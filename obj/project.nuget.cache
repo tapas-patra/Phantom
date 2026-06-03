@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "dgSpecHash": "g3q4LQQ1dEw=",
+  "success": true,
+  "projectFilePath": "D:\\HiddenApplication\\SecureOverlay_v6.6-changed\\SecureOverlay\\SecureOverlay.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\tapas\\.nuget\\packages\\markdig\\0.22.0\\markdig.0.22.0.nupkg.sha512",
+    "C:\\Users\\tapas\\.nuget\\packages\\markdig.wpf\\0.5.0.1\\markdig.wpf.0.5.0.1.nupkg.sha512",
+    "C:\\Users\\tapas\\.nuget\\packages\\microsoft.web.webview2\\1.0.2739.15\\microsoft.web.webview2.1.0.2739.15.nupkg.sha512",
+    "C:\\Users\\tapas\\.nuget\\packages\\microsoft.win32.systemevents\\8.0.0\\microsoft.win32.systemevents.8.0.0.nupkg.sha512",
+    "C:\\Users\\tapas\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512",
+    "C:\\Users\\tapas\\.nuget\\packages\\system.drawing.common\\8.0.0\\system.drawing.common.8.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

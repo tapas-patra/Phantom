@@ -453,6 +453,7 @@ namespace SecureOverlay
 
             if (_conversationManager != null)
             {
+                _conversationManager.APISwitchNotification -= OnAPISwitchNotification;
                 _conversationManager.UpdateAIService(newAI);
                 _conversationManager.UpdateModelConfig(modelConfig);
                 _conversationManager.UpdateSystemPrompt(_settings.SystemPrompt);
@@ -815,7 +816,8 @@ namespace SecureOverlay
                         message, 
                         onChunk, 
                         _currentRequestCancellation.Token,
-                        imageBase64  // ✅ Pass image
+                        imageBase64,
+                        ResetCurrentStreamingAttempt
                     );
                 }, _currentRequestCancellation.Token);
                 
@@ -3048,7 +3050,7 @@ namespace SecureOverlay
             // ✅ **NEW: Recreate AI service with new model**
             if (_rotationManager != null && _conversationManager != null)
             {
-                var currentKey = _rotationManager.GetNextApiKey(_settings.SelectedAI);
+                var currentKey = _rotationManager.GetCurrentApiKey(_settings.SelectedAI);
                 var newAI = AIServiceFactory.CreateService(_settings.SelectedAI, currentKey, newModel);
                 _conversationManager.UpdateAIService(newAI);
                 _currentAI = newAI;
@@ -3083,6 +3085,25 @@ namespace SecureOverlay
             Log.WriteLine($"✓ Model changed to {newModel}");
             DebugCurrentModel();
             Log.WriteLine("═══════════════════════════════════════════════════════");
+        }
+
+        private void ResetCurrentStreamingAttempt()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                lock (_streamBuffer)
+                {
+                    _streamBuffer.Clear();
+                }
+
+                if (_currentStreamingParagraph == null)
+                    return;
+
+                while (_currentStreamingParagraph.Inlines.Count > 1)
+                {
+                    _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
+                }
+            });
         }
 
 

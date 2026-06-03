@@ -537,7 +537,8 @@ namespace SecureOverlay.Services
             string userMessage, 
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null)  // ✅ NEW PARAMETER
+            string? imageBase64 = null,
+            Action? onRetryCleanup = null)
         {
             // Add user message to full conversation
             var userMsg = new ConversationMessage
@@ -587,7 +588,12 @@ namespace SecureOverlay.Services
             Log.WriteLine($"Sending {optimizedContext.Count} messages ({totalTokens} tokens) to AI [STREAMING]");
 
             // ✅ Send with cancellation support AND image
-            var (response, error) = await SendWithRetryStreamAsync(optimizedContext, onChunkReceived, cancellationToken, imageBase64);
+            var (response, error) = await SendWithRetryStreamAsync(
+                optimizedContext,
+                onChunkReceived,
+                cancellationToken,
+                imageBase64,
+                onRetryCleanup);
 
             if (!string.IsNullOrEmpty(error))
             {
@@ -747,7 +753,8 @@ namespace SecureOverlay.Services
             List<ConversationMessage> context, 
             Action<string> onChunkReceived,
             CancellationToken cancellationToken,
-            string? imageBase64 = null)
+            string? imageBase64 = null,
+            Action? onRetryCleanup = null)
         {
             int maxAttempts = 5;
             int currentAttempt = 0;
@@ -804,15 +811,17 @@ namespace SecureOverlay.Services
                             {
                                 Log.WriteLine("🚫 429 Error Detected (rate limit)");
                                 Log.WriteLine("   Strategy: Try all keys → Try models (persist for conversation)");
-                                
-                                var availableKeys = _rotationManager.GetAvailableKeyCount(_currentProvider);
                                 var currentKeyIdx = _rotationManager.GetCurrentKeyIndex(_currentProvider);
+                                _rotationManager.MarkKeyAsRateLimited(_currentProvider, currentKeyIdx);
+
+                                var availableKeys = _rotationManager.GetAvailableKeyCount(_currentProvider);
                                 var totalKeysCount = _rotationManager.GetTotalKeyCount(_currentProvider);
                                 
                                 // Try next key if available
                                 if (_rotationManager.IsAutoSwitchKeysEnabled &&
-                                    (availableKeys > 1 || (totalKeysCount > 1 && currentKeyIdx < totalKeysCount - 1)))
+                                    availableKeys > 0)
                                 {
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     var oldKeyIndex = currentKeyIdx;
                                     var newKey = _rotationManager.GetNextApiKey(_currentProvider);
                                     var currentModelName = _rotationManager.GetCurrentModel(_currentProvider);
@@ -833,6 +842,7 @@ namespace SecureOverlay.Services
                                         _rotationManager.IsAutoSwitchModelsEnabled &&
                                         _rotationManager.HasMultipleModels(_currentProvider))
                                 {
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     Log.WriteLine("   All keys exhausted - trying different model");
                                     Log.WriteLine("   → Model will persist for rest of this conversation");
                                     
@@ -840,6 +850,7 @@ namespace SecureOverlay.Services
                                     var newModel = _rotationManager.GetNextModel(_currentProvider);
                                     
                                     // Reset to first key with new model
+                                    _rotationManager.ClearRateLimitedKeys(_currentProvider);
                                     _rotationManager.ResetKeyRotation(_currentProvider);
                                     var firstKey = _rotationManager.GetNextApiKey(_currentProvider);
                                     
@@ -878,6 +889,7 @@ namespace SecureOverlay.Services
                                 {
                                     // First retry - same key and model
                                     Log.WriteLine("   Retry 1: Same key/model after 2s delay");
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     await Task.Delay(2000, cancellationToken);
                                     continue;
                                 }
@@ -885,6 +897,7 @@ namespace SecureOverlay.Services
                                         _rotationManager.IsAutoSwitchModelsEnabled &&
                                         _rotationManager.HasMultipleModels(_currentProvider))
                                 {
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     // Second retry - switch model (persists for conversation)
                                     Log.WriteLine("   Retry 2: Switching model");
                                     Log.WriteLine("   → Model will persist for rest of this conversation");
@@ -907,6 +920,7 @@ namespace SecureOverlay.Services
                                         _rotationManager.IsAutoSwitchKeysEnabled &&
                                         _rotationManager.GetTotalKeyCount(_currentProvider) > 1)
                                 {
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     // Third retry - switch key
                                     Log.WriteLine("   Retry 3: Switching key");
                                     
@@ -952,8 +966,9 @@ namespace SecureOverlay.Services
                                 
                                 Log.WriteLine($"   Marked Key #{currentKeyIdx + 1} as failed");
                                 
-                                if (_rotationManager.GetAvailableKeyCount(_currentProvider) > 0)
+                                if (_rotationManager.GetRecoverableKeyCount(_currentProvider) > 0)
                                 {
+                                    ResetStreamingAttempt(onRetryCleanup);
                                     var newKey = _rotationManager.GetNextApiKey(_currentProvider);
                                     var currentModelName = _rotationManager.GetCurrentModel(_currentProvider);
                                     _aiService = AIServiceFactory.CreateService(_currentProvider, newKey, currentModelName);
@@ -988,6 +1003,7 @@ namespace SecureOverlay.Services
                                 var delay = currentAttempt * 2000;
                                 Log.WriteLine($"⚠️ Retryable error: {errorMsg}");
                                 Log.WriteLine($"Waiting {delay}ms before retry...");
+                                ResetStreamingAttempt(onRetryCleanup);
                                 await Task.Delay(delay, cancellationToken);
                                 continue;
                             }
@@ -1017,6 +1033,7 @@ namespace SecureOverlay.Services
                     {
                         var delay = currentAttempt * 1000;
                         Log.WriteLine($"Waiting {delay}ms before retry...");
+                        ResetStreamingAttempt(onRetryCleanup);
                         
                         try
                         {
@@ -1041,6 +1058,21 @@ namespace SecureOverlay.Services
             Log.WriteLine($"✗ Failed after {maxAttempts} attempts");
             Log.WriteLine("═══════════════════════════════════════════════════════");
             return ("", $"Failed to get response from AI after {maxAttempts} attempts");
+        }
+
+        private void ResetStreamingAttempt(Action? onRetryCleanup)
+        {
+            if (onRetryCleanup == null)
+                return;
+
+            try
+            {
+                onRetryCleanup();
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"⚠️ Streaming retry cleanup failed: {ex.Message}");
+            }
         }
 
 
@@ -1111,14 +1143,15 @@ namespace SecureOverlay.Services
                             Log.WriteLine("🚫 429 Error Detected (rate limit)");
                             Log.WriteLine("   Strategy: Try all keys → Try models (persist for conversation)");
                             
-                            var availableKeys = _rotationManager?.GetAvailableKeyCount(_currentProvider) ?? 0;
                             var currentKeyIdx = _rotationManager?.GetCurrentKeyIndex(_currentProvider) ?? 0;
+                            _rotationManager?.MarkKeyAsRateLimited(_currentProvider, currentKeyIdx);
+                            var availableKeys = _rotationManager?.GetAvailableKeyCount(_currentProvider) ?? 0;
                             var totalKeysCount = _rotationManager?.GetTotalKeyCount(_currentProvider) ?? 0;
                             
                             // Try next key if available
                             if (_rotationManager != null && 
                                 _rotationManager.IsAutoSwitchKeysEnabled &&
-                                (availableKeys > 1 || (totalKeysCount > 1 && currentKeyIdx < totalKeysCount - 1)))
+                                availableKeys > 0)
                             {
                                 var oldKeyIndex = currentKeyIdx;
                                 var newKey = _rotationManager.GetNextApiKey(_currentProvider);
@@ -1148,6 +1181,7 @@ namespace SecureOverlay.Services
                                 var newModel = _rotationManager.GetNextModel(_currentProvider);
                                 
                                 // Reset to first key with new model
+                                _rotationManager.ClearRateLimitedKeys(_currentProvider);
                                 _rotationManager.ResetKeyRotation(_currentProvider);
                                 var firstKey = _rotationManager.GetNextApiKey(_currentProvider);
                                 
@@ -1262,7 +1296,7 @@ namespace SecureOverlay.Services
                                 _rotationManager.MarkKeyAsFailed(_currentProvider, currentKeyIndex);
                                 Log.WriteLine($"   Marked Key #{currentKeyIndex + 1} as failed");
                                 
-                                if (_rotationManager.GetAvailableKeyCount(_currentProvider) > 0)
+                                if (_rotationManager.GetRecoverableKeyCount(_currentProvider) > 0)
                                 {
                                     var newKey = _rotationManager.GetNextApiKey(_currentProvider);
                                     var currentModelName = _rotationManager.GetCurrentModel(_currentProvider);

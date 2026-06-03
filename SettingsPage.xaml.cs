@@ -624,10 +624,6 @@ namespace SecureOverlay
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 Log.WriteLine("SAVING API KEYS:");
                 Log.WriteLine($"  ChatGPT: {_settings.ChatGPTApiKeys.Count} keys");
-                foreach (var key in _settings.ChatGPTApiKeys)
-                {
-                    Log.WriteLine($"    - {key.Substring(0, Math.Min(10, key.Length))}... ({key.Length} chars)");
-                }
                 Log.WriteLine($"  Claude: {_settings.ClaudeApiKeys.Count} keys");
                 Log.WriteLine($"  Mistral: {_settings.MistralApiKeys.Count} keys");
                 Log.WriteLine($"  Gemini: {_settings.GeminiApiKeys.Count} keys");

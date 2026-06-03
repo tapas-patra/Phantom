@@ -37,12 +37,11 @@ namespace SecureOverlay.Services
             string provider,
             APIRotationManager rotationManager)
         {
-            var apiKey = rotationManager.GetNextApiKey(provider);
+            var apiKey = rotationManager.GetCurrentApiKey(provider);
             var model = rotationManager.GetCurrentModel(provider);
             
-            // FIX: Wrap ternary operator in parentheses to avoid interpolation conflict
             var keyStatus = rotationManager.GetTotalKeyCount(provider) > 0 ? "configured" : "missing";
-            Log.WriteLine($"Creating {provider} service with Key #{keyStatus}, Model: {model}");
+            Log.WriteLine($"Creating {provider} service with key {keyStatus}, Model: {model}");
             
             return CreateService(provider, apiKey, model);
         }

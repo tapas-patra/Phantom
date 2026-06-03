@@ -44,7 +44,7 @@ namespace SecureOverlay.Services
                 return keys[0];
             }
 
-            // Get failed keys list for this provider
+            var permanentlyFailedKeys = GetPermanentlyFailedKeyIndexes(provider);
             var failedKeys = GetFailedKeys(provider);
             
             // Get last used index
@@ -60,8 +60,14 @@ namespace SecureOverlay.Services
             // Round-robin search for next available key (skip failed ones)
             while (attempts < keys.Count)
             {
+                attempts++;
                 currentIndex = (currentIndex + 1) % keys.Count;
                 var key = keys[currentIndex];
+
+                if (permanentlyFailedKeys.Contains(currentIndex))
+                {
+                    continue;
+                }
                 
                 // Check if this key is not in failed list
                 if (!failedKeys.Contains(key))
@@ -72,20 +78,47 @@ namespace SecureOverlay.Services
                     Log.WriteLine($"✓ Selected {provider} Key #{currentIndex + 1} (round-robin)");
                     return key;
                 }
-                
-                attempts++;
             }
 
-            // All keys are in failed list - clear the failed list and start fresh
-            Log.WriteLine($"⚠️ All {provider} keys are marked as failed - clearing failed list");
-            ClearFailedKeys(provider);
-            
-            // Use first key
-            _state.LastKeyIndex[provider] = 0;
-            SaveRotationState();
-            
-            Log.WriteLine($"✓ Reset to {provider} Key #1");
-            return keys[0];
+            if (failedKeys.Count > 0)
+            {
+                Log.WriteLine($"⚠️ All non-invalid {provider} keys are rate limited - clearing temporary failures");
+                ClearFailedKeys(provider);
+                return GetNextApiKey(provider);
+            }
+
+            Log.WriteLine($"⚠️ No usable API keys remain for {provider}");
+            return "";
+        }
+
+        public string GetCurrentApiKey(string provider)
+        {
+            var keys = GetKeysForProvider(provider);
+
+            if (keys.Count == 0)
+            {
+                Log.WriteLine($"⚠️ No API keys configured for {provider}");
+                return "";
+            }
+
+            if (keys.Count == 1)
+            {
+                return keys[0];
+            }
+
+            if (_state.LastKeyIndex.TryGetValue(provider, out var currentIndex) &&
+                currentIndex >= 0 &&
+                currentIndex < keys.Count)
+            {
+                var currentKey = keys[currentIndex];
+                if (!GetPermanentlyFailedKeyIndexes(provider).Contains(currentIndex) &&
+                    !GetFailedKeys(provider).Contains(currentKey))
+                {
+                    return currentKey;
+                }
+            }
+
+            return GetNextApiKey(provider);
         }
 
         /// <summary>
@@ -104,8 +137,30 @@ namespace SecureOverlay.Services
                 {
                     failedKeys.Add(keyIndex);
                     property.SetValue(_settings, failedKeys);
+                    SaveRotationState();
                     Log.WriteLine($"✓ Marked Key #{keyIndex + 1} as failed for {provider}");
                 }
+            }
+        }
+
+        public void MarkKeyAsRateLimited(string provider, int keyIndex)
+        {
+            var keys = GetKeysForProvider(provider);
+            if (keyIndex < 0 || keyIndex >= keys.Count)
+            {
+                Log.WriteLine($"⚠️ Cannot mark rate-limited key for {provider}: invalid index {keyIndex}");
+                return;
+            }
+
+            var key = keys[keyIndex];
+            var failedKeys = GetFailedKeys(provider);
+
+            if (!failedKeys.Contains(key))
+            {
+                failedKeys.Add(key);
+                _state.Last429Time[provider] = DateTime.UtcNow;
+                SaveRotationState();
+                Log.WriteLine($"✓ Marked Key #{keyIndex + 1} as rate limited for {provider}");
             }
         }
 
@@ -125,6 +180,11 @@ namespace SecureOverlay.Services
                 _state.FailedKeys429[provider].Clear();
                 SaveRotationState();
             }
+        }
+
+        public void ClearRateLimitedKeys(string provider)
+        {
+            ClearFailedKeys(provider);
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -331,6 +391,15 @@ namespace SecureOverlay.Services
                 _ => ""
             };
         }
+
+        private List<int> GetPermanentlyFailedKeyIndexes(string provider)
+        {
+            var failedKey = $"{provider}_Failed";
+            return _settings.GetType()
+                .GetProperty(failedKey)
+                ?.GetValue(_settings) as List<int> ?? new List<int>();
+        }
+
         private List<string> GetKeysForProvider(string provider)
         {
             return provider switch
@@ -376,13 +445,32 @@ namespace SecureOverlay.Services
         {
             var keys = GetKeysForProvider(provider);
             if (keys == null || keys.Count == 0) return 0;
-            
-            var failedKey = $"{provider}_Failed";
-            var failedKeys = _settings.GetType()
-                .GetProperty(failedKey)
-                ?.GetValue(_settings) as List<int> ?? new List<int>();
-            
-            return keys.Count - failedKeys.Count;
+
+            var permanentlyFailedKeys = GetPermanentlyFailedKeyIndexes(provider);
+            var rateLimitedKeys = GetFailedKeys(provider);
+            int available = 0;
+
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (permanentlyFailedKeys.Contains(i))
+                    continue;
+
+                if (rateLimitedKeys.Contains(keys[i]))
+                    continue;
+
+                available++;
+            }
+
+            return available;
+        }
+
+        public int GetRecoverableKeyCount(string provider)
+        {
+            var keys = GetKeysForProvider(provider);
+            if (keys == null || keys.Count == 0) return 0;
+
+            var permanentlyFailedKeys = GetPermanentlyFailedKeyIndexes(provider);
+            return Math.Max(0, keys.Count - permanentlyFailedKeys.Count);
         }
 
         /// <summary>

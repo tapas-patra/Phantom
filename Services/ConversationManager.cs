@@ -1545,19 +1545,43 @@ namespace SecureOverlay.Services
             if (systemMsg != null)
             {
                 Log.WriteLine($"  System prompt length: {systemMsg.Content.Length} chars");
-                
-                // Check if resume summary is embedded
-                if (systemMsg.Content.Contains("User Profile:"))
+
+                RestoreEmbeddedContextFromSystemPrompt(systemMsg.Content);
+            }
+        }
+
+        private void RestoreEmbeddedContextFromSystemPrompt(string systemPromptContent)
+        {
+            const string resumeMarker = "\n\nUser Profile: ";
+            const string jdMarker = "\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n";
+
+            int resumeStart = systemPromptContent.IndexOf(resumeMarker, StringComparison.Ordinal);
+            int jdStart = systemPromptContent.IndexOf(jdMarker, StringComparison.Ordinal);
+
+            if (resumeStart >= 0)
+            {
+                int contentStart = resumeStart + resumeMarker.Length;
+                int contentEnd = jdStart >= 0 && jdStart > contentStart ? jdStart : systemPromptContent.Length;
+                var extractedResumeSummary = systemPromptContent.Substring(contentStart, contentEnd - contentStart).Trim();
+
+                if (!string.IsNullOrWhiteSpace(extractedResumeSummary))
                 {
-                    Log.WriteLine("  ✓ Resume summary detected in system prompt");
+                    _resumeSummary = extractedResumeSummary;
                     _resumeSummarized = true;
+                    Log.WriteLine("  ✓ Resume summary restored from imported system prompt");
                 }
-                
-                // Check if JD summary is embedded
-                if (systemMsg.Content.Contains("Interview Context:"))
+            }
+
+            if (jdStart >= 0)
+            {
+                int contentStart = jdStart + jdMarker.Length;
+                var extractedJdSummary = systemPromptContent.Substring(contentStart).Trim();
+
+                if (!string.IsNullOrWhiteSpace(extractedJdSummary))
                 {
-                    Log.WriteLine("  ✓ Job description detected in system prompt");
+                    _jobDescriptionSummary = extractedJdSummary;
                     _jobDescriptionSummarized = true;
+                    Log.WriteLine("  ✓ Job description summary restored from imported system prompt");
                 }
             }
         }

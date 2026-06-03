@@ -89,11 +89,14 @@ namespace SecureOverlay.Services
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("x-api-key", _apiKey);
-                _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+                var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
+                {
+                    Content = content
+                };
+                requestMessage.Headers.TryAddWithoutValidation("x-api-key", _apiKey);
+                requestMessage.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
 
-                var response = await _httpClient.PostAsync("https://api.anthropic.com/v1/messages", content);
+                var response = await _httpClient.SendAsync(requestMessage);
                 var responseJson = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
@@ -177,14 +180,12 @@ namespace SecureOverlay.Services
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("x-api-key", _apiKey);
-                _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-
                 var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
                 {
                     Content = content
                 };
+                requestMessage.Headers.TryAddWithoutValidation("x-api-key", _apiKey);
+                requestMessage.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
 
                 var response = await _httpClient.SendAsync(
                     requestMessage,

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -85,10 +86,13 @@ namespace SecureOverlay.Services
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
+                var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+                {
+                    Content = content
+                };
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
 
-                var response = await _httpClient.PostAsync("https://api.openai.com/v1/chat/completions", content);
+                var response = await _httpClient.SendAsync(requestMessage);
                 var responseJson = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
@@ -172,9 +176,10 @@ namespace SecureOverlay.Services
                 {
                     Content = content
                 };
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
 
                 var response = await _httpClient.SendAsync(
-                    requestMessage, 
+                    requestMessage,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken
                 );

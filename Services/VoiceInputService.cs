@@ -9,10 +9,13 @@ namespace SecureOverlay.Services
     public class VoiceInputService : IDisposable
     {
         private WebView2? _webView;
+        private System.Windows.Controls.Grid? _hostContainer;
         private bool _isListening = false;
         private bool _isInitialized = false;
         private bool _isInitializing = false;
         private bool _permissionGranted = false;
+        private bool _isDisposed = false;
+        private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? StatusChanged;
@@ -24,6 +27,12 @@ namespace SecureOverlay.Services
 
         public async Task<bool> InitializeAsync()
         {
+            if (_isDisposed)
+            {
+                Log.WriteLine("Cannot initialize disposed voice service");
+                return false;
+            }
+
             if (_isInitialized)
             {
                 Log.WriteLine("Already initialized");
@@ -65,6 +74,7 @@ namespace SecureOverlay.Services
                             var container = mainWindow.FindName("WebView2Container") as System.Windows.Controls.Grid;
                             if (container != null)
                             {
+                                _hostContainer = container;
                                 container.Children.Add(_webView);
                                 Log.WriteLine("  ✓ WebView2 added to MainWindow container");
                             }
@@ -106,16 +116,8 @@ namespace SecureOverlay.Services
                         Log.WriteLine("Step 5: Configuring permissions...");
 
                         // Set up permission handler
-                        _webView.CoreWebView2.PermissionRequested += (s, e) =>
-                        {
-                            Log.WriteLine($"  🔐 Permission requested: {e.PermissionKind}");
-                            
-                            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
-                            {
-                                Log.WriteLine("  ✅ Auto-granting microphone permission (already saved)");
-                                e.State = CoreWebView2PermissionState.Allow;
-                            }
-                        };
+                        _permissionRequestedHandler = OnPermissionRequested;
+                        _webView.CoreWebView2.PermissionRequested += _permissionRequestedHandler;
 
                         Log.WriteLine("  ✓ Permission handler configured");
 
@@ -283,6 +285,17 @@ namespace SecureOverlay.Services
             catch (Exception ex)
             {
                 Log.WriteLine($"Message handling error: {ex.Message}");
+            }
+        }
+
+        private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            Log.WriteLine($"  🔐 Permission requested: {e.PermissionKind}");
+
+            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
+            {
+                Log.WriteLine("  ✅ Auto-granting microphone permission (already saved)");
+                e.State = CoreWebView2PermissionState.Allow;
             }
         }
 
@@ -584,9 +597,43 @@ namespace SecureOverlay.Services
 
         public void Dispose()
         {
-            if (_isListening) StopListening();
-            _webView?.Dispose();
+            if (_isDisposed)
+                return;
+
+            _isDisposed = true;
+            _isListening = false;
+            _isInitializing = false;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_webView?.CoreWebView2 != null)
+                {
+                    if (_permissionRequestedHandler != null)
+                    {
+                        _webView.CoreWebView2.PermissionRequested -= _permissionRequestedHandler;
+                        _permissionRequestedHandler = null;
+                    }
+
+                    _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+                }
+
+                if (_webView != null)
+                {
+                    if (_webView.Parent is System.Windows.Controls.Panel parentPanel)
+                    {
+                        parentPanel.Children.Remove(_webView);
+                    }
+                    else if (_hostContainer != null)
+                    {
+                        _hostContainer.Children.Remove(_webView);
+                    }
+
+                    _webView.Dispose();
+                }
+            });
+
             _webView = null;
+            _hostContainer = null;
             _isInitialized = false;
         }
     }

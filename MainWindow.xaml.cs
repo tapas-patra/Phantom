@@ -30,6 +30,7 @@ namespace SecureOverlay
         private bool _isHidden = false;
         
         private bool _isRestarting = false;
+        private bool _cleanupPerformed = false;
 
         private AppSettings _settings;
         private IAIService? _currentAI;
@@ -3197,6 +3198,14 @@ namespace SecureOverlay
 
         private void PerformFullCleanup()
         {
+            if (_cleanupPerformed)
+            {
+                Log.WriteLine("Cleanup already performed - skipping duplicate call");
+                return;
+            }
+
+            _cleanupPerformed = true;
+
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("PERFORMING FULL CLEANUP");
             Log.WriteLine($"Is Restarting: {_isRestarting}");

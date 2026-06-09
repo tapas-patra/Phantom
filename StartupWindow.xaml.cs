@@ -19,6 +19,8 @@ namespace SecureOverlay
 {
     public partial class StartupWindow : Window
     {
+        private const string DefaultStubEmail = "local-user@phantom.app";
+        private const string DefaultStubPassword = "phantom123";
         private readonly IStartupGateService _startupGateService;
         private readonly IDeviceIdentityService _deviceIdentityService;
         private StartupGateContext _currentContext;
@@ -30,6 +32,7 @@ namespace SecureOverlay
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             IDeviceProfileRepository deviceProfileRepository = new SqliteDeviceProfileRepository(store);
             _deviceIdentityService = new WindowsDeviceIdentityService(deviceProfileRepository, new WindowsSecretVault(store));
+            SeedStubCredentials();
             _currentContext = startupGateService.GetInitialContext();
             ApplyContext(_currentContext);
         }
@@ -79,10 +82,17 @@ namespace SecureOverlay
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            EmailTextBox.Text = string.Empty;
-            PasswordTextBox.Password = string.Empty;
+            SeedStubCredentials();
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
+        }
+
+        private void SignOutButton_Click(object sender, RoutedEventArgs e)
+        {
+            SeedStubCredentials();
+            _currentContext = _startupGateService.ResetToAuthChoice();
+            ApplyContext(_currentContext);
+            InlineStatusText.Text = "Signed out from the local stub session.";
         }
 
         private void RegisterButton_Click(object sender, RoutedEventArgs e)
@@ -118,6 +128,7 @@ namespace SecureOverlay
         {
             var isLoginState = context.State == StartupGateState.Login;
             var isAuthChoiceState = context.State == StartupGateState.AuthChoice;
+            var showSignOut = !isAuthChoiceState && !isLoginState;
 
             StateTitleText.Text = context.Title;
             StateMessageText.Text = context.Message;
@@ -127,6 +138,7 @@ namespace SecureOverlay
             MagicLinkButton.Visibility = context.CanAttemptLogin ? Visibility.Visible : Visibility.Collapsed;
             RegisterButton.Visibility = context.CanRegister ? Visibility.Visible : Visibility.Collapsed;
             BackButton.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
+            SignOutButton.Visibility = showSignOut ? Visibility.Visible : Visibility.Collapsed;
             ContinueButton.Visibility = context.CanOpenMainApp ? Visibility.Visible : Visibility.Collapsed;
             RetryButton.Visibility = context.CanRetry ? Visibility.Visible : Visibility.Collapsed;
             CredentialsPanel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
@@ -134,7 +146,7 @@ namespace SecureOverlay
 
             LeftPanelTitleText.Text = isLoginState ? "Credentials" : "Login Methods";
             LeftPanelMessageText.Text = isLoginState
-                ? "Enter your email and continue with either password login or a magic link. Use Back to return to the first screen."
+                ? "Enter your email and continue with either password login or a magic link. A default stub user is prefilled so you can test the flow immediately."
                 : "Choose a sign-in method. Login stays in-app. Registration opens on the hosted website.";
             PasswordLabel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             PasswordTextBox.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
@@ -156,6 +168,12 @@ namespace SecureOverlay
 
             LoginButton.Content = context.State == StartupGateState.Login ? "Submit Login" : "Login";
             MagicLinkButton.Content = context.State == StartupGateState.Login ? "Send Magic Link" : "Magic Link";
+        }
+
+        private void SeedStubCredentials()
+        {
+            EmailTextBox.Text = DefaultStubEmail;
+            PasswordTextBox.Password = DefaultStubPassword;
         }
 
         private async Task AdvanceToEvaluatedStateAsync()

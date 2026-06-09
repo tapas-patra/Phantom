@@ -102,7 +102,7 @@
                         </Border>
                     </Grid>
 
-                    <WrapPanel Grid.Row="3" Margin="0,24,0,0" ItemHeight="46" ItemWidth="140">
+                    <WrapPanel Grid.Row="3" Margin="0,24,0,0" Orientation="Horizontal">
                         <Button x:Name="LoginButton" Content="Login" Width="140" Background="#1976D2" Style="{StaticResource ActionButtonStyle}" Click="LoginButton_Click"/>
                         <Button x:Name="MagicLinkButton" Content="Magic Link" Width="140" Background="#2A4E77" Style="{StaticResource ActionButtonStyle}" Click="MagicLinkButton_Click"/>
                         <Button x:Name="RegisterButton" Content="Register On Website" Width="190" Background="#264653" Style="{StaticResource ActionButtonStyle}" Click="RegisterButton_Click"/>

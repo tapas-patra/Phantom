@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 
 namespace SecureOverlay.Infrastructure.Persistence
@@ -16,6 +18,7 @@ namespace SecureOverlay.Infrastructure.Persistence
         public const string TelemetryQueueKey = "telemetry_queue";
 
         private readonly string _databasePath;
+        private int _schemaEnsured;
 
         public SqliteRuntimeStore(string databasePath)
         {
@@ -24,6 +27,7 @@ namespace SecureOverlay.Infrastructure.Persistence
 
         public SqliteConnection OpenConnection()
         {
+            EnsureSchema();
             var connection = new SqliteConnection($"Data Source={_databasePath}");
             connection.Open();
             return connection;
@@ -31,7 +35,19 @@ namespace SecureOverlay.Infrastructure.Persistence
 
         public void EnsureSchema()
         {
-            using var connection = OpenConnection();
+            if (Interlocked.Exchange(ref _schemaEnsured, 1) == 1)
+            {
+                return;
+            }
+
+            var directory = Path.GetDirectoryName(_databasePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            using var connection = new SqliteConnection($"Data Source={_databasePath}");
+            connection.Open();
             using var command = connection.CreateCommand();
             command.CommandText = @"
 CREATE TABLE IF NOT EXISTS app_state (
@@ -43,9 +59,16 @@ CREATE TABLE IF NOT EXISTS app_state (
             command.ExecuteNonQuery();
         }
 
+        private SqliteConnection OpenRawConnection()
+        {
+            var connection = new SqliteConnection($"Data Source={_databasePath}");
+            connection.Open();
+            return connection;
+        }
+
         public bool HasEntry(string stateKey)
         {
-            using var connection = OpenConnection();
+            using var connection = OpenRawConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(1) FROM app_state WHERE state_key = $key;";
             command.Parameters.AddWithValue("$key", stateKey);
@@ -55,7 +78,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 
         public string? ReadPayload(string stateKey)
         {
-            using var connection = OpenConnection();
+            using var connection = OpenRawConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT payload_json FROM app_state WHERE state_key = $key LIMIT 1;";
             command.Parameters.AddWithValue("$key", stateKey);
@@ -64,7 +87,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 
         public void UpsertPayload(string stateKey, string payloadJson, DateTime updatedAtUtc)
         {
-            using var connection = OpenConnection();
+            using var connection = OpenRawConnection();
             using var command = connection.CreateCommand();
             command.CommandText = @"
 INSERT INTO app_state (state_key, payload_json, updated_at)
@@ -81,7 +104,7 @@ ON CONFLICT(state_key) DO UPDATE SET
 
         public void DeletePayload(string stateKey)
         {
-            using var connection = OpenConnection();
+            using var connection = OpenRawConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "DELETE FROM app_state WHERE state_key = $key;";
             command.Parameters.AddWithValue("$key", stateKey);

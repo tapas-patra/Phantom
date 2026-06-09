@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using SecureOverlay.Application.Auth;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Application.Telemetry;
@@ -22,7 +23,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         private readonly IHostedAccountClient _accountClient;
         private readonly ITelemetryService _telemetryService;
         private readonly string? _pendingCallbackUri;
-
+        private readonly DeviceProfile _deviceProfile;
         public LocalStartupGateService(string? pendingCallbackUri)
         {
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
@@ -32,9 +33,10 @@ namespace SecureOverlay.Infrastructure.Hosted
             var deviceIdentityService = new WindowsDeviceIdentityService(
                 new SqliteDeviceProfileRepository(store),
                 new WindowsSecretVault(store));
-            var deviceProfile = deviceIdentityService.GetOrCreateProfile();
-            _authClient = new LocalHostedAuthClient(deviceProfile);
-            _accountClient = new LocalHostedAccountClient();
+            _deviceProfile = deviceIdentityService.GetOrCreateProfile();
+            var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+            _authClient = HostedClientFactory.CreateAuthClient(_deviceProfile, hostedRuntimeOptions);
+            _accountClient = HostedClientFactory.CreateAccountClient(hostedRuntimeOptions);
             _pendingCallbackUri = pendingCallbackUri;
         }
 
@@ -82,19 +84,34 @@ namespace SecureOverlay.Infrastructure.Hosted
             return BuildContext(
                 StartupGateState.Login,
                 "Login",
-                "Use the in-app login flow. Hosted auth is not wired yet, so this phase persists a local session and account snapshot through the production startup seam.",
+                "Use the in-app login flow. This desktop seam can run against local stubs or a configured hosted backend without changing the window flow.",
                 canOpenMainApp: false,
                 canResumeLockedInterview: false,
                 canAttemptLogin: true,
                 canRegister: true,
                 canRetry: false,
-                detail: "Submit Login or Magic Link to persist a local authenticated session.");
+                detail: "Submit Login or Magic Link to complete authentication and refresh the startup account snapshot.");
         }
 
         public StartupGateContext CompleteLogin(string email, bool useMagicLink)
         {
-            var sessionDto = _authClient.CreateLocalSession(email, useMagicLink);
-            var accountCheckDto = _accountClient.BuildLocalAccountCheck(sessionDto);
+            return CompleteLogin(email, string.Empty, useMagicLink);
+        }
+
+        public StartupGateContext CompleteLogin(string email, string password, bool useMagicLink)
+        {
+            var sessionDto = _authClient.CreateSession(new AuthLoginRequestDto
+            {
+                Email = email,
+                Password = password,
+                UseMagicLink = useMagicLink,
+                AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+                InstallId = _deviceProfile.InstallId,
+                DeviceLabel = _deviceProfile.DeviceLabel,
+                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
+                SecretFingerprintHint = _deviceProfile.SecretFingerprintHint
+            });
+            var accountCheckDto = _accountClient.GetStartupAccountCheck(sessionDto);
 
             _authSessionRepository.Save(MapAuthSession(sessionDto));
             _accountCacheRepository.Save(MapAccountSnapshot(accountCheckDto));
@@ -118,21 +135,13 @@ namespace SecureOverlay.Infrastructure.Hosted
 
         public StartupGateContext ProcessAuthCallback(string callbackUri)
         {
-            var callbackResult = _authClient.ParseCallback(callbackUri);
-            var sessionDto = new AuthSessionDto
+            var callbackCompletion = _authClient.CompleteCallback(new AuthCallbackCompletionRequestDto
             {
-                UserId = callbackResult.Email.ToLowerInvariant(),
-                Email = callbackResult.Email,
-                AccessToken = $"callback-access::{Guid.NewGuid():N}",
-                RefreshToken = $"callback-refresh::{Guid.NewGuid():N}",
-                AuthMethod = "callback",
-                DeviceInstallId = callbackResult.DeviceInstallId,
-                DeviceFingerprintHash = callbackResult.DeviceFingerprintHash,
-                AuthenticatedAtUtc = DateTime.UtcNow,
-                ExpiresAtUtc = DateTime.UtcNow.AddHours(12),
-                IsAuthenticated = true
-            };
-            var accountCheckDto = _accountClient.BuildCallbackAccountCheck(callbackResult);
+                CallbackUri = callbackUri
+            });
+            var sessionDto = callbackCompletion.Session;
+            var callbackResult = callbackCompletion.CallbackResult;
+            var accountCheckDto = _accountClient.GetStartupAccountCheck(callbackResult);
 
             _authSessionRepository.Save(MapAuthSession(sessionDto));
             var snapshot = MapAccountSnapshot(accountCheckDto);

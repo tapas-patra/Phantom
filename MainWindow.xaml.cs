@@ -146,6 +146,7 @@ namespace SecureOverlay
             IContextPackRepository contextPackRepository = new SqliteContextPackRepository(store);
             IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
             ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
+            var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             _creditMeteringService = new LocalCreditMeteringService(
                 authSessionRepository,
                 accountCacheRepository,
@@ -157,7 +158,7 @@ namespace SecureOverlay
                 accountCacheRepository);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
-                new LocalHostedUsageClient());
+                HostedClientFactory.CreateUsageClient(hostedRuntimeOptions));
             _telemetryService = new LocalTelemetryService(telemetryRepository);
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();

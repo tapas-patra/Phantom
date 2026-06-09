@@ -113,6 +113,22 @@ This file captures the decisions already locked so implementation can start with
 - admin/support tooling must support stale-lock clears, trial overrides, negative-balance waivers, and reconciliation inspection
 - executable/runtime identity and app-data folder naming remain intentionally decoupled as an implementation invariant
 
+## Phase 4 Desktop Seam
+
+- desktop runtime now supports `local` and backend-configured hosted modes through the same startup/auth/account/usage seam
+- default mode remains `local` so the Windows app is still runnable without backend dependencies
+- runtime environment variables:
+  - `PHANTOM_HOSTED_MODE=local|auto|remote`
+  - `PHANTOM_WEBSITE_BASE_URL=https://...`
+  - `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://...`
+- current desktop backend endpoint contract targets:
+  - `POST /api/desktop/auth/login`
+  - `POST /api/desktop/auth/callback/complete`
+  - `POST /api/desktop/account/startup-check/session`
+  - `POST /api/desktop/account/startup-check/callback`
+  - `POST /api/desktop/usage/reconcile`
+- magic-link callback completion is expected to return an authenticated desktop session plus callback state
+
 ## Implementation Guardrails
 
 - do not expand `MainWindow.xaml.cs` further for new architecture logic

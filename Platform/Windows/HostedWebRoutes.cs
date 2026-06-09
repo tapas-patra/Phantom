@@ -1,11 +1,12 @@
 using System;
+using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Platform.Windows
 {
     public static class HostedWebRoutes
     {
-        public const string BaseUrl = "https://phantom.app";
+        public static string BaseUrl => HostedClientFactory.LoadOptions().WebsiteBaseUrl;
 
         public static string BuildRegisterUrl(DeviceRegistrationMetadataDto metadata)
         {

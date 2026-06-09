@@ -5,7 +5,7 @@ namespace SecureOverlay.Infrastructure.Hosted
 {
     public sealed class LocalHostedAccountClient : IHostedAccountClient
     {
-        public StartupAccountCheckResultDto BuildLocalAccountCheck(AuthSessionDto session)
+        public StartupAccountCheckResultDto GetStartupAccountCheck(AuthSessionDto session)
         {
             return new StartupAccountCheckResultDto
             {
@@ -28,7 +28,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             };
         }
 
-        public StartupAccountCheckResultDto BuildCallbackAccountCheck(AuthCallbackResultDto callbackResult)
+        public StartupAccountCheckResultDto GetStartupAccountCheck(AuthCallbackResultDto callbackResult)
         {
             return new StartupAccountCheckResultDto
             {

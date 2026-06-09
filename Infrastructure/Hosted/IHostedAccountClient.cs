@@ -4,7 +4,7 @@ namespace SecureOverlay.Infrastructure.Hosted
 {
     public interface IHostedAccountClient
     {
-        StartupAccountCheckResultDto BuildLocalAccountCheck(AuthSessionDto session);
-        StartupAccountCheckResultDto BuildCallbackAccountCheck(AuthCallbackResultDto callbackResult);
+        StartupAccountCheckResultDto GetStartupAccountCheck(AuthSessionDto session);
+        StartupAccountCheckResultDto GetStartupAccountCheck(AuthCallbackResultDto callbackResult);
     }
 }

@@ -4,7 +4,7 @@ namespace SecureOverlay.Infrastructure.Hosted
 {
     public interface IHostedAuthClient
     {
-        AuthSessionDto CreateLocalSession(string email, bool useMagicLink);
-        AuthCallbackResultDto ParseCallback(string callbackUri);
+        AuthSessionDto CreateSession(AuthLoginRequestDto request);
+        AuthCallbackCompletionResultDto CompleteCallback(AuthCallbackCompletionRequestDto request);
     }
 }

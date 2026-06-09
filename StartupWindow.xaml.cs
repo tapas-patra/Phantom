@@ -41,16 +41,16 @@ namespace SecureOverlay
         {
             if (_currentContext.State == StartupGateState.Login)
             {
-                _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, useMagicLink: false);
+                _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: false);
                 ApplyContext(_currentContext);
-                InlineStatusText.Text = "Simulating password login and account validation...";
+                InlineStatusText.Text = "Completing password login and refreshing account validation...";
                 await AdvanceToEvaluatedStateAsync();
                 return;
             }
 
             _currentContext = _startupGateService.BeginLogin();
             ApplyContext(_currentContext);
-            InlineStatusText.Text = "Enter credentials and press Login again to continue in local stub mode.";
+            InlineStatusText.Text = "Enter credentials and press Login again to continue.";
         }
 
         private async void MagicLinkButton_Click(object sender, RoutedEventArgs e)
@@ -63,9 +63,9 @@ namespace SecureOverlay
                 return;
             }
 
-            _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, useMagicLink: true);
+            _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: true);
             ApplyContext(_currentContext);
-            InlineStatusText.Text = "Simulating login and account validation...";
+            InlineStatusText.Text = "Completing magic-link login and refreshing account validation...";
             await AdvanceToEvaluatedStateAsync();
         }
 
@@ -92,7 +92,7 @@ namespace SecureOverlay
             SeedStubCredentials();
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
-            InlineStatusText.Text = "Signed out from the local stub session.";
+            InlineStatusText.Text = "Signed out from the current desktop session.";
         }
 
         private void RegisterButton_Click(object sender, RoutedEventArgs e)

@@ -13,16 +13,16 @@ namespace SecureOverlay.Infrastructure.Hosted
             _deviceProfile = deviceProfile;
         }
 
-        public AuthSessionDto CreateLocalSession(string email, bool useMagicLink)
+        public AuthSessionDto CreateSession(AuthLoginRequestDto request)
         {
-            var normalizedEmail = string.IsNullOrWhiteSpace(email) ? "local-user@phantom.app" : email.Trim();
+            var normalizedEmail = string.IsNullOrWhiteSpace(request.Email) ? "local-user@phantom.app" : request.Email.Trim();
             return new AuthSessionDto
             {
                 UserId = normalizedEmail.ToLowerInvariant(),
                 Email = normalizedEmail,
                 AccessToken = $"local-access::{Guid.NewGuid():N}",
                 RefreshToken = $"local-refresh::{Guid.NewGuid():N}",
-                AuthMethod = useMagicLink ? "magic_link" : "password",
+                AuthMethod = request.UseMagicLink ? "magic_link" : "password",
                 DeviceInstallId = _deviceProfile.InstallId,
                 DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
                 AuthenticatedAtUtc = DateTime.UtcNow,
@@ -31,18 +31,35 @@ namespace SecureOverlay.Infrastructure.Hosted
             };
         }
 
-        public AuthCallbackResultDto ParseCallback(string callbackUri)
+        public AuthCallbackCompletionResultDto CompleteCallback(AuthCallbackCompletionRequestDto request)
         {
-            var email = ReadQueryValue(callbackUri, "email") ?? "callback-user@phantom.app";
-            var status = (ReadQueryValue(callbackUri, "status") ?? "ready").ToLowerInvariant();
-
-            return new AuthCallbackResultDto
+            var email = ReadQueryValue(request.CallbackUri, "email") ?? "callback-user@phantom.app";
+            var status = (ReadQueryValue(request.CallbackUri, "status") ?? "ready").ToLowerInvariant();
+            var callbackResult = new AuthCallbackResultDto
             {
                 Email = email,
                 Status = status,
                 PhoneVerified = status != "verify",
                 DeviceInstallId = _deviceProfile.InstallId,
                 DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash
+            };
+
+            return new AuthCallbackCompletionResultDto
+            {
+                CallbackResult = callbackResult,
+                Session = new AuthSessionDto
+                {
+                    UserId = email.ToLowerInvariant(),
+                    Email = email,
+                    AccessToken = $"callback-access::{Guid.NewGuid():N}",
+                    RefreshToken = $"callback-refresh::{Guid.NewGuid():N}",
+                    AuthMethod = "callback",
+                    DeviceInstallId = _deviceProfile.InstallId,
+                    DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
+                    AuthenticatedAtUtc = DateTime.UtcNow,
+                    ExpiresAtUtc = DateTime.UtcNow.AddHours(12),
+                    IsAuthenticated = true
+                }
             };
         }
 

@@ -148,6 +148,12 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
             return databaseUrl;
         }
 
+        if (databaseUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
+            || databaseUrl.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildConnectionStringFromUriLikeValue(databaseUrl);
+        }
+
         if (!Uri.TryCreate(databaseUrl, UriKind.Absolute, out var uri))
         {
             throw new InvalidOperationException("PHANTOM_WINDOWS_BACKEND_DATABASE_URL must be a valid PostgreSQL URI.");
@@ -161,6 +167,67 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
             Database = uri.AbsolutePath.Trim('/'),
             Username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : string.Empty,
             Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty,
+            SslMode = SslMode.Require,
+            TrustServerCertificate = false
+        };
+
+        return builder.ConnectionString;
+    }
+
+    private static string BuildConnectionStringFromUriLikeValue(string databaseUrl)
+    {
+        var withoutScheme = databaseUrl
+            .Replace("postgresql://", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("postgres://", string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        var atIndex = withoutScheme.LastIndexOf('@');
+        if (atIndex <= 0 || atIndex >= withoutScheme.Length - 1)
+        {
+            throw new InvalidOperationException("PHANTOM_WINDOWS_BACKEND_DATABASE_URL must include credentials and host.");
+        }
+
+        var userInfo = withoutScheme[..atIndex];
+        var hostAndDatabase = withoutScheme[(atIndex + 1)..];
+
+        var colonIndex = userInfo.IndexOf(':');
+        if (colonIndex <= 0 || colonIndex >= userInfo.Length - 1)
+        {
+            throw new InvalidOperationException("PHANTOM_WINDOWS_BACKEND_DATABASE_URL must include username and password.");
+        }
+
+        var username = Uri.UnescapeDataString(userInfo[..colonIndex]);
+        var password = Uri.UnescapeDataString(userInfo[(colonIndex + 1)..]);
+
+        var slashIndex = hostAndDatabase.IndexOf('/');
+        if (slashIndex <= 0 || slashIndex >= hostAndDatabase.Length - 1)
+        {
+            throw new InvalidOperationException("PHANTOM_WINDOWS_BACKEND_DATABASE_URL must include database name.");
+        }
+
+        var hostPort = hostAndDatabase[..slashIndex];
+        var databaseAndQuery = hostAndDatabase[(slashIndex + 1)..];
+        var queryIndex = databaseAndQuery.IndexOf('?');
+        var databaseName = queryIndex >= 0
+            ? databaseAndQuery[..queryIndex]
+            : databaseAndQuery;
+
+        var host = hostPort;
+        var port = 5432;
+        var lastColonIndex = hostPort.LastIndexOf(':');
+        if (lastColonIndex > 0 && lastColonIndex < hostPort.Length - 1
+            && int.TryParse(hostPort[(lastColonIndex + 1)..], out var parsedPort))
+        {
+            host = hostPort[..lastColonIndex];
+            port = parsedPort;
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = host,
+            Port = port,
+            Database = Uri.UnescapeDataString(databaseName),
+            Username = username,
+            Password = password,
             SslMode = SslMode.Require,
             TrustServerCertificate = false
         };

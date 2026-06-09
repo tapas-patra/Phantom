@@ -452,7 +452,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("✗ CRITICAL: Failed to get window handle!");
                 InvisibleMessageBox.Show("Failed to initialize window!", "Error");
-                Application.Current.Shutdown();
+                System.Windows.Application.Current.Shutdown();
                 return;
             }
 
@@ -2115,7 +2115,7 @@ namespace SecureOverlay
 
                 PerformFullCleanup();
 
-                Application.Current.Shutdown();
+                System.Windows.Application.Current.Shutdown();
             }
             else
             {
@@ -2373,7 +2373,7 @@ namespace SecureOverlay
                 Log.WriteLine("═══════════════════════════════════════════════════════");
 
                 // Close current instance (PerformFullCleanup will run, but won't delete cache)
-                Application.Current.Shutdown();
+                System.Windows.Application.Current.Shutdown();
             }
             catch (Exception ex)
             {

@@ -134,7 +134,7 @@ namespace SecureOverlay
         {
             if (_windowsHidden) return;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
                 // Hide main window
                 if (_mainWindow != null && _mainWindow.Visibility == Visibility.Visible)
@@ -169,7 +169,7 @@ namespace SecureOverlay
         {
             if (!_windowsHidden) return;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
                 // Restore main window
                 if (_mainWindow != null)

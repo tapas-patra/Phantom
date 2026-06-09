@@ -106,7 +106,7 @@ namespace SecureOverlay
             LoadApiKeys();
             
             // ✅ FIX: Get CURRENT model from rotation manager (if available), not just from settings
-            var mainWindow = Application.Current.MainWindow as MainWindow;
+            var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
             
             // Load currently ACTIVE model (reflects rotation state)
             string chatGPTModel = _settings.ChatGPTModel;
@@ -454,7 +454,7 @@ namespace SecureOverlay
                 
                 FakeCursorSizeTextBox.Text = $"{FakeCursorSizeSlider.Value:F0}";
                 
-                var mainWindow = Application.Current.MainWindow as MainWindow;
+                var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
                 mainWindow?.UpdateFakeCursorPreviewSize(FakeCursorSizeSlider.Value / 100.0);
             }
             catch (Exception ex)
@@ -482,7 +482,7 @@ namespace SecureOverlay
                     
                     FakeCursorSizeSlider.Value = value;
                     
-                    var mainWindow = Application.Current.MainWindow as MainWindow;
+                    var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
                     mainWindow?.UpdateFakeCursorPreviewSize(value / 100.0);
                     
                     _isUpdatingSlider = false;
@@ -514,7 +514,7 @@ namespace SecureOverlay
             
             try
             {
-                var mainWindow = Application.Current.MainWindow as MainWindow;
+                var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
                 mainWindow?.ShowFakeCursorPreview();
             }
             catch (Exception ex)
@@ -529,7 +529,7 @@ namespace SecureOverlay
             
             try
             {
-                var mainWindow = Application.Current.MainWindow as MainWindow;
+                var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
                 mainWindow?.HideFakeCursorPreview();
             }
             catch (Exception ex)

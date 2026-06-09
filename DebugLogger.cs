@@ -44,9 +44,9 @@ namespace SecureOverlay
             var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
 
             // Try to update on UI thread if available
-            if (Application.Current != null)
+            if (System.Windows.Application.Current != null)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
                     AddMessageToCollection(timestampedMessage);
                 });
@@ -78,9 +78,9 @@ namespace SecureOverlay
 
         public void Clear()
         {
-            if (Application.Current != null)
+            if (System.Windows.Application.Current != null)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
                     _logMessages.Clear();
                     AddLog("Logs cleared by user");
@@ -92,9 +92,9 @@ namespace SecureOverlay
         {
             var sb = new StringBuilder();
             
-            if (Application.Current != null)
+            if (System.Windows.Application.Current != null)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
                     foreach (var msg in _logMessages)
                     {

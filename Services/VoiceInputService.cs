@@ -53,7 +53,7 @@ namespace SecureOverlay.Services
                 Log.WriteLine("════════════════════════════════════════════════");
                 Log.WriteLine("Starting WebView2 initialization...");
                 
-                var result = await Application.Current.Dispatcher.InvokeAsync(async () =>
+                var result = await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
                     try
                     {
@@ -69,7 +69,7 @@ namespace SecureOverlay.Services
                         
                         Log.WriteLine("Step 2: Adding WebView2 to visual tree...");
                         
-                        var mainWindow = Application.Current.MainWindow as MainWindow;
+                        var mainWindow = System.Windows.Application.Current.MainWindow as MainWindow;
                         if (mainWindow != null)
                         {
                             var container = mainWindow.FindName("WebView2Container") as System.Windows.Controls.Grid;
@@ -258,7 +258,7 @@ namespace SecureOverlay.Services
                     // Only show permission window if it's a permission error
                     if (error.Contains("not-allowed") || error.Contains("permission"))
                     {
-                        Application.Current.Dispatcher.Invoke(() =>
+                        System.Windows.Application.Current.Dispatcher.Invoke(() =>
                         {
                             ShowPermissionPrompt();
                         });
@@ -597,7 +597,7 @@ namespace SecureOverlay.Services
             _isListening = false;
             _isInitializing = false;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
                 if (_webView?.CoreWebView2 != null)
                 {

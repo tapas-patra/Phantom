@@ -138,7 +138,7 @@ namespace SecureOverlay
         private Task OpenMainWindowAsync()
         {
             var mainWindow = new MainWindow(CreateLaunchContext(_currentContext));
-            Application.Current.MainWindow = mainWindow;
+            System.Windows.Application.Current.MainWindow = mainWindow;
             mainWindow.Show();
             Close();
             return Task.CompletedTask;

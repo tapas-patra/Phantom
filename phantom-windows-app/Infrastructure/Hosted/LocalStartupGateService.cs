@@ -63,7 +63,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             }
 
             var session = _authSessionRepository.Load();
-            if (_hostedRuntimeOptions.UseRemoteBackend && IsLegacyStubSession(session))
+            if (IsLegacyStubSession(session))
             {
                 _authSessionRepository.Clear();
                 _accountCacheRepository.Clear();
@@ -496,6 +496,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             return new AccountCacheSnapshot
             {
                 UserId = dto.UserId,
+                AccessTier = string.IsNullOrWhiteSpace(dto.AccessTier) ? "free" : dto.AccessTier,
                 PhoneVerified = dto.PhoneVerified,
                 ProAvailableCredits = dto.Wallet.ProAvailableCredits,
                 PremiumAvailableCredits = dto.Wallet.PremiumAvailableCredits,

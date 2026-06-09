@@ -102,7 +102,10 @@ namespace SecureOverlay
         private readonly IUsageReconciliationService _usageReconciliationService;
         private readonly IKnowledgeRetrievalService _knowledgeRetrievalService;
         private readonly ITelemetryService _telemetryService;
+        private readonly IAccountCacheRepository _accountCacheRepository;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
+        private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
+        private AccountCacheSnapshot? _accountSnapshot;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -141,7 +144,7 @@ namespace SecureOverlay
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             IAuthSessionRepository authSessionRepository = new SqliteAuthSessionRepository(store);
-            IAccountCacheRepository accountCacheRepository = new SqliteAccountCacheRepository(store);
+            _accountCacheRepository = new SqliteAccountCacheRepository(store);
             IInterviewSessionRepository interviewSessionRepository = new SqliteInterviewSessionRepository(store);
             IContextPackRepository contextPackRepository = new SqliteContextPackRepository(store);
             IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
@@ -149,13 +152,13 @@ namespace SecureOverlay
             var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             _creditMeteringService = new LocalCreditMeteringService(
                 authSessionRepository,
-                accountCacheRepository,
+                _accountCacheRepository,
                 interviewSessionRepository);
             _contextPackService = new LocalContextPackService(contextPackRepository);
             _knowledgeRetrievalService = new LocalKnowledgeRetrievalService();
             _interviewLockService = new LocalInterviewLockService(
                 interviewSessionRepository,
-                accountCacheRepository);
+                _accountCacheRepository);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
                 HostedClientFactory.CreateUsageClient(hostedRuntimeOptions));
@@ -163,6 +166,7 @@ namespace SecureOverlay
                 telemetryRepository,
                 HostedClientFactory.CreateTelemetryClient(hostedRuntimeOptions),
                 hostedRuntimeOptions);
+            _accountSnapshot = _accountCacheRepository.Load();
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
@@ -419,6 +423,75 @@ namespace SecureOverlay
                 true);
         }
 
+        private void RefreshAccountSnapshot()
+        {
+            _accountSnapshot = _accountCacheRepository.Load();
+        }
+
+        private void ApplyAccountTierChrome()
+        {
+            var isPremium = string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+            ProviderSelectorBorder.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
+            ModelSelectorBorder.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
+            if (isPremium)
+            {
+                APIKeyIndicator.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void UpdateCreditIndicator()
+        {
+            RefreshAccountSnapshot();
+            if (_accountSnapshot == null)
+            {
+                CreditIndicatorText.Text = "Credits: unavailable";
+                return;
+            }
+
+            CreditIndicatorText.Text =
+                $"{GetTierLabel(_accountSnapshot.AccessTier)} | Pro {_accountSnapshot.ProAvailableCredits:0.##} | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+        }
+
+        private void StartSessionStatusTimer()
+        {
+            _sessionStatusTimer?.Stop();
+            _sessionStatusTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _sessionStatusTimer.Tick += (s, e) => UpdateSessionStatus();
+            _sessionStatusTimer.Start();
+        }
+
+        private void UpdateSessionStatus()
+        {
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null)
+            {
+                SessionTimerBorder.Visibility = Visibility.Collapsed;
+                SessionStatusText.Text = string.Empty;
+                return;
+            }
+
+            var elapsed = DateTime.UtcNow - activeSession.StartedAtUtc;
+            var blocks = Math.Max(1, (int)Math.Ceiling(elapsed.TotalMinutes / 15d));
+            var projectedCharge = blocks * 0.25m;
+
+            SessionTimerBorder.Visibility = Visibility.Visible;
+            SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
+            SessionStatusText.Text = $"Live | {blocks} block{(blocks == 1 ? string.Empty : "s")} | {projectedCharge:0.##} cr";
+        }
+
+        private static string GetTierLabel(string? accessTier)
+        {
+            return accessTier?.ToLowerInvariant() switch
+            {
+                "premium" => "Premium",
+                "pro_byo" => "Pro BYO",
+                _ => "Free"
+            };
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // CURSOR MANAGEMENT - EVENT HANDLERS
         // ═══════════════════════════════════════════════════════════════
@@ -511,6 +584,11 @@ namespace SecureOverlay
             UpdateAPIKeyIndicator();
             UpdateScreenshotButtonVisibility();
             UpdateProviderAndModelDisplay();
+            RefreshAccountSnapshot();
+            ApplyAccountTierChrome();
+            UpdateCreditIndicator();
+            UpdateSessionStatus();
+            StartSessionStatusTimer();
 
             FocusInput();
             ApplyLaunchRestrictions();
@@ -652,6 +730,14 @@ namespace SecureOverlay
         {
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING API KEY INDICATOR");
+
+            if (string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.WriteLine("  Premium tier - hiding indicator");
+                APIKeyIndicator.Visibility = Visibility.Collapsed;
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+                return;
+            }
             
             if (_rotationManager == null)
             {
@@ -897,6 +983,9 @@ namespace SecureOverlay
             if (meteringActivation.Session != null)
             {
                 ActivateInterviewLock(meteringActivation.Session);
+                RefreshAccountSnapshot();
+                UpdateCreditIndicator();
+                UpdateSessionStatus();
             }
 
             string? imageBase64 = null;
@@ -1994,19 +2083,11 @@ namespace SecureOverlay
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Settings button clicked - switching to settings page");
+            RefreshAccountSnapshot();
 
-            // Create settings page if not exists
-            if (_settingsPage == null)
-            {
-                _settingsPage = new SettingsPage();
-                _settingsPage.SettingsClosed += OnSettingsClosed;
-                SettingsPageHost.Content = _settingsPage;
-            }
-            else
-            {
-                // ✅ NEW: Refresh settings page with latest data
-                _settingsPage.RefreshSettings();
-            }
+            _settingsPage = new SettingsPage(_accountSnapshot);
+            _settingsPage.SettingsClosed += OnSettingsClosed;
+            SettingsPageHost.Content = _settingsPage;
 
             // Switch pages
             ChatPageContainer.Visibility = Visibility.Collapsed;
@@ -2025,6 +2106,9 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
+                RefreshAccountSnapshot();
+                ApplyAccountTierChrome();
+                UpdateCreditIndicator();
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
@@ -3485,6 +3569,8 @@ namespace SecureOverlay
 
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
+                _sessionStatusTimer?.Stop();
+                _sessionStatusTimer = null;
                 
                 Log.WriteLine("Clearing job description on app close...");
                 _contextPackService.ClearSelectedPack(clearResume: false, clearJobDescription: true);

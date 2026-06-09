@@ -53,15 +53,16 @@ public sealed class AccountRepository
         using var command = connection.CreateCommand();
         command.CommandText = @"
 INSERT INTO desktop_accounts (
-    user_id, email, password_hash, phone_verified, pro_available_credits, premium_available_credits,
+    user_id, email, access_tier, password_hash, phone_verified, pro_available_credits, premium_available_credits,
     premium_negative_credits, lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
     created_at_utc, updated_at_utc
 ) VALUES (
-    @userId, @email, @passwordHash, @phoneVerified, @proCredits, @premiumCredits,
+    @userId, @email, @accessTier, @passwordHash, @phoneVerified, @proCredits, @premiumCredits,
     @premiumNegative, @leaseExpiresAt, @offlineModeEnabled, @lastValidatedAt, @createdAt, @updatedAt
 )
 ON CONFLICT(user_id) DO UPDATE SET
     email = EXCLUDED.email,
+    access_tier = EXCLUDED.access_tier,
     password_hash = EXCLUDED.password_hash,
     phone_verified = EXCLUDED.phone_verified,
     pro_available_credits = EXCLUDED.pro_available_credits,
@@ -79,6 +80,7 @@ ON CONFLICT(user_id) DO UPDATE SET
     {
         command.Parameters.AddWithValue("userId", account.UserId);
         command.Parameters.AddWithValue("email", account.Email);
+        command.Parameters.AddWithValue("accessTier", account.AccessTier);
         command.Parameters.AddWithValue("passwordHash", account.PasswordHash);
         command.Parameters.AddWithValue("phoneVerified", account.PhoneVerified);
         command.Parameters.AddWithValue("proCredits", account.ProAvailableCredits);
@@ -97,6 +99,7 @@ ON CONFLICT(user_id) DO UPDATE SET
         {
             UserId = reader.GetString(reader.GetOrdinal("user_id")),
             Email = reader.GetString(reader.GetOrdinal("email")),
+            AccessTier = reader.GetString(reader.GetOrdinal("access_tier")),
             PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
             PhoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
             ProAvailableCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits")),

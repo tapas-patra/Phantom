@@ -108,6 +108,17 @@
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
+                        <Border x:Name="CreditIndicatorBorder" Background="#506A4C1F" CornerRadius="4" Padding="8,4" Margin="5,0,0,0">
+                            <TextBlock x:Name="CreditIndicatorText" Text="Credits: --" FontSize="11"
+                                    FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
+                        </Border>
+
+                        <Border x:Name="SessionTimerBorder" Background="#503A245D" CornerRadius="4" Padding="8,4" Margin="5,0,0,0"
+                                Visibility="Collapsed">
+                            <TextBlock x:Name="SessionTimerText" Text="Session 00:00:00" FontSize="11"
+                                    FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
+                        </Border>
+
                         <!-- Token Counter -->
                         <Border Background="#5000AAFF" CornerRadius="4" Padding="8,4" Margin="10,0,0,0">
                             <TextBlock x:Name="TokenCounterText" Text="0k/8k" FontSize="11" 
@@ -333,9 +344,14 @@
                                       FontSize="12" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </StackPanel>
                         
-                        <TextBlock x:Name="VoiceStatusText" Text="" 
-                                  FontSize="12" Foreground="#FFD700" 
-                                  HorizontalAlignment="Right" Effect="{StaticResource Shadow}"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <TextBlock x:Name="SessionStatusText" Text="" 
+                                      FontSize="12" Foreground="#71D9D7" Margin="0,0,12,0"
+                                      Effect="{StaticResource Shadow}"/>
+                            <TextBlock x:Name="VoiceStatusText" Text="" 
+                                      FontSize="12" Foreground="#FFD700" 
+                                      Effect="{StaticResource Shadow}"/>
+                        </StackPanel>
                     </Grid>
                 </Border>
 

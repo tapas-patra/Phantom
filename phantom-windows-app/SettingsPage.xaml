@@ -46,6 +46,19 @@
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         
+                        <Border x:Name="PremiumManagedNotice" Background="#503A245D" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#9071D9D7" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock Text="Premium Managed AI" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" Effect="{StaticResource Shadow}"/>
+                                <TextBlock Text="Provider and API key setup is hidden for Premium accounts. Phantom manages the model lane for this tier."
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0" Margin="0,8,0,0"
+                                          Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
@@ -338,6 +351,7 @@
                                 </TextBlock>
                             </StackPanel>
                         </Border>
+                        </StackPanel>
 
                         <!-- System Prompt -->
                         <TextBlock Text="System Prompt (AI Instructions)" FontSize="14" FontWeight="Bold" 

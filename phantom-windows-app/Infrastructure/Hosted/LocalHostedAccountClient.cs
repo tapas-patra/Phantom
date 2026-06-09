@@ -11,6 +11,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 UserId = session.UserId,
                 Email = session.Email,
+                AccessTier = "pro_byo",
                 PhoneVerified = true,
                 Wallet = new WalletSnapshotDto
                 {
@@ -34,6 +35,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 UserId = callbackResult.Email.ToLowerInvariant(),
                 Email = callbackResult.Email,
+                AccessTier = "pro_byo",
                 PhoneVerified = callbackResult.PhoneVerified,
                 Wallet = new WalletSnapshotDto
                 {

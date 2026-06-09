@@ -5,6 +5,7 @@ namespace SecureOverlay.Domain.Entities
     public sealed class AccountCacheSnapshot
     {
         public string UserId { get; set; } = string.Empty;
+        public string AccessTier { get; set; } = "free";
         public bool PhoneVerified { get; set; }
         public decimal ProAvailableCredits { get; set; }
         public decimal PremiumAvailableCredits { get; set; }

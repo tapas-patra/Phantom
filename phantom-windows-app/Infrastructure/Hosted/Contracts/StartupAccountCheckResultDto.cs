@@ -6,6 +6,7 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
     {
         public string UserId { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
+        public string AccessTier { get; set; } = "free";
         public bool PhoneVerified { get; set; }
         public WalletSnapshotDto Wallet { get; set; } = new WalletSnapshotDto();
         public DateTime? LeaseExpiresAtUtc { get; set; }

@@ -15,92 +15,20 @@ namespace SecureOverlay.Infrastructure.Hosted
 
         public AuthSessionDto CreateSession(AuthLoginRequestDto request)
         {
-            var normalizedEmail = string.IsNullOrWhiteSpace(request.Email) ? "local-user@phantom.app" : request.Email.Trim();
-            return new AuthSessionDto
-            {
-                UserId = normalizedEmail.ToLowerInvariant(),
-                Email = normalizedEmail,
-                AccessToken = $"local-access::{Guid.NewGuid():N}",
-                RefreshToken = $"local-refresh::{Guid.NewGuid():N}",
-                AuthMethod = request.UseMagicLink ? "magic_link" : "password",
-                DeviceInstallId = _deviceProfile.InstallId,
-                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
-                AuthenticatedAtUtc = DateTime.UtcNow,
-                ExpiresAtUtc = DateTime.UtcNow.AddHours(12),
-                IsAuthenticated = true
-            };
+            throw new HostedServiceException(
+                "Local fallback authentication is disabled. Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_HOSTED_MODE=remote.");
         }
 
         public AuthMagicLinkIssuedDto RequestMagicLink(AuthMagicLinkRequestDto request)
         {
-            var normalizedEmail = string.IsNullOrWhiteSpace(request.Email) ? "local-user@phantom.app" : request.Email.Trim();
-            var callbackUri = $"phantom://auth/callback?email={Uri.EscapeDataString(normalizedEmail)}&status=ready";
-            return new AuthMagicLinkIssuedDto
-            {
-                Email = normalizedEmail,
-                MagicLinkUrl = callbackUri,
-                CallbackUri = callbackUri,
-                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(15)
-            };
+            throw new HostedServiceException(
+                "Local fallback authentication is disabled. Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_HOSTED_MODE=remote.");
         }
 
         public AuthCallbackCompletionResultDto CompleteCallback(AuthCallbackCompletionRequestDto request)
         {
-            var email = ReadQueryValue(request.CallbackUri, "email") ?? "callback-user@phantom.app";
-            var status = (ReadQueryValue(request.CallbackUri, "status") ?? "ready").ToLowerInvariant();
-            var callbackResult = new AuthCallbackResultDto
-            {
-                Email = email,
-                Status = status,
-                PhoneVerified = status != "verify",
-                DeviceInstallId = _deviceProfile.InstallId,
-                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash
-            };
-
-            return new AuthCallbackCompletionResultDto
-            {
-                CallbackResult = callbackResult,
-                Session = new AuthSessionDto
-                {
-                    UserId = email.ToLowerInvariant(),
-                    Email = email,
-                    AccessToken = $"callback-access::{Guid.NewGuid():N}",
-                    RefreshToken = $"callback-refresh::{Guid.NewGuid():N}",
-                    AuthMethod = "callback",
-                    DeviceInstallId = _deviceProfile.InstallId,
-                    DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
-                    AuthenticatedAtUtc = DateTime.UtcNow,
-                    ExpiresAtUtc = DateTime.UtcNow.AddHours(12),
-                    IsAuthenticated = true
-                }
-            };
-        }
-
-        private static string? ReadQueryValue(string callbackUri, string key)
-        {
-            if (!Uri.TryCreate(callbackUri, UriKind.Absolute, out var uri))
-            {
-                return null;
-            }
-
-            var query = uri.Query;
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                return null;
-            }
-
-            var trimmed = query.TrimStart('?');
-            var parts = trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var part in parts)
-            {
-                var pair = part.Split('=', 2, StringSplitOptions.None);
-                if (pair.Length == 2 && string.Equals(pair[0], key, StringComparison.OrdinalIgnoreCase))
-                {
-                    return Uri.UnescapeDataString(pair[1]);
-                }
-            }
-
-            return null;
+            throw new HostedServiceException(
+                "Local fallback authentication is disabled. Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_HOSTED_MODE=remote.");
         }
     }
 }

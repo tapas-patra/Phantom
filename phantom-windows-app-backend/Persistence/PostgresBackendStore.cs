@@ -50,6 +50,7 @@ public sealed class PostgresBackendStore
 CREATE TABLE IF NOT EXISTS desktop_accounts (
     user_id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
+    access_tier TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     phone_verified BOOLEAN NOT NULL,
     pro_available_credits NUMERIC(18,2) NOT NULL,
@@ -61,6 +62,9 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
     created_at_utc TIMESTAMPTZ NOT NULL,
     updated_at_utc TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'free';
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
     session_id TEXT PRIMARY KEY,

@@ -19,8 +19,11 @@ namespace SecureOverlay
 {
     public partial class SettingsPage : UserControl
     {
+        private const int MaxProvidersForByo = 3;
+        private const int MaxKeysPerProvider = 2;
         private AppSettings _settings;
         private readonly IContextPackService _contextPackService;
+        private readonly AccountCacheSnapshot? _accountSnapshot;
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
 
@@ -33,16 +36,18 @@ namespace SecureOverlay
 
         public event EventHandler<bool>? SettingsClosed;
 
-        public SettingsPage()
+        public SettingsPage(AccountCacheSnapshot? accountSnapshot = null)
         {
             InitializeComponent();
 
             _settings = SettingsManager.Load();
+            _accountSnapshot = accountSnapshot;
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
 
             InitializeControls();
             LoadSettings();
+            ApplyAccountTierRestrictions();
             ProtectAllComboBoxes();
             
             _isInitializing = false;
@@ -192,6 +197,7 @@ namespace SecureOverlay
             
             // Reload all UI elements
             LoadSettings();
+            ApplyAccountTierRestrictions();
             
             Log.WriteLine("✓ Settings page refreshed");
         }
@@ -265,6 +271,7 @@ namespace SecureOverlay
 
         private void AddChatGPTKey_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanAddProviderKey(_chatGPTKeys, "ChatGPT")) return;
             _chatGPTKeys.Add(new ApiKeyItem { Index = $"#{_chatGPTKeys.Count + 1}", Key = "" });
         }
 
@@ -279,6 +286,7 @@ namespace SecureOverlay
 
         private void AddClaudeKey_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanAddProviderKey(_claudeKeys, "Claude")) return;
             _claudeKeys.Add(new ApiKeyItem { Index = $"#{_claudeKeys.Count + 1}", Key = "" });
         }
 
@@ -293,6 +301,7 @@ namespace SecureOverlay
 
         private void AddMistralKey_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanAddProviderKey(_mistralKeys, "Mistral")) return;
             _mistralKeys.Add(new ApiKeyItem { Index = $"#{_mistralKeys.Count + 1}", Key = "" });
         }
 
@@ -307,6 +316,7 @@ namespace SecureOverlay
 
         private void AddGeminiKey_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanAddProviderKey(_geminiKeys, "Gemini")) return;
             _geminiKeys.Add(new ApiKeyItem { Index = $"#{_geminiKeys.Count + 1}", Key = "" });
         }
 
@@ -321,6 +331,7 @@ namespace SecureOverlay
 
         private void AddGroqKey_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanAddProviderKey(_groqKeys, "Groq")) return;
             _groqKeys.Add(new ApiKeyItem { Index = $"#{_groqKeys.Count + 1}", Key = "" });
         }
 
@@ -412,6 +423,16 @@ namespace SecureOverlay
 
         private void UpdatePanelVisibility()
         {
+            if (IsPremiumAccount())
+            {
+                ChatGPTPanel.Visibility = Visibility.Collapsed;
+                ClaudePanel.Visibility = Visibility.Collapsed;
+                MistralPanel.Visibility = Visibility.Collapsed;
+                GeminiPanel.Visibility = Visibility.Collapsed;
+                GroqPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             if (AIProviderComboBox.SelectedItem == null) return;
 
             var selected = AIProviderComboBox.SelectedItem as string;
@@ -621,12 +642,24 @@ namespace SecureOverlay
             {
                 _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
                 
-                // Save API keys (filter out empty ones)
-                _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                _settings.GroqApiKeys = _groqKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                if (IsPremiumAccount())
+                {
+                    _settings.ChatGPTApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.ClaudeApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.MistralApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.GeminiApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.GroqApiKeys = new System.Collections.Generic.List<string>();
+                }
+                else
+                {
+                    _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.GroqApiKeys = _groqKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                }
+
+                ValidateByoProviderLimits();
                 
                 // Detailed logging
                 Log.WriteLine("═══════════════════════════════════════════════════════");
@@ -762,6 +795,88 @@ namespace SecureOverlay
             
             var selectedModel = GroqModelBox.SelectedItem as string;
             Log.WriteLine($"User selected Groq model: {selectedModel}");
+        }
+
+        private void ApplyAccountTierRestrictions()
+        {
+            var isPremium = IsPremiumAccount();
+            PremiumManagedNotice.Visibility = isPremium ? Visibility.Visible : Visibility.Collapsed;
+            ByoConfigurationSection.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
+            UpdatePanelVisibility();
+        }
+
+        private bool IsPremiumAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool CanAddProviderKey(ObservableCollection<ApiKeyItem> providerKeys, string providerName)
+        {
+            if (IsPremiumAccount())
+            {
+                InvisibleMessageBox.Show("Premium accounts do not expose BYO provider configuration.", "Premium Managed AI");
+                return false;
+            }
+
+            if (providerKeys.Count >= MaxKeysPerProvider)
+            {
+                InvisibleMessageBox.Show(
+                    $"{providerName} is limited to {MaxKeysPerProvider} API keys for BYO accounts.",
+                    "Provider Key Limit");
+                return false;
+            }
+
+            var activeProviders = CountConfiguredProviders(providerKeys);
+            if (providerKeys.Count == 0 && activeProviders > MaxProvidersForByo)
+            {
+                InvisibleMessageBox.Show(
+                    $"BYO accounts can configure at most {MaxProvidersForByo} providers.",
+                    "Provider Limit");
+                return false;
+            }
+
+            return true;
+        }
+
+        private int CountConfiguredProviders(ObservableCollection<ApiKeyItem>? pendingProvider = null)
+        {
+            var count = 0;
+            if (_chatGPTKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _chatGPTKeys) count++;
+            if (_claudeKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _claudeKeys) count++;
+            if (_mistralKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _mistralKeys) count++;
+            if (_geminiKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _geminiKeys) count++;
+            if (_groqKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _groqKeys) count++;
+            return count;
+        }
+
+        private void ValidateByoProviderLimits()
+        {
+            if (IsPremiumAccount())
+            {
+                return;
+            }
+
+            var providerLists = new[]
+            {
+                new { Name = "ChatGPT", Keys = _settings.ChatGPTApiKeys },
+                new { Name = "Claude", Keys = _settings.ClaudeApiKeys },
+                new { Name = "Mistral", Keys = _settings.MistralApiKeys },
+                new { Name = "Gemini", Keys = _settings.GeminiApiKeys },
+                new { Name = "Groq", Keys = _settings.GroqApiKeys }
+            };
+
+            var configuredProviders = providerLists.Count(item => item.Keys.Count > 0);
+            if (configuredProviders > MaxProvidersForByo)
+            {
+                throw new InvalidOperationException($"BYO accounts can configure at most {MaxProvidersForByo} providers.");
+            }
+
+            var oversizedProvider = providerLists.FirstOrDefault(item => item.Keys.Count > MaxKeysPerProvider);
+            if (oversizedProvider != null)
+            {
+                throw new InvalidOperationException(
+                    $"{oversizedProvider.Name} can store at most {MaxKeysPerProvider} API keys for BYO accounts.");
+            }
         }
     }
 

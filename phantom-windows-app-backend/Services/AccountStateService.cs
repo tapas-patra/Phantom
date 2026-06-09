@@ -14,9 +14,9 @@ public sealed class AccountStateService
 
     private static readonly SeedUser[] SeedUsers =
     {
-        new("free.user@phantom.app", "PhantomFree123!", 0m, 0m, true),
-        new("pro.user@phantom.app", "PhantomPro123!", 5m, 0m, true),
-        new("premium.user@phantom.app", "PhantomPremium123!", 5m, 5m, true)
+        new("free.user@phantom.app", "PhantomFree123!", "free", 0m, 0m, true),
+        new("pro.user@phantom.app", "PhantomPro123!", "pro_byo", 5m, 0m, true),
+        new("premium.user@phantom.app", "PhantomPremium123!", "premium", 5m, 5m, true)
     };
 
     public AccountStateService(
@@ -71,6 +71,7 @@ public sealed class AccountStateService
         {
             UserId = account.UserId,
             Email = account.Email,
+            AccessTier = account.AccessTier,
             PhoneVerified = account.PhoneVerified,
             Wallet = new WalletSnapshotDto
             {
@@ -130,24 +131,22 @@ public sealed class AccountStateService
     {
         foreach (var seed in SeedUsers)
         {
-            if (_accounts.FindByEmail(seed.Email) != null)
-            {
-                continue;
-            }
+            var existing = _accounts.FindByEmail(seed.Email);
 
             _accounts.Save(new DesktopAccountRecord
             {
-                UserId = seed.Email,
+                UserId = existing?.UserId ?? seed.Email,
                 Email = seed.Email,
-                PasswordHash = _passwordHasher.Hash(seed.Password),
+                AccessTier = seed.AccessTier,
+                PasswordHash = existing?.PasswordHash ?? _passwordHasher.Hash(seed.Password),
                 PhoneVerified = seed.PhoneVerified,
                 ProAvailableCredits = seed.ProCredits,
                 PremiumAvailableCredits = seed.PremiumCredits,
-                PremiumNegativeCredits = 0m,
-                LeaseExpiresAtUtc = DateTime.UtcNow.AddHours(_options.DefaultLeaseHours),
-                OfflineModeEnabled = false,
+                PremiumNegativeCredits = existing?.PremiumNegativeCredits ?? 0m,
+                LeaseExpiresAtUtc = existing?.LeaseExpiresAtUtc ?? DateTime.UtcNow.AddHours(_options.DefaultLeaseHours),
+                OfflineModeEnabled = existing?.OfflineModeEnabled ?? false,
                 LastValidatedAtUtc = DateTime.UtcNow,
-                CreatedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = existing?.CreatedAtUtc ?? DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
             });
         }
@@ -156,6 +155,7 @@ public sealed class AccountStateService
     private sealed record SeedUser(
         string Email,
         string Password,
+        string AccessTier,
         decimal ProCredits,
         decimal PremiumCredits,
         bool PhoneVerified);

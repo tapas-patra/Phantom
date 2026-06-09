@@ -59,16 +59,9 @@ CREATE TABLE IF NOT EXISTS app_state (
             command.ExecuteNonQuery();
         }
 
-        private SqliteConnection OpenRawConnection()
-        {
-            var connection = new SqliteConnection($"Data Source={_databasePath}");
-            connection.Open();
-            return connection;
-        }
-
         public bool HasEntry(string stateKey)
         {
-            using var connection = OpenRawConnection();
+            using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(1) FROM app_state WHERE state_key = $key;";
             command.Parameters.AddWithValue("$key", stateKey);
@@ -78,7 +71,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 
         public string? ReadPayload(string stateKey)
         {
-            using var connection = OpenRawConnection();
+            using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT payload_json FROM app_state WHERE state_key = $key LIMIT 1;";
             command.Parameters.AddWithValue("$key", stateKey);
@@ -87,7 +80,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 
         public void UpsertPayload(string stateKey, string payloadJson, DateTime updatedAtUtc)
         {
-            using var connection = OpenRawConnection();
+            using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = @"
 INSERT INTO app_state (state_key, payload_json, updated_at)
@@ -104,7 +97,7 @@ ON CONFLICT(state_key) DO UPDATE SET
 
         public void DeletePayload(string stateKey)
         {
-            using var connection = OpenRawConnection();
+            using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = "DELETE FROM app_state WHERE state_key = $key;";
             command.Parameters.AddWithValue("$key", stateKey);

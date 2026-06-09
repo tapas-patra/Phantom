@@ -146,6 +146,22 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetInitialContext();
         }
 
+        public StartupGateContext ResetToAuthChoice()
+        {
+            _authSessionRepository.Clear();
+            _accountCacheRepository.Clear();
+
+            return BuildContext(
+                StartupGateState.AuthChoice,
+                "Welcome To Phantom",
+                "Sign in to continue, or register on the website to create and verify a new account.",
+                canOpenMainApp: false,
+                canAttemptLogin: true,
+                canRegister: true,
+                canRetry: false,
+                detail: "Choose a sign-in method to continue.");
+        }
+
         private static StartupGateContext EvaluateAccountState(AuthSessionCache session, AccountCacheSnapshot? snapshot)
         {
             if (snapshot == null)

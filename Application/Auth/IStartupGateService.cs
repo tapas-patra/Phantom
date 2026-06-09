@@ -6,6 +6,7 @@ namespace SecureOverlay.Application.Auth
         StartupGateContext BeginLogin();
         StartupGateContext CompleteLogin(string email, bool useMagicLink);
         StartupGateContext ProcessAuthCallback(string callbackUri);
+        StartupGateContext ResetToAuthChoice();
         StartupGateContext Retry();
     }
 }

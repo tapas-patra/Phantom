@@ -52,6 +52,14 @@ namespace SecureOverlay
 
         private async void MagicLinkButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_currentContext.State != StartupGateState.Login)
+            {
+                _currentContext = _startupGateService.BeginLogin();
+                ApplyContext(_currentContext);
+                InlineStatusText.Text = "Enter your email, then press Send Magic Link. You can return to the previous screen with Back.";
+                return;
+            }
+
             _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, useMagicLink: true);
             ApplyContext(_currentContext);
             InlineStatusText.Text = "Simulating login and account validation...";
@@ -66,6 +74,14 @@ namespace SecureOverlay
         private void RetryButton_Click(object sender, RoutedEventArgs e)
         {
             _currentContext = _startupGateService.Retry();
+            ApplyContext(_currentContext);
+        }
+
+        private void BackButton_Click(object sender, RoutedEventArgs e)
+        {
+            EmailTextBox.Text = string.Empty;
+            PasswordTextBox.Password = string.Empty;
+            _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
         }
 
@@ -100,6 +116,9 @@ namespace SecureOverlay
 
         private void ApplyContext(StartupGateContext context)
         {
+            var isLoginState = context.State == StartupGateState.Login;
+            var isAuthChoiceState = context.State == StartupGateState.AuthChoice;
+
             StateTitleText.Text = context.Title;
             StateMessageText.Text = context.Message;
             InlineStatusText.Text = context.Detail ?? string.Empty;
@@ -107,8 +126,18 @@ namespace SecureOverlay
             LoginButton.Visibility = context.CanAttemptLogin ? Visibility.Visible : Visibility.Collapsed;
             MagicLinkButton.Visibility = context.CanAttemptLogin ? Visibility.Visible : Visibility.Collapsed;
             RegisterButton.Visibility = context.CanRegister ? Visibility.Visible : Visibility.Collapsed;
+            BackButton.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             ContinueButton.Visibility = context.CanOpenMainApp ? Visibility.Visible : Visibility.Collapsed;
             RetryButton.Visibility = context.CanRetry ? Visibility.Visible : Visibility.Collapsed;
+            CredentialsPanel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
+            ChoicePanel.Visibility = isAuthChoiceState ? Visibility.Visible : Visibility.Collapsed;
+
+            LeftPanelTitleText.Text = isLoginState ? "Credentials" : "Login Methods";
+            LeftPanelMessageText.Text = isLoginState
+                ? "Enter your email and continue with either password login or a magic link. Use Back to return to the first screen."
+                : "Choose a sign-in method. Login stays in-app. Registration opens on the hosted website.";
+            PasswordLabel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
+            PasswordTextBox.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
 
             if (context.State == StartupGateState.ReadOnlySafeMode)
             {
@@ -126,6 +155,7 @@ namespace SecureOverlay
             }
 
             LoginButton.Content = context.State == StartupGateState.Login ? "Submit Login" : "Login";
+            MagicLinkButton.Content = context.State == StartupGateState.Login ? "Send Magic Link" : "Magic Link";
         }
 
         private async Task AdvanceToEvaluatedStateAsync()

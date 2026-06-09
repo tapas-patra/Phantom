@@ -26,5 +26,12 @@ namespace SecureOverlay.Infrastructure.Hosted
                 ? new HttpHostedUsageClient(options)
                 : new LocalHostedUsageClient();
         }
+
+        public static IHostedTelemetryClient CreateTelemetryClient(HostedRuntimeOptions options)
+        {
+            return options.UseRemoteBackend
+                ? new HttpHostedTelemetryClient(options)
+                : new LocalHostedTelemetryClient();
+        }
     }
 }

@@ -34,12 +34,18 @@ namespace SecureOverlay
             {
                 var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
                 ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
-                _telemetryService = new LocalTelemetryService(telemetryRepository);
+                var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+                _telemetryService = new HostedTelemetryService(
+                    telemetryRepository,
+                    HostedClientFactory.CreateTelemetryClient(hostedRuntimeOptions),
+                    hostedRuntimeOptions);
                 _telemetryService.Track("app", "startup", new Dictionary<string, string>
                 {
                     ["has_callback"] = (!string.IsNullOrWhiteSpace(e.Args.FirstOrDefault(arg =>
                         arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
-                        || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString()
+                        || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString(),
+                    ["hosted_mode"] = hostedRuntimeOptions.Mode,
+                    ["hosted_backend"] = hostedRuntimeOptions.DesktopBackendBaseUrl
                 });
 
                 Log.WriteLine("Checking administrator privileges...");

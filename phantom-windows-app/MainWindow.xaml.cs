@@ -159,7 +159,10 @@ namespace SecureOverlay
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
                 HostedClientFactory.CreateUsageClient(hostedRuntimeOptions));
-            _telemetryService = new LocalTelemetryService(telemetryRepository);
+            _telemetryService = new HostedTelemetryService(
+                telemetryRepository,
+                HostedClientFactory.CreateTelemetryClient(hostedRuntimeOptions),
+                hostedRuntimeOptions);
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)

@@ -9,6 +9,7 @@ namespace SecureOverlay.Application.Auth
             string title,
             string message,
             bool canOpenMainApp,
+            bool canResumeLockedInterview,
             bool canAttemptLogin,
             bool canRegister,
             bool canRetry,
@@ -18,6 +19,7 @@ namespace SecureOverlay.Application.Auth
             Title = title;
             Message = message;
             CanOpenMainApp = canOpenMainApp;
+            CanResumeLockedInterview = canResumeLockedInterview;
             CanAttemptLogin = canAttemptLogin;
             CanRegister = canRegister;
             CanRetry = canRetry;
@@ -28,6 +30,7 @@ namespace SecureOverlay.Application.Auth
         public string Title { get; }
         public string Message { get; }
         public bool CanOpenMainApp { get; }
+        public bool CanResumeLockedInterview { get; }
         public bool CanAttemptLogin { get; }
         public bool CanRegister { get; }
         public bool CanRetry { get; }

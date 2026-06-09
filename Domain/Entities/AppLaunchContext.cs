@@ -9,6 +9,7 @@ namespace SecureOverlay.Domain.Entities
         public string Message { get; set; } = string.Empty;
         public string Detail { get; set; } = string.Empty;
         public bool CanStartInterview { get; set; } = true;
+        public bool CanResumeLockedInterview { get; set; }
         public bool IsRestrictedShell => !CanStartInterview;
     }
 }

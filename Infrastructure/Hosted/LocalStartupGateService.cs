@@ -47,6 +47,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "Read-Only Safe Mode",
                     SettingsManager.GetSafeModeReason() ?? "Storage startup failed. The app is running in read-only safe mode.",
                     canOpenMainApp: false,
+                    canResumeLockedInterview: false,
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
@@ -66,6 +67,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "Welcome To Phantom",
                     "Sign in to continue, or register on the website to create and verify a new account.",
                     canOpenMainApp: false,
+                    canResumeLockedInterview: false,
                     canAttemptLogin: true,
                     canRegister: true,
                     canRetry: false,
@@ -82,6 +84,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "Login",
                 "Use the in-app login flow. Hosted auth is not wired yet, so this phase persists a local session and account snapshot through the production startup seam.",
                 canOpenMainApp: false,
+                canResumeLockedInterview: false,
                 canAttemptLogin: true,
                 canRegister: true,
                 canRetry: false,
@@ -106,6 +109,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "Checking Account",
                 "Validating auth, entitlement, wallet, lease, and session-lock state against the local startup cache.",
                 canOpenMainApp: false,
+                canResumeLockedInterview: false,
                 canAttemptLogin: false,
                 canRegister: false,
                 canRetry: false,
@@ -156,6 +160,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "Welcome To Phantom",
                 "Sign in to continue, or register on the website to create and verify a new account.",
                 canOpenMainApp: false,
+                canResumeLockedInterview: false,
                 canAttemptLogin: true,
                 canRegister: true,
                 canRetry: false,
@@ -171,6 +176,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "Checking Account",
                     "Authenticated session found, but no local account snapshot is available yet.",
                     canOpenMainApp: false,
+                    canResumeLockedInterview: false,
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
@@ -184,10 +190,39 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "Phone Verification Required",
                     "Your account is signed in, but phone verification is still required before the app can be used.",
                     canOpenMainApp: false,
+                    canResumeLockedInterview: false,
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
                     detail: $"Signed in as {session.Email}.");
+            }
+
+            if (LeaseExpired(snapshot))
+            {
+                if (snapshot.HasResumableLockedSession)
+                {
+                    return BuildContext(
+                        StartupGateState.OfflineLeaseExpired,
+                        "Offline Lease Expired",
+                        "The cached offline lease has expired. You may resume the currently locked local session on this device, but new interviews must remain blocked.",
+                        canOpenMainApp: true,
+                        canResumeLockedInterview: true,
+                        canAttemptLogin: false,
+                        canRegister: false,
+                        canRetry: true,
+                        detail: "Reconnect and refresh account validation before starting another interview.");
+                }
+
+                return BuildContext(
+                    StartupGateState.OfflineLeaseExpired,
+                    "Offline Lease Expired",
+                    "The cached offline lease has expired and there is no resumable locked session on this device.",
+                    canOpenMainApp: false,
+                    canResumeLockedInterview: false,
+                    canAttemptLogin: false,
+                    canRegister: false,
+                    canRetry: true,
+                    detail: "A new interview must stay blocked until backend validation succeeds.");
             }
 
             if (snapshot.PremiumNegativeCredits > 0m)
@@ -197,23 +232,11 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "Negative Premium Balance",
                     "The app shell may load later, but starting a new interview must remain blocked until the negative Premium balance is cleared.",
                     canOpenMainApp: true,
+                    canResumeLockedInterview: snapshot.HasResumableLockedSession,
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
                     detail: $"Outstanding Premium balance: {snapshot.PremiumNegativeCredits:0.##} credit.");
-            }
-
-            if (LeaseExpired(snapshot) && !snapshot.HasResumableLockedSession)
-            {
-                return BuildContext(
-                    StartupGateState.OfflineLeaseExpired,
-                    "Offline Lease Expired",
-                    "The cached offline lease has expired and there is no resumable locked session on this device.",
-                    canOpenMainApp: false,
-                    canAttemptLogin: false,
-                    canRegister: false,
-                    canRetry: true,
-                    detail: "A new interview must stay blocked until backend validation succeeds.");
             }
 
             if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m && !snapshot.HasResumableLockedSession)
@@ -223,10 +246,25 @@ namespace SecureOverlay.Infrastructure.Hosted
                     "No Credits Available",
                     "You are signed in, but no plan has at least one full first metering block available for a new interview.",
                     canOpenMainApp: true,
+                    canResumeLockedInterview: false,
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
                     detail: "The app shell can open, but interview start must remain blocked until credits are added.");
+            }
+
+            if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m)
+            {
+                return BuildContext(
+                    StartupGateState.NoCredits,
+                    "No Credits Available",
+                    "No plan has one full first metering block available for a new interview, but the current locked session may continue on this device.",
+                    canOpenMainApp: true,
+                    canResumeLockedInterview: true,
+                    canAttemptLogin: false,
+                    canRegister: false,
+                    canRetry: true,
+                    detail: "Add credits before attempting to start another interview.");
             }
 
             return BuildContext(
@@ -234,6 +272,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "Ready",
                 "Startup checks passed from the local account cache. Continue into the desktop app.",
                 canOpenMainApp: true,
+                canResumeLockedInterview: snapshot.HasResumableLockedSession,
                 canAttemptLogin: false,
                 canRegister: false,
                 canRetry: true,
@@ -252,6 +291,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             string title,
             string message,
             bool canOpenMainApp,
+            bool canResumeLockedInterview,
             bool canAttemptLogin,
             bool canRegister,
             bool canRetry,
@@ -262,6 +302,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 title,
                 message,
                 canOpenMainApp,
+                canResumeLockedInterview,
                 canAttemptLogin,
                 canRegister,
                 canRetry,

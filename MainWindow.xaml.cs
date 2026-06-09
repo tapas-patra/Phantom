@@ -362,6 +362,13 @@ namespace SecureOverlay
             return _launchContext != null && !_launchContext.CanStartInterview;
         }
 
+        private bool CanContinueRestrictedInterview()
+        {
+            return _launchContext != null
+                && _launchContext.CanResumeLockedInterview
+                && _creditMeteringService.GetActiveSession() != null;
+        }
+
         private void ApplyLaunchRestrictions()
         {
             if (!IsInterviewStartBlocked())
@@ -380,6 +387,16 @@ namespace SecureOverlay
 
             LaunchRestrictionDetails.Text = detail;
             LaunchRestrictionBanner.Visibility = Visibility.Visible;
+
+            if (CanContinueRestrictedInterview())
+            {
+                StatusText.Text = $"⚠️ {_launchContext.Title}";
+                StatusIndicator.Fill = Brushes.Orange;
+                AddToChat(
+                    $"⚠️ **{_launchContext.Title}**\n\n{_launchContext.Message}\n\n{_launchContext.Detail}\n\nExisting locked interview continuation is still allowed on this device.",
+                    true);
+                return;
+            }
 
             InputTextBox.Text = "Interview start is blocked for this account state.";
             InputTextBox.Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255));
@@ -794,7 +811,7 @@ namespace SecureOverlay
 
         private async Task SendMessage()
         {
-            if (IsInterviewStartBlocked())
+            if (IsInterviewStartBlocked() && !CanContinueRestrictedInterview())
             {
                 Log.WriteLine($"Interview start blocked by launch context: {_launchContext.Title}");
                 StatusText.Text = $"⚠️ {_launchContext.Title}";

@@ -200,7 +200,8 @@ namespace SecureOverlay
                 Title = context.Title,
                 Message = context.Message,
                 Detail = context.Detail ?? string.Empty,
-                CanStartInterview = context.State == StartupGateState.Ready
+                CanStartInterview = context.State == StartupGateState.Ready,
+                CanResumeLockedInterview = context.CanResumeLockedInterview
             };
         }
     }

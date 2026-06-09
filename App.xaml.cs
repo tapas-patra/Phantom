@@ -11,7 +11,7 @@ using SecureOverlay.Services;
 
 namespace SecureOverlay
 {
-    public partial class App : Application
+    public partial class App : System.Windows.Application
     {
         private ITelemetryService? _telemetryService;
 

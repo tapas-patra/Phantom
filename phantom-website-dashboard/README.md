@@ -1,20 +1,32 @@
 # phantom-website-dashboard
 
-Future frontend repository for:
-- public website
-- login/register pages
-- user dashboard
-- desktop download and handoff UX
+React/Vite frontend for:
+- public Phantom website
+- login/register entrypoints
+- desktop magic-link and callback explanation surfaces
+- user dashboard for wallet, devices, history, support, and download access
+
+Run:
+```bash
+npm install
+npm run dev
+```
+
+Environment:
+- `VITE_PHANTOM_DASHBOARD_API_BASE_URL=http://localhost:5067`
+
+Routes:
+- `/`
+- `/pricing`
+- `/download`
+- `/login`
+- `/register`
+- `/magic-link`
+- `/desktop-return`
+- `/dashboard`
 
 Not owned here:
-- wallet authority
+- wallet mutation authority
 - desktop runtime
-- device lock authority
-- usage reconciliation
-
-Initial implementation targets:
-1. registration flow entrypoint
-2. login flow entrypoint
-3. credit balance dashboard
-4. device list UI
-5. download surface for the Windows installer
+- session-lock authority
+- usage reconciliation writes

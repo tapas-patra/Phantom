@@ -12,15 +12,18 @@ public sealed class AccountStateService
     private readonly BackendOptions _options;
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
+    private const string SeededTestEmail = "test.user@phantom.app";
+    private const string SeededTestPassword = "Phantom123!";
 
     public AccountStateService(BackendOptions options, AccountRepository accounts, LockRepository locks)
     {
         _options = options;
         _accounts = accounts;
         _locks = locks;
+        EnsureSeededAccounts();
     }
 
-    public DesktopAccountRecord GetOrCreateForLogin(AuthLoginRequestDto request)
+    public DesktopAccountRecord GetForLogin(AuthLoginRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
         {
@@ -29,40 +32,29 @@ public sealed class AccountStateService
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
         var existing = _accounts.FindByEmail(normalizedEmail);
-        if (existing != null)
+        if (existing == null)
         {
-            if (!request.UseMagicLink && !string.IsNullOrWhiteSpace(existing.PasswordHash))
-            {
-                var providedHash = ComputeHash(string.IsNullOrWhiteSpace(request.Password) ? "phantom123" : request.Password);
-                if (!string.Equals(existing.PasswordHash, providedHash, StringComparison.Ordinal))
-                {
-                    throw new BackendValidationException("Invalid credentials.");
-                }
-            }
-
-            existing.UpdatedAtUtc = DateTime.UtcNow;
-            existing.LastValidatedAtUtc = DateTime.UtcNow;
-            _accounts.Save(existing);
-            return existing;
+            throw new BackendValidationException("Account not found.");
         }
 
-        var created = new DesktopAccountRecord
+        if (!request.UseMagicLink && !string.IsNullOrWhiteSpace(existing.PasswordHash))
         {
-            UserId = normalizedEmail,
-            Email = normalizedEmail,
-            PasswordHash = ComputeHash(string.IsNullOrWhiteSpace(request.Password) ? "phantom123" : request.Password),
-            PhoneVerified = true,
-            ProAvailableCredits = _options.DefaultProCredits,
-            PremiumAvailableCredits = _options.DefaultPremiumCredits,
-            PremiumNegativeCredits = 0m,
-            LeaseExpiresAtUtc = DateTime.UtcNow.AddHours(_options.DefaultLeaseHours),
-            OfflineModeEnabled = false,
-            LastValidatedAtUtc = DateTime.UtcNow,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
-        };
-        _accounts.Save(created);
-        return created;
+            if (string.IsNullOrWhiteSpace(request.Password))
+            {
+                throw new BackendValidationException("Password is required.");
+            }
+
+            var providedHash = ComputeHash(request.Password);
+            if (!string.Equals(existing.PasswordHash, providedHash, StringComparison.Ordinal))
+            {
+                throw new BackendValidationException("Invalid credentials.");
+            }
+        }
+
+        existing.UpdatedAtUtc = DateTime.UtcNow;
+        existing.LastValidatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(existing);
+        return existing;
     }
 
     public DesktopAccountRecord ProjectCallbackState(AuthCallbackResultDto callback)
@@ -73,44 +65,13 @@ public sealed class AccountStateService
         }
 
         var normalizedEmail = callback.Email.Trim().ToLowerInvariant();
-        var account = _accounts.FindByEmail(normalizedEmail) ?? new DesktopAccountRecord
-        {
-            UserId = normalizedEmail,
-            Email = normalizedEmail,
-            PasswordHash = ComputeHash("phantom123"),
-            CreatedAtUtc = DateTime.UtcNow
-        };
+        var account = _accounts.FindByEmail(normalizedEmail)
+            ?? throw new BackendValidationException("Account not found.");
 
-        account.PhoneVerified = callback.PhoneVerified;
-        account.ProAvailableCredits = callback.Status == "nocredits" ? 0m : Math.Max(account.ProAvailableCredits, _options.DefaultProCredits);
-        account.PremiumAvailableCredits = 0m;
-        account.PremiumNegativeCredits = callback.Status == "negative" ? 0.5m : account.PremiumNegativeCredits;
-        account.LeaseExpiresAtUtc = callback.Status == "offlineexpired"
-            ? DateTime.UtcNow.AddHours(-1)
-            : DateTime.UtcNow.AddHours(_options.DefaultLeaseHours);
-        account.OfflineModeEnabled = callback.Status is "offlineexpired" or "resume";
         account.LastValidatedAtUtc = DateTime.UtcNow;
         account.UpdatedAtUtc = DateTime.UtcNow;
-        if (account.CreatedAtUtc == default)
-        {
-            account.CreatedAtUtc = DateTime.UtcNow;
-        }
 
         _accounts.Save(account);
-
-        if (callback.Status == "resume")
-        {
-            _locks.Save(new DesktopLockRecord
-            {
-                SessionId = $"resume-{account.UserId}",
-                UserId = account.UserId,
-                DeviceId = string.IsNullOrWhiteSpace(callback.DeviceInstallId) ? account.UserId : callback.DeviceInstallId,
-                LockToken = ComputeHash($"{account.UserId}:{callback.DeviceFingerprintHash}:resume"),
-                ExpiresAtUtc = DateTime.UtcNow.AddHours(24),
-                LastHeartbeatAtUtc = DateTime.UtcNow,
-                AppVersion = "callback-resume"
-            });
-        }
 
         return account;
     }
@@ -161,6 +122,17 @@ public sealed class AccountStateService
         throw new BackendValidationException("Account not found.");
     }
 
+    public DesktopAccountRecord RequireAccountByEmail(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            throw new BackendValidationException("Email is required.");
+        }
+
+        return _accounts.FindByEmail(email.Trim().ToLowerInvariant())
+            ?? throw new BackendValidationException("Account not found.");
+    }
+
     public void Save(DesktopAccountRecord account)
     {
         account.UpdatedAtUtc = DateTime.UtcNow;
@@ -172,5 +144,29 @@ public sealed class AccountStateService
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
         return Convert.ToHexString(bytes);
+    }
+
+    private void EnsureSeededAccounts()
+    {
+        if (_accounts.FindByEmail(SeededTestEmail) != null)
+        {
+            return;
+        }
+
+        _accounts.Save(new DesktopAccountRecord
+        {
+            UserId = SeededTestEmail,
+            Email = SeededTestEmail,
+            PasswordHash = ComputeHash(SeededTestPassword),
+            PhoneVerified = true,
+            ProAvailableCredits = 5m,
+            PremiumAvailableCredits = 0m,
+            PremiumNegativeCredits = 0m,
+            LeaseExpiresAtUtc = DateTime.UtcNow.AddHours(_options.DefaultLeaseHours),
+            OfflineModeEnabled = false,
+            LastValidatedAtUtc = DateTime.UtcNow,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
     }
 }

@@ -10,6 +10,7 @@ builder.Services.AddSingleton(BackendOptions.FromConfiguration(builder.Configura
 builder.Services.AddSingleton<SqliteBackendStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
+builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
@@ -52,7 +53,7 @@ app.MapPost("/api/desktop/auth/login", (
     AccountStateService accounts,
     AuthService auth) =>
 {
-    var account = accounts.GetOrCreateForLogin(request);
+    var account = accounts.GetForLogin(request);
     var session = auth.CreateSession(
         account,
         request.UseMagicLink ? "magic_link" : "password",
@@ -61,7 +62,24 @@ app.MapPost("/api/desktop/auth/login", (
     return Results.Ok(session);
 });
 
+app.MapPost("/api/desktop/auth/magic-link/request", (
+    HttpContext httpContext,
+    AuthMagicLinkRequestDto request,
+    AccountStateService accounts,
+    AuthService auth) =>
+{
+    accounts.GetForLogin(new AuthLoginRequestDto
+    {
+        Email = request.Email,
+        UseMagicLink = true
+    });
+
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(auth.IssueMagicLink(request, publicBaseUrl));
+});
+
 app.MapPost("/api/desktop/auth/callback/complete", (
+    HttpContext httpContext,
     AuthCallbackCompletionRequestDto request,
     AccountStateService accounts,
     AuthService auth) =>
@@ -73,28 +91,77 @@ app.MapPost("/api/desktop/auth/callback/complete", (
 
     var uri = new Uri(request.CallbackUri);
     var query = QueryHelpers.ParseQuery(uri.Query);
-    var email = query.TryGetValue("email", out var emailValues) ? emailValues.ToString() : "callback-user@phantom.app";
-    var status = (query.TryGetValue("status", out var statusValues) ? statusValues.ToString() : "ready").ToLowerInvariant();
-    var installId = query.TryGetValue("installId", out var installValues) ? installValues.ToString() : "callback-install";
-    var fingerprint = query.TryGetValue("deviceFingerprint", out var fingerprintValues) ? fingerprintValues.ToString() : "callback-device";
+    var token = query.TryGetValue("token", out var tokenValues) ? tokenValues.ToString() : string.Empty;
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        throw new BackendValidationException("Magic link token is required.");
+    }
+
+    var magicLinks = httpContext.RequestServices.GetRequiredService<MagicLinkRepository>();
+    var issued = magicLinks.FindByToken(token) ?? throw new BackendValidationException("Magic link token not found.");
+    if (issued.Consumed)
+    {
+        throw new BackendValidationException("Magic link already consumed.");
+    }
+    if (issued.ExpiresAtUtc <= DateTime.UtcNow)
+    {
+        throw new BackendValidationException("Magic link has expired.");
+    }
+    if (!string.Equals(issued.InstallId, request.InstallId, StringComparison.Ordinal))
+    {
+        throw new BackendValidationException("Magic link was issued for a different device install.");
+    }
+    if (!string.Equals(issued.DeviceFingerprintHash, request.DeviceFingerprintHash, StringComparison.Ordinal))
+    {
+        throw new BackendValidationException("Magic link device fingerprint does not match.");
+    }
+
+    var account = accounts.RequireAccountByEmail(issued.Email);
+    issued.Consumed = true;
+    issued.ConsumedAtUtc = DateTime.UtcNow;
+    magicLinks.Save(issued);
 
     var callbackResult = new AuthCallbackResultDto
     {
-        Email = email,
-        Status = status,
-        PhoneVerified = status != "verify",
-        DeviceInstallId = installId,
-        DeviceFingerprintHash = fingerprint
+        Email = account.Email,
+        Status = account.PhoneVerified ? "ready" : "verify",
+        PhoneVerified = account.PhoneVerified,
+        DeviceInstallId = issued.InstallId,
+        DeviceFingerprintHash = issued.DeviceFingerprintHash
     };
 
-    var account = accounts.ProjectCallbackState(callbackResult);
-    var session = auth.CreateSession(account, "callback", installId, fingerprint);
+    var session = auth.CreateSession(account, "magic_link_callback", issued.InstallId, issued.DeviceFingerprintHash);
 
     return Results.Ok(new AuthCallbackCompletionResultDto
     {
         Session = session,
         CallbackResult = callbackResult
     });
+});
+
+app.MapGet("/magic-link/consume", (HttpContext httpContext) =>
+{
+    var token = httpContext.Request.Query["token"].ToString();
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        return Results.BadRequest("Missing token.");
+    }
+
+    var callbackUri = $"phantom://auth/callback?token={Uri.EscapeDataString(token)}";
+    var html = $"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Phantom Magic Link</title></head>
+<body style="font-family:Segoe UI, sans-serif; padding:32px; background:#0c1018; color:#fff;">
+  <h1>Phantom Magic Link</h1>
+  <p>Use the button below to continue sign-in in the desktop app.</p>
+  <p><a href="{callbackUri}" style="display:inline-block;padding:12px 18px;background:#1976d2;color:#fff;text-decoration:none;border-radius:8px;">Open Phantom</a></p>
+  <p style="margin-top:24px; color:#c6d7e8;">If the app does not open automatically, copy this callback URI into your desktop test flow:</p>
+  <pre style="white-space:pre-wrap;color:#ffd89a;">{callbackUri}</pre>
+</body>
+</html>
+""";
+    return Results.Content(html, "text/html");
 });
 
 app.MapPost("/api/desktop/account/startup-check/session", (
@@ -109,7 +176,7 @@ app.MapPost("/api/desktop/account/startup-check/callback", (
     AuthCallbackResultDto request,
     AccountStateService accounts) =>
 {
-    var account = accounts.ProjectCallbackState(request);
+    var account = accounts.RequireAccountByEmail(request.Email);
     return Results.Ok(accounts.BuildStartupSnapshot("callback_check", account));
 });
 

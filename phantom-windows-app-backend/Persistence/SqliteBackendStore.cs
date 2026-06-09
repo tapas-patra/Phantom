@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     is_authenticated INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS magic_links (
+    token TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    install_id TEXT NOT NULL,
+    device_fingerprint_hash TEXT NOT NULL,
+    expires_at_utc TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    consumed INTEGER NOT NULL,
+    consumed_at_utc TEXT NULL
+);
+
 CREATE TABLE IF NOT EXISTS interview_locks (
     session_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

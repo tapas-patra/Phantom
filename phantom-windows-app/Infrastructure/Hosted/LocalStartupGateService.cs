@@ -63,6 +63,13 @@ namespace SecureOverlay.Infrastructure.Hosted
             }
 
             var session = _authSessionRepository.Load();
+            if (_hostedRuntimeOptions.UseRemoteBackend && IsLegacyStubSession(session))
+            {
+                _authSessionRepository.Clear();
+                _accountCacheRepository.Clear();
+                session = null;
+            }
+
             if (session == null || !session.IsAuthenticated)
             {
                 return BuildContext(
@@ -137,6 +144,19 @@ namespace SecureOverlay.Infrastructure.Hosted
             return CompleteLogin(email, string.Empty, useMagicLink);
         }
 
+        public AuthMagicLinkIssuedDto RequestMagicLink(string email)
+        {
+            return _authClient.RequestMagicLink(new AuthMagicLinkRequestDto
+            {
+                Email = email,
+                AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+                InstallId = _deviceProfile.InstallId,
+                DeviceLabel = _deviceProfile.DeviceLabel,
+                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
+                SecretFingerprintHint = _deviceProfile.SecretFingerprintHint
+            });
+        }
+
         public StartupGateContext CompleteLogin(string email, string password, bool useMagicLink)
         {
             try
@@ -195,11 +215,13 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 var callbackCompletion = _authClient.CompleteCallback(new AuthCallbackCompletionRequestDto
                 {
-                    CallbackUri = callbackUri
+                    CallbackUri = callbackUri,
+                    InstallId = _deviceProfile.InstallId,
+                    DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash
                 });
                 var sessionDto = callbackCompletion.Session;
                 var callbackResult = callbackCompletion.CallbackResult;
-                var accountCheckDto = _accountClient.GetStartupAccountCheck(callbackResult);
+                var accountCheckDto = _accountClient.GetStartupAccountCheck(sessionDto);
 
                 _authSessionRepository.Save(MapAuthSession(sessionDto));
                 var snapshot = MapAccountSnapshot(accountCheckDto);
@@ -407,6 +429,19 @@ namespace SecureOverlay.Infrastructure.Hosted
                 ExpiresAtUtc = session.ExpiresAtUtc,
                 IsAuthenticated = session.IsAuthenticated
             };
+        }
+
+        private static bool IsLegacyStubSession(AuthSessionCache? session)
+        {
+            if (session == null)
+            {
+                return false;
+            }
+
+            return (!string.IsNullOrWhiteSpace(session.AccessToken) &&
+                    (session.AccessToken.StartsWith("local-", StringComparison.OrdinalIgnoreCase)
+                     || session.AccessToken.StartsWith("callback-", StringComparison.OrdinalIgnoreCase)))
+                || string.Equals(session.Email, "local-user@phantom.app", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool LeaseExpired(AccountCacheSnapshot snapshot)

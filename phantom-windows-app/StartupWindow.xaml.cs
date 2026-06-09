@@ -20,12 +20,12 @@ namespace SecureOverlay
 {
     public partial class StartupWindow : Window
     {
-        private const string DefaultStubEmail = "local-user@phantom.app";
-        private const string DefaultStubPassword = "phantom123";
         private readonly IStartupGateService _startupGateService;
         private readonly IDeviceIdentityService _deviceIdentityService;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private StartupGateContext _currentContext;
+        private string? _pendingMagicLinkCallbackUri;
+        private string? _pendingMagicLinkUrl;
 
         public StartupWindow(IStartupGateService startupGateService)
         {
@@ -35,7 +35,7 @@ namespace SecureOverlay
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             IDeviceProfileRepository deviceProfileRepository = new SqliteDeviceProfileRepository(store);
             _deviceIdentityService = new WindowsDeviceIdentityService(deviceProfileRepository, new WindowsSecretVault(store));
-            SeedStubCredentials();
+            ClearCredentials();
             BackendModeText.Text = _hostedRuntimeOptions.UseRemoteBackend
                 ? $"{_hostedRuntimeOptions.ModeLabel}\n{_hostedRuntimeOptions.DesktopBackendBaseUrl}"
                 : $"{_hostedRuntimeOptions.ModeLabel}\nNo backend URL configured.";
@@ -69,6 +69,27 @@ namespace SecureOverlay
                 return;
             }
 
+            if (_hostedRuntimeOptions.UseRemoteBackend)
+            {
+                try
+                {
+                    var issuedLink = _startupGateService.RequestMagicLink(EmailTextBox.Text);
+                    _pendingMagicLinkCallbackUri = issuedLink.CallbackUri;
+                    _pendingMagicLinkUrl = issuedLink.MagicLinkUrl;
+                    MagicLinkUrlText.Text = $"{issuedLink.MagicLinkUrl}\nExpires: {issuedLink.ExpiresAtUtc:yyyy-MM-dd HH:mm:ss}";
+                    MagicLinkResultPanel.Visibility = Visibility.Visible;
+                    OpenMagicLinkButton.Visibility = Visibility.Visible;
+                    CompleteMagicLinkButton.Visibility = Visibility.Visible;
+                    InlineStatusText.Text = $"Magic link issued for {issuedLink.Email}. Use Complete Magic Link to finish in-app, or open the link externally.";
+                }
+                catch (Exception ex)
+                {
+                    InlineStatusText.Text = $"Failed to issue magic link: {ex.Message}";
+                }
+
+                return;
+            }
+
             _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: true);
             ApplyContext(_currentContext);
             InlineStatusText.Text = "Completing magic-link login and refreshing account validation...";
@@ -86,16 +107,57 @@ namespace SecureOverlay
             ApplyContext(_currentContext);
         }
 
+        private void CompleteMagicLinkButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_pendingMagicLinkCallbackUri))
+            {
+                InlineStatusText.Text = "No pending magic link callback is available.";
+                return;
+            }
+
+            _currentContext = _startupGateService.ProcessAuthCallback(_pendingMagicLinkCallbackUri);
+            _pendingMagicLinkCallbackUri = null;
+            _pendingMagicLinkUrl = null;
+            ApplyContext(_currentContext);
+        }
+
+        private void OpenMagicLinkButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_pendingMagicLinkUrl))
+            {
+                InlineStatusText.Text = "No issued magic link URL is available.";
+                return;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = _pendingMagicLinkUrl,
+                    UseShellExecute = true
+                });
+                InlineStatusText.Text = "Magic link opened in your browser. Complete the hosted page, then return to Phantom.";
+            }
+            catch (Exception ex)
+            {
+                InlineStatusText.Text = $"Failed to open magic link: {ex.Message}";
+            }
+        }
+
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            SeedStubCredentials();
+            ClearCredentials();
+            _pendingMagicLinkCallbackUri = null;
+            _pendingMagicLinkUrl = null;
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
         }
 
         private void SignOutButton_Click(object sender, RoutedEventArgs e)
         {
-            SeedStubCredentials();
+            ClearCredentials();
+            _pendingMagicLinkCallbackUri = null;
+            _pendingMagicLinkUrl = null;
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
             InlineStatusText.Text = "Signed out from the current desktop session.";
@@ -149,12 +211,16 @@ namespace SecureOverlay
             RetryButton.Visibility = context.CanRetry ? Visibility.Visible : Visibility.Collapsed;
             CredentialsPanel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             ChoicePanel.Visibility = isAuthChoiceState ? Visibility.Visible : Visibility.Collapsed;
+            if (!isLoginState)
+            {
+                MagicLinkResultPanel.Visibility = Visibility.Collapsed;
+                OpenMagicLinkButton.Visibility = Visibility.Collapsed;
+                CompleteMagicLinkButton.Visibility = Visibility.Collapsed;
+            }
 
             LeftPanelTitleText.Text = isLoginState ? "Credentials" : "Login Methods";
             LeftPanelMessageText.Text = isLoginState
-                ? _hostedRuntimeOptions.UseRemoteBackend
-                    ? "Enter your email and continue with either password login or a magic link. This flow validates against the configured hosted backend."
-                    : "Enter your email and continue with either password login or a magic link. A default stub user is prefilled so you can test the flow immediately."
+                ? "Enter your email and continue with either password login or a magic link. This flow validates against the configured hosted backend."
                 : "Choose a sign-in method. Login stays in-app. Registration opens on the hosted website.";
             PasswordLabel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             PasswordTextBox.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
@@ -178,10 +244,10 @@ namespace SecureOverlay
             MagicLinkButton.Content = context.State == StartupGateState.Login ? "Send Magic Link" : "Magic Link";
         }
 
-        private void SeedStubCredentials()
+        private void ClearCredentials()
         {
-            EmailTextBox.Text = _hostedRuntimeOptions.UseRemoteBackend ? string.Empty : DefaultStubEmail;
-            PasswordTextBox.Password = _hostedRuntimeOptions.UseRemoteBackend ? string.Empty : DefaultStubPassword;
+            EmailTextBox.Text = string.Empty;
+            PasswordTextBox.Password = string.Empty;
         }
 
         private async Task AdvanceToEvaluatedStateAsync()

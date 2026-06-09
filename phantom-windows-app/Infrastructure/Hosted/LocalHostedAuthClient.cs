@@ -31,6 +31,19 @@ namespace SecureOverlay.Infrastructure.Hosted
             };
         }
 
+        public AuthMagicLinkIssuedDto RequestMagicLink(AuthMagicLinkRequestDto request)
+        {
+            var normalizedEmail = string.IsNullOrWhiteSpace(request.Email) ? "local-user@phantom.app" : request.Email.Trim();
+            var callbackUri = $"phantom://auth/callback?email={Uri.EscapeDataString(normalizedEmail)}&status=ready";
+            return new AuthMagicLinkIssuedDto
+            {
+                Email = normalizedEmail,
+                MagicLinkUrl = callbackUri,
+                CallbackUri = callbackUri,
+                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(15)
+            };
+        }
+
         public AuthCallbackCompletionResultDto CompleteCallback(AuthCallbackCompletionRequestDto request)
         {
             var email = ReadQueryValue(request.CallbackUri, "email") ?? "callback-user@phantom.app";

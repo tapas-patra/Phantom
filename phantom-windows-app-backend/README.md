@@ -4,6 +4,7 @@ Backend authority for the Windows desktop runtime.
 
 Implemented:
 - desktop login completion
+- desktop magic-link request
 - magic-link callback completion
 - startup account-check APIs
 - usage reconciliation API
@@ -24,6 +25,7 @@ dotnet run
 Default endpoints:
 - `GET /health`
 - `POST /api/desktop/auth/login`
+- `POST /api/desktop/auth/magic-link/request`
 - `POST /api/desktop/auth/callback/complete`
 - `POST /api/desktop/account/startup-check/session`
 - `POST /api/desktop/account/startup-check/callback`
@@ -32,6 +34,7 @@ Default endpoints:
 - `POST /api/desktop/locks/acquire`
 - `POST /api/desktop/locks/heartbeat`
 - `POST /api/desktop/locks/release`
+- `GET /magic-link/consume?token=...`
 - `GET /api/admin/accounts/{userId}`
 - `POST /api/admin/locks/clear`
 - `POST /api/admin/balance/waive-negative-premium`
@@ -43,3 +46,7 @@ Optional env vars:
 - `PHANTOM_WINDOWS_BACKEND_LOCK_TTL_MINUTES`
 - `PHANTOM_WINDOWS_BACKEND_DEFAULT_PRO_CREDITS`
 - `PHANTOM_WINDOWS_BACKEND_DEFAULT_PREMIUM_CREDITS`
+
+Seeded test user:
+- email: `test.user@phantom.app`
+- password: `Phantom123!`

@@ -8,14 +8,19 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Navigation;
+using SecureOverlay.Application.Context;
 using SecureOverlay.Services;
 using SecureOverlay.Helpers;
+using SecureOverlay.Domain.Entities;
+using SecureOverlay.Infrastructure.Context;
+using SecureOverlay.Infrastructure.Persistence;
 
 namespace SecureOverlay
 {
     public partial class SettingsPage : UserControl
     {
         private AppSettings _settings;
+        private readonly IContextPackService _contextPackService;
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
 
@@ -33,6 +38,8 @@ namespace SecureOverlay
             InitializeComponent();
 
             _settings = SettingsManager.Load();
+            var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
+            _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
 
             InitializeControls();
             LoadSettings();
@@ -145,14 +152,15 @@ namespace SecureOverlay
             
             UpdateFakeCursorPanelVisibility();
             SystemPromptBox.Text = _settings.SystemPrompt;
-            
-            ResumeBox.Text = _settings.Resume;
-            UpdateResumeWordCount();
-            UpdateResumeSummaryStatus();
 
-            JobDescriptionBox.Text = _settings.JobDescription;
+            var selectedPack = _contextPackService.GetSelectedPack();
+            ResumeBox.Text = selectedPack.ResumeText;
+            UpdateResumeWordCount();
+            UpdateResumeSummaryStatus(selectedPack);
+
+            JobDescriptionBox.Text = selectedPack.JobDescriptionText;
             UpdateJobDescriptionWordCount();
-            UpdateJobDescriptionSummaryStatus();
+            UpdateJobDescriptionSummaryStatus(selectedPack);
 
             if (DebugModeCheckBox != null)
             {
@@ -377,17 +385,17 @@ namespace SecureOverlay
             }
         }
 
-        private void UpdateJobDescriptionSummaryStatus()
+        private void UpdateJobDescriptionSummaryStatus(ContextPack selectedPack)
         {
             if (JobDescriptionSummaryStatus == null) return;
             
             try
             {
-                if (!string.IsNullOrWhiteSpace(_settings.JobDescriptionSummary))
+                if (!string.IsNullOrWhiteSpace(selectedPack.JobDescriptionSummary))
                 {
                     JobDescriptionSummaryStatus.Text = "✓ Cached summary available";
                 }
-                else if (!string.IsNullOrWhiteSpace(_settings.JobDescription))
+                else if (!string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
                 {
                     JobDescriptionSummaryStatus.Text = "⚠ Will be summarized on first use";
                 }
@@ -565,17 +573,17 @@ namespace SecureOverlay
             }
         }
 
-        private void UpdateResumeSummaryStatus()
+        private void UpdateResumeSummaryStatus(ContextPack selectedPack)
         {
             if (ResumeSummaryStatus == null) return;
             
             try
             {
-                if (!string.IsNullOrWhiteSpace(_settings.ResumeSummary))
+                if (!string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
                 {
                     ResumeSummaryStatus.Text = "✓ Cached summary available";
                 }
-                else if (!string.IsNullOrWhiteSpace(_settings.Resume))
+                else if (!string.IsNullOrWhiteSpace(selectedPack.ResumeText))
                 {
                     ResumeSummaryStatus.Text = "⚠ Will be summarized on first use";
                 }
@@ -662,24 +670,6 @@ namespace SecureOverlay
                 }
                 
                 _settings.SystemPrompt = SystemPromptBox.Text;
-                
-                var oldResume = _settings.Resume;
-                _settings.Resume = ResumeBox.Text;
-
-                if (oldResume != _settings.Resume)
-                {
-                    _settings.ResumeSummary = "";
-                    Log.WriteLine("Resume changed - cached summary cleared");
-                }
-
-                var oldJD = _settings.JobDescription;
-                _settings.JobDescription = JobDescriptionBox.Text;
-
-                if (oldJD != _settings.JobDescription)
-                {
-                    _settings.JobDescriptionSummary = "";
-                    Log.WriteLine("Job description changed - cached summary cleared");
-                }
 
                 // debug mode:
                 _settings.DebugModeEnabled = DebugModeCheckBox.IsChecked == true;
@@ -691,6 +681,26 @@ namespace SecureOverlay
                 }
                 
                 SettingsManager.Save(_settings);
+
+                var selectedPack = _contextPackService.GetSelectedPack();
+                var oldResume = selectedPack.ResumeText;
+                var oldJobDescription = selectedPack.JobDescriptionText;
+                selectedPack.ResumeText = ResumeBox.Text;
+                selectedPack.JobDescriptionText = JobDescriptionBox.Text;
+
+                if (oldResume != selectedPack.ResumeText)
+                {
+                    selectedPack.ResumeSummary = string.Empty;
+                    Log.WriteLine("Resume changed - cached summary cleared");
+                }
+
+                if (oldJobDescription != selectedPack.JobDescriptionText)
+                {
+                    selectedPack.JobDescriptionSummary = string.Empty;
+                    Log.WriteLine("Job description changed - cached summary cleared");
+                }
+
+                _contextPackService.SaveSelectedPack(selectedPack);
 
                 Log.WriteLine($"✓ Settings saved:");
                 Log.WriteLine($"  ChatGPT keys: {_settings.ChatGPTApiKeys.Count}");

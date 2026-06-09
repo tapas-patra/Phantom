@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using SecureOverlay.Platform.Windows;
 using System.Windows;
 
 namespace SecureOverlay.Services
@@ -91,11 +92,7 @@ namespace SecureOverlay.Services
                         Log.WriteLine("Step 3: Creating environment...");
                         StatusChanged?.Invoke(this, "Setting up environment...");
                         
-                        var userDataFolder = System.IO.Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                            "SecureOverlay",
-                            "WebView2Cache"
-                        );
+                        var userDataFolder = WindowsAppPaths.WebView2CachePath;
                         
                         Log.WriteLine($"  User data folder: {userDataFolder}");
                         
@@ -128,18 +125,14 @@ namespace SecureOverlay.Services
                         StatusChanged?.Invoke(this, "Loading speech engine...");
 
                         // Use file:// protocol (same as permission window for shared permissions)
-                        var tempFolder = System.IO.Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                            "SecureOverlay",
-                            "Temp"
-                        );
+                        var tempFolder = WindowsAppPaths.TempRoot;
 
                         if (!System.IO.Directory.Exists(tempFolder))
                         {
                             System.IO.Directory.CreateDirectory(tempFolder);
                         }
 
-                        var htmlFilePath = System.IO.Path.Combine(tempFolder, "speech_recognition.html");
+                        var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
                         System.IO.File.WriteAllText(htmlFilePath, GetSpeechRecognitionHTML());
 
                         Log.WriteLine($"  HTML saved to: {htmlFilePath}");

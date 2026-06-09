@@ -159,27 +159,50 @@
 
                 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- DEBUG MODE WARNING BANNER (Grid.Row="1") ← FIXED! -->
+                <!-- STATUS BANNERS (Grid.Row="1") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border x:Name="DebugModeWarning" Grid.Row="1" 
-                        Background="#50FF0000" CornerRadius="6" 
-                        Padding="10" Margin="0,0,0,10" 
-                        Visibility="Collapsed"
-                        BorderBrush="#90FF0000" BorderThickness="2">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="🧪" FontSize="20" Margin="0,0,10,0"/>
-                        <StackPanel>
-                            <TextBlock x:Name="DebugModeText" 
-                                    Text="DEBUG MODE: Simulating API Errors" 
-                                    FontSize="13" FontWeight="Bold" Foreground="White"
-                                    Effect="{StaticResource Shadow}"/>
-                            <TextBlock x:Name="DebugModeDetails" 
-                                    Text="Mode: None | Requests: 0" 
-                                    FontSize="10" Foreground="#FFCCCC"
-                                    Effect="{StaticResource Shadow}"/>
+                <StackPanel Grid.Row="1">
+                    <Border x:Name="LaunchRestrictionBanner"
+                            Background="#50FFB000" CornerRadius="6"
+                            Padding="10" Margin="0,0,0,10"
+                            Visibility="Collapsed"
+                            BorderBrush="#90FFB000" BorderThickness="2">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚠️" FontSize="20" Margin="0,0,10,0"/>
+                            <StackPanel>
+                                <TextBlock x:Name="LaunchRestrictionTitle"
+                                           Text="Restricted Session"
+                                           FontSize="13" FontWeight="Bold" Foreground="White"
+                                           Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="LaunchRestrictionDetails"
+                                           Text="Interview actions are currently blocked."
+                                           TextWrapping="Wrap"
+                                           FontSize="10" Foreground="#FFF0D0"
+                                           Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </Border>
+
+                    <Border x:Name="DebugModeWarning"
+                            Background="#50FF0000" CornerRadius="6"
+                            Padding="10" Margin="0,0,0,10"
+                            Visibility="Collapsed"
+                            BorderBrush="#90FF0000" BorderThickness="2">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🧪" FontSize="20" Margin="0,0,10,0"/>
+                            <StackPanel>
+                                <TextBlock x:Name="DebugModeText"
+                                           Text="DEBUG MODE: Simulating API Errors"
+                                           FontSize="13" FontWeight="Bold" Foreground="White"
+                                           Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="DebugModeDetails"
+                                           Text="Mode: None | Requests: 0"
+                                           FontSize="10" Foreground="#FFCCCC"
+                                           Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
                 <!-- CHAT DISPLAY (Grid.Row="2") -->
@@ -278,7 +301,7 @@
                             Style="{StaticResource ButtonStyle}"/>
 
                     <!-- Send Button (Grid.Column="3") -->
-                    <Button Grid.Column="3" 
+                    <Button Grid.Column="3" x:Name="SendButton"
                             Content="Send" 
                             Width="80" Height="40"
                             Click="SendButton_Click" 

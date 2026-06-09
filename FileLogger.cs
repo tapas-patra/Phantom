@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using SecureOverlay.Platform.Windows;
 
 namespace SecureOverlay
 {
@@ -8,11 +9,7 @@ namespace SecureOverlay
     /// </summary>
     public static class FileLogger
     {
-        private static readonly string LogFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "SecureOverlay",
-            "crash_log.txt"
-        );
+        private static readonly string LogFilePath = WindowsAppPaths.CrashLogPath;
 
         static FileLogger()
         {

@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
+using SecureOverlay.Platform.Windows;
 
 namespace SecureOverlay
 {
@@ -27,11 +28,7 @@ namespace SecureOverlay
 
             try
             {
-                var userDataFolder = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "SecureOverlay",
-                    "WebView2Cache"
-                );
+                var userDataFolder = WindowsAppPaths.WebView2CachePath;
 
                 var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
                 await PermissionWebView.EnsureCoreWebView2Async(env);
@@ -82,18 +79,14 @@ namespace SecureOverlay
                 StatusText.Text = "Loading...";
                 
                 // Save HTML to a temporary file (file:// is a secure context)
-                var tempFolder = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "SecureOverlay",
-                    "Temp"
-                );
+                var tempFolder = WindowsAppPaths.TempRoot;
                 
                 if (!System.IO.Directory.Exists(tempFolder))
                 {
                     System.IO.Directory.CreateDirectory(tempFolder);
                 }
 
-                var htmlFilePath = System.IO.Path.Combine(tempFolder, "microphone_permission.html");
+                var htmlFilePath = WindowsAppPaths.MicrophonePermissionHtmlPath;
                 System.IO.File.WriteAllText(htmlFilePath, GetPermissionHTML());
                 
                 Log.WriteLine($"  HTML saved to: {htmlFilePath}");

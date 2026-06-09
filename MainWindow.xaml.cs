@@ -14,9 +14,22 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using SecureOverlay.Application.Billing;
+using SecureOverlay.Application.Context;
+using SecureOverlay.Application.Interviews;
+using SecureOverlay.Application.Persistence;
+using SecureOverlay.Application.Sync;
+using SecureOverlay.Application.Telemetry;
 using SecureOverlay.Services;
 using SecureOverlay.Helpers;
-
+using SecureOverlay.Domain.Entities;
+using SecureOverlay.Infrastructure.Context;
+using SecureOverlay.Infrastructure.Billing;
+using SecureOverlay.Infrastructure.Hosted;
+using SecureOverlay.Infrastructure.Interviews;
+using SecureOverlay.Infrastructure.Persistence;
+using SecureOverlay.Infrastructure.Sync;
+using SecureOverlay.Infrastructure.Telemetry;
 using System.Windows.Media.Imaging;
 using System.IO; 
 
@@ -82,9 +95,22 @@ namespace SecureOverlay
         private BitmapImage? _attachedScreenshot = null;
 
         private Window? _currentDropdownMenu = null;
+        private readonly AppLaunchContext _launchContext;
+        private readonly ICreditMeteringService _creditMeteringService;
+        private readonly IContextPackService _contextPackService;
+        private readonly IInterviewLockService _interviewLockService;
+        private readonly IUsageReconciliationService _usageReconciliationService;
+        private readonly IKnowledgeRetrievalService _knowledgeRetrievalService;
+        private readonly ITelemetryService _telemetryService;
+        private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
 
-        public MainWindow()
+        public MainWindow() : this(new AppLaunchContext())
         {
+        }
+
+        public MainWindow(AppLaunchContext launchContext)
+        {
+            _launchContext = launchContext;
             InitializeComponent();
             WindowProtection.MakeInvisibleToScreenCapture(this);
 
@@ -112,6 +138,48 @@ namespace SecureOverlay
             Log.WriteLine("Loading settings...");
             _settings = SettingsManager.Load();
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
+
+            var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
+            IAuthSessionRepository authSessionRepository = new SqliteAuthSessionRepository(store);
+            IAccountCacheRepository accountCacheRepository = new SqliteAccountCacheRepository(store);
+            IInterviewSessionRepository interviewSessionRepository = new SqliteInterviewSessionRepository(store);
+            IContextPackRepository contextPackRepository = new SqliteContextPackRepository(store);
+            IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
+            ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
+            _creditMeteringService = new LocalCreditMeteringService(
+                authSessionRepository,
+                accountCacheRepository,
+                interviewSessionRepository);
+            _contextPackService = new LocalContextPackService(contextPackRepository);
+            _knowledgeRetrievalService = new LocalKnowledgeRetrievalService();
+            _interviewLockService = new LocalInterviewLockService(
+                interviewSessionRepository,
+                accountCacheRepository);
+            _usageReconciliationService = new LocalUsageReconciliationService(
+                usageReconciliationRepository,
+                new LocalHostedUsageClient());
+            _telemetryService = new LocalTelemetryService(telemetryRepository);
+
+            var activeInterviewSession = _creditMeteringService.GetActiveSession();
+            if (activeInterviewSession != null)
+            {
+                ActivateInterviewLock(activeInterviewSession);
+            }
+
+            var reconciliationFlush = _usageReconciliationService.FlushPending();
+            if (reconciliationFlush.PendingBefore > 0)
+            {
+                Log.WriteLine(
+                    $"Usage reconciliation flush: pending={reconciliationFlush.PendingBefore}, " +
+                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                LogUsageQueueSnapshot();
+                _telemetryService.Track("sync", "usage_reconciliation_flush", new Dictionary<string, string>
+                {
+                    ["pending"] = reconciliationFlush.PendingBefore.ToString(),
+                    ["synced"] = reconciliationFlush.SyncedCount.ToString(),
+                    ["failed"] = reconciliationFlush.FailedCount.ToString()
+                });
+            }
             
             // ✅ UPDATED: Check for cached conversation in SEPARATE file
             bool hasRestoredConversation = false;
@@ -289,6 +357,47 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
+        private bool IsInterviewStartBlocked()
+        {
+            return _launchContext != null && !_launchContext.CanStartInterview;
+        }
+
+        private void ApplyLaunchRestrictions()
+        {
+            if (!IsInterviewStartBlocked())
+            {
+                LaunchRestrictionBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            LaunchRestrictionTitle.Text = string.IsNullOrWhiteSpace(_launchContext.Title)
+                ? "Restricted Session"
+                : _launchContext.Title;
+
+            var detail = string.IsNullOrWhiteSpace(_launchContext.Detail)
+                ? _launchContext.Message
+                : $"{_launchContext.Message} {_launchContext.Detail}".Trim();
+
+            LaunchRestrictionDetails.Text = detail;
+            LaunchRestrictionBanner.Visibility = Visibility.Visible;
+
+            InputTextBox.Text = "Interview start is blocked for this account state.";
+            InputTextBox.Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255));
+            InputTextBox.IsReadOnly = true;
+            InputTextBox.IsEnabled = false;
+            VoiceButton.IsEnabled = false;
+            ScreenshotButton.IsEnabled = false;
+            SendButton.IsEnabled = false;
+            InputBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(180, 255, 176, 0));
+
+            StatusText.Text = $"⚠️ {_launchContext.Title}";
+            StatusIndicator.Fill = Brushes.Orange;
+
+            AddToChat(
+                $"⚠️ **{_launchContext.Title}**\n\n{_launchContext.Message}\n\n{_launchContext.Detail}",
+                true);
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // CURSOR MANAGEMENT - EVENT HANDLERS
         // ═══════════════════════════════════════════════════════════════
@@ -383,6 +492,7 @@ namespace SecureOverlay
             UpdateProviderAndModelDisplay();
 
             FocusInput();
+            ApplyLaunchRestrictions();
             
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("✓ APPLICATION READY");
@@ -467,20 +577,27 @@ namespace SecureOverlay
             }
             else
             {
-                _conversationManager = new ConversationManager(newAI, _settings.SystemPrompt, modelConfig, _rotationManager);
+                _conversationManager = new ConversationManager(
+                    newAI,
+                    _settings.SystemPrompt,
+                    modelConfig,
+                    _rotationManager,
+                    query => _knowledgeRetrievalService.RetrieveForPrompt(_contextPackService.GetSelectedPack(), query));
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
                 
-                if (!string.IsNullOrWhiteSpace(_settings.Resume))
+                var selectedPack = _contextPackService.GetSelectedPack();
+
+                if (!string.IsNullOrWhiteSpace(selectedPack.ResumeText))
                 {
-                    _conversationManager.SetResume(_settings.Resume, _settings.ResumeSummary);
+                    _conversationManager.SetResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
                     Log.WriteLine($"Resume loaded ({_conversationManager.HasResume()})");
                 }
 
-                if (!string.IsNullOrWhiteSpace(_settings.JobDescription))
+                if (!string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
                 {
-                    _conversationManager.SetJobDescription(_settings.JobDescription, _settings.JobDescriptionSummary);
+                    _conversationManager.SetJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
                     Log.WriteLine($"Job description loaded ({_conversationManager.HasJobDescription()})");
                 }
 
@@ -677,6 +794,14 @@ namespace SecureOverlay
 
         private async Task SendMessage()
         {
+            if (IsInterviewStartBlocked())
+            {
+                Log.WriteLine($"Interview start blocked by launch context: {_launchContext.Title}");
+                StatusText.Text = $"⚠️ {_launchContext.Title}";
+                StatusIndicator.Fill = Brushes.Orange;
+                return;
+            }
+
             var message = InputTextBox.Text.Trim();
             
             if (string.IsNullOrEmpty(message) || message == "Ask me anything...") 
@@ -721,6 +846,36 @@ namespace SecureOverlay
                 Log.WriteLine("✗ ConversationManager not initialized!");
                 AddToChat("⚠️ **System error!** Please restart the application.", false);
                 return;
+            }
+
+            var hadActiveInterview = _creditMeteringService.GetActiveSession() != null;
+            var meteringActivation = _creditMeteringService.EnsureInterviewSession();
+            if (!meteringActivation.Allowed)
+            {
+                Log.WriteLine($"Interview metering denied: {meteringActivation.Title} | {meteringActivation.Message}");
+                StatusText.Text = $"⚠️ {meteringActivation.Title}";
+                StatusIndicator.Fill = Brushes.Orange;
+                AddToChat($"⚠️ **{meteringActivation.Title}**\n\n{meteringActivation.Message}", false);
+                FocusInput();
+                return;
+            }
+
+            if (meteringActivation.StartedNewSession || (!hadActiveInterview && meteringActivation.ResumedExistingSession))
+            {
+                Log.WriteLine($"{meteringActivation.Title}: {meteringActivation.Message}");
+                StatusText.Text = $"✓ {meteringActivation.Title}";
+                StatusIndicator.Fill = Brushes.LightGreen;
+                _telemetryService.Track("billing", "interview_session_activated", new Dictionary<string, string>
+                {
+                    ["started_new"] = meteringActivation.StartedNewSession.ToString(),
+                    ["resumed"] = meteringActivation.ResumedExistingSession.ToString(),
+                    ["session_id"] = meteringActivation.Session?.SessionId ?? string.Empty
+                });
+            }
+
+            if (meteringActivation.Session != null)
+            {
+                ActivateInterviewLock(meteringActivation.Session);
             }
 
             string? imageBase64 = null;
@@ -899,11 +1054,19 @@ namespace SecureOverlay
                         }
                     }
                     
-                    if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(_settings.ResumeSummary))
+                    var selectedPack = _contextPackService.GetSelectedPack();
+                    if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
                     {
-                        _settings.ResumeSummary = _conversationManager.GetResumeSummary();
-                        SettingsManager.Save(_settings);
-                        Log.WriteLine("✓ Resume summary cached to settings");
+                        selectedPack.ResumeSummary = _conversationManager.GetResumeSummary();
+                        _contextPackService.SaveSelectedPack(selectedPack);
+                        Log.WriteLine("✓ Resume summary cached to context pack");
+                    }
+
+                    if (_conversationManager.HasJobDescription() && string.IsNullOrWhiteSpace(selectedPack.JobDescriptionSummary))
+                    {
+                        selectedPack.JobDescriptionSummary = _conversationManager.GetJobDescriptionSummary();
+                        _contextPackService.SaveSelectedPack(selectedPack);
+                        Log.WriteLine("✓ Job description summary cached to context pack");
                     }
                     
                     StatusText.Text = $"✓ Response in {elapsed:F1}s | Two-cursor active";
@@ -1074,6 +1237,55 @@ namespace SecureOverlay
             }
         }
 
+        private void ActivateInterviewLock(InterviewSessionRecord session)
+        {
+            var lockResult = _interviewLockService.StartOrResumeLock(session);
+            if (!lockResult.Succeeded)
+            {
+                Log.WriteLine($"Interview lock activation failed: {lockResult.Title} | {lockResult.Message}");
+                return;
+            }
+
+            _interviewLockHeartbeatTimer?.Stop();
+            _interviewLockHeartbeatTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds > 0 ? session.HeartbeatIntervalSeconds : 60)
+            };
+            _interviewLockHeartbeatTimer.Tick += InterviewLockHeartbeatTimer_Tick;
+            _interviewLockHeartbeatTimer.Start();
+
+            Log.WriteLine($"Interview lock active until {lockResult.LockExpiresAtUtc:O}");
+            _telemetryService.Track("lock", "interview_lock_active", new Dictionary<string, string>
+            {
+                ["session_id"] = session.SessionId,
+                ["expires_at"] = lockResult.LockExpiresAtUtc?.ToString("O") ?? string.Empty
+            });
+        }
+
+        private void InterviewLockHeartbeatTimer_Tick(object? sender, EventArgs e)
+        {
+            var heartbeat = _interviewLockService.HeartbeatActiveLock();
+            if (!heartbeat.Succeeded)
+            {
+                Log.WriteLine($"Interview lock heartbeat failed: {heartbeat.Title} | {heartbeat.Message}");
+                _interviewLockHeartbeatTimer?.Stop();
+                StatusText.Text = $"⚠️ {heartbeat.Title}";
+                StatusIndicator.Fill = Brushes.Orange;
+                _telemetryService.Track("lock", "interview_lock_heartbeat_failed", new Dictionary<string, string>
+                {
+                    ["title"] = heartbeat.Title,
+                    ["message"] = heartbeat.Message
+                });
+                return;
+            }
+
+            Log.WriteLine($"Interview lock heartbeat refreshed until {heartbeat.LockExpiresAtUtc:O}");
+            _telemetryService.Track("lock", "interview_lock_heartbeat", new Dictionary<string, string>
+            {
+                ["expires_at"] = heartbeat.LockExpiresAtUtc?.ToString("O") ?? string.Empty
+            });
+        }
+
         private async void SendButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Send button clicked");
@@ -1178,15 +1390,7 @@ namespace SecureOverlay
                 // Clear conversation (this now properly re-adds system prompt)
                 _conversationManager.ClearConversation();
                 
-                // Clear resume from settings
-                _settings.Resume = "";
-                _settings.ResumeSummary = "";
-                
-                // Clear job description from settings
-                _settings.JobDescription = "";
-                _settings.JobDescriptionSummary = "";
-                
-                SettingsManager.Save(_settings);
+                _contextPackService.ClearSelectedPack(clearResume: true, clearJobDescription: true);
                 
                 // Clear conversation cache
                 SettingsManager.ClearConversationCache();
@@ -1251,10 +1455,7 @@ namespace SecureOverlay
                 // Start new topic (this now properly preserves resume and re-adds system prompt)
                 _conversationManager.StartNewTopic();
                 
-                // Clear job description from settings
-                _settings.JobDescription = "";
-                _settings.JobDescriptionSummary = "";
-                SettingsManager.Save(_settings);
+                _contextPackService.ClearSelectedPack(clearResume: false, clearJobDescription: true);
                 
                 // Clear JD from conversation manager
                 _conversationManager.ClearJobDescription();
@@ -1811,13 +2012,10 @@ namespace SecureOverlay
 
                 if (_conversationManager != null)
                 {
-                    _conversationManager.UpdateResume(_settings.Resume, _settings.ResumeSummary);
+                    var selectedPack = _contextPackService.GetSelectedPack();
+                    _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
                     Log.WriteLine("✓ Resume updated in conversation manager");
-                }
-
-                if (_conversationManager != null)
-                {
-                    _conversationManager.UpdateJobDescription(_settings.JobDescription, _settings.JobDescriptionSummary);
+                    _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
                     Log.WriteLine("✓ Job description updated in conversation manager");
                 }
 
@@ -3219,22 +3417,57 @@ namespace SecureOverlay
                     Log.WriteLine("Normal close detected - clearing conversation cache...");
                     SettingsManager.ClearConversationCache();
                     Log.WriteLine("  ✓ Conversation cache cleared");
+
+                    var completion = _creditMeteringService.FinalizeActiveSession();
+                    if (completion != null)
+                    {
+                        _usageReconciliationService.Enqueue(new UsageReconciliationPayload
+                        {
+                            UserId = completion.UserId,
+                            SessionId = completion.SessionId,
+                            StartedAtUtc = completion.StartedAtUtc,
+                            EndedAtUtc = completion.EndedAtUtc,
+                            ChargedCredits = completion.ChargedCredits,
+                            ChargedBlocks = completion.ChargedBlocks,
+                            PremiumDebtAdded = completion.PremiumDebtAdded
+                        });
+                        var reconciliationFlush = _usageReconciliationService.FlushPending();
+                        Log.WriteLine(
+                            $"  ✓ Interview finalized: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
+                            $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
+                        Log.WriteLine(
+                            $"  ✓ Usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
+                            $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                        LogUsageQueueSnapshot();
+                        _telemetryService.Track("billing", "interview_session_finalized", new Dictionary<string, string>
+                        {
+                            ["session_id"] = completion.SessionId,
+                            ["charged_credits"] = completion.ChargedCredits.ToString("0.##"),
+                            ["charged_blocks"] = completion.ChargedBlocks.ToString(),
+                            ["premium_debt"] = completion.PremiumDebtAdded.ToString("0.##")
+                        });
+                        _telemetryService.Track("sync", "usage_reconciliation_after_finalize", new Dictionary<string, string>
+                        {
+                            ["pending"] = reconciliationFlush.PendingBefore.ToString(),
+                            ["synced"] = reconciliationFlush.SyncedCount.ToString(),
+                            ["failed"] = reconciliationFlush.FailedCount.ToString()
+                        });
+                    }
+
+                    _interviewLockService.MarkLockReleased();
                 }
                 else
                 {
                     Log.WriteLine("Restart detected - PRESERVING conversation cache");
                     Log.WriteLine($"  Cache location: {SettingsManager.GetConversationCachePath()}");
                 }
+
+                _interviewLockHeartbeatTimer?.Stop();
+                _interviewLockHeartbeatTimer = null;
                 
-                // Always clear job description on app close
-                if (_settings != null)
-                {
-                    Log.WriteLine("Clearing job description on app close...");
-                    _settings.JobDescription = "";
-                    _settings.JobDescriptionSummary = "";
-                    SettingsManager.Save(_settings);
-                    Log.WriteLine("  ✓ Job description cleared");
-                }
+                Log.WriteLine("Clearing job description on app close...");
+                _contextPackService.ClearSelectedPack(clearResume: false, clearJobDescription: true);
+                Log.WriteLine("  ✓ Job description cleared");
                 
                 if (_cursorManager != null)
                 {
@@ -3302,6 +3535,20 @@ namespace SecureOverlay
         private void Cleanup()
         {
             PerformFullCleanup();
+        }
+
+        private void LogUsageQueueSnapshot()
+        {
+            var snapshot = _usageReconciliationService.GetQueueSnapshot();
+            Log.WriteLine(
+                $"  Queue snapshot: pending={snapshot.PendingCount}, failed={snapshot.FailedCount}, deadLetters={snapshot.DeadLetterCount}");
+
+            foreach (var deadLetter in snapshot.DeadLetters.Take(3))
+            {
+                Log.WriteLine(
+                    $"  Dead-letter record: id={deadLetter.RecordId}, session={deadLetter.Payload.SessionId}, " +
+                    $"attempts={deadLetter.AttemptCount}, error={deadLetter.LastError}");
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)

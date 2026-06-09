@@ -1,10 +1,20 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
+using SecureOverlay.Application.Persistence;
+using SecureOverlay.Application.Telemetry;
+using SecureOverlay.Infrastructure.Hosted;
+using SecureOverlay.Infrastructure.Persistence;
+using SecureOverlay.Infrastructure.Telemetry;
+using SecureOverlay.Services;
 
 namespace SecureOverlay
 {
     public partial class App : Application
     {
+        private ITelemetryService? _telemetryService;
+
         protected override void OnStartup(StartupEventArgs e)
         {
             // ✅ Catch all unhandled exceptions
@@ -21,10 +31,21 @@ namespace SecureOverlay
 
             base.OnStartup(e);
 
+            var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
+            ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
+            _telemetryService = new LocalTelemetryService(telemetryRepository);
+            _telemetryService.Track("app", "startup", new Dictionary<string, string>
+            {
+                ["has_callback"] = (!string.IsNullOrWhiteSpace(e.Args.FirstOrDefault(arg =>
+                    arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
+                    || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString()
+            });
+
             Log.WriteLine("Checking administrator privileges...");
             if (!IsRunningAsAdministrator())
             {
                 Log.WriteLine("✗ Not running as administrator!");
+                _telemetryService.Track("app", "startup_admin_required");
                 
                 // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
                 InvisibleMessageBox.Show(
@@ -45,6 +66,10 @@ namespace SecureOverlay
             {
                 var build = Environment.OSVersion.Version.Build;
                 Log.WriteLine($"✗ Windows build {build} is too old (need 19041+)");
+                _telemetryService.Track("app", "startup_unsupported_windows", new Dictionary<string, string>
+                {
+                    ["build"] = build.ToString()
+                });
                 
                 // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
                 InvisibleMessageBox.Show(
@@ -59,9 +84,26 @@ namespace SecureOverlay
                 return;
             }
             Log.WriteLine($"✓ Windows version compatible (build {Environment.OSVersion.Version.Build})");
+            _telemetryService.Track("app", "startup_ready", new Dictionary<string, string>
+            {
+                ["build"] = Environment.OSVersion.Version.Build.ToString()
+            });
 
-            Log.WriteLine("Prerequisites check complete - starting main window");
+            Log.WriteLine("Prerequisites check complete - starting startup gate");
             Log.WriteLine("═══════════════════════════════════════════════════════");
+
+            var callbackUri = e.Args.FirstOrDefault(arg =>
+                arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
+                || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(callbackUri) && callbackUri.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase))
+            {
+                callbackUri = callbackUri.Substring("--auth-callback=".Length);
+            }
+
+            var startupWindow = new StartupWindow(new LocalStartupGateService(callbackUri));
+            MainWindow = startupWindow;
+            startupWindow.Show();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -87,6 +129,12 @@ namespace SecureOverlay
                 
                 Log.WriteLine($"Is Terminating: {e.IsTerminating}");
                 Log.WriteLine("═══════════════════════════════════════════════════════");
+                _telemetryService?.Track("crash", "unhandled_exception", new Dictionary<string, string>
+                {
+                    ["message"] = ex?.Message ?? "unknown",
+                    ["source"] = ex?.Source ?? "unknown",
+                    ["terminating"] = e.IsTerminating.ToString()
+                });
 
                 if (e.IsTerminating)
                 {
@@ -113,6 +161,12 @@ namespace SecureOverlay
             try
             {
                 Log.WriteLine("═══════════════════════════════════════════════════════");
+                _telemetryService?.Track("crash", "dispatcher_exception", new Dictionary<string, string>
+                {
+                    ["message"] = e.Exception.Message,
+                    ["source"] = e.Exception.Source ?? "unknown",
+                    ["type"] = e.Exception.GetType().Name
+                });
                 Log.WriteLine("💥 EXCEPTION (UI THREAD)");
                 Log.WriteLine($"Message: {e.Exception.Message}");
                 Log.WriteLine($"Source: {e.Exception.Source}");
@@ -151,6 +205,7 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("APPLICATION EXITING");
             Log.WriteLine("═══════════════════════════════════════════════════════");
+            _telemetryService?.Track("app", "exit");
             
             base.OnExit(e);
             

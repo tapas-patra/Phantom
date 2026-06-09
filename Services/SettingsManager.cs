@@ -3,7 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
-using SecureOverlay.Helpers; 
+using SecureOverlay.Application.Persistence;
+using SecureOverlay.Helpers;
+using SecureOverlay.Infrastructure.Persistence;
+using SecureOverlay.Platform.Windows;
+using SecureOverlay.Platform.Windows.Secrets;
 
 namespace SecureOverlay.Services
 {
@@ -110,17 +114,12 @@ namespace SecureOverlay.Services
     // ═══════════════════════════════════════════════════════════════
     public static class SettingsManager
     {
-        private static readonly string SettingsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "SecureOverlay",
-            "settings.json"
-        );
-
-        private static readonly string ConversationCachePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "SecureOverlay",
-            "conversation_cache.json"
-        );
+        private static readonly object SyncLock = new object();
+        private static readonly StorageBootstrapResult Bootstrap = StorageBootstrapper.Initialize();
+        private static readonly SqliteRuntimeStore Store = new SqliteRuntimeStore(WindowsAppPaths.DatabasePath);
+        private static readonly ISettingsRepository SettingsRepository = new SqliteSettingsRepository(Store);
+        private static readonly IConversationCacheRepository ConversationRepository = new SqliteConversationCacheRepository(Store);
+        private static readonly ISecretVault SecretVault = new WindowsSecretVault(Store);
 
         // ═══════════════════════════════════════════════════════════════
         // LOAD SETTINGS (from settings.json)
@@ -129,44 +128,29 @@ namespace SecureOverlay.Services
         {
             try
             {
-                if (File.Exists(SettingsPath))
+                if (!Bootstrap.IsReadOnlySafeMode)
                 {
-                    Log.WriteLine($"Loading settings from: {SettingsPath}");
-                    
-                    var json = File.ReadAllText(SettingsPath);
-                    var settings = JsonConvert.DeserializeObject<AppSettings>(json) ?? new AppSettings();
-                    
-                    // Auto-migrate legacy single keys to lists
-                    MigrateLegacyKeys(settings);
-                    
-                    // Remove duplicate models (fix for bug where models get appended)
-                    CleanupDuplicateModels(settings);
-                    
-                    // ✅ NEW: Sync model lists with registry
-                    SyncModelListsWithRegistry(settings);
-                    
-                    // ✅ ONLY SAVE ONCE at the end if anything changed
-                    Save(settings);
-                    
-                    Log.WriteLine("✓ Settings loaded successfully");
-                    return settings;
+                    lock (SyncLock)
+                    {
+                        var settings = SettingsRepository.Load() ?? new AppSettings();
+                        HydrateSecrets(settings);
+                        PrepareSettings(settings, persistChanges: true);
+                        Log.WriteLine($"✓ Settings loaded successfully from: {WindowsAppPaths.DatabasePath}");
+                        return settings;
+                    }
                 }
-                else
-                {
-                    Log.WriteLine("No settings file found - creating new settings");
-                    var newSettings = new AppSettings();
-                    
-                    // ✅ NEW: Initialize with registry models
-                    SyncModelListsWithRegistry(newSettings);
-                    Save(newSettings);
-                    
-                    return newSettings;
-                }
+
+                Log.WriteLine($"Storage bootstrap entered read-only safe mode: {Bootstrap.SafeModeReason}");
+                var safeModeSettings = LoadLegacySettingsReadOnly() ?? new AppSettings();
+                PrepareSettings(safeModeSettings, persistChanges: false);
+                return safeModeSettings;
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"Error loading settings: {ex.Message}");
-                return new AppSettings();
+                var fallback = new AppSettings();
+                PrepareSettings(fallback, persistChanges: false);
+                return fallback;
             }
         }
 
@@ -238,18 +222,21 @@ namespace SecureOverlay.Services
         // ═══════════════════════════════════════════════════════════════
         public static void Save(AppSettings settings)
         {
+            if (Bootstrap.IsReadOnlySafeMode)
+            {
+                Log.WriteLine("Storage is in read-only safe mode - skipping settings save");
+                return;
+            }
+
             try
             {
-                var dir = Path.GetDirectoryName(SettingsPath);
-                if (dir != null && !Directory.Exists(dir))
+                lock (SyncLock)
                 {
-                    Directory.CreateDirectory(dir);
-                }
-
-                var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
-                File.WriteAllText(SettingsPath, json);
-                
-                Log.WriteLine($"✓ Settings saved to: {SettingsPath}");
+                    SecretVault.SaveProviderKeys(ExtractProviderKeys(settings));
+                    var sanitizedSettings = CloneSettingsWithoutSecrets(settings);
+                    SettingsRepository.Save(sanitizedSettings);
+                    Log.WriteLine($"✓ Settings saved to SQLite: {WindowsAppPaths.DatabasePath}");
+                }                
             }
             catch (Exception ex)
             {
@@ -262,25 +249,24 @@ namespace SecureOverlay.Services
         // ═══════════════════════════════════════════════════════════════
         public static ConversationCache? LoadConversationCache()
         {
+            if (Bootstrap.IsReadOnlySafeMode)
+            {
+                return LoadLegacyConversationCacheReadOnly();
+            }
+
             try
             {
-                if (File.Exists(ConversationCachePath))
+                lock (SyncLock)
                 {
-                    Log.WriteLine($"Loading conversation cache from: {ConversationCachePath}");
-                    
-                    var cacheJson = File.ReadAllText(ConversationCachePath);
-                    var cache = JsonConvert.DeserializeObject<ConversationCache>(cacheJson);
-                    
+                    var cache = ConversationRepository.Load();
                     if (cache != null && cache.Messages != null)
                     {
                         Log.WriteLine($"✓ Loaded {cache.Messages.Count} cached messages from {cache.SavedAt}");
                         return cache;
                     }
                 }
-                else
-                {
-                    Log.WriteLine("No conversation cache file found");
-                }
+
+                Log.WriteLine("No conversation cache entry found");
             }
             catch (Exception ex)
             {
@@ -296,24 +282,26 @@ namespace SecureOverlay.Services
         // ═══════════════════════════════════════════════════════════════
         public static void SaveConversationCache(List<ConversationMessage> messages)
         {
+            if (Bootstrap.IsReadOnlySafeMode)
+            {
+                Log.WriteLine("Storage is in read-only safe mode - skipping conversation cache save");
+                return;
+            }
+
             try
             {
-                var dir = Path.GetDirectoryName(ConversationCachePath);
-                if (dir != null && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
                 var cache = new ConversationCache
                 {
                     Messages = messages,
                     SavedAt = DateTime.Now
                 };
 
-                var json = JsonConvert.SerializeObject(cache, Formatting.Indented);
-                File.WriteAllText(ConversationCachePath, json);
-                
-                Log.WriteLine($"✓ Saved {messages.Count} messages to: {ConversationCachePath}");
+                lock (SyncLock)
+                {
+                    ConversationRepository.Save(cache);
+                }
+
+                Log.WriteLine($"✓ Saved {messages.Count} messages to SQLite: {WindowsAppPaths.DatabasePath}");
             }
             catch (Exception ex)
             {
@@ -327,17 +315,20 @@ namespace SecureOverlay.Services
         // ═══════════════════════════════════════════════════════════════
         public static void ClearConversationCache()
         {
+            if (Bootstrap.IsReadOnlySafeMode)
+            {
+                Log.WriteLine("Storage is in read-only safe mode - skipping conversation cache clear");
+                return;
+            }
+
             try
             {
-                if (File.Exists(ConversationCachePath))
+                lock (SyncLock)
                 {
-                    File.Delete(ConversationCachePath);
-                    Log.WriteLine($"✓ Conversation cache deleted: {ConversationCachePath}");
+                    ConversationRepository.Clear();
                 }
-                else
-                {
-                    Log.WriteLine("No conversation cache file to delete");
-                }
+
+                Log.WriteLine($"✓ Conversation cache deleted from SQLite: {WindowsAppPaths.DatabasePath}");
             }
             catch (Exception ex)
             {
@@ -478,7 +469,118 @@ namespace SecureOverlay.Services
         // ═══════════════════════════════════════════════════════════════
         // GET FILE PATHS (for debugging)
         // ═══════════════════════════════════════════════════════════════
-        public static string GetSettingsPath() => SettingsPath;
-        public static string GetConversationCachePath() => ConversationCachePath;
+        public static string GetSettingsPath() => WindowsAppPaths.DatabasePath;
+        public static string GetConversationCachePath() => WindowsAppPaths.DatabasePath;
+        public static bool IsReadOnlySafeMode() => Bootstrap.IsReadOnlySafeMode;
+        public static string? GetSafeModeReason() => Bootstrap.SafeModeReason;
+
+        private static void PrepareSettings(AppSettings settings, bool persistChanges)
+        {
+            MigrateLegacyKeys(settings);
+            CleanupDuplicateModels(settings);
+            SyncModelListsWithRegistry(settings);
+
+            if (persistChanges)
+            {
+                Save(settings);
+            }
+        }
+
+        private static AppSettings? LoadLegacySettingsReadOnly()
+        {
+            try
+            {
+                if (!File.Exists(WindowsAppPaths.LegacySettingsPath))
+                {
+                    return null;
+                }
+
+                var json = File.ReadAllText(WindowsAppPaths.LegacySettingsPath);
+                return JsonConvert.DeserializeObject<AppSettings>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Failed to read legacy settings in safe mode: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static ConversationCache? LoadLegacyConversationCacheReadOnly()
+        {
+            try
+            {
+                if (!File.Exists(WindowsAppPaths.LegacyConversationCachePath))
+                {
+                    return null;
+                }
+
+                var cacheJson = File.ReadAllText(WindowsAppPaths.LegacyConversationCachePath);
+                var cache = JsonConvert.DeserializeObject<ConversationCache>(cacheJson);
+                if (cache != null && cache.Messages != null)
+                {
+                    Log.WriteLine($"✓ Loaded {cache.Messages.Count} legacy cached messages in safe mode");
+                }
+
+                return cache;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Failed to read legacy conversation cache in safe mode: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static void HydrateSecrets(AppSettings settings)
+        {
+            var providerKeys = SecretVault.LoadProviderKeys();
+            if (providerKeys.Count == 0)
+            {
+                return;
+            }
+
+            settings.ChatGPTApiKeys = providerKeys.TryGetValue("ChatGPT", out var chatGptKeys) ? chatGptKeys : new List<string>();
+            settings.ClaudeApiKeys = providerKeys.TryGetValue("Claude", out var claudeKeys) ? claudeKeys : new List<string>();
+            settings.MistralApiKeys = providerKeys.TryGetValue("Mistral", out var mistralKeys) ? mistralKeys : new List<string>();
+            settings.GeminiApiKeys = providerKeys.TryGetValue("Gemini", out var geminiKeys) ? geminiKeys : new List<string>();
+            settings.GroqApiKeys = providerKeys.TryGetValue("Groq", out var groqKeys) ? groqKeys : new List<string>();
+
+            settings.ChatGPTApiKey = settings.ChatGPTApiKeys.FirstOrDefault() ?? "";
+            settings.ClaudeApiKey = settings.ClaudeApiKeys.FirstOrDefault() ?? "";
+            settings.MistralApiKey = settings.MistralApiKeys.FirstOrDefault() ?? "";
+            settings.GeminiApiKey = settings.GeminiApiKeys.FirstOrDefault() ?? "";
+            settings.GroqApiKey = settings.GroqApiKeys.FirstOrDefault() ?? "";
+        }
+
+        private static Dictionary<string, List<string>> ExtractProviderKeys(AppSettings settings)
+        {
+            return new Dictionary<string, List<string>>
+            {
+                ["ChatGPT"] = settings.ChatGPTApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["Claude"] = settings.ClaudeApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["Mistral"] = settings.MistralApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["Gemini"] = settings.GeminiApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["Groq"] = settings.GroqApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
+            };
+        }
+
+        private static AppSettings CloneSettingsWithoutSecrets(AppSettings source)
+        {
+            var clone = JsonConvert.DeserializeObject<AppSettings>(
+                JsonConvert.SerializeObject(source, Formatting.Indented)) ?? new AppSettings();
+
+            clone.ChatGPTApiKeys = new List<string>();
+            clone.ClaudeApiKeys = new List<string>();
+            clone.MistralApiKeys = new List<string>();
+            clone.GeminiApiKeys = new List<string>();
+            clone.GroqApiKeys = new List<string>();
+
+            clone.ChatGPTApiKey = "";
+            clone.ClaudeApiKey = "";
+            clone.MistralApiKey = "";
+            clone.GeminiApiKey = "";
+            clone.GroqApiKey = "";
+
+            return clone;
+        }
     }
 }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using SecureOverlay.Domain.Entities;
 
 namespace SecureOverlay.Services
 {
@@ -19,6 +20,8 @@ namespace SecureOverlay.Services
         private string _jobDescriptionText = string.Empty;
         private string _jobDescriptionSummary = string.Empty;
         private bool _jobDescriptionSummarized = false;
+        private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+        private readonly Func<string, IReadOnlyList<RetrievedContextSnippet>>? _knowledgeRetriever;
 
         
         private ModelConfig _modelConfig;
@@ -30,13 +33,19 @@ namespace SecureOverlay.Services
 
         public event EventHandler<string>? APISwitchNotification;
 
-        public ConversationManager(IAIService aiService, string systemPrompt, ModelConfig modelConfig, APIRotationManager? rotationManager = null)
+        public ConversationManager(
+            IAIService aiService,
+            string systemPrompt,
+            ModelConfig modelConfig,
+            APIRotationManager? rotationManager = null,
+            Func<string, IReadOnlyList<RetrievedContextSnippet>>? knowledgeRetriever = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
             _modelConfig = modelConfig;
             _rotationManager = rotationManager;
             _currentProvider = aiService.GetProviderName();
+            _knowledgeRetriever = knowledgeRetriever;
 
             _fullConversation.Add(new ConversationMessage
             {
@@ -419,6 +428,16 @@ namespace SecureOverlay.Services
                 Log.WriteLine($"   _jobDescriptionText is empty: {string.IsNullOrWhiteSpace(_jobDescriptionText ?? string.Empty)}");
                 Log.WriteLine($"   _jobDescriptionSummarized: {_jobDescriptionSummarized}");
             }
+
+            if (_retrievedKnowledgeSnippets.Count > 0)
+            {
+                Log.WriteLine($"✓ Adding {_retrievedKnowledgeSnippets.Count} retrieved knowledge snippet(s)");
+                contextParts.Append("\n\nRelevant Local Context:");
+                foreach (var snippet in _retrievedKnowledgeSnippets)
+                {
+                    contextParts.Append($"\n- [{snippet.SourceType}] {snippet.DocumentTitle}: {snippet.Text}");
+                }
+            }
             
             var finalContent = contextParts.ToString();
             
@@ -493,6 +512,9 @@ namespace SecureOverlay.Services
                     return ("", "Failed to summarize job description. Please try again.");
                 }
             }
+
+            _retrievedKnowledgeSnippets = _knowledgeRetriever?.Invoke(userMessage) ?? Array.Empty<RetrievedContextSnippet>();
+            UpdateSystemPromptWithContext();
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
@@ -580,6 +602,9 @@ namespace SecureOverlay.Services
                     return ("", "Failed to summarize job description. Please try again.");
                 }
             }
+
+            _retrievedKnowledgeSnippets = _knowledgeRetriever?.Invoke(userMessage) ?? Array.Empty<RetrievedContextSnippet>();
+            UpdateSystemPromptWithContext();
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();

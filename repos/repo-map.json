@@ -1,0 +1,53 @@
+{
+  "workspace": "phantom",
+  "current_source_of_truth": "phantom-windows-app",
+  "repos": [
+    {
+      "name": "phantom-website-dashboard",
+      "status": "scaffolded",
+      "owns": [
+        "marketing-site",
+        "registration-ui",
+        "login-ui",
+        "dashboard-ui",
+        "device-management-ui",
+        "billing-history-ui"
+      ]
+    },
+    {
+      "name": "phantom-windows-app",
+      "status": "active-in-current-root",
+      "owns": [
+        "wpf-app",
+        "local-sqlite-runtime",
+        "dpapi-secret-vault",
+        "offline-continuation",
+        "context-packs",
+        "desktop-telemetry-queue"
+      ]
+    },
+    {
+      "name": "phantom-windows-app-backend",
+      "status": "scaffolded",
+      "owns": [
+        "desktop-auth",
+        "startup-entitlements",
+        "wallet-snapshots",
+        "device-registration",
+        "session-lock-authority",
+        "usage-reconciliation",
+        "desktop-observability-ingestion"
+      ]
+    },
+    {
+      "name": "phantom-dashboard-backend",
+      "status": "scaffolded",
+      "owns": [
+        "dashboard-api",
+        "reporting-api",
+        "support-admin-api",
+        "dashboard-aggregations"
+      ]
+    }
+  ]
+}

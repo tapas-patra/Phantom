@@ -1,6 +1,6 @@
 # Windows App Extraction Manifest
 
-This file defines what moves from the current workspace root into `phantom-windows-app`.
+This file records what was moved into `phantom-windows-app` when the repository root was reorganized into four top-level product folders.
 
 ## Move As-Is
 
@@ -52,10 +52,13 @@ This file defines what moves from the current workspace root into `phantom-windo
 
 ## Do Not Move
 
-- `repos/`
 - future website code
 - future backend service code
 - future dashboard backend code
+
+## Follow-Up
+
+- repo-split handoff docs now live under `docs/repo-split/`
 
 ## Preconditions
 

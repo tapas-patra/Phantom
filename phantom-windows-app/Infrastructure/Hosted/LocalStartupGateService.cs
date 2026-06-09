@@ -24,6 +24,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         private readonly ITelemetryService _telemetryService;
         private readonly string? _pendingCallbackUri;
         private readonly DeviceProfile _deviceProfile;
+        private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         public LocalStartupGateService(string? pendingCallbackUri)
         {
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
@@ -34,9 +35,9 @@ namespace SecureOverlay.Infrastructure.Hosted
                 new SqliteDeviceProfileRepository(store),
                 new WindowsSecretVault(store));
             _deviceProfile = deviceIdentityService.GetOrCreateProfile();
-            var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
-            _authClient = HostedClientFactory.CreateAuthClient(_deviceProfile, hostedRuntimeOptions);
-            _accountClient = HostedClientFactory.CreateAccountClient(hostedRuntimeOptions);
+            _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+            _authClient = HostedClientFactory.CreateAuthClient(_deviceProfile, _hostedRuntimeOptions);
+            _accountClient = HostedClientFactory.CreateAccountClient(_hostedRuntimeOptions);
             _pendingCallbackUri = pendingCallbackUri;
         }
 
@@ -76,7 +77,45 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: "No local authenticated session was found.");
             }
 
-            return EvaluateAccountState(session, _accountCacheRepository.Load());
+            var cachedSnapshot = _accountCacheRepository.Load();
+            if (_hostedRuntimeOptions.UseRemoteBackend)
+            {
+                try
+                {
+                    var refreshedSnapshot = MapAccountSnapshot(_accountClient.GetStartupAccountCheck(MapSessionForHostedCheck(session)));
+                    _accountCacheRepository.Save(refreshedSnapshot);
+                    _telemetryService.Track("auth", "startup_account_check_refreshed", new Dictionary<string, string>
+                    {
+                        ["source"] = refreshedSnapshot.UserId,
+                        ["mode"] = _hostedRuntimeOptions.Mode
+                    });
+                    return EvaluateAccountState(session, refreshedSnapshot);
+                }
+                catch (HostedServiceException ex)
+                {
+                    Log.WriteLine($"Hosted startup refresh failed: {ex.Message}");
+                    _telemetryService.Track("auth", "startup_account_check_failed", new Dictionary<string, string>
+                    {
+                        ["mode"] = _hostedRuntimeOptions.Mode,
+                        ["reason"] = ex.Message
+                    });
+
+                    if (cachedSnapshot != null && CanUseCachedSnapshotOffline(cachedSnapshot))
+                    {
+                        return EvaluateAccountState(
+                            session,
+                            cachedSnapshot,
+                            "Backend unavailable. Using cached account validation for offline launch rules.");
+                    }
+
+                    return BuildBackendUnavailableContext(
+                        "Backend Unavailable",
+                        "The desktop backend could not be reached to refresh your account state.",
+                        "Reconnect and press Retry. Offline launch requires a valid cached lease or resumable locked session.");
+                }
+            }
+
+            return EvaluateAccountState(session, cachedSnapshot);
         }
 
         public StartupGateContext BeginLogin()
@@ -100,58 +139,86 @@ namespace SecureOverlay.Infrastructure.Hosted
 
         public StartupGateContext CompleteLogin(string email, string password, bool useMagicLink)
         {
-            var sessionDto = _authClient.CreateSession(new AuthLoginRequestDto
+            try
             {
-                Email = email,
-                Password = password,
-                UseMagicLink = useMagicLink,
-                AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
-                InstallId = _deviceProfile.InstallId,
-                DeviceLabel = _deviceProfile.DeviceLabel,
-                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
-                SecretFingerprintHint = _deviceProfile.SecretFingerprintHint
-            });
-            var accountCheckDto = _accountClient.GetStartupAccountCheck(sessionDto);
+                var sessionDto = _authClient.CreateSession(new AuthLoginRequestDto
+                {
+                    Email = email,
+                    Password = password,
+                    UseMagicLink = useMagicLink,
+                    AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+                    InstallId = _deviceProfile.InstallId,
+                    DeviceLabel = _deviceProfile.DeviceLabel,
+                    DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
+                    SecretFingerprintHint = _deviceProfile.SecretFingerprintHint
+                });
+                var accountCheckDto = _accountClient.GetStartupAccountCheck(sessionDto);
 
-            _authSessionRepository.Save(MapAuthSession(sessionDto));
-            _accountCacheRepository.Save(MapAccountSnapshot(accountCheckDto));
-            _telemetryService.Track("auth", "login_completed", new Dictionary<string, string>
+                _authSessionRepository.Save(MapAuthSession(sessionDto));
+                _accountCacheRepository.Save(MapAccountSnapshot(accountCheckDto));
+                _telemetryService.Track("auth", "login_completed", new Dictionary<string, string>
+                {
+                    ["method"] = useMagicLink ? "magic_link" : "password",
+                    ["user"] = sessionDto.Email
+                });
+
+                return BuildContext(
+                    StartupGateState.CheckingAccount,
+                    "Checking Account",
+                    "Validating auth, entitlement, wallet, lease, and session-lock state against the local startup cache.",
+                    canOpenMainApp: false,
+                    canResumeLockedInterview: false,
+                    canAttemptLogin: false,
+                    canRegister: false,
+                    canRetry: false,
+                    detail: "Authentication completed. Refreshing account validation now.");
+            }
+            catch (HostedServiceException ex)
             {
-                ["method"] = useMagicLink ? "magic_link" : "password",
-                ["user"] = sessionDto.Email
-            });
-
-            return BuildContext(
-                StartupGateState.CheckingAccount,
-                "Checking Account",
-                "Validating auth, entitlement, wallet, lease, and session-lock state against the local startup cache.",
-                canOpenMainApp: false,
-                canResumeLockedInterview: false,
-                canAttemptLogin: false,
-                canRegister: false,
-                canRetry: false,
-                detail: "Hosted validation will replace this local cache evaluation later.");
+                Log.WriteLine($"Login failed against hosted seam: {ex.Message}");
+                return BuildContext(
+                    StartupGateState.Login,
+                    "Login Failed",
+                    "Authentication could not be completed.",
+                    canOpenMainApp: false,
+                    canResumeLockedInterview: false,
+                    canAttemptLogin: true,
+                    canRegister: true,
+                    canRetry: true,
+                    detail: ex.Message);
+            }
         }
 
         public StartupGateContext ProcessAuthCallback(string callbackUri)
         {
-            var callbackCompletion = _authClient.CompleteCallback(new AuthCallbackCompletionRequestDto
+            try
             {
-                CallbackUri = callbackUri
-            });
-            var sessionDto = callbackCompletion.Session;
-            var callbackResult = callbackCompletion.CallbackResult;
-            var accountCheckDto = _accountClient.GetStartupAccountCheck(callbackResult);
+                var callbackCompletion = _authClient.CompleteCallback(new AuthCallbackCompletionRequestDto
+                {
+                    CallbackUri = callbackUri
+                });
+                var sessionDto = callbackCompletion.Session;
+                var callbackResult = callbackCompletion.CallbackResult;
+                var accountCheckDto = _accountClient.GetStartupAccountCheck(callbackResult);
 
-            _authSessionRepository.Save(MapAuthSession(sessionDto));
-            var snapshot = MapAccountSnapshot(accountCheckDto);
-            _accountCacheRepository.Save(snapshot);
-            _telemetryService.Track("auth", "callback_processed", new Dictionary<string, string>
+                _authSessionRepository.Save(MapAuthSession(sessionDto));
+                var snapshot = MapAccountSnapshot(accountCheckDto);
+                _accountCacheRepository.Save(snapshot);
+                _telemetryService.Track("auth", "callback_processed", new Dictionary<string, string>
+                {
+                    ["status"] = callbackResult.Status,
+                    ["user"] = callbackResult.Email
+                });
+                return EvaluateAccountState(_authSessionRepository.Load()!, snapshot);
+            }
+            catch (HostedServiceException ex)
             {
-                ["status"] = callbackResult.Status,
-                ["user"] = callbackResult.Email
-            });
-            return EvaluateAccountState(_authSessionRepository.Load()!, snapshot);
+                Log.WriteLine($"Auth callback completion failed: {ex.Message}");
+                return BuildBackendUnavailableContext(
+                    "Callback Validation Failed",
+                    "The desktop app could not complete the website sign-in callback.",
+                    ex.Message);
+            }
         }
 
         public StartupGateContext Retry()
@@ -176,7 +243,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 detail: "Choose a sign-in method to continue.");
         }
 
-        private static StartupGateContext EvaluateAccountState(AuthSessionCache session, AccountCacheSnapshot? snapshot)
+        private static StartupGateContext EvaluateAccountState(AuthSessionCache session, AccountCacheSnapshot? snapshot, string? detailPrefix = null)
         {
             if (snapshot == null)
             {
@@ -189,7 +256,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: $"Signed in as {session.Email}. Account cache still needs to be hydrated.");
+                    detail: ComposeDetail(detailPrefix, $"Signed in as {session.Email}. Account cache still needs to be hydrated."));
             }
 
             if (!snapshot.PhoneVerified)
@@ -203,7 +270,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: $"Signed in as {session.Email}.");
+                    detail: ComposeDetail(detailPrefix, $"Signed in as {session.Email}."));
             }
 
             if (LeaseExpired(snapshot))
@@ -219,7 +286,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                         canAttemptLogin: false,
                         canRegister: false,
                         canRetry: true,
-                        detail: "Reconnect and refresh account validation before starting another interview.");
+                        detail: ComposeDetail(detailPrefix, "Reconnect and refresh account validation before starting another interview."));
                 }
 
                 return BuildContext(
@@ -231,7 +298,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: "A new interview must stay blocked until backend validation succeeds.");
+                    detail: ComposeDetail(detailPrefix, "A new interview must stay blocked until backend validation succeeds."));
             }
 
             if (snapshot.PremiumNegativeCredits > 0m)
@@ -245,7 +312,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: $"Outstanding Premium balance: {snapshot.PremiumNegativeCredits:0.##} credit.");
+                    detail: ComposeDetail(detailPrefix, $"Outstanding Premium balance: {snapshot.PremiumNegativeCredits:0.##} credit."));
             }
 
             if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m && !snapshot.HasResumableLockedSession)
@@ -259,7 +326,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: "The app shell can open, but interview start must remain blocked until credits are added.");
+                    detail: ComposeDetail(detailPrefix, "The app shell can open, but interview start must remain blocked until credits are added."));
             }
 
             if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m)
@@ -273,7 +340,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canAttemptLogin: false,
                     canRegister: false,
                     canRetry: true,
-                    detail: "Add credits before attempting to start another interview.");
+                    detail: ComposeDetail(detailPrefix, "Add credits before attempting to start another interview."));
             }
 
             return BuildContext(
@@ -285,7 +352,61 @@ namespace SecureOverlay.Infrastructure.Hosted
                 canAttemptLogin: false,
                 canRegister: false,
                 canRetry: true,
-                detail: $"Signed in as {session.Email}.");
+                detail: ComposeDetail(detailPrefix, $"Signed in as {session.Email}."));
+        }
+
+        private static bool CanUseCachedSnapshotOffline(AccountCacheSnapshot snapshot)
+        {
+            if (snapshot.HasResumableLockedSession)
+            {
+                return true;
+            }
+
+            return snapshot.LeaseExpiresAtUtc.HasValue
+                && snapshot.LeaseExpiresAtUtc.Value > DateTime.UtcNow;
+        }
+
+        private StartupGateContext BuildBackendUnavailableContext(string title, string message, string detail)
+        {
+            return BuildContext(
+                StartupGateState.BackendUnavailable,
+                title,
+                message,
+                canOpenMainApp: false,
+                canResumeLockedInterview: false,
+                canAttemptLogin: true,
+                canRegister: true,
+                canRetry: true,
+                detail: ComposeDetail(
+                    $"Mode: {_hostedRuntimeOptions.ModeLabel}.",
+                    detail));
+        }
+
+        private static string ComposeDetail(string? prefix, string detail)
+        {
+            if (string.IsNullOrWhiteSpace(prefix))
+            {
+                return detail;
+            }
+
+            return $"{prefix} {detail}".Trim();
+        }
+
+        private static AuthSessionDto MapSessionForHostedCheck(AuthSessionCache session)
+        {
+            return new AuthSessionDto
+            {
+                UserId = session.UserId,
+                Email = session.Email,
+                AccessToken = session.AccessToken,
+                RefreshToken = session.RefreshToken,
+                AuthMethod = session.AuthMethod,
+                DeviceInstallId = session.DeviceInstallId,
+                DeviceFingerprintHash = session.DeviceFingerprintHash,
+                AuthenticatedAtUtc = session.AuthenticatedAtUtc,
+                ExpiresAtUtc = session.ExpiresAtUtc,
+                IsAuthenticated = session.IsAuthenticated
+            };
         }
 
         private static bool LeaseExpired(AccountCacheSnapshot snapshot)

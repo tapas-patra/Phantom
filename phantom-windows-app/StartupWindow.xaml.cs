@@ -10,6 +10,7 @@ using SecureOverlay.Domain.Entities;
 using SecureOverlay.Domain.Enums;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Persistence;
+using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Platform.Windows;
 using SecureOverlay.Platform.Windows.Device;
 using SecureOverlay.Platform.Windows.Secrets;
@@ -23,16 +24,21 @@ namespace SecureOverlay
         private const string DefaultStubPassword = "phantom123";
         private readonly IStartupGateService _startupGateService;
         private readonly IDeviceIdentityService _deviceIdentityService;
+        private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private StartupGateContext _currentContext;
 
         public StartupWindow(IStartupGateService startupGateService)
         {
             InitializeComponent();
             _startupGateService = startupGateService;
+            _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             IDeviceProfileRepository deviceProfileRepository = new SqliteDeviceProfileRepository(store);
             _deviceIdentityService = new WindowsDeviceIdentityService(deviceProfileRepository, new WindowsSecretVault(store));
             SeedStubCredentials();
+            BackendModeText.Text = _hostedRuntimeOptions.UseRemoteBackend
+                ? $"{_hostedRuntimeOptions.ModeLabel}\n{_hostedRuntimeOptions.DesktopBackendBaseUrl}"
+                : $"{_hostedRuntimeOptions.ModeLabel}\nNo backend URL configured.";
             _currentContext = startupGateService.GetInitialContext();
             ApplyContext(_currentContext);
         }
@@ -146,7 +152,9 @@ namespace SecureOverlay
 
             LeftPanelTitleText.Text = isLoginState ? "Credentials" : "Login Methods";
             LeftPanelMessageText.Text = isLoginState
-                ? "Enter your email and continue with either password login or a magic link. A default stub user is prefilled so you can test the flow immediately."
+                ? _hostedRuntimeOptions.UseRemoteBackend
+                    ? "Enter your email and continue with either password login or a magic link. This flow validates against the configured hosted backend."
+                    : "Enter your email and continue with either password login or a magic link. A default stub user is prefilled so you can test the flow immediately."
                 : "Choose a sign-in method. Login stays in-app. Registration opens on the hosted website.";
             PasswordLabel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             PasswordTextBox.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
@@ -172,8 +180,8 @@ namespace SecureOverlay
 
         private void SeedStubCredentials()
         {
-            EmailTextBox.Text = DefaultStubEmail;
-            PasswordTextBox.Password = DefaultStubPassword;
+            EmailTextBox.Text = _hostedRuntimeOptions.UseRemoteBackend ? string.Empty : DefaultStubEmail;
+            PasswordTextBox.Password = _hostedRuntimeOptions.UseRemoteBackend ? string.Empty : DefaultStubPassword;
         }
 
         private async Task AdvanceToEvaluatedStateAsync()

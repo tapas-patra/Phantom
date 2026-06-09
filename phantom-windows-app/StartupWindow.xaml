@@ -97,6 +97,13 @@
                                     <TextBlock Text="Current implementation status: backend-ready desktop seam. This gate can run against local fallbacks or a configured hosted backend." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
                                 </Border>
 
+                                <Border Background="#2A3348" CornerRadius="12" Padding="14" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="Runtime Mode" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="BackendModeText" Foreground="#D3E5F5" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+
                                 <TextBlock x:Name="SafeModeText" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#FFD89A" FontSize="12" LineHeight="18"/>
                             </StackPanel>
                         </Border>

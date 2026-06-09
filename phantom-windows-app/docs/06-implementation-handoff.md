@@ -128,6 +128,8 @@ This file captures the decisions already locked so implementation can start with
   - `POST /api/desktop/account/startup-check/callback`
   - `POST /api/desktop/usage/reconcile`
 - magic-link callback completion is expected to return an authenticated desktop session plus callback state
+- in hosted mode, startup revalidates account state against the backend before allowing a fresh launch
+- if hosted startup refresh fails, the desktop app may fall back only to a valid cached lease or a resumable locked session on the same device
 
 ## Implementation Guardrails
 

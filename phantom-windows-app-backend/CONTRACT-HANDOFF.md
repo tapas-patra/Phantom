@@ -5,7 +5,7 @@ This repo will own the backend authority for desktop runtime behavior.
 ## Current Contract Source
 
 Temporary contract source in current workspace:
-- `Infrastructure/Hosted/Contracts/`
+- `phantom-windows-app/Infrastructure/Hosted/Contracts/`
 
 ## Contracts To Re-Home Here
 

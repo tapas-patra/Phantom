@@ -13,6 +13,6 @@ Owns:
 - desktop observability ingestion
 
 Key input from current workspace:
-- `Infrastructure/Hosted/Contracts/`
+- `phantom-windows-app/Infrastructure/Hosted/Contracts/`
 
 That contract seam should eventually be re-homed under this repo.

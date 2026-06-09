@@ -60,11 +60,12 @@
 - This means local verification from non-Windows environments is limited to static inspection only.
 
 ## State On Disk
-- Settings: `%AppData%/SecureOverlay/settings.json`
-- Conversation cache: `%AppData%/SecureOverlay/conversation_cache.json`
-- Crash/session log: `%AppData%/SecureOverlay/crash_log.txt`
-- WebView2 user data: `%AppData%/SecureOverlay/WebView2Cache`
-- Temporary speech HTML: `%AppData%/SecureOverlay/Temp/speech_recognition.html`
+- Runtime database: `%AppData%/Windows Host Service 271/phantom.db`
+- Crash/session log: `%AppData%/Windows Host Service 271/crash_log.txt`
+- WebView2 user data: `%AppData%/Windows Host Service 271/WebView2Cache`
+- Temporary speech HTML: `%AppData%/Windows Host Service 271/Temp/speech_recognition.html`
+- Safe mode marker: `%AppData%/Windows Host Service 271/safe_mode.txt`
+- Legacy JSON state may still exist under `%AppData%/SecureOverlay/` only for one-way migration
 
 ## Architectural Invariants
 - `Helpers/AIModelRegistry.cs` is the canonical model registry.

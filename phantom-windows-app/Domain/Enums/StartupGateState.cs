@@ -10,6 +10,7 @@ namespace SecureOverlay.Domain.Enums
         NegativeBalance = 5,
         OfflineLeaseExpired = 6,
         ReadOnlySafeMode = 7,
-        Ready = 8
+        Ready = 8,
+        BackendUnavailable = 9
     }
 }

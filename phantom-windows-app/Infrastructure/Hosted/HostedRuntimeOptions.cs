@@ -13,6 +13,8 @@ namespace SecureOverlay.Infrastructure.Hosted
             || (string.Equals(Mode, "auto", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(DesktopBackendBaseUrl));
 
+        public string ModeLabel => UseRemoteBackend ? "Hosted Backend" : "Local Fallback";
+
         public static HostedRuntimeOptions Load()
         {
             var mode = Environment.GetEnvironmentVariable("PHANTOM_HOSTED_MODE");

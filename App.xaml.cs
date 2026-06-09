@@ -30,80 +30,93 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
 
             base.OnStartup(e);
-
-            var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
-            ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
-            _telemetryService = new LocalTelemetryService(telemetryRepository);
-            _telemetryService.Track("app", "startup", new Dictionary<string, string>
+            try
             {
-                ["has_callback"] = (!string.IsNullOrWhiteSpace(e.Args.FirstOrDefault(arg =>
-                    arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
-                    || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString()
-            });
-
-            Log.WriteLine("Checking administrator privileges...");
-            if (!IsRunningAsAdministrator())
-            {
-                Log.WriteLine("✗ Not running as administrator!");
-                _telemetryService.Track("app", "startup_admin_required");
-                
-                // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
-                InvisibleMessageBox.Show(
-                    "Administrator privileges required.\n\n" +
-                    "Please right-click the application and select\n" +
-                    "'Run as administrator'",
-                    "Administrator Required"
-                );
-                
-                Log.WriteLine("Shutting down due to missing admin privileges");
-                Shutdown();
-                return;
-            }
-            Log.WriteLine("✓ Running as administrator");
-
-            Log.WriteLine("Checking Windows version...");
-            if (!IsWindows10Build19041OrLater())
-            {
-                var build = Environment.OSVersion.Version.Build;
-                Log.WriteLine($"✗ Windows build {build} is too old (need 19041+)");
-                _telemetryService.Track("app", "startup_unsupported_windows", new Dictionary<string, string>
+                var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
+                ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
+                _telemetryService = new LocalTelemetryService(telemetryRepository);
+                _telemetryService.Track("app", "startup", new Dictionary<string, string>
                 {
-                    ["build"] = build.ToString()
+                    ["has_callback"] = (!string.IsNullOrWhiteSpace(e.Args.FirstOrDefault(arg =>
+                        arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
+                        || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString()
                 });
-                
-                // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
-                InvisibleMessageBox.Show(
-                    $"Windows 10 version 2004 or later is required.\n\n" +
-                    $"Your build: {build}\n" +
-                    $"Required build: 19041+",
-                    "Unsupported Windows Version"
-                );
-                
-                Log.WriteLine("Shutting down due to unsupported Windows version");
-                Shutdown();
-                return;
+
+                Log.WriteLine("Checking administrator privileges...");
+                if (!IsRunningAsAdministrator())
+                {
+                    Log.WriteLine("✗ Not running as administrator!");
+                    _telemetryService.Track("app", "startup_admin_required");
+                    ShowCriticalStartupError(
+                        "Administrator Required",
+                        "Administrator privileges required.\n\nPlease right-click the application and select\n'Run as administrator'.");
+                    Log.WriteLine("Shutting down due to missing admin privileges");
+                    Shutdown();
+                    return;
+                }
+                Log.WriteLine("✓ Running as administrator");
+
+                Log.WriteLine("Checking Windows version...");
+                if (!IsWindows10Build19041OrLater())
+                {
+                    var build = Environment.OSVersion.Version.Build;
+                    Log.WriteLine($"✗ Windows build {build} is too old (need 19041+)");
+                    _telemetryService.Track("app", "startup_unsupported_windows", new Dictionary<string, string>
+                    {
+                        ["build"] = build.ToString()
+                    });
+                    ShowCriticalStartupError(
+                        "Unsupported Windows Version",
+                        $"Windows 10 version 2004 or later is required.\n\nYour build: {build}\nRequired build: 19041+");
+                    Log.WriteLine("Shutting down due to unsupported Windows version");
+                    Shutdown();
+                    return;
+                }
+
+                Log.WriteLine($"✓ Windows version compatible (build {Environment.OSVersion.Version.Build})");
+                _telemetryService.Track("app", "startup_ready", new Dictionary<string, string>
+                {
+                    ["build"] = Environment.OSVersion.Version.Build.ToString()
+                });
+
+                Log.WriteLine("Prerequisites check complete - starting startup gate");
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+
+                var callbackUri = e.Args.FirstOrDefault(arg =>
+                    arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
+                    || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(callbackUri) && callbackUri.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase))
+                {
+                    callbackUri = callbackUri.Substring("--auth-callback=".Length);
+                }
+
+                Log.WriteLine("Creating startup window...");
+                var startupWindow = new StartupWindow(new LocalStartupGateService(callbackUri));
+                MainWindow = startupWindow;
+                startupWindow.Show();
+                Log.WriteLine("Startup window shown successfully");
             }
-            Log.WriteLine($"✓ Windows version compatible (build {Environment.OSVersion.Version.Build})");
-            _telemetryService.Track("app", "startup_ready", new Dictionary<string, string>
+            catch (Exception ex)
             {
-                ["build"] = Environment.OSVersion.Version.Build.ToString()
-            });
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+                Log.WriteLine("💥 FATAL STARTUP ERROR");
+                Log.WriteLine($"Message: {ex.Message}");
+                Log.WriteLine($"Source: {ex.Source}");
+                Log.WriteLine($"Stack Trace:\n{ex.StackTrace}");
 
-            Log.WriteLine("Prerequisites check complete - starting startup gate");
-            Log.WriteLine("═══════════════════════════════════════════════════════");
+                if (ex.InnerException != null)
+                {
+                    Log.WriteLine($"Inner Exception: {ex.InnerException.Message}");
+                    Log.WriteLine($"Inner Stack: {ex.InnerException.StackTrace}");
+                }
 
-            var callbackUri = e.Args.FirstOrDefault(arg =>
-                arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
-                || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase));
-
-            if (!string.IsNullOrWhiteSpace(callbackUri) && callbackUri.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase))
-            {
-                callbackUri = callbackUri.Substring("--auth-callback=".Length);
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+                ShowCriticalStartupError(
+                    "Phantom Startup Failed",
+                    $"The application failed before the main window could open.\n\nError: {ex.Message}\n\nLog file:\n{Log.GetLogFilePath()}");
+                Shutdown(-1);
             }
-
-            var startupWindow = new StartupWindow(new LocalStartupGateService(callbackUri));
-            MainWindow = startupWindow;
-            startupWindow.Show();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -138,15 +151,9 @@ namespace SecureOverlay
 
                 if (e.IsTerminating)
                 {
-                    // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
-                    InvisibleMessageBox.Show(
-                        $"💥 FATAL CRASH\n\n" +
-                        $"The application encountered a critical error and must close.\n\n" +
-                        $"Error: {ex?.Message}\n\n" +
-                        $"Log file location:\n{Log.GetLogFilePath()}\n\n" +
-                        $"Please check the log file for details.",
-                        "Application Crash"
-                    );
+                    ShowCriticalStartupError(
+                        "Application Crash",
+                        $"The application encountered a critical error and must close.\n\nError: {ex?.Message}\n\nLog file:\n{Log.GetLogFilePath()}");
                 }
             }
             catch { }
@@ -181,15 +188,11 @@ namespace SecureOverlay
                 
                 Log.WriteLine("═══════════════════════════════════════════════════════");
 
-                // ✅ UPDATED: Use InvisibleMessageBox instead of MessageBox
-                InvisibleMessageBox.Show(
-                    $"⚠️ APPLICATION ERROR\n\n" +
-                    $"An error occurred, but the app will continue running.\n\n" +
-                    $"Error: {e.Exception.Message}\n\n" +
-                    $"Log file location:\n{Log.GetLogFilePath()}\n\n" +
-                    $"Check the log file for full details.",
-                    "Application Error"
-                );
+                MessageBox.Show(
+                    $"An error occurred, but the app will continue running.\n\nError: {e.Exception.Message}\n\nLog file:\n{Log.GetLogFilePath()}",
+                    "Application Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
 
                 e.Handled = true; // Prevent full crash
             }
@@ -235,6 +238,21 @@ namespace SecureOverlay
         private bool IsWindows10Build19041OrLater()
         {
             return Environment.OSVersion.Version.Build >= 19041;
+        }
+
+        private static void ShowCriticalStartupError(string title, string message)
+        {
+            try
+            {
+                MessageBox.Show(
+                    message,
+                    title,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Diagnostics;
 
 namespace SecureOverlay
@@ -13,6 +14,8 @@ namespace SecureOverlay
         {
             // Send to debug output (Visual Studio)
             Debug.WriteLine(message);
+
+            TryWriteToConsole(message);
             
             // Send to our debug logger (in-app debug panel)
             DebugLogger.Instance.AddLog(message);
@@ -24,6 +27,7 @@ namespace SecureOverlay
         public static void Write(string message)
         {
             Debug.Write(message);
+            TryWriteToConsole(message);
             DebugLogger.Instance.AddLog(message);
             FileLogger.WriteLine(message); // ✅ NEW
         }
@@ -32,6 +36,30 @@ namespace SecureOverlay
         public static string GetLogFilePath()
         {
             return FileLogger.GetLogPath();
+        }
+
+        private static void TryWriteToConsole(string message)
+        {
+            try
+            {
+                if (!Console.IsOutputRedirected || !Console.IsErrorRedirected)
+                {
+                    Console.Error.WriteLine(message);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WT_SESSION"))
+                    || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PROMPT")))
+                {
+                    Console.Error.WriteLine(message);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
     }
 }

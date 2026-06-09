@@ -50,6 +50,24 @@ public sealed class AdminService
         };
     }
 
+    public IReadOnlyList<object> ListAccounts()
+    {
+        return _accounts.ListAll()
+            .Select(account => (object)new
+            {
+                account.UserId,
+                account.Email,
+                account.PhoneVerified,
+                account.ProAvailableCredits,
+                account.PremiumAvailableCredits,
+                account.PremiumNegativeCredits,
+                account.LeaseExpiresAtUtc,
+                account.OfflineModeEnabled,
+                account.LastValidatedAtUtc
+            })
+            .ToList();
+    }
+
     public object ClearLock(AdminLockClearRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.UserId))

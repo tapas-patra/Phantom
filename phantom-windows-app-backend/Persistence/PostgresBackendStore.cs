@@ -1,0 +1,170 @@
+using Npgsql;
+using Phantom.WindowsApp.Backend.Infrastructure;
+
+namespace Phantom.WindowsApp.Backend.Persistence;
+
+public sealed class PostgresBackendStore
+{
+    private readonly string _connectionString;
+
+    public PostgresBackendStore(BackendOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.DatabaseUrl))
+        {
+            throw new InvalidOperationException(
+                "Backend database URL is not configured. Set PHANTOM_WINDOWS_BACKEND_DATABASE_URL.");
+        }
+
+        _connectionString = BuildConnectionString(options.DatabaseUrl);
+        EnsureSchema();
+    }
+
+    public NpgsqlConnection OpenConnection()
+    {
+        var connection = new NpgsqlConnection(_connectionString);
+        connection.Open();
+        return connection;
+    }
+
+    public bool CanConnect()
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1;";
+            command.ExecuteScalar();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void EnsureSchema()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+CREATE TABLE IF NOT EXISTS desktop_accounts (
+    user_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    phone_verified BOOLEAN NOT NULL,
+    pro_available_credits NUMERIC(18,2) NOT NULL,
+    premium_available_credits NUMERIC(18,2) NOT NULL,
+    premium_negative_credits NUMERIC(18,2) NOT NULL,
+    lease_expires_at_utc TIMESTAMPTZ NOT NULL,
+    offline_mode_enabled BOOLEAN NOT NULL,
+    last_validated_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    access_token_hash TEXT NOT NULL UNIQUE,
+    refresh_token_hash TEXT NOT NULL UNIQUE,
+    auth_method TEXT NOT NULL,
+    device_install_id TEXT NOT NULL,
+    device_fingerprint_hash TEXT NOT NULL,
+    authenticated_at_utc TIMESTAMPTZ NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    is_authenticated BOOLEAN NOT NULL,
+    revoked_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_refresh_token_hash ON auth_sessions(refresh_token_hash);
+
+CREATE TABLE IF NOT EXISTS magic_links (
+    token_hash TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    install_id TEXT NOT NULL,
+    device_fingerprint_hash TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS interview_locks (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    lock_token TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at_utc TIMESTAMPTZ NOT NULL,
+    app_version TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_locks_user_id ON interview_locks(user_id);
+
+CREATE TABLE IF NOT EXISTS usage_ledger (
+    ledger_entry_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL UNIQUE,
+    started_at_utc TIMESTAMPTZ NOT NULL,
+    ended_at_utc TIMESTAMPTZ NOT NULL,
+    charged_credits NUMERIC(18,2) NOT NULL,
+    charged_blocks INTEGER NOT NULL,
+    added_premium_debt NUMERIC(18,2) NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_ledger_user_id ON usage_ledger(user_id);
+
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    event_id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    attempted_at_utc TIMESTAMPTZ NOT NULL,
+    succeeded BOOLEAN NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
+    ON auth_login_attempts(email, ip_address, attempted_at_utc DESC);
+";
+        command.ExecuteNonQuery();
+    }
+
+    private static string BuildConnectionString(string databaseUrl)
+    {
+        if (databaseUrl.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
+        {
+            return databaseUrl;
+        }
+
+        if (!Uri.TryCreate(databaseUrl, UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException("PHANTOM_WINDOWS_BACKEND_DATABASE_URL must be a valid PostgreSQL URI.");
+        }
+
+        var userInfo = uri.UserInfo.Split(':', 2);
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = uri.Host,
+            Port = uri.Port > 0 ? uri.Port : 5432,
+            Database = uri.AbsolutePath.Trim('/'),
+            Username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : string.Empty,
+            Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty,
+            SslMode = SslMode.Require,
+            TrustServerCertificate = false
+        };
+
+        return builder.ConnectionString;
+    }
+}

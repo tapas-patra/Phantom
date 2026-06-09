@@ -1,5 +1,6 @@
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
+using Phantom.WindowsApp.Backend.Infrastructure;
 using Phantom.WindowsApp.Backend.Services;
 using Phantom.WindowsApp.Backend.Persistence;
 
@@ -20,7 +21,7 @@ public sealed class UsageReconciliationService
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.SessionId))
         {
-            throw new Infrastructure.BackendValidationException("UserId and SessionId are required.");
+            throw new BackendValidationException("UserId and SessionId are required.");
         }
 
         var existing = _usageLedger.FindBySessionId(request.SessionId);

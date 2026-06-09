@@ -1,92 +1,195 @@
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 using Phantom.WindowsApp.Backend.Contracts;
+using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
 using Phantom.WindowsApp.Backend.Persistence;
 using Phantom.WindowsApp.Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton(BackendOptions.FromConfiguration(builder.Configuration));
-builder.Services.AddSingleton<SqliteBackendStore>();
+var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(backendOptions);
+builder.Services.AddSingleton<PostgresBackendStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
+builder.Services.AddSingleton<LoginAttemptRepository>();
+builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
+builder.Services.AddSingleton<TokenService>();
+builder.Services.AddSingleton<LoginAttemptService>();
+builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryIngestService>();
 builder.Services.AddSingleton<AdminService>();
+builder.Services.AddSingleton<AdminApiKeyFilter>();
+builder.Services.AddHostedService<MaintenanceService>();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("auth", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 15;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+        limiterOptions.AutoReplenishment = true;
+    });
+});
 
 var app = builder.Build();
 
-app.Use(async (context, next) =>
+app.UseExceptionHandler(exceptionApp =>
 {
-    try
+    exceptionApp.Run(async context =>
     {
-        await next();
-    }
-    catch (BackendValidationException ex)
-    {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
-    }
-    catch (Exception ex)
-    {
+        var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        if (exception is BackendValidationException validationException)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsJsonAsync(new { error = validationException.Message });
+            return;
+        }
+
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
-    }
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "An unexpected server error occurred."
+        });
+    });
 });
 
-app.MapGet("/health", () => Results.Ok(new
+app.UseRateLimiter();
+
+app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
 {
     status = "ok",
     service = "phantom-windows-app-backend",
+    database = store.CanConnect() ? "reachable" : "unreachable",
     utc = DateTime.UtcNow
 }));
 
+app.MapGet("/health/ready", (PostgresBackendStore store) =>
+    store.CanConnect()
+        ? Results.Ok(new { status = "ready", utc = DateTime.UtcNow })
+        : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Database unavailable"))
+    .RequireRateLimiting("auth");
+
 app.MapPost("/api/desktop/auth/login", (
+    HttpContext httpContext,
     AuthLoginRequestDto request,
+    LoginAttemptService attempts,
     AccountStateService accounts,
+    AuthService auth,
+    AuthSessionRepository sessions,
+    TelemetryRepository telemetry) =>
+{
+    var email = request.Email.Trim().ToLowerInvariant();
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    attempts.EnsureNotBlocked(email, ipAddress);
+
+    try
+    {
+        var account = accounts.GetForLogin(request);
+        var previousSession = sessions.FindLatestByUser(account.UserId);
+        if (previousSession != null
+            && !string.Equals(previousSession.DeviceFingerprintHash, request.DeviceFingerprintHash, StringComparison.Ordinal))
+        {
+            telemetry.Save(new TelemetryEventRecord
+            {
+                EventId = $"telemetry-{Guid.NewGuid():N}",
+                Category = "auth",
+                EventName = "new_device_fingerprint_login",
+                PayloadJson = $$"""{"email":"{{account.Email}}","previous_fingerprint":"{{previousSession.DeviceFingerprintHash}}","current_fingerprint":"{{request.DeviceFingerprintHash}}"}""",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+        }
+
+        var session = auth.CreateSession(
+            account,
+            "password",
+            request.InstallId,
+            request.DeviceFingerprintHash);
+        attempts.Record(email, ipAddress, succeeded: true);
+        return Results.Ok(session);
+    }
+    catch
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        throw;
+    }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/refresh", (
+    AuthRefreshRequestDto request,
     AuthService auth) =>
 {
-    var account = accounts.GetForLogin(request);
-    var session = auth.CreateSession(
-        account,
-        request.UseMagicLink ? "magic_link" : "password",
+    if (string.IsNullOrWhiteSpace(request.RefreshToken))
+    {
+        throw new BackendValidationException("RefreshToken is required.");
+    }
+
+    return Results.Ok(auth.RefreshSession(
+        request.RefreshToken,
         request.InstallId,
-        request.DeviceFingerprintHash);
-    return Results.Ok(session);
-});
+        request.DeviceFingerprintHash));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/logout", (
+    AuthLogoutRequestDto request,
+    AuthService auth) =>
+{
+    if (string.IsNullOrWhiteSpace(request.RefreshToken))
+    {
+        throw new BackendValidationException("RefreshToken is required.");
+    }
+
+    auth.RevokeSession(request.RefreshToken);
+    return Results.Ok(new { revoked = true });
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/magic-link/request", (
     HttpContext httpContext,
     AuthMagicLinkRequestDto request,
+    LoginAttemptService attempts,
     AccountStateService accounts,
     AuthService auth) =>
 {
+    var email = request.Email.Trim().ToLowerInvariant();
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    attempts.EnsureNotBlocked(email, ipAddress);
     accounts.GetForLogin(new AuthLoginRequestDto
     {
-        Email = request.Email,
+        Email = email,
         UseMagicLink = true
     });
 
     var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
     return Results.Ok(auth.IssueMagicLink(request, publicBaseUrl));
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/callback/complete", (
-    HttpContext httpContext,
     AuthCallbackCompletionRequestDto request,
     AccountStateService accounts,
-    AuthService auth) =>
+    AuthService auth,
+    MagicLinkRepository magicLinks) =>
 {
     if (string.IsNullOrWhiteSpace(request.CallbackUri))
     {
         throw new BackendValidationException("CallbackUri is required.");
+    }
+    if (string.IsNullOrWhiteSpace(request.InstallId) || string.IsNullOrWhiteSpace(request.DeviceFingerprintHash))
+    {
+        throw new BackendValidationException("InstallId and DeviceFingerprintHash are required.");
     }
 
     var uri = new Uri(request.CallbackUri);
@@ -97,8 +200,7 @@ app.MapPost("/api/desktop/auth/callback/complete", (
         throw new BackendValidationException("Magic link token is required.");
     }
 
-    var magicLinks = httpContext.RequestServices.GetRequiredService<MagicLinkRepository>();
-    var issued = magicLinks.FindByToken(token) ?? throw new BackendValidationException("Magic link token not found.");
+    var issued = auth.RequireMagicLink(token);
     if (issued.Consumed)
     {
         throw new BackendValidationException("Magic link already consumed.");
@@ -131,13 +233,12 @@ app.MapPost("/api/desktop/auth/callback/complete", (
     };
 
     var session = auth.CreateSession(account, "magic_link_callback", issued.InstallId, issued.DeviceFingerprintHash);
-
     return Results.Ok(new AuthCallbackCompletionResultDto
     {
         Session = session,
         CallbackResult = callbackResult
     });
-});
+}).RequireRateLimiting("auth");
 
 app.MapGet("/magic-link/consume", (HttpContext httpContext) =>
 {
@@ -216,28 +317,36 @@ app.MapPost("/api/desktop/locks/release", (
     return Results.Ok(locks.Release(request));
 });
 
-app.MapGet("/api/admin/accounts/{userId}", (
+var adminGroup = app.MapGroup("/api/admin")
+    .AddEndpointFilter<AdminApiKeyFilter>();
+
+adminGroup.MapGet("/accounts/{userId}", (
     string userId,
     AdminService admin) =>
 {
     return Results.Ok(admin.GetAccountSnapshot(userId));
 });
 
-app.MapPost("/api/admin/locks/clear", (
+adminGroup.MapGet("/accounts", (AdminService admin) =>
+{
+    return Results.Ok(admin.ListAccounts());
+});
+
+adminGroup.MapPost("/locks/clear", (
     AdminLockClearRequestDto request,
     AdminService admin) =>
 {
     return Results.Ok(admin.ClearLock(request));
 });
 
-app.MapPost("/api/admin/balance/waive-negative-premium", (
+adminGroup.MapPost("/balance/waive-negative-premium", (
     AdminBalanceWaiverRequestDto request,
     AdminService admin) =>
 {
     return Results.Ok(admin.WaiveNegativePremiumBalance(request));
 });
 
-app.MapPost("/api/admin/credits/grant", (
+adminGroup.MapPost("/credits/grant", (
     AdminCreditGrantRequestDto request,
     AdminService admin) =>
 {

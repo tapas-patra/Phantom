@@ -1,13 +1,13 @@
-using Microsoft.Data.Sqlite;
+using Npgsql;
 using Phantom.WindowsApp.Backend.Domain;
 
 namespace Phantom.WindowsApp.Backend.Persistence;
 
 public sealed class AccountRepository
 {
-    private readonly SqliteBackendStore _store;
+    private readonly PostgresBackendStore _store;
 
-    public AccountRepository(SqliteBackendStore store)
+    public AccountRepository(PostgresBackendStore store)
     {
         _store = store;
     }
@@ -16,8 +16,8 @@ public sealed class AccountRepository
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM desktop_accounts WHERE user_id = $userId LIMIT 1;";
-        command.Parameters.AddWithValue("$userId", userId);
+        command.CommandText = "SELECT * FROM desktop_accounts WHERE user_id = @userId LIMIT 1;";
+        command.Parameters.AddWithValue("userId", userId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
     }
@@ -26,10 +26,25 @@ public sealed class AccountRepository
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM desktop_accounts WHERE lower(email) = lower($email) LIMIT 1;";
-        command.Parameters.AddWithValue("$email", email);
+        command.CommandText = "SELECT * FROM desktop_accounts WHERE lower(email) = lower(@email) LIMIT 1;";
+        command.Parameters.AddWithValue("email", email);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
+    }
+
+    public List<DesktopAccountRecord> ListAll()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM desktop_accounts ORDER BY email ASC;";
+        using var reader = command.ExecuteReader();
+        var items = new List<DesktopAccountRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
     }
 
     public void Save(DesktopAccountRecord account)
@@ -42,57 +57,56 @@ INSERT INTO desktop_accounts (
     premium_negative_credits, lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
     created_at_utc, updated_at_utc
 ) VALUES (
-    $userId, $email, $passwordHash, $phoneVerified, $proCredits, $premiumCredits,
-    $premiumNegative, $leaseExpiresAt, $offlineModeEnabled, $lastValidatedAt, $createdAt, $updatedAt
+    @userId, @email, @passwordHash, @phoneVerified, @proCredits, @premiumCredits,
+    @premiumNegative, @leaseExpiresAt, @offlineModeEnabled, @lastValidatedAt, @createdAt, @updatedAt
 )
 ON CONFLICT(user_id) DO UPDATE SET
-    email = excluded.email,
-    password_hash = excluded.password_hash,
-    phone_verified = excluded.phone_verified,
-    pro_available_credits = excluded.pro_available_credits,
-    premium_available_credits = excluded.premium_available_credits,
-    premium_negative_credits = excluded.premium_negative_credits,
-    lease_expires_at_utc = excluded.lease_expires_at_utc,
-    offline_mode_enabled = excluded.offline_mode_enabled,
-    last_validated_at_utc = excluded.last_validated_at_utc,
-    updated_at_utc = excluded.updated_at_utc;
-";
+    email = EXCLUDED.email,
+    password_hash = EXCLUDED.password_hash,
+    phone_verified = EXCLUDED.phone_verified,
+    pro_available_credits = EXCLUDED.pro_available_credits,
+    premium_available_credits = EXCLUDED.premium_available_credits,
+    premium_negative_credits = EXCLUDED.premium_negative_credits,
+    lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
+    offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+    last_validated_at_utc = EXCLUDED.last_validated_at_utc,
+    updated_at_utc = EXCLUDED.updated_at_utc;";
         Bind(command, account);
         command.ExecuteNonQuery();
     }
 
-    private static void Bind(SqliteCommand command, DesktopAccountRecord account)
+    private static void Bind(NpgsqlCommand command, DesktopAccountRecord account)
     {
-        command.Parameters.AddWithValue("$userId", account.UserId);
-        command.Parameters.AddWithValue("$email", account.Email);
-        command.Parameters.AddWithValue("$passwordHash", account.PasswordHash);
-        command.Parameters.AddWithValue("$phoneVerified", account.PhoneVerified ? 1 : 0);
-        command.Parameters.AddWithValue("$proCredits", account.ProAvailableCredits.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("$premiumCredits", account.PremiumAvailableCredits.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("$premiumNegative", account.PremiumNegativeCredits.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("$leaseExpiresAt", account.LeaseExpiresAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$offlineModeEnabled", account.OfflineModeEnabled ? 1 : 0);
-        command.Parameters.AddWithValue("$lastValidatedAt", account.LastValidatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$createdAt", account.CreatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$updatedAt", account.UpdatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("userId", account.UserId);
+        command.Parameters.AddWithValue("email", account.Email);
+        command.Parameters.AddWithValue("passwordHash", account.PasswordHash);
+        command.Parameters.AddWithValue("phoneVerified", account.PhoneVerified);
+        command.Parameters.AddWithValue("proCredits", account.ProAvailableCredits);
+        command.Parameters.AddWithValue("premiumCredits", account.PremiumAvailableCredits);
+        command.Parameters.AddWithValue("premiumNegative", account.PremiumNegativeCredits);
+        command.Parameters.AddWithValue("leaseExpiresAt", account.LeaseExpiresAtUtc);
+        command.Parameters.AddWithValue("offlineModeEnabled", account.OfflineModeEnabled);
+        command.Parameters.AddWithValue("lastValidatedAt", account.LastValidatedAtUtc);
+        command.Parameters.AddWithValue("createdAt", account.CreatedAtUtc);
+        command.Parameters.AddWithValue("updatedAt", account.UpdatedAtUtc);
     }
 
-    private static DesktopAccountRecord Map(SqliteDataReader reader)
+    private static DesktopAccountRecord Map(NpgsqlDataReader reader)
     {
         return new DesktopAccountRecord
         {
             UserId = reader.GetString(reader.GetOrdinal("user_id")),
             Email = reader.GetString(reader.GetOrdinal("email")),
             PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
-            PhoneVerified = reader.GetInt32(reader.GetOrdinal("phone_verified")) == 1,
-            ProAvailableCredits = decimal.Parse(reader.GetString(reader.GetOrdinal("pro_available_credits")), System.Globalization.CultureInfo.InvariantCulture),
-            PremiumAvailableCredits = decimal.Parse(reader.GetString(reader.GetOrdinal("premium_available_credits")), System.Globalization.CultureInfo.InvariantCulture),
-            PremiumNegativeCredits = decimal.Parse(reader.GetString(reader.GetOrdinal("premium_negative_credits")), System.Globalization.CultureInfo.InvariantCulture),
-            LeaseExpiresAtUtc = DateTime.Parse(reader.GetString(reader.GetOrdinal("lease_expires_at_utc")), null, System.Globalization.DateTimeStyles.RoundtripKind),
-            OfflineModeEnabled = reader.GetInt32(reader.GetOrdinal("offline_mode_enabled")) == 1,
-            LastValidatedAtUtc = DateTime.Parse(reader.GetString(reader.GetOrdinal("last_validated_at_utc")), null, System.Globalization.DateTimeStyles.RoundtripKind),
-            CreatedAtUtc = DateTime.Parse(reader.GetString(reader.GetOrdinal("created_at_utc")), null, System.Globalization.DateTimeStyles.RoundtripKind),
-            UpdatedAtUtc = DateTime.Parse(reader.GetString(reader.GetOrdinal("updated_at_utc")), null, System.Globalization.DateTimeStyles.RoundtripKind)
+            PhoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
+            ProAvailableCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits")),
+            PremiumAvailableCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits")),
+            PremiumNegativeCredits = reader.GetDecimal(reader.GetOrdinal("premium_negative_credits")),
+            LeaseExpiresAtUtc = reader.GetDateTime(reader.GetOrdinal("lease_expires_at_utc")),
+            OfflineModeEnabled = reader.GetBoolean(reader.GetOrdinal("offline_mode_enabled")),
+            LastValidatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_validated_at_utc")),
+            CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+            UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
         };
     }
 }

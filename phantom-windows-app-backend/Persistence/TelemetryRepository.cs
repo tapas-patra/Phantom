@@ -1,13 +1,13 @@
-using Microsoft.Data.Sqlite;
+using Npgsql;
 using Phantom.WindowsApp.Backend.Domain;
 
 namespace Phantom.WindowsApp.Backend.Persistence;
 
 public sealed class TelemetryRepository
 {
-    private readonly SqliteBackendStore _store;
+    private readonly PostgresBackendStore _store;
 
-    public TelemetryRepository(SqliteBackendStore store)
+    public TelemetryRepository(PostgresBackendStore store)
     {
         _store = store;
     }
@@ -20,13 +20,13 @@ public sealed class TelemetryRepository
 INSERT INTO telemetry_events (
     event_id, category, event_name, payload_json, created_at_utc
 ) VALUES (
-    $eventId, $category, $eventName, $payloadJson, $createdAtUtc
+    @eventId, @category, @eventName, CAST(@payloadJson AS jsonb), @createdAtUtc
 );";
-        command.Parameters.AddWithValue("$eventId", record.EventId);
-        command.Parameters.AddWithValue("$category", record.Category);
-        command.Parameters.AddWithValue("$eventName", record.EventName);
-        command.Parameters.AddWithValue("$payloadJson", record.PayloadJson);
-        command.Parameters.AddWithValue("$createdAtUtc", record.CreatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("eventId", record.EventId);
+        command.Parameters.AddWithValue("category", record.Category);
+        command.Parameters.AddWithValue("eventName", record.EventName);
+        command.Parameters.AddWithValue("payloadJson", record.PayloadJson);
+        command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
         command.ExecuteNonQuery();
     }
 }

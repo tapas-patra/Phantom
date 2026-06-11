@@ -41,20 +41,20 @@ public sealed class UsageReconciliationService
         var appliedCredits = 0m;
         var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
 
-        if (!isFreeTier && account.ProAvailableCredits > 0m)
-        {
-            var fromPro = Math.Min(account.ProAvailableCredits, remainingCharge);
-            account.ProAvailableCredits -= fromPro;
-            remainingCharge -= fromPro;
-            appliedCredits += fromPro;
-        }
-
         if (remainingCharge > 0m && account.PremiumAvailableCredits > 0m)
         {
             var fromPremium = Math.Min(account.PremiumAvailableCredits, remainingCharge);
             account.PremiumAvailableCredits -= fromPremium;
             remainingCharge -= fromPremium;
             appliedCredits += fromPremium;
+        }
+
+        if (!isFreeTier && remainingCharge > 0m && account.ProAvailableCredits > 0m)
+        {
+            var fromPro = Math.Min(account.ProAvailableCredits, remainingCharge);
+            account.ProAvailableCredits -= fromPro;
+            remainingCharge -= fromPro;
+            appliedCredits += fromPro;
         }
 
         var addedDebt = !isFreeTier && remainingCharge > 0m ? remainingCharge : 0m;

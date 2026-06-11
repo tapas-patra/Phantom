@@ -141,7 +141,9 @@ namespace SecureOverlay
             // Rotation settings
             AutoSwitchKeysCheckBox.IsChecked = _settings.AutoSwitchKeysOnError;
             AutoSwitchModelsCheckBox.IsChecked = _settings.AutoSwitchModelsOnError;
-            SessionContinuationCheckBox.IsChecked = _settings.AllowFreeTrialSessionExtension;
+            SessionContinuationCheckBox.IsChecked = IsFreeTrialAccount()
+                ? _settings.AllowFreeTrialSessionExtension
+                : _settings.AllowByoSessionExtension;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
             
@@ -690,6 +692,7 @@ namespace SecureOverlay
                 _settings.AutoSwitchKeysOnError = AutoSwitchKeysCheckBox.IsChecked == true;
                 _settings.AutoSwitchModelsOnError = AutoSwitchModelsCheckBox.IsChecked == true;
                 _settings.AllowFreeTrialSessionExtension = IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
+                _settings.AllowByoSessionExtension = !IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 
@@ -801,12 +804,14 @@ namespace SecureOverlay
 
         private void ApplyAccountTierRestrictions()
         {
-            var isPremium = IsPremiumAccount();
+            var isPremium = HasPremiumManagedEntitlement();
             var isFreeTrial = IsFreeTrialAccount();
-            var isByo = IsByoAccount();
+            var isByo = HasByoEntitlement();
             PremiumManagedNotice.Visibility = isPremium ? Visibility.Visible : Visibility.Collapsed;
             FreeTrialNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
-            SessionContinuationNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
+            SessionContinuationNotice.Visibility = (isFreeTrial || (!isFreeTrial && (isPremium || isByo)))
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
 
             if (isFreeTrial)
@@ -818,6 +823,15 @@ namespace SecureOverlay
                     "Allow this interview to continue into the next free-trial 15-minute block";
                 SessionContinuationCheckBox.IsChecked = _settings.AllowFreeTrialSessionExtension;
             }
+            else
+            {
+                SessionContinuationTitle.Text = "Paid Session Extension";
+                SessionContinuationDescription.Text =
+                    "Premium is consumed first. If Premium is depleted and BYO is available, Phantom falls back to BYO. This setting only matters if the interview would continue after all available paid credits are exhausted.";
+                SessionContinuationCheckBox.Content =
+                    "Allow this interview to continue after available paid credits are exhausted";
+                SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;
+            }
 
             UpdatePanelVisibility();
         }
@@ -825,6 +839,13 @@ namespace SecureOverlay
         private bool IsPremiumAccount()
         {
             return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool HasPremiumManagedEntitlement()
+        {
+            return !IsFreeTrialAccount()
+                && (((_accountSnapshot?.PremiumAvailableCredits ?? 0m) > 0m)
+                    || string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase));
         }
 
         private bool IsFreeTrialAccount()
@@ -837,15 +858,16 @@ namespace SecureOverlay
             return string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool HasByoEntitlement()
+        {
+            return !IsFreeTrialAccount()
+                && (((_accountSnapshot?.ProAvailableCredits ?? 0m) > 0m)
+                    || string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase));
+        }
+
         private bool CanAddProviderKey(ObservableCollection<ApiKeyItem> providerKeys, string providerName)
         {
-            if (IsPremiumAccount())
-            {
-                InvisibleMessageBox.Show("Premium accounts do not expose BYO provider configuration.", "Premium Managed AI");
-                return false;
-            }
-
-            if (!IsByoAccount())
+            if (!HasByoEntitlement())
             {
                 InvisibleMessageBox.Show("Upgrade to Pro BYO to configure provider keys and models.", "Free Trial");
                 return false;
@@ -884,7 +906,7 @@ namespace SecureOverlay
 
         private void ValidateByoProviderLimits()
         {
-            if (!IsByoAccount())
+            if (!HasByoEntitlement())
             {
                 return;
             }

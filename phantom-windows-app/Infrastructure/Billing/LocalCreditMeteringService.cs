@@ -188,6 +188,11 @@ namespace SecureOverlay.Infrastructure.Billing
 
         private static CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
+            if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits >= CreditsPerBlock)
+            {
+                return CreditLedgerType.Premium;
+            }
+
             if (snapshot.ProAvailableCredits >= CreditsPerBlock)
             {
                 return CreditLedgerType.Pro;

@@ -436,7 +436,7 @@ namespace SecureOverlay
         {
             ProviderSelectorBorder.Visibility = Visibility.Visible;
             ModelSelectorBorder.Visibility = Visibility.Visible;
-            if (!IsByoAccount())
+            if (!HasByoEntitlement())
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
@@ -457,7 +457,14 @@ namespace SecureOverlay
                 return;
             }
 
-            if (IsPremiumAccount())
+            if (HasPremiumManagedEntitlement() && HasByoEntitlement())
+            {
+                CreditIndicatorText.Text =
+                    $"Premium -> BYO | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | BYO {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                return;
+            }
+
+            if (HasPremiumManagedEntitlement())
             {
                 CreditIndicatorText.Text =
                     $"Premium | Credits {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
@@ -505,17 +512,34 @@ namespace SecureOverlay
 
         private bool IsSessionExtensionEnabledForCurrentTier()
         {
-            return !IsFreeTrialAccount() || _settings.AllowFreeTrialSessionExtension;
+            if (IsFreeTrialAccount())
+            {
+                return _settings.AllowFreeTrialSessionExtension;
+            }
+
+            if (HasPaidCreditExhaustionGate())
+            {
+                return _settings.AllowByoSessionExtension;
+            }
+
+            return true;
         }
 
         private bool ShouldFinalizeAtCurrentBoundary(InterviewSessionRecord session)
         {
-            if (!IsFreeTrialAccount() || IsSessionExtensionEnabledForCurrentTier())
+            if (IsFreeTrialAccount())
+            {
+                return !IsSessionExtensionEnabledForCurrentTier()
+                    && DateTime.UtcNow - session.StartedAtUtc >= TimeSpan.FromMinutes(15);
+            }
+
+            if (!HasPaidCreditExhaustionGate() || IsSessionExtensionEnabledForCurrentTier())
             {
                 return false;
             }
 
-            return DateTime.UtcNow - session.StartedAtUtc >= TimeSpan.FromMinutes(15);
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(DateTime.UtcNow - session.StartedAtUtc);
+            return projectedCharge > GetTotalPaidCreditsAvailable();
         }
 
         private void FinalizeActiveInterviewSessionAtBoundary()
@@ -554,14 +578,16 @@ namespace SecureOverlay
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
-                _sessionExtensionOptInRequired = IsFreeTrialAccount();
+                _sessionExtensionOptInRequired = IsFreeTrialAccount() || HasPaidCreditExhaustionGate();
 
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
 
-                const string title = "Free Trial Block Complete";
-                const string message = "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block.";
+                var title = IsFreeTrialAccount() ? "Free Trial Block Complete" : "Paid Credits Exhausted";
+                var message = IsFreeTrialAccount()
+                    ? "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block."
+                    : "The current interview has consumed the available paid credits. Enable paid session extension in Settings if you want the interview to continue beyond the available Premium and BYO credits.";
 
                 StatusText.Text = $"⚠️ {title}";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -603,9 +629,23 @@ namespace SecureOverlay
             return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool HasPremiumManagedEntitlement()
+        {
+            return !IsFreeTrialAccount()
+                && (((_accountSnapshot?.PremiumAvailableCredits ?? 0m) > 0m)
+                    || string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase));
+        }
+
         private bool IsByoAccount()
         {
             return string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool HasByoEntitlement()
+        {
+            return !IsFreeTrialAccount()
+                && (((_accountSnapshot?.ProAvailableCredits ?? 0m) > 0m)
+                    || string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase));
         }
 
         private bool IsFreeTrialAccount()
@@ -613,9 +653,74 @@ namespace SecureOverlay
             return string.Equals(_accountSnapshot?.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
         }
 
+        private decimal GetTotalPaidCreditsAvailable()
+        {
+            var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
+            var byoCredits = HasConfiguredByoKeysForProvider(_settings.SelectedAI)
+                ? (_accountSnapshot?.ProAvailableCredits ?? 0m)
+                : 0m;
+            return premiumCredits + byoCredits;
+        }
+
+        private bool HasPaidCreditExhaustionGate()
+        {
+            return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
+        }
+
+        private static bool IsManagedProvider(string provider)
+        {
+            return provider == AIModelRegistry.Providers.ChatGPT
+                || provider == AIModelRegistry.Providers.Claude
+                || provider == AIModelRegistry.Providers.Gemini
+                || provider == AIModelRegistry.Providers.Mistral;
+        }
+
+        private bool HasConfiguredByoKeysForProvider(string provider)
+        {
+            return _rotationManager != null && _rotationManager.GetTotalKeyCount(provider) > 0;
+        }
+
+        private bool PremiumCreditsCanStillCoverCurrentSession()
+        {
+            var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
+            if (premiumCredits <= 0m)
+            {
+                return false;
+            }
+
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null)
+            {
+                return true;
+            }
+
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(DateTime.UtcNow - activeSession.StartedAtUtc);
+            return projectedCharge <= premiumCredits;
+        }
+
+        private bool ShouldUseByoRuntimeForCurrentSelection(string provider)
+        {
+            if (IsFreeTrialAccount() || !HasByoEntitlement())
+            {
+                return false;
+            }
+
+            if (!IsManagedProvider(provider))
+            {
+                return true;
+            }
+
+            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return false;
+            }
+
+            return HasConfiguredByoKeysForProvider(provider);
+        }
+
         private string[] GetAvailableProvidersForCurrentTier()
         {
-            if (IsByoAccount())
+            if (HasByoEntitlement())
             {
                 return AIModelRegistry.GetAllProviders();
             }
@@ -631,7 +736,7 @@ namespace SecureOverlay
 
         private string[] GetAvailableModelsForSelectedProvider()
         {
-            if (IsByoAccount())
+            if (!IsManagedProvider(_settings.SelectedAI) || ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
             {
                 return AIModelRegistry.GetModelsForProvider(_settings.SelectedAI);
             }
@@ -821,9 +926,11 @@ namespace SecureOverlay
             }
             
             Log.WriteLine($"✓ Loading model from settings: {currentModel}");
+
+            var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
             
             // Create AI service with rotation
-            IAIService newAI = IsByoAccount()
+            IAIService newAI = useByoRuntime
                 ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, _rotationManager)
                 : new HostedManagedAiService(
                     _authSessionRepository,
@@ -907,9 +1014,9 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING API KEY INDICATOR");
 
-            if (!IsByoAccount())
+            if (!HasByoEntitlement() || !ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
             {
-                Log.WriteLine("  Non-BYO tier - hiding indicator");
+                Log.WriteLine("  Non-BYO runtime - hiding indicator");
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 return;
@@ -1095,9 +1202,10 @@ namespace SecureOverlay
 
             if (_sessionExtensionOptInRequired && !IsSessionExtensionEnabledForCurrentTier())
             {
-                const string blockedTitle = "Free Trial Extension Disabled";
-                const string blockedMessage =
-                    "Enable session extension in Settings if you want to consume the next 15-minute free-trial block in this interview.";
+                var blockedTitle = IsFreeTrialAccount() ? "Free Trial Extension Disabled" : "Paid Session Extension Disabled";
+                var blockedMessage = IsFreeTrialAccount()
+                    ? "Enable session extension in Settings if you want to consume the next 15-minute free-trial block in this interview."
+                    : "Enable paid session extension in Settings if you want this interview to continue after the available Premium and BYO credits are exhausted.";
                 Log.WriteLine($"Interview continuation blocked: {blockedTitle}");
                 StatusText.Text = $"⚠️ {blockedTitle}";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -1109,6 +1217,12 @@ namespace SecureOverlay
             if (_sessionExtensionOptInRequired && IsSessionExtensionEnabledForCurrentTier())
             {
                 _sessionExtensionOptInRequired = false;
+            }
+
+            RefreshAccountSnapshot();
+            if (ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI) != (_currentAI is not HostedManagedAiService))
+            {
+                InitializeAI();
             }
 
             var message = InputTextBox.Text.Trim();

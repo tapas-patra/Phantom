@@ -197,8 +197,11 @@ public sealed class ManagedAiService
 
     private static void EnsureManagedTier(DesktopAccountRecord account)
     {
-        if (!string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase))
+        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        var hasPremiumManagedLane = account.PremiumAvailableCredits > 0m
+            || string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+
+        if (!isFreeTier && !hasPremiumManagedLane)
         {
             throw new BackendValidationException("Managed AI is available only for Free and Premium tiers.");
         }

@@ -54,6 +54,13 @@ Default endpoints:
 Required env vars:
 - `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
 
+Recommended connection string form for Supabase:
+```bash
+PHANTOM_WINDOWS_BACKEND_DATABASE_URL="Host=db.your-project.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=YOUR_PASSWORD;SSL Mode=Require"
+```
+
+If you prefer URI form and the password contains `@`, encode it as `%40`.
+
 Recommended env vars:
 - `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_LEASE_HOURS`

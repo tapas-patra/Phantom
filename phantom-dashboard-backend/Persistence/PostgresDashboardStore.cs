@@ -97,8 +97,7 @@ public sealed class PostgresDashboardStore
                 Database = Uri.UnescapeDataString(databaseName),
                 Username = username,
                 Password = password,
-                SslMode = SslMode.Require,
-                TrustServerCertificate = false
+                SslMode = SslMode.Require
             }.ConnectionString;
         }
 

@@ -25,6 +25,11 @@ Environment:
 - falls back to `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
 - `PHANTOM_DASHBOARD_ADMIN_API_KEY`
 
+Recommended PostgreSQL connection string form:
+```bash
+PHANTOM_DASHBOARD_BACKEND_DATABASE_URL="Host=db.your-project.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=YOUR_PASSWORD;SSL Mode=Require"
+```
+
 Endpoints:
 - `GET /health`
 - `GET /api/dashboard/account-summary?email=...`

@@ -171,8 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
             Database = uri.AbsolutePath.Trim('/'),
             Username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : string.Empty,
             Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty,
-            SslMode = SslMode.Require,
-            TrustServerCertificate = false
+            SslMode = SslMode.Require
         };
 
         return builder.ConnectionString;
@@ -232,8 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
             Database = Uri.UnescapeDataString(databaseName),
             Username = username,
             Password = password,
-            SslMode = SslMode.Require,
-            TrustServerCertificate = false
+            SslMode = SslMode.Require
         };
 
         return builder.ConnectionString;

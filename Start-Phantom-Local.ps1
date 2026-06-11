@@ -113,7 +113,7 @@ $windowsAppCommand = @"
 `$env:PHANTOM_HOSTED_MODE = 'remote'
 `$env:PHANTOM_WINDOWS_BACKEND_BASE_URL = '$windowsBackendBaseUrl'
 `$env:PHANTOM_WEBSITE_BASE_URL = '$websiteBaseUrl'
-dotnet build ..\SecureOverlay.sln -c Debug
+dotnet build .\SecureOverlay.sln -c Debug
 & '.\bin\Debug\net8.0-windows\svchost-shell.exe'
 "@
 

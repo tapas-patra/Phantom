@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Microsoft.AspNetCore.WebUtilities;
 using Google.Apis.Auth.OAuth2.Flows;
+using Microsoft.AspNetCore.WebUtilities;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -58,7 +58,6 @@ public sealed class GoogleMailOAuthService
         }
 
         var redirectUri = ResolveRedirectUri(publicBackendBaseUrl);
-        var flow = BuildFlow();
         var stateToken = _tokenService.GenerateOpaqueToken();
         _states.Save(new OAuthPendingStateRecord
         {
@@ -68,21 +67,19 @@ public sealed class GoogleMailOAuthService
             CreatedAtUtc = DateTime.UtcNow
         });
 
-        var authorizationUrl = flow.CreateAuthorizationCodeRequest(redirectUri);
-        authorizationUrl.State = stateToken;
-        authorizationUrl.Scope = GmailSendScope;
-        var builtUrl = authorizationUrl.Build().ToString();
-        var uri = new Uri(builtUrl);
-        var query = QueryHelpers.ParseQuery(uri.Query)
-            .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
-        query["access_type"] = "offline";
-        query["prompt"] = "consent";
-        query["scope"] = GmailSendScope;
-        query["state"] = stateToken;
-
+        var clientSecrets = LoadClientSecrets();
         var finalAuthorizationUrl = QueryHelpers.AddQueryString(
-            uri.GetLeftPart(UriPartial.Path),
-            query);
+            "https://accounts.google.com/o/oauth2/v2/auth",
+            new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["client_id"] = clientSecrets.ClientId,
+                ["redirect_uri"] = redirectUri,
+                ["response_type"] = "code",
+                ["scope"] = GmailSendScope,
+                ["state"] = stateToken,
+                ["access_type"] = "offline",
+                ["prompt"] = "consent"
+            });
 
         return new GoogleMailOAuthStartResultDto
         {

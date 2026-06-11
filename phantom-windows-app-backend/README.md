@@ -28,7 +28,7 @@ Seed the three test users into the configured PostgreSQL database:
 dotnet run -- --seed-test-users
 ```
 
-You can also apply [db/seed-test-users.sql](/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/db/seed-test-users.sql) directly in Supabase SQL Editor.
+You can also apply [db/seed-test-users.sql](/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/db/seed-test-users.sql) directly in Supabase SQL Editor. It now includes `desktop_accounts` bootstrap and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` statements so it can upgrade older schemas before inserting users.
 
 Default endpoints:
 - `GET /health`

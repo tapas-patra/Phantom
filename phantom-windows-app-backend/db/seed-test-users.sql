@@ -1,3 +1,31 @@
+CREATE TABLE IF NOT EXISTS desktop_accounts (
+    user_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    access_tier TEXT NOT NULL DEFAULT 'free',
+    password_hash TEXT NOT NULL,
+    phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    pro_available_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    premium_available_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    premium_negative_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    lease_expires_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+    offline_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    last_validated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'free';
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS pro_available_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS premium_available_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS premium_negative_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS lease_expires_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours';
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS offline_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS last_validated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 INSERT INTO desktop_accounts (
     user_id,
     email,

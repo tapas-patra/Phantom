@@ -1426,6 +1426,14 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
         {localError && <p className="admin-error">{localError}</p>}
         {success && <p className="admin-success">{success}</p>}
 
+        <div className="admin-guidance">
+          <strong>Rotation model</strong>
+          <p>
+            Add one API key per save. To configure rotation or failover for the same provider, create multiple
+            rows with different labels and priorities. Lower priority numbers are preferred first.
+          </p>
+        </div>
+
         <form className="admin-form" onSubmit={handleSubmit}>
           <label>
             Provider
@@ -1443,7 +1451,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
             <input
               value={label}
               onChange={(event) => setLabel(event.target.value)}
-              placeholder="Primary lane / backup lane"
+              placeholder="Primary lane / backup lane / reserve lane"
             />
           </label>
 
@@ -1473,7 +1481,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
           </div>
 
           <button className="button button-primary" type="submit" disabled={submitting}>
-            {submitting ? "Saving..." : "Save Managed Credential"}
+            {submitting ? "Saving..." : "Add Managed Credential"}
           </button>
         </form>
       </article>
@@ -1487,6 +1495,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
               <th>Label</th>
               <th>Priority</th>
               <th>Status</th>
+              <th>Selection order</th>
               <th>Updated</th>
               <th>Action</th>
             </tr>
@@ -1494,7 +1503,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
           <tbody>
             {credentials.length === 0 ? (
               <tr>
-                <td colSpan="6">No managed credentials configured yet.</td>
+                <td colSpan="7">No managed credentials configured yet.</td>
               </tr>
             ) : (
               credentials.map((item) => (
@@ -1503,6 +1512,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
                   <td>{item.label}</td>
                   <td>{item.priority}</td>
                   <td>{item.isEnabled ? "Enabled" : "Disabled"}</td>
+                  <td>{item.priority === 0 ? "Primary candidate" : `Fallback after priority ${item.priority - 1}`}</td>
                   <td>{formatDate(item.updatedAtUtc)}</td>
                   <td>
                     <button className="table-action" type="button" onClick={() => handleDelete(item.credentialId)}>

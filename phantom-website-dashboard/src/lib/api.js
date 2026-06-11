@@ -10,11 +10,11 @@ const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
 async function request(baseUrl, path, init) {
   const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {})
-    },
-    ...init
+    }
   });
 
   if (!response.ok) {

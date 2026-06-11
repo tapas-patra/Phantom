@@ -29,8 +29,13 @@ public sealed class AccountStateService
         }
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var existing = _accounts.FindByEmail(normalizedEmail)
-            ?? throw new BackendValidationException("Account not found.");
+        var existing = _accounts.FindByEmail(normalizedEmail);
+        if (existing == null)
+        {
+            throw new BackendValidationException(request.UseMagicLink
+                ? "Account not found."
+                : "Invalid email or password.");
+        }
 
         if (!request.UseMagicLink)
         {
@@ -41,7 +46,7 @@ public sealed class AccountStateService
 
             if (!_passwordHasher.Verify(request.Password, existing.PasswordHash))
             {
-                throw new BackendValidationException("Invalid credentials.");
+                throw new BackendValidationException("Invalid email or password.");
             }
         }
 

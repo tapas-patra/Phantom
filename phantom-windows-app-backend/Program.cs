@@ -131,6 +131,11 @@ app.MapPost("/api/desktop/auth/login", (
         attempts.Record(email, ipAddress, succeeded: true);
         return Results.Ok(session);
     }
+    catch (BackendValidationException validationException)
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        return Results.BadRequest(new { error = validationException.Message });
+    }
     catch
     {
         attempts.Record(email, ipAddress, succeeded: false);

@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Text;
+using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 
 namespace SecureOverlay.Infrastructure.Hosted
@@ -32,8 +33,11 @@ namespace SecureOverlay.Infrastructure.Hosted
                 var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 if (!response.IsSuccessStatusCode)
                 {
+                    var errorMessage = TryExtractErrorMessage(body);
                     throw new HostedServiceException(
-                        $"Hosted request failed ({(int)response.StatusCode}) for {relativePath}: {body}");
+                        string.IsNullOrWhiteSpace(errorMessage)
+                            ? $"Hosted request failed ({(int)response.StatusCode}) for {relativePath}."
+                            : errorMessage);
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);
@@ -53,6 +57,24 @@ namespace SecureOverlay.Infrastructure.Hosted
                 throw new HostedServiceException(
                     $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
                     ex);
+            }
+        }
+
+        private static string? TryExtractErrorMessage(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+
+            try
+            {
+                var payload = JObject.Parse(body);
+                return payload["error"]?.Value<string>();
+            }
+            catch
+            {
+                return body;
             }
         }
     }

@@ -47,8 +47,11 @@ namespace SecureOverlay
             {
                 _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: false);
                 ApplyContext(_currentContext);
-                InlineStatusText.Text = "Completing password login and refreshing account validation...";
-                await AdvanceToEvaluatedStateAsync();
+                if (_currentContext.State == StartupGateState.CheckingAccount)
+                {
+                    InlineStatusText.Text = "Completing password login and refreshing account validation...";
+                    await AdvanceToEvaluatedStateAsync();
+                }
                 return;
             }
 

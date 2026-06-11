@@ -24,6 +24,7 @@ builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<LoginAttemptService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<AccountStateService>();
+builder.Services.AddSingleton<BootstrapAccountSeeder>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -45,6 +46,15 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
+{
+    using var scope = app.Services.CreateScope();
+    var seeded = scope.ServiceProvider.GetRequiredService<BootstrapAccountSeeder>()
+        .SeedDefaultTestUsers();
+    Console.WriteLine($"Seeded {seeded} test users into desktop_accounts.");
+    return;
+}
 
 app.UseExceptionHandler(exceptionApp =>
 {

@@ -12,7 +12,7 @@ Implemented:
 - telemetry ingestion API
 - admin inspection and support APIs protected by API key
 - background cleanup for expired sessions, locks, magic links, and stale login-attempt rows
-- seeded pricing-tier users for desktop testing
+- explicit database seeding path for test users
 
 Current project file:
 - `Phantom.WindowsApp.Backend.csproj`
@@ -22,6 +22,13 @@ Run from this folder on a machine with .NET 8:
 dotnet restore
 dotnet run
 ```
+
+Seed the three test users into the configured PostgreSQL database:
+```bash
+dotnet run -- --seed-test-users
+```
+
+You can also apply [db/seed-test-users.sql](/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/db/seed-test-users.sql) directly in Supabase SQL Editor.
 
 Default endpoints:
 - `GET /health`
@@ -68,7 +75,7 @@ Recommended env vars:
 
 Admin endpoints require the `X-Phantom-Admin-Key` header.
 
-Seeded desktop test users:
+Default test users after explicit seeding:
 - `free.user@phantom.app` / `PhantomFree123!`
 - `pro.user@phantom.app` / `PhantomPro123!`
 - `premium.user@phantom.app` / `PhantomPremium123!`

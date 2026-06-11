@@ -7,29 +7,18 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class AccountStateService
 {
-    private readonly BackendOptions _options;
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
     private readonly PasswordHasher _passwordHasher;
 
-    private static readonly SeedUser[] SeedUsers =
-    {
-        new("free.user@phantom.app", "PhantomFree123!", "free", 0m, 0m, true),
-        new("pro.user@phantom.app", "PhantomPro123!", "pro_byo", 5m, 0m, true),
-        new("premium.user@phantom.app", "PhantomPremium123!", "premium", 5m, 5m, true)
-    };
-
     public AccountStateService(
-        BackendOptions options,
         AccountRepository accounts,
         LockRepository locks,
         PasswordHasher passwordHasher)
     {
-        _options = options;
         _accounts = accounts;
         _locks = locks;
         _passwordHasher = passwordHasher;
-        EnsureSeededAccounts();
     }
 
     public DesktopAccountRecord GetForLogin(AuthLoginRequestDto request)
@@ -126,37 +115,4 @@ public sealed class AccountStateService
         account.LastValidatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);
     }
-
-    private void EnsureSeededAccounts()
-    {
-        foreach (var seed in SeedUsers)
-        {
-            var existing = _accounts.FindByEmail(seed.Email);
-
-            _accounts.Save(new DesktopAccountRecord
-            {
-                UserId = existing?.UserId ?? seed.Email,
-                Email = seed.Email,
-                AccessTier = seed.AccessTier,
-                PasswordHash = existing?.PasswordHash ?? _passwordHasher.Hash(seed.Password),
-                PhoneVerified = seed.PhoneVerified,
-                ProAvailableCredits = seed.ProCredits,
-                PremiumAvailableCredits = seed.PremiumCredits,
-                PremiumNegativeCredits = existing?.PremiumNegativeCredits ?? 0m,
-                LeaseExpiresAtUtc = existing?.LeaseExpiresAtUtc ?? DateTime.UtcNow.AddHours(_options.DefaultLeaseHours),
-                OfflineModeEnabled = existing?.OfflineModeEnabled ?? false,
-                LastValidatedAtUtc = DateTime.UtcNow,
-                CreatedAtUtc = existing?.CreatedAtUtc ?? DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            });
-        }
-    }
-
-    private sealed record SeedUser(
-        string Email,
-        string Password,
-        string AccessTier,
-        decimal ProCredits,
-        decimal PremiumCredits,
-        bool PhoneVerified);
 }

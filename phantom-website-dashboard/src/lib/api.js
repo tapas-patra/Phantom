@@ -6,8 +6,7 @@ const WINDOWS_BACKEND_API_BASE =
   import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
   "http://localhost:5057";
 
-const DASHBOARD_ADMIN_API_KEY =
-  import.meta.env.VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY || "";
+const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
 async function request(baseUrl, path, init) {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -24,15 +23,68 @@ async function request(baseUrl, path, init) {
       const payload = await response.json();
       if (payload?.error) {
         message = payload.error;
+      } else if (payload?.detail) {
+        message = payload.detail;
       }
     } catch {
-      // Ignore body parse failures.
+      // Ignore parse failures.
     }
 
     throw new Error(message);
   }
 
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+
   return response.json();
+}
+
+function getBrowserDeviceProfile() {
+  const existing = window.localStorage.getItem(BROWSER_DEVICE_STORAGE_KEY);
+  if (existing) {
+    return JSON.parse(existing);
+  }
+
+  const installId = `web-${crypto.randomUUID()}`;
+  const deviceProfile = {
+    appVersion: "phantom-website-dashboard",
+    installId,
+    deviceLabel: "Browser Dashboard",
+    deviceFingerprintHash: `browser-${installId}`,
+    secretFingerprintHint: "browser"
+  };
+
+  window.localStorage.setItem(BROWSER_DEVICE_STORAGE_KEY, JSON.stringify(deviceProfile));
+  return deviceProfile;
+}
+
+export async function loginAccount(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/login", {
+    method: "POST",
+    body: JSON.stringify({
+      ...getBrowserDeviceProfile(),
+      ...payload
+    })
+  });
+}
+
+export async function requestMagicLink(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/magic-link/request", {
+    method: "POST",
+    body: JSON.stringify({
+      ...getBrowserDeviceProfile(),
+      ...payload
+    })
+  });
+}
+
+export async function logoutAccount(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/logout", {
+    method: "POST",
+    body: JSON.stringify({ refreshToken })
+  });
 }
 
 export async function registerAccount(payload) {
@@ -54,25 +106,10 @@ export async function fetchAccountSummary(email) {
     return null;
   }
 
-  try {
-    return await request(
-      DASHBOARD_API_BASE,
-      `/api/dashboard/account-summary?email=${encodeURIComponent(email)}`
-    );
-  } catch {
-    return {
-      userId: email,
-      email,
-      planLabel: email.startsWith("premium") ? "Premium" : email.startsWith("pro") ? "Pro BYO" : "Free",
-      phoneVerified: true,
-      proAvailableCredits: email.startsWith("free") ? 0 : 5,
-      premiumAvailableCredits: email.startsWith("premium") ? 5 : 0,
-      premiumNegativeCredits: 0,
-      leaseExpiresAtUtc: new Date(Date.now() + 18 * 60 * 60 * 1000).toISOString(),
-      activeDeviceCount: email.startsWith("premium") ? 3 : 1,
-      lastActivityAtUtc: new Date().toISOString()
-    };
-  }
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/account-summary?email=${encodeURIComponent(email)}`
+  );
 }
 
 export async function fetchWalletHistory(userId) {
@@ -80,31 +117,10 @@ export async function fetchWalletHistory(userId) {
     return [];
   }
 
-  try {
-    return await request(
-      DASHBOARD_API_BASE,
-      `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
-    );
-  } catch {
-    return [
-      {
-        ledgerEntryId: "demo-ledger-1",
-        sessionId: "interview-2026-001",
-        chargedCredits: 0.5,
-        chargedBlocks: 2,
-        addedPremiumDebt: 0,
-        createdAtUtc: new Date().toISOString()
-      },
-      {
-        ledgerEntryId: "demo-ledger-2",
-        sessionId: "interview-2026-002",
-        chargedCredits: 1,
-        chargedBlocks: 4,
-        addedPremiumDebt: 0,
-        createdAtUtc: new Date(Date.now() - 86400000).toISOString()
-      }
-    ];
-  }
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 export async function fetchDevices(userId) {
@@ -112,22 +128,10 @@ export async function fetchDevices(userId) {
     return [];
   }
 
-  try {
-    return await request(
-      DASHBOARD_API_BASE,
-      `/api/dashboard/devices?userId=${encodeURIComponent(userId)}`
-    );
-  } catch {
-    return [
-      {
-        deviceInstallId: "device-alpha",
-        deviceFingerprintHash: "fp-live-01",
-        lastAuthenticatedAtUtc: new Date().toISOString(),
-        authMethod: "password",
-        isActive: true
-      }
-    ];
-  }
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/devices?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 export async function fetchDownloadEntitlement(userId) {
@@ -135,20 +139,10 @@ export async function fetchDownloadEntitlement(userId) {
     return null;
   }
 
-  try {
-    return await request(
-      DASHBOARD_API_BASE,
-      `/api/dashboard/download-entitlement?userId=${encodeURIComponent(userId)}`
-    );
-  } catch {
-    return {
-      canDownload: true,
-      installerLabel: "Phantom Desktop for Windows",
-      installerVersion: "0.9.0-preview",
-      installerUrl: "#download",
-      releaseChannel: "Hosted Preview"
-    };
-  }
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/download-entitlement?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 export async function fetchSupportOverview(userId) {
@@ -156,44 +150,47 @@ export async function fetchSupportOverview(userId) {
     return null;
   }
 
-  try {
-    return await request(
-      DASHBOARD_API_BASE,
-      `/api/dashboard/support/preview?userId=${encodeURIComponent(userId)}`
-    );
-  } catch {
-    return {
-      openLockSessionId: "session-alpha",
-      lastUsageChargeCredits: 0.5,
-      offlineLeaseHoursRemaining: 18,
-      supportMessage: "Support tools become live when dashboard backend admin keys and payment events are connected."
-    };
-  }
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/support/preview?userId=${encodeURIComponent(userId)}`
+  );
 }
 
-export async function fetchManagedAiAdminInventory() {
-  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
+export async function fetchAdminOverview(adminApiKey) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
     headers: {
-      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+      "X-Phantom-Admin-Key": adminApiKey
     }
   });
 }
 
-export async function upsertManagedAiCredential(payload) {
+export async function fetchManagedAiAdminInventory(adminApiKey) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
+    headers: {
+      "X-Phantom-Admin-Key": adminApiKey
+    }
+  });
+}
+
+export async function upsertManagedAiCredential(adminApiKey, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",
     headers: {
-      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+      "X-Phantom-Admin-Key": adminApiKey
     },
     body: JSON.stringify(payload)
   });
 }
 
-export async function deleteManagedAiCredential(credentialId) {
-  return request(DASHBOARD_API_BASE, `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`, {
-    method: "DELETE",
-    headers: {
-      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+export async function deleteManagedAiCredential(adminApiKey, credentialId) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        "X-Phantom-Admin-Key": adminApiKey
+      }
     }
-  });
+  );
 }

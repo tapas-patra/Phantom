@@ -48,6 +48,8 @@ namespace SecureOverlay.Services
         // Rotation settings
         public bool AutoSwitchKeysOnError { get; set; } = true;
         public bool AutoSwitchModelsOnError { get; set; } = true;
+        public bool AllowByoSessionExtension { get; set; } = false;
+        public bool AllowFreeTrialSessionExtension { get; set; } = false;
         
         // Rotation state (persisted)
         public APIRotationState RotationState { get; set; } = new APIRotationState();

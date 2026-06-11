@@ -108,6 +108,8 @@ namespace SecureOverlay
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
         private AccountCacheSnapshot? _accountSnapshot;
+        private bool _sessionExtensionOptInRequired;
+        private bool _isBoundaryFinalizationInProgress;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -486,6 +488,12 @@ namespace SecureOverlay
                 return;
             }
 
+            if (ShouldFinalizeAtCurrentBoundary(activeSession))
+            {
+                FinalizeActiveInterviewSessionAtBoundary();
+                return;
+            }
+
             var elapsed = DateTime.UtcNow - activeSession.StartedAtUtc;
             var blocks = Math.Max(1, (int)Math.Ceiling(elapsed.TotalMinutes / 15d));
             var projectedCharge = blocks * 0.25m;
@@ -493,6 +501,103 @@ namespace SecureOverlay
             SessionTimerBorder.Visibility = Visibility.Visible;
             SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
             SessionStatusText.Text = $"Live | {blocks} block{(blocks == 1 ? string.Empty : "s")} | {projectedCharge:0.##} cr";
+        }
+
+        private bool IsSessionExtensionEnabledForCurrentTier()
+        {
+            if (IsFreeTrialAccount())
+            {
+                return _settings.AllowFreeTrialSessionExtension;
+            }
+
+            if (IsByoAccount())
+            {
+                return _settings.AllowByoSessionExtension;
+            }
+
+            return true;
+        }
+
+        private bool ShouldFinalizeAtCurrentBoundary(InterviewSessionRecord session)
+        {
+            if ((!IsFreeTrialAccount() && !IsByoAccount()) || IsSessionExtensionEnabledForCurrentTier())
+            {
+                return false;
+            }
+
+            return DateTime.UtcNow - session.StartedAtUtc >= TimeSpan.FromMinutes(15);
+        }
+
+        private void FinalizeActiveInterviewSessionAtBoundary()
+        {
+            if (_isBoundaryFinalizationInProgress)
+            {
+                return;
+            }
+
+            _isBoundaryFinalizationInProgress = true;
+            try
+            {
+                if (_isProcessingRequest && _currentRequestCancellation != null)
+                {
+                    Log.WriteLine("Boundary reached during active response - cancelling in-flight request");
+                    _currentRequestCancellation.Cancel();
+                }
+
+                var completion = _creditMeteringService.FinalizeActiveSession();
+                if (completion == null)
+                {
+                    return;
+                }
+
+                _usageReconciliationService.Enqueue(new UsageReconciliationPayload
+                {
+                    UserId = completion.UserId,
+                    SessionId = completion.SessionId,
+                    StartedAtUtc = completion.StartedAtUtc,
+                    EndedAtUtc = completion.EndedAtUtc,
+                    ChargedCredits = completion.ChargedCredits,
+                    ChargedBlocks = completion.ChargedBlocks,
+                    PremiumDebtAdded = completion.PremiumDebtAdded
+                });
+                var reconciliationFlush = _usageReconciliationService.FlushPending();
+                _interviewLockService.MarkLockReleased();
+                _interviewLockHeartbeatTimer?.Stop();
+                _interviewLockHeartbeatTimer = null;
+                _sessionExtensionOptInRequired = IsFreeTrialAccount() || IsByoAccount();
+
+                RefreshAccountSnapshot();
+                UpdateCreditIndicator();
+                UpdateSessionStatus();
+
+                var title = IsFreeTrialAccount() ? "Free Trial Block Complete" : "Session Extension Required";
+                var message = IsFreeTrialAccount()
+                    ? "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block."
+                    : "The first 15-minute billed block has ended. Enable session extension in Settings if you want this interview to continue into more billed blocks.";
+
+                StatusText.Text = $"⚠️ {title}";
+                StatusIndicator.Fill = Brushes.Orange;
+                AddToChat($"⚠️ **{title}**\n\n{message}", false);
+
+                Log.WriteLine(
+                    $"Boundary finalization complete: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
+                    $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
+                Log.WriteLine(
+                    $"Boundary usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
+                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                LogUsageQueueSnapshot();
+                _telemetryService.Track("billing", "interview_session_boundary_finalized", new Dictionary<string, string>
+                {
+                    ["session_id"] = completion.SessionId,
+                    ["charged_credits"] = completion.ChargedCredits.ToString("0.##"),
+                    ["charged_blocks"] = completion.ChargedBlocks.ToString(),
+                    ["tier"] = _accountSnapshot?.AccessTier ?? "unknown"
+                });
+            }
+            finally
+            {
+                _isBoundaryFinalizationInProgress = false;
+            }
         }
 
         private static string GetTierLabel(string? accessTier)
@@ -992,6 +1097,33 @@ namespace SecureOverlay
                 return;
             }
 
+            var activeSessionBeforeSend = _creditMeteringService.GetActiveSession();
+            if (activeSessionBeforeSend != null && ShouldFinalizeAtCurrentBoundary(activeSessionBeforeSend))
+            {
+                FinalizeActiveInterviewSessionAtBoundary();
+                FocusInput();
+                return;
+            }
+
+            if (_sessionExtensionOptInRequired && !IsSessionExtensionEnabledForCurrentTier())
+            {
+                var blockedTitle = IsFreeTrialAccount() ? "Free Trial Extension Disabled" : "Session Extension Disabled";
+                var blockedMessage = IsFreeTrialAccount()
+                    ? "Enable session extension in Settings if you want to consume the next 15-minute free-trial block in this interview."
+                    : "Enable session extension in Settings if you want this interview to continue into another billed 15-minute block.";
+                Log.WriteLine($"Interview continuation blocked: {blockedTitle}");
+                StatusText.Text = $"⚠️ {blockedTitle}";
+                StatusIndicator.Fill = Brushes.Orange;
+                AddToChat($"⚠️ **{blockedTitle}**\n\n{blockedMessage}", false);
+                FocusInput();
+                return;
+            }
+
+            if (_sessionExtensionOptInRequired && IsSessionExtensionEnabledForCurrentTier())
+            {
+                _sessionExtensionOptInRequired = false;
+            }
+
             var message = InputTextBox.Text.Trim();
             
             if (string.IsNullOrEmpty(message) || message == "Ask me anything...") 
@@ -1055,6 +1187,7 @@ namespace SecureOverlay
                 Log.WriteLine($"{meteringActivation.Title}: {meteringActivation.Message}");
                 StatusText.Text = $"✓ {meteringActivation.Title}";
                 StatusIndicator.Fill = Brushes.LightGreen;
+                _sessionExtensionOptInRequired = false;
                 _telemetryService.Track("billing", "interview_session_activated", new Dictionary<string, string>
                 {
                     ["started_new"] = meteringActivation.StartedNewSession.ToString(),

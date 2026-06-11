@@ -73,6 +73,22 @@
                             </StackPanel>
                         </Border>
 
+                        <Border x:Name="SessionContinuationNotice" Background="#303C5060" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#9071D9D7" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock x:Name="SessionContinuationTitle" Text="Session Extension"
+                                          FontSize="14" FontWeight="Bold" Foreground="White"
+                                          Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="SessionContinuationDescription"
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0"
+                                          Margin="0,8,0,10" Effect="{StaticResource Shadow}"/>
+                                <CheckBox x:Name="SessionContinuationCheckBox"
+                                         Content="Allow session extension beyond the first 15-minute block"
+                                         Foreground="White" FontSize="13"/>
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 

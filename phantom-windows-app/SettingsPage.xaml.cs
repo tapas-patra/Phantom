@@ -141,9 +141,7 @@ namespace SecureOverlay
             // Rotation settings
             AutoSwitchKeysCheckBox.IsChecked = _settings.AutoSwitchKeysOnError;
             AutoSwitchModelsCheckBox.IsChecked = _settings.AutoSwitchModelsOnError;
-            SessionContinuationCheckBox.IsChecked = IsFreeTrialAccount()
-                ? _settings.AllowFreeTrialSessionExtension
-                : _settings.AllowByoSessionExtension;
+            SessionContinuationCheckBox.IsChecked = _settings.AllowFreeTrialSessionExtension;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
             
@@ -691,7 +689,6 @@ namespace SecureOverlay
                 // Save rotation settings
                 _settings.AutoSwitchKeysOnError = AutoSwitchKeysCheckBox.IsChecked == true;
                 _settings.AutoSwitchModelsOnError = AutoSwitchModelsCheckBox.IsChecked == true;
-                _settings.AllowByoSessionExtension = IsByoAccount() && SessionContinuationCheckBox.IsChecked == true;
                 _settings.AllowFreeTrialSessionExtension = IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
@@ -809,7 +806,7 @@ namespace SecureOverlay
             var isByo = IsByoAccount();
             PremiumManagedNotice.Visibility = isPremium ? Visibility.Visible : Visibility.Collapsed;
             FreeTrialNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
-            SessionContinuationNotice.Visibility = (isFreeTrial || isByo) ? Visibility.Visible : Visibility.Collapsed;
+            SessionContinuationNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
 
             if (isFreeTrial)
@@ -820,15 +817,6 @@ namespace SecureOverlay
                 SessionContinuationCheckBox.Content =
                     "Allow this interview to continue into the next free-trial 15-minute block";
                 SessionContinuationCheckBox.IsChecked = _settings.AllowFreeTrialSessionExtension;
-            }
-            else if (isByo)
-            {
-                SessionContinuationTitle.Text = "BYO Session Extension";
-                SessionContinuationDescription.Text =
-                    "Phantom can stop the current interview at the first 15-minute block, or continue into additional billed blocks only when you explicitly allow it.";
-                SessionContinuationCheckBox.Content =
-                    "Allow this interview to continue into additional billed 15-minute blocks";
-                SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;
             }
 
             UpdatePanelVisibility();

@@ -505,22 +505,12 @@ namespace SecureOverlay
 
         private bool IsSessionExtensionEnabledForCurrentTier()
         {
-            if (IsFreeTrialAccount())
-            {
-                return _settings.AllowFreeTrialSessionExtension;
-            }
-
-            if (IsByoAccount())
-            {
-                return _settings.AllowByoSessionExtension;
-            }
-
-            return true;
+            return !IsFreeTrialAccount() || _settings.AllowFreeTrialSessionExtension;
         }
 
         private bool ShouldFinalizeAtCurrentBoundary(InterviewSessionRecord session)
         {
-            if ((!IsFreeTrialAccount() && !IsByoAccount()) || IsSessionExtensionEnabledForCurrentTier())
+            if (!IsFreeTrialAccount() || IsSessionExtensionEnabledForCurrentTier())
             {
                 return false;
             }
@@ -564,16 +554,14 @@ namespace SecureOverlay
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
-                _sessionExtensionOptInRequired = IsFreeTrialAccount() || IsByoAccount();
+                _sessionExtensionOptInRequired = IsFreeTrialAccount();
 
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
 
-                var title = IsFreeTrialAccount() ? "Free Trial Block Complete" : "Session Extension Required";
-                var message = IsFreeTrialAccount()
-                    ? "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block."
-                    : "The first 15-minute billed block has ended. Enable session extension in Settings if you want this interview to continue into more billed blocks.";
+                const string title = "Free Trial Block Complete";
+                const string message = "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block.";
 
                 StatusText.Text = $"⚠️ {title}";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -1107,10 +1095,9 @@ namespace SecureOverlay
 
             if (_sessionExtensionOptInRequired && !IsSessionExtensionEnabledForCurrentTier())
             {
-                var blockedTitle = IsFreeTrialAccount() ? "Free Trial Extension Disabled" : "Session Extension Disabled";
-                var blockedMessage = IsFreeTrialAccount()
-                    ? "Enable session extension in Settings if you want to consume the next 15-minute free-trial block in this interview."
-                    : "Enable session extension in Settings if you want this interview to continue into another billed 15-minute block.";
+                const string blockedTitle = "Free Trial Extension Disabled";
+                const string blockedMessage =
+                    "Enable session extension in Settings if you want to consume the next 15-minute free-trial block in this interview.";
                 Log.WriteLine($"Interview continuation blocked: {blockedTitle}");
                 StatusText.Text = $"⚠️ {blockedTitle}";
                 StatusIndicator.Fill = Brushes.Orange;

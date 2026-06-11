@@ -5,7 +5,7 @@ namespace SecureOverlay.Infrastructure.Hosted
     public sealed class HostedRuntimeOptions
     {
         public string Mode { get; init; } = "remote";
-        public string WebsiteBaseUrl { get; init; } = "https://phantom.app";
+        public string WebsiteBaseUrl { get; init; } = string.Empty;
         public string DesktopBackendBaseUrl { get; init; } = string.Empty;
 
         public bool UseRemoteBackend => true;
@@ -21,7 +21,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             var options = new HostedRuntimeOptions
             {
                 Mode = string.IsNullOrWhiteSpace(mode) ? "remote" : mode.Trim(),
-                WebsiteBaseUrl = string.IsNullOrWhiteSpace(websiteBaseUrl) ? "https://phantom.app" : websiteBaseUrl.Trim().TrimEnd('/'),
+                WebsiteBaseUrl = string.IsNullOrWhiteSpace(websiteBaseUrl) ? string.Empty : websiteBaseUrl.Trim().TrimEnd('/'),
                 DesktopBackendBaseUrl = string.IsNullOrWhiteSpace(backendBaseUrl) ? string.Empty : backendBaseUrl.Trim().TrimEnd('/')
             };
 
@@ -47,6 +47,12 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 throw new InvalidOperationException(
                     "PHANTOM_WINDOWS_BACKEND_BASE_URL must be an absolute URL.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.WebsiteBaseUrl))
+            {
+                throw new InvalidOperationException(
+                    "PHANTOM_WEBSITE_BASE_URL is required. The desktop app must know where your Phantom website is hosted for registration and magic-link return flows.");
             }
 
             if (!Uri.TryCreate(options.WebsiteBaseUrl, UriKind.Absolute, out _))

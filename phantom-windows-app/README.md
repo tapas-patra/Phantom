@@ -19,3 +19,11 @@ Required runtime env vars:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL`
 - `PHANTOM_WEBSITE_BASE_URL`
 - `PHANTOM_HOSTED_MODE=remote` or unset
+
+Local development example:
+- `PHANTOM_WINDOWS_BACKEND_BASE_URL=http://localhost:5057`
+- `PHANTOM_WEBSITE_BASE_URL=http://localhost:4173`
+
+Hosted deployment example:
+- `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://windows-api.your-domain.com`
+- `PHANTOM_WEBSITE_BASE_URL=https://app.your-domain.com`

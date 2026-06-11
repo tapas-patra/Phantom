@@ -11,6 +11,7 @@ namespace SecureOverlay.Infrastructure.Billing
     public sealed class LocalCreditMeteringService : ICreditMeteringService
     {
         private const decimal CreditsPerBlock = 0.25m;
+        private const decimal CreditsPerMinute = 1m / 60m;
         private const decimal ProtectedContinuationCap = 1.0m;
         private static readonly TimeSpan MeteringBlock = TimeSpan.FromMinutes(15);
 
@@ -133,7 +134,7 @@ namespace SecureOverlay.Infrastructure.Billing
             var endedAtUtc = DateTime.UtcNow;
             var duration = endedAtUtc - session.StartedAtUtc;
             var blocks = Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes / MeteringBlock.TotalMinutes));
-            var requestedCharge = blocks * CreditsPerBlock;
+            var requestedCharge = EstimateChargeForElapsed(duration);
 
             var availablePrimaryCredits = session.PrimaryLedger == CreditLedgerType.Pro
                 ? snapshot.ProAvailableCredits
@@ -203,6 +204,21 @@ namespace SecureOverlay.Infrastructure.Billing
         private static bool IsFreeTier(AccountCacheSnapshot snapshot)
         {
             return string.Equals(snapshot.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static decimal EstimateChargeForElapsed(TimeSpan elapsed)
+        {
+            return RoundCredits(RoundUpToMinute(elapsed) * CreditsPerMinute);
+        }
+
+        private static int RoundUpToMinute(TimeSpan duration)
+        {
+            return Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds / 60d));
+        }
+
+        private static decimal RoundCredits(decimal credits)
+        {
+            return Math.Round(credits, 2, MidpointRounding.AwayFromZero);
         }
 
         private static InterviewSessionActivationResult Denied(string title, string message)

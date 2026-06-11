@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Application.Telemetry;
+using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Telemetry;

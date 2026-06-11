@@ -495,12 +495,12 @@ namespace SecureOverlay
             }
 
             var elapsed = DateTime.UtcNow - activeSession.StartedAtUtc;
-            var blocks = Math.Max(1, (int)Math.Ceiling(elapsed.TotalMinutes / 15d));
-            var projectedCharge = blocks * 0.25m;
+            var billedMinutes = Math.Max(1, (int)Math.Ceiling(elapsed.TotalSeconds / 60d));
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(elapsed);
 
             SessionTimerBorder.Visibility = Visibility.Visible;
             SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
-            SessionStatusText.Text = $"Live | {blocks} block{(blocks == 1 ? string.Empty : "s")} | {projectedCharge:0.##} cr";
+            SessionStatusText.Text = $"Live | {billedMinutes} min | {projectedCharge:0.##} cr";
         }
 
         private bool IsSessionExtensionEnabledForCurrentTier()

@@ -42,31 +42,41 @@ public sealed class RegistrationService
             throw new BackendValidationException("Password must be at least 10 characters.");
         }
 
+        var deliveryConfigurationError = _emailService.GetDeliveryConfigurationError();
+        if (!string.IsNullOrWhiteSpace(deliveryConfigurationError))
+        {
+            throw new BackendValidationException(deliveryConfigurationError);
+        }
+
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        if (_accounts.FindByEmail(normalizedEmail) != null)
+        var existing = _accounts.FindByEmail(normalizedEmail);
+        if (existing != null && existing.EmailVerified)
         {
             throw new BackendValidationException("An account with this email already exists.");
         }
 
         var now = DateTime.UtcNow;
-        var account = new DesktopAccountRecord
+        var account = existing ?? new DesktopAccountRecord
         {
             UserId = $"user-{Guid.NewGuid():N}",
             Email = normalizedEmail,
-            EmailVerified = false,
-            EmailVerifiedAtUtc = null,
             AccessTier = "free",
-            PasswordHash = _passwordHasher.Hash(request.Password),
             PhoneVerified = false,
             ProAvailableCredits = 0m,
             PremiumAvailableCredits = 0m,
             PremiumNegativeCredits = 0m,
             LeaseExpiresAtUtc = now.AddHours(_options.DefaultLeaseHours),
             OfflineModeEnabled = false,
-            LastValidatedAtUtc = now,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now
+            CreatedAtUtc = now
         };
+
+        account.Email = normalizedEmail;
+        account.EmailVerified = false;
+        account.EmailVerifiedAtUtc = null;
+        account.PasswordHash = _passwordHasher.Hash(request.Password);
+        account.LastValidatedAtUtc = now;
+        account.UpdatedAtUtc = now;
+
         _accounts.Save(account);
 
         var verification = IssueVerification(account, publicBackendBaseUrl);
@@ -97,6 +107,12 @@ public sealed class RegistrationService
                 Verified = true,
                 Message = "Email is already verified."
             };
+        }
+
+        var deliveryConfigurationError = _emailService.GetDeliveryConfigurationError();
+        if (!string.IsNullOrWhiteSpace(deliveryConfigurationError))
+        {
+            throw new BackendValidationException(deliveryConfigurationError);
         }
 
         var verification = IssueVerification(account, publicBackendBaseUrl);

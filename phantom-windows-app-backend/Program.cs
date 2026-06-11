@@ -134,8 +134,15 @@ app.MapPost("/api/desktop/auth/register", (
     AuthRegisterRequestDto request,
     RegistrationService registration) =>
 {
-    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
-    return Results.Ok(registration.Register(request, publicBaseUrl));
+    try
+    {
+        var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+        return Results.Ok(registration.Register(request, publicBaseUrl));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/verify-email/request", (
@@ -143,8 +150,15 @@ app.MapPost("/api/desktop/auth/verify-email/request", (
     AuthEmailVerificationRequestDto request,
     RegistrationService registration) =>
 {
-    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
-    return Results.Ok(registration.ResendVerification(request, publicBaseUrl));
+    try
+    {
+        var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+        return Results.Ok(registration.ResendVerification(request, publicBaseUrl));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("auth");
 
 app.MapGet("/email/verify", (

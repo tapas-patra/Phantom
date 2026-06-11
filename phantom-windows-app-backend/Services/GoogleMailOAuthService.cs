@@ -38,9 +38,14 @@ public sealed class GoogleMailOAuthService
         return new GoogleMailOAuthStatusDto
         {
             IsConfigured = _options.HasGoogleOAuthClientSecrets,
-            HasRefreshToken = _secrets.FindByKey(GmailRefreshTokenSecretKey) != null,
+            HasRefreshToken = HasRefreshTokenConfigured(),
             FromEmail = "official.phantomai@gmail.com"
         };
+    }
+
+    public bool HasRefreshTokenConfigured()
+    {
+        return _secrets.FindByKey(GmailRefreshTokenSecretKey) != null;
     }
 
     public GoogleMailOAuthStartResultDto StartAuthorization(string publicBackendBaseUrl)

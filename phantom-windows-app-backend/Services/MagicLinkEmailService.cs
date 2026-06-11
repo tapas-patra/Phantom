@@ -49,6 +49,27 @@ This link expires at {expiresAtUtc:yyyy-MM-dd HH:mm:ss} UTC.
         return SendMail(recipientEmail, "Verify your Phantom account", body);
     }
 
+    public string? GetDeliveryConfigurationError()
+    {
+        if (_options.HasGoogleOAuthClientSecrets && _options.HasSecretEncryptionKey)
+        {
+            var googleMailOAuth = _serviceProvider.GetRequiredService<GoogleMailOAuthService>();
+            if (googleMailOAuth.HasRefreshTokenConfigured())
+            {
+                return null;
+            }
+
+            return "Gmail delivery is not authorized yet. Complete the Gmail OAuth bootstrap first.";
+        }
+
+        if (_options.IsSmtpConfigured)
+        {
+            return null;
+        }
+
+        return "Email delivery is not configured.";
+    }
+
     private (string Status, string Error) SendMail(string recipientEmail, string subject, string body)
     {
         try

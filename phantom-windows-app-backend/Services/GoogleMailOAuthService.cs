@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using Google.Apis.Auth.OAuth2.Flows;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
@@ -71,9 +72,17 @@ public sealed class GoogleMailOAuthService
         authorizationUrl.State = stateToken;
         authorizationUrl.Scope = GmailSendScope;
         var builtUrl = authorizationUrl.Build().ToString();
-        var separator = builtUrl.Contains('?') ? "&" : "?";
-        var finalAuthorizationUrl =
-            $"{builtUrl}{separator}access_type=offline&prompt=consent";
+        var uri = new Uri(builtUrl);
+        var query = QueryHelpers.ParseQuery(uri.Query)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+        query["access_type"] = "offline";
+        query["prompt"] = "consent";
+        query["scope"] = GmailSendScope;
+        query["state"] = stateToken;
+
+        var finalAuthorizationUrl = QueryHelpers.AddQueryString(
+            uri.GetLeftPart(UriPartial.Path),
+            query);
 
         return new GoogleMailOAuthStartResultDto
         {

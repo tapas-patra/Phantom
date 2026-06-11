@@ -334,6 +334,35 @@ namespace SecureOverlay.Infrastructure.Hosted
 
             var isFreeTier = IsFreeTier(snapshot);
             var hasMeteringBlock = snapshot.ProAvailableCredits >= 0.25m || snapshot.PremiumAvailableCredits >= 0.25m;
+            var hasFreeTrialBlock = snapshot.PremiumAvailableCredits >= 0.25m;
+
+            if (isFreeTier && !hasFreeTrialBlock && !snapshot.HasResumableLockedSession)
+            {
+                return BuildContext(
+                    StartupGateState.NoCredits,
+                    "Free Trial Exhausted",
+                    "The free trial does not have a full 15 minute demo block remaining for a new interview.",
+                    canOpenMainApp: true,
+                    canResumeLockedInterview: false,
+                    canAttemptLogin: false,
+                    canRegister: false,
+                    canRetry: true,
+                    detail: ComposeDetail(detailPrefix, "The app shell can open, but a new interview stays blocked until trial credits are restored by Phantom."));
+            }
+
+            if (isFreeTier && !hasFreeTrialBlock)
+            {
+                return BuildContext(
+                    StartupGateState.NoCredits,
+                    "Free Trial Exhausted",
+                    "The free trial has no full demo block left for a new interview, but the current locked session may continue on this device.",
+                    canOpenMainApp: true,
+                    canResumeLockedInterview: true,
+                    canAttemptLogin: false,
+                    canRegister: false,
+                    canRetry: true,
+                    detail: ComposeDetail(detailPrefix, "Resume the current locked session or restore trial credits before starting another interview."));
+            }
 
             if (!isFreeTier && !hasMeteringBlock && !snapshot.HasResumableLockedSession)
             {

@@ -71,12 +71,10 @@ namespace SecureOverlay.Infrastructure.Billing
             {
                 if (IsFreeTier(snapshot))
                 {
-                    ledger = CreditLedgerType.Premium;
+                    return Denied("Free Trial Exhausted", "A full 15 minute free-trial block must be available before a new interview starts.");
                 }
-                else
-                {
+
                 return Denied("No Credits Available", "At least one full 15 minute block must be available before a new interview starts.");
-                }
             }
 
             var session = new InterviewSessionRecord
@@ -135,14 +133,19 @@ namespace SecureOverlay.Infrastructure.Billing
             var endedAtUtc = DateTime.UtcNow;
             var duration = endedAtUtc - session.StartedAtUtc;
             var blocks = Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes / MeteringBlock.TotalMinutes));
-            var chargedCredits = blocks * CreditsPerBlock;
+            var requestedCharge = blocks * CreditsPerBlock;
 
             var availablePrimaryCredits = session.PrimaryLedger == CreditLedgerType.Pro
                 ? snapshot.ProAvailableCredits
                 : snapshot.PremiumAvailableCredits;
+            var chargedCredits = IsFreeTier(snapshot)
+                ? Math.Min(availablePrimaryCredits, requestedCharge)
+                : requestedCharge;
             var consumedPrimaryCredits = Math.Min(availablePrimaryCredits, chargedCredits);
             var shortfall = chargedCredits - consumedPrimaryCredits;
-            var premiumDebtAdded = Math.Min(shortfall, ProtectedContinuationCap);
+            var premiumDebtAdded = IsFreeTier(snapshot)
+                ? 0m
+                : Math.Min(shortfall, ProtectedContinuationCap);
 
             if (session.PrimaryLedger == CreditLedgerType.Pro)
             {

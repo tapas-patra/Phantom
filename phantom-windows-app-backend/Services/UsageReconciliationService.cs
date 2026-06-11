@@ -39,8 +39,9 @@ public sealed class UsageReconciliationService
         var account = _accounts.RequireAccount(request.UserId);
         var remainingCharge = request.ChargedCredits;
         var appliedCredits = 0m;
+        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
 
-        if (account.ProAvailableCredits > 0m)
+        if (!isFreeTier && account.ProAvailableCredits > 0m)
         {
             var fromPro = Math.Min(account.ProAvailableCredits, remainingCharge);
             account.ProAvailableCredits -= fromPro;
@@ -56,7 +57,7 @@ public sealed class UsageReconciliationService
             appliedCredits += fromPremium;
         }
 
-        var addedDebt = remainingCharge > 0m ? remainingCharge : 0m;
+        var addedDebt = !isFreeTier && remainingCharge > 0m ? remainingCharge : 0m;
         account.PremiumNegativeCredits += addedDebt;
         _accounts.Save(account);
 

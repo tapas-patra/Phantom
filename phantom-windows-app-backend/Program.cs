@@ -1,6 +1,8 @@
 using System.Threading.RateLimiting;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
+using Npgsql;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -89,6 +91,16 @@ app.UseExceptionHandler(exceptionApp =>
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             await context.Response.WriteAsJsonAsync(new { error = validationException.Message });
+            return;
+        }
+
+        if (exception is NpgsqlException || exception is SocketException)
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = "Database unavailable."
+            });
             return;
         }
 
@@ -364,8 +376,19 @@ app.MapPost("/api/desktop/telemetry/ingest", (
     TelemetryIngestRequestDto request,
     TelemetryIngestService telemetry) =>
 {
-    telemetry.Ingest(request);
-    return Results.Ok(new { accepted = true });
+    try
+    {
+        telemetry.Ingest(request);
+        return Results.Ok(new { accepted = true });
+    }
+    catch (NpgsqlException)
+    {
+        return Results.Ok(new { accepted = false, deferred = true, reason = "database_unavailable" });
+    }
+    catch (SocketException)
+    {
+        return Results.Ok(new { accepted = false, deferred = true, reason = "database_unavailable" });
+    }
 });
 
 app.MapPost("/api/desktop/locks/acquire", (

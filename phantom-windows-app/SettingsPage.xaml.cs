@@ -426,7 +426,7 @@ namespace SecureOverlay
 
         private void UpdatePanelVisibility()
         {
-            if (IsPremiumAccount())
+            if (IsPremiumOnlyAccount())
             {
                 ChatGPTPanel.Visibility = Visibility.Collapsed;
                 ClaudePanel.Visibility = Visibility.Collapsed;
@@ -645,7 +645,7 @@ namespace SecureOverlay
             {
                 _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
                 
-                if (IsPremiumAccount())
+                if (IsPremiumOnlyAccount())
                 {
                     _settings.ChatGPTApiKeys = new System.Collections.Generic.List<string>();
                     _settings.ClaudeApiKeys = new System.Collections.Generic.List<string>();
@@ -807,12 +807,27 @@ namespace SecureOverlay
             var isPremium = HasPremiumManagedEntitlement();
             var isFreeTrial = IsFreeTrialAccount();
             var isByo = HasByoEntitlement();
+            var isPremiumOnly = IsPremiumOnlyAccount();
+
             PremiumManagedNotice.Visibility = isPremium ? Visibility.Visible : Visibility.Collapsed;
             FreeTrialNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
             SessionContinuationNotice.Visibility = (isFreeTrial || (!isFreeTrial && (isPremium || isByo)))
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+
+            if (isPremiumOnly)
+            {
+                PremiumManagedNoticeTitle.Text = "Premium Managed AI";
+                PremiumManagedNoticeBody.Text =
+                    "Premium-only accounts use Phantom-managed provider keys. Provider and model can still be switched from the main window, but API key setup stays hidden.";
+            }
+            else if (isPremium && isByo)
+            {
+                PremiumManagedNoticeTitle.Text = "Premium With BYO Fallback";
+                PremiumManagedNoticeBody.Text =
+                    "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
+            }
 
             if (isFreeTrial)
             {
@@ -839,6 +854,11 @@ namespace SecureOverlay
         private bool IsPremiumAccount()
         {
             return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsPremiumOnlyAccount()
+        {
+            return HasPremiumManagedEntitlement() && !HasByoEntitlement();
         }
 
         private bool HasPremiumManagedEntitlement()

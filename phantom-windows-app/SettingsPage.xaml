@@ -50,9 +50,9 @@
                                Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
                                BorderBrush="#9071D9D7" BorderThickness="1.5">
                             <StackPanel>
-                                <TextBlock Text="Premium Managed AI" FontSize="14" FontWeight="Bold"
+                                <TextBlock x:Name="PremiumManagedNoticeTitle" Text="Premium Managed AI" FontSize="14" FontWeight="Bold"
                                           Foreground="White" Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text="Premium accounts use Phantom-managed provider keys. Provider and model can still be switched from the main window, but API key setup stays hidden."
+                                <TextBlock x:Name="PremiumManagedNoticeBody" Text="Premium accounts use Phantom-managed provider keys. Provider and model can still be switched from the main window, but API key setup stays hidden."
                                           TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0" Margin="0,8,0,0"
                                           Effect="{StaticResource Shadow}"/>
                             </StackPanel>

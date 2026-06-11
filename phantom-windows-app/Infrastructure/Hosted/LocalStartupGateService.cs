@@ -332,7 +332,10 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, $"Outstanding Premium balance: {snapshot.PremiumNegativeCredits:0.##} credit."));
             }
 
-            if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m && !snapshot.HasResumableLockedSession)
+            var isFreeTier = IsFreeTier(snapshot);
+            var hasMeteringBlock = snapshot.ProAvailableCredits >= 0.25m || snapshot.PremiumAvailableCredits >= 0.25m;
+
+            if (!isFreeTier && !hasMeteringBlock && !snapshot.HasResumableLockedSession)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
@@ -346,7 +349,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, "The app shell can open, but interview start must remain blocked until credits are added."));
             }
 
-            if (snapshot.ProAvailableCredits < 0.25m && snapshot.PremiumAvailableCredits < 0.25m)
+            if (!isFreeTier && !hasMeteringBlock)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
@@ -381,6 +384,11 @@ namespace SecureOverlay.Infrastructure.Hosted
 
             return snapshot.LeaseExpiresAtUtc.HasValue
                 && snapshot.LeaseExpiresAtUtc.Value > DateTime.UtcNow;
+        }
+
+        private static bool IsFreeTier(AccountCacheSnapshot snapshot)
+        {
+            return string.Equals(snapshot.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
         }
 
         private StartupGateContext BuildBackendUnavailableContext(string title, string message, string detail)

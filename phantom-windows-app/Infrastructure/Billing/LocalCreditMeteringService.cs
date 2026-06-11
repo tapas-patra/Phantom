@@ -69,7 +69,14 @@ namespace SecureOverlay.Infrastructure.Billing
             var ledger = ResolveEligibleLedger(snapshot);
             if (!ledger.HasValue)
             {
+                if (IsFreeTier(snapshot))
+                {
+                    ledger = CreditLedgerType.Premium;
+                }
+                else
+                {
                 return Denied("No Credits Available", "At least one full 15 minute block must be available before a new interview starts.");
+                }
             }
 
             var session = new InterviewSessionRecord
@@ -188,6 +195,11 @@ namespace SecureOverlay.Infrastructure.Billing
             }
 
             return null;
+        }
+
+        private static bool IsFreeTier(AccountCacheSnapshot snapshot)
+        {
+            return string.Equals(snapshot.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
         }
 
         private static InterviewSessionActivationResult Denied(string title, string message)

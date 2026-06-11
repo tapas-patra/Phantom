@@ -800,8 +800,10 @@ namespace SecureOverlay
         private void ApplyAccountTierRestrictions()
         {
             var isPremium = IsPremiumAccount();
+            var isFreeTrial = IsFreeTrialAccount();
             PremiumManagedNotice.Visibility = isPremium ? Visibility.Visible : Visibility.Collapsed;
-            ByoConfigurationSection.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
+            FreeTrialNotice.Visibility = isFreeTrial ? Visibility.Visible : Visibility.Collapsed;
+            ByoConfigurationSection.Visibility = IsByoAccount() ? Visibility.Visible : Visibility.Collapsed;
             UpdatePanelVisibility();
         }
 
@@ -810,11 +812,27 @@ namespace SecureOverlay
             return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool IsFreeTrialAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsByoAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool CanAddProviderKey(ObservableCollection<ApiKeyItem> providerKeys, string providerName)
         {
             if (IsPremiumAccount())
             {
                 InvisibleMessageBox.Show("Premium accounts do not expose BYO provider configuration.", "Premium Managed AI");
+                return false;
+            }
+
+            if (!IsByoAccount())
+            {
+                InvisibleMessageBox.Show("Upgrade to Pro BYO to configure provider keys and models.", "Free Trial");
                 return false;
             }
 
@@ -827,7 +845,7 @@ namespace SecureOverlay
             }
 
             var activeProviders = CountConfiguredProviders(providerKeys);
-            if (providerKeys.Count == 0 && activeProviders > MaxProvidersForByo)
+            if (providerKeys.Count == 0 && activeProviders >= MaxProvidersForByo)
             {
                 InvisibleMessageBox.Show(
                     $"BYO accounts can configure at most {MaxProvidersForByo} providers.",
@@ -851,7 +869,7 @@ namespace SecureOverlay
 
         private void ValidateByoProviderLimits()
         {
-            if (IsPremiumAccount())
+            if (!IsByoAccount())
             {
                 return;
             }

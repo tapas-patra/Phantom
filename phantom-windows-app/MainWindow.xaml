@@ -72,10 +72,16 @@
                 <!-- TITLE BAR (Grid.Row="0") - ENHANCED WITH INTERACTIVE DROPDOWNS -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
                 <Grid Grid.Row="0" Margin="0,0,0,15">
-                    <StackPanel Orientation="Horizontal">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <WrapPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
                         <TextBlock Text="🤖" FontSize="24" Margin="0,0,10,0"/>
                         <TextBlock Text="AI Assistant" FontSize="18" FontWeight="Bold"
-                                Foreground="White" VerticalAlignment="Center" Effect="{StaticResource Shadow}"/>
+                                Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"
+                                Effect="{StaticResource Shadow}"/>
                         
                         <!-- Provider Selector -->
                         <Border Background="#50FFD700" CornerRadius="4" Padding="8,4" Margin="15,0,0,0"
@@ -124,9 +130,9 @@
                             <TextBlock x:Name="TokenCounterText" Text="0k/8k" FontSize="11" 
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
-                    </StackPanel>
+                    </WrapPanel>
                     
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <!-- AUTO-RESTART BUTTON -->
                         <Button Content="🔄" Width="40" Height="32" Click="RestartButton_Click"
                             Background="#50FF6B00" BorderBrush="#90FF6B00" BorderThickness="1.5"

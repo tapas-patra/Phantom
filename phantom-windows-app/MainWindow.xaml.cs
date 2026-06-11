@@ -430,10 +430,10 @@ namespace SecureOverlay
 
         private void ApplyAccountTierChrome()
         {
-            var isPremium = string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
-            ProviderSelectorBorder.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
-            ModelSelectorBorder.Visibility = isPremium ? Visibility.Collapsed : Visibility.Visible;
-            if (isPremium)
+            var isByo = IsByoAccount();
+            ProviderSelectorBorder.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            ModelSelectorBorder.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            if (!isByo)
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
@@ -448,8 +448,20 @@ namespace SecureOverlay
                 return;
             }
 
-            CreditIndicatorText.Text =
-                $"{GetTierLabel(_accountSnapshot.AccessTier)} | Pro {_accountSnapshot.ProAvailableCredits:0.##} | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+            if (IsFreeTrialAccount())
+            {
+                CreditIndicatorText.Text = "Free Trial | 2 x 20 min sessions";
+                return;
+            }
+
+            if (IsPremiumAccount())
+            {
+                CreditIndicatorText.Text =
+                    $"Premium | Credits {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                return;
+            }
+
+            CreditIndicatorText.Text = $"Pro BYO | Credits {_accountSnapshot.ProAvailableCredits:0.##}";
         }
 
         private void StartSessionStatusTimer()
@@ -490,6 +502,21 @@ namespace SecureOverlay
                 "pro_byo" => "Pro BYO",
                 _ => "Free"
             };
+        }
+
+        private bool IsPremiumAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsByoAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsFreeTrialAccount()
+        {
+            return string.Equals(_accountSnapshot?.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -731,9 +758,9 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING API KEY INDICATOR");
 
-            if (string.Equals(_accountSnapshot?.AccessTier, "premium", StringComparison.OrdinalIgnoreCase))
+            if (!IsByoAccount())
             {
-                Log.WriteLine("  Premium tier - hiding indicator");
+                Log.WriteLine("  Non-BYO tier - hiding indicator");
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 return;
@@ -2989,12 +3016,22 @@ namespace SecureOverlay
 
         private void ProviderSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            if (!IsByoAccount())
+            {
+                return;
+            }
+
             Log.WriteLine("Provider selector clicked");
             ShowProviderMenu();
         }
 
         private void ModelSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            if (!IsByoAccount())
+            {
+                return;
+            }
+
             Log.WriteLine("Model selector clicked");
             ShowModelMenu();
         }
@@ -3418,6 +3455,24 @@ namespace SecureOverlay
             
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING PROVIDER AND MODEL DISPLAY");
+
+            if (IsFreeTrialAccount())
+            {
+                AIProviderText.Text = "Free Trial";
+                ModelText.Text = "2 Trial Sessions";
+                Log.WriteLine("✓ Title bar updated for Free Trial");
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+                return;
+            }
+
+            if (IsPremiumAccount())
+            {
+                AIProviderText.Text = "Phantom AI";
+                ModelText.Text = "Managed Lane";
+                Log.WriteLine("✓ Title bar updated for Premium managed lane");
+                Log.WriteLine("═══════════════════════════════════════════════════════");
+                return;
+            }
             
             // Update provider display
             var providerName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;

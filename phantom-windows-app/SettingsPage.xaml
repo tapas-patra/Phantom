@@ -58,6 +58,21 @@
                             </StackPanel>
                         </Border>
 
+                        <Border x:Name="FreeTrialNotice" Background="#50456A21" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#90D7C46B" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock Text="Free Trial Mode" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" Effect="{StaticResource Shadow}"/>
+                                <TextBlock Text="This tier uses Phantom-managed trial access. BYO provider, model, and API key setup is hidden until the account upgrades to Pro BYO."
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF" Margin="0,8,0,0"
+                                          Effect="{StaticResource Shadow}"/>
+                                <TextBlock Text="Trial allowance: 2 sessions, up to 20 minutes each."
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF" Margin="0,6,0,0"
+                                          Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 

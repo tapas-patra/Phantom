@@ -85,44 +85,39 @@ namespace SecureOverlay.Infrastructure.Hosted
             }
 
             var cachedSnapshot = _accountCacheRepository.Load();
-            if (_hostedRuntimeOptions.UseRemoteBackend)
+            try
             {
-                try
+                var refreshedSnapshot = MapAccountSnapshot(_accountClient.GetStartupAccountCheck(MapSessionForHostedCheck(session)));
+                _accountCacheRepository.Save(refreshedSnapshot);
+                _telemetryService.Track("auth", "startup_account_check_refreshed", new Dictionary<string, string>
                 {
-                    var refreshedSnapshot = MapAccountSnapshot(_accountClient.GetStartupAccountCheck(MapSessionForHostedCheck(session)));
-                    _accountCacheRepository.Save(refreshedSnapshot);
-                    _telemetryService.Track("auth", "startup_account_check_refreshed", new Dictionary<string, string>
-                    {
-                        ["source"] = refreshedSnapshot.UserId,
-                        ["mode"] = _hostedRuntimeOptions.Mode
-                    });
-                    return EvaluateAccountState(session, refreshedSnapshot);
-                }
-                catch (HostedServiceException ex)
-                {
-                    Log.WriteLine($"Hosted startup refresh failed: {ex.Message}");
-                    _telemetryService.Track("auth", "startup_account_check_failed", new Dictionary<string, string>
-                    {
-                        ["mode"] = _hostedRuntimeOptions.Mode,
-                        ["reason"] = ex.Message
-                    });
-
-                    if (cachedSnapshot != null && CanUseCachedSnapshotOffline(cachedSnapshot))
-                    {
-                        return EvaluateAccountState(
-                            session,
-                            cachedSnapshot,
-                            "Backend unavailable. Using cached account validation for offline launch rules.");
-                    }
-
-                    return BuildBackendUnavailableContext(
-                        "Backend Unavailable",
-                        "The desktop backend could not be reached to refresh your account state.",
-                        "Reconnect and press Retry. Offline launch requires a valid cached lease or resumable locked session.");
-                }
+                    ["source"] = refreshedSnapshot.UserId,
+                    ["mode"] = _hostedRuntimeOptions.Mode
+                });
+                return EvaluateAccountState(session, refreshedSnapshot);
             }
+            catch (HostedServiceException ex)
+            {
+                Log.WriteLine($"Hosted startup refresh failed: {ex.Message}");
+                _telemetryService.Track("auth", "startup_account_check_failed", new Dictionary<string, string>
+                {
+                    ["mode"] = _hostedRuntimeOptions.Mode,
+                    ["reason"] = ex.Message
+                });
 
-            return EvaluateAccountState(session, cachedSnapshot);
+                if (cachedSnapshot != null && CanUseCachedSnapshotOffline(cachedSnapshot))
+                {
+                    return EvaluateAccountState(
+                        session,
+                        cachedSnapshot,
+                        "Backend unavailable. Using cached account validation for offline launch rules.");
+                }
+
+                return BuildBackendUnavailableContext(
+                    "Backend Unavailable",
+                    "The desktop backend could not be reached to refresh your account state.",
+                    "Reconnect and press Retry. Offline launch requires a valid cached lease or resumable locked session.");
+            }
         }
 
         public StartupGateContext BeginLogin()
@@ -130,7 +125,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             return BuildContext(
                 StartupGateState.Login,
                 "Login",
-                "Use the in-app login flow. This desktop seam can run against local stubs or a configured hosted backend without changing the window flow.",
+                "Use the in-app login flow backed by the hosted Phantom backend.",
                 canOpenMainApp: false,
                 canResumeLockedInterview: false,
                 canAttemptLogin: true,

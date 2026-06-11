@@ -36,9 +36,7 @@ namespace SecureOverlay
             IDeviceProfileRepository deviceProfileRepository = new SqliteDeviceProfileRepository(store);
             _deviceIdentityService = new WindowsDeviceIdentityService(deviceProfileRepository, new WindowsSecretVault(store));
             ClearCredentials();
-            BackendModeText.Text = _hostedRuntimeOptions.UseRemoteBackend
-                ? $"{_hostedRuntimeOptions.ModeLabel}\n{_hostedRuntimeOptions.DesktopBackendBaseUrl}"
-                : $"{_hostedRuntimeOptions.ModeLabel}\nNo backend URL configured.";
+            BackendModeText.Text = $"{_hostedRuntimeOptions.ModeLabel}\n{_hostedRuntimeOptions.DesktopBackendBaseUrl}";
             _currentContext = startupGateService.GetInitialContext();
             ApplyContext(_currentContext);
         }
@@ -59,7 +57,7 @@ namespace SecureOverlay
             InlineStatusText.Text = "Enter credentials and press Login again to continue.";
         }
 
-        private async void MagicLinkButton_Click(object sender, RoutedEventArgs e)
+        private void MagicLinkButton_Click(object sender, RoutedEventArgs e)
         {
             if (_currentContext.State != StartupGateState.Login)
             {
@@ -69,31 +67,21 @@ namespace SecureOverlay
                 return;
             }
 
-            if (_hostedRuntimeOptions.UseRemoteBackend)
+            try
             {
-                try
-                {
-                    var issuedLink = _startupGateService.RequestMagicLink(EmailTextBox.Text);
-                    _pendingMagicLinkCallbackUri = issuedLink.CallbackUri;
-                    _pendingMagicLinkUrl = issuedLink.MagicLinkUrl;
-                    MagicLinkUrlText.Text = $"{issuedLink.MagicLinkUrl}\nExpires: {issuedLink.ExpiresAtUtc:yyyy-MM-dd HH:mm:ss}";
-                    MagicLinkResultPanel.Visibility = Visibility.Visible;
-                    OpenMagicLinkButton.Visibility = Visibility.Visible;
-                    CompleteMagicLinkButton.Visibility = Visibility.Visible;
-                    InlineStatusText.Text = $"Magic link issued for {issuedLink.Email}. Use Complete Magic Link to finish in-app, or open the link externally.";
-                }
-                catch (Exception ex)
-                {
-                    InlineStatusText.Text = $"Failed to issue magic link: {ex.Message}";
-                }
-
-                return;
+                var issuedLink = _startupGateService.RequestMagicLink(EmailTextBox.Text);
+                _pendingMagicLinkCallbackUri = issuedLink.CallbackUri;
+                _pendingMagicLinkUrl = issuedLink.MagicLinkUrl;
+                MagicLinkUrlText.Text = $"{issuedLink.MagicLinkUrl}\nExpires: {issuedLink.ExpiresAtUtc:yyyy-MM-dd HH:mm:ss}";
+                MagicLinkResultPanel.Visibility = Visibility.Visible;
+                OpenMagicLinkButton.Visibility = Visibility.Visible;
+                CompleteMagicLinkButton.Visibility = Visibility.Visible;
+                InlineStatusText.Text = $"Magic link issued for {issuedLink.Email}. Use Complete Magic Link to finish in-app, or open the link externally.";
             }
-
-            _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: true);
-            ApplyContext(_currentContext);
-            InlineStatusText.Text = "Completing magic-link login and refreshing account validation...";
-            await AdvanceToEvaluatedStateAsync();
+            catch (Exception ex)
+            {
+                InlineStatusText.Text = $"Failed to issue magic link: {ex.Message}";
+            }
         }
 
         private async void ContinueButton_Click(object sender, RoutedEventArgs e)

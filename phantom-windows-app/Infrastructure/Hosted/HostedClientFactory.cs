@@ -8,30 +8,22 @@ namespace SecureOverlay.Infrastructure.Hosted
 
         public static IHostedAuthClient CreateAuthClient(DeviceProfile deviceProfile, HostedRuntimeOptions options)
         {
-            return options.UseRemoteBackend
-                ? new HttpHostedAuthClient(deviceProfile, options)
-                : new LocalHostedAuthClient(deviceProfile);
+            return new HttpHostedAuthClient(deviceProfile, options);
         }
 
         public static IHostedAccountClient CreateAccountClient(HostedRuntimeOptions options)
         {
-            return options.UseRemoteBackend
-                ? new HttpHostedAccountClient(options)
-                : new LocalHostedAccountClient();
+            return new HttpHostedAccountClient(options);
         }
 
         public static IHostedUsageClient CreateUsageClient(HostedRuntimeOptions options)
         {
-            return options.UseRemoteBackend
-                ? new HttpHostedUsageClient(options)
-                : new LocalHostedUsageClient();
+            return new HttpHostedUsageClient(options);
         }
 
         public static IHostedTelemetryClient CreateTelemetryClient(HostedRuntimeOptions options)
         {
-            return options.UseRemoteBackend
-                ? new HttpHostedTelemetryClient(options)
-                : new LocalHostedTelemetryClient();
+            return new HttpHostedTelemetryClient(options);
         }
     }
 }

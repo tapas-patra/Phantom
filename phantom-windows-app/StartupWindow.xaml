@@ -62,7 +62,7 @@
                         <Border Grid.Column="0" CornerRadius="18" Background="#88101927" Padding="24" Margin="0,0,18,0" MinHeight="250">
                             <StackPanel>
                                 <TextBlock x:Name="LeftPanelTitleText" Text="Login Methods" Foreground="White" FontSize="18" FontWeight="SemiBold"/>
-                                <TextBlock x:Name="LeftPanelMessageText" Text="Choose a sign-in method. Login stays in-app. Registration opens on the hosted website." TextWrapping="Wrap" Foreground="#9AB6D3" FontSize="13" Margin="0,10,0,18"/>
+                                <TextBlock x:Name="LeftPanelMessageText" Text="Choose a sign-in method. Login stays in-app and validates against the hosted backend. Registration opens on the hosted website." TextWrapping="Wrap" Foreground="#9AB6D3" FontSize="13" Margin="0,10,0,18"/>
 
                                 <Border x:Name="ChoicePanel" Background="#44273B53" CornerRadius="14" Padding="16" Margin="0,0,0,12">
                                     <TextBlock Text="Select Login or Magic Link to continue. The credentials form appears on the next step so the first screen stays uncluttered on smaller displays." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
@@ -80,7 +80,7 @@
                                 <Border x:Name="MagicLinkResultPanel" Background="#223654" CornerRadius="12" Padding="14" Margin="0,12,0,0" Visibility="Collapsed">
                                     <StackPanel>
                                         <TextBlock Text="Issued Magic Link" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                        <TextBlock Text="Open the hosted link in your browser to simulate email delivery. Then either let the website return into Phantom via the callback URI, or press Complete Magic Link in this window." Foreground="#B9D0E4" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Open the hosted link in your browser to complete the real backend-backed magic-link flow. Then either let the website return into Phantom via the callback URI, or press Complete Magic Link in this window." Foreground="#B9D0E4" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
                                         <TextBlock x:Name="MagicLinkUrlText" Foreground="#D3E5F5" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Border>
@@ -90,10 +90,10 @@
                         <Border Grid.Column="1" CornerRadius="18" Background="#5516283D" Padding="24" MinHeight="250">
                             <StackPanel>
                                 <TextBlock Text="Launch Rules" Foreground="White" FontSize="18" FontWeight="SemiBold"/>
-                                <TextBlock Text="Registration happens on the website. Login stays in-app. MainWindow stays blocked until startup checks pass." TextWrapping="Wrap" Foreground="#D3E5F5" FontSize="13" Margin="0,10,0,18"/>
+                                <TextBlock Text="Registration happens on the website. Login stays in-app. MainWindow stays blocked until hosted account checks pass." TextWrapping="Wrap" Foreground="#D3E5F5" FontSize="13" Margin="0,10,0,18"/>
 
                                 <Border Background="#6620354D" CornerRadius="12" Padding="14" Margin="0,0,0,12">
-                                    <TextBlock Text="Current implementation status: backend-ready desktop seam. This gate can run against local fallbacks or a configured hosted backend." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
+                                    <TextBlock Text="Current implementation status: production backend required. Local hosted fallbacks are disabled." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
                                 </Border>
 
                                 <Border Background="#2A3348" CornerRadius="12" Padding="14" Margin="0,0,0,12">

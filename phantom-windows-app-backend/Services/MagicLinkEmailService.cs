@@ -112,7 +112,7 @@ This link expires at {expiresAtUtc:yyyy-MM-dd HH:mm:ss} UTC.
         var token = flow.RefreshTokenAsync(
             userId: "gmail_sender",
             refreshToken: refreshToken,
-            cancellationToken: CancellationToken.None).GetAwaiter().GetResult();
+            taskCancellationToken: CancellationToken.None).GetAwaiter().GetResult();
 
         var service = new GmailService(new BaseClientService.Initializer
         {

@@ -7,6 +7,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class SecretProtector
 {
     private readonly byte[] _keyBytes;
+    private const int AuthenticationTagSizeInBytes = 16;
 
     public SecretProtector(BackendOptions options)
     {
@@ -41,7 +42,7 @@ public sealed class SecretProtector
         var ciphertext = new byte[plaintextBytes.Length];
         var tag = new byte[16];
 
-        using var aes = new AesGcm(_keyBytes);
+        using var aes = new AesGcm(_keyBytes, AuthenticationTagSizeInBytes);
         aes.Encrypt(nonce, plaintextBytes, ciphertext, tag);
 
         return $"{Convert.ToBase64String(nonce)}.{Convert.ToBase64String(tag)}.{Convert.ToBase64String(ciphertext)}";
@@ -60,7 +61,7 @@ public sealed class SecretProtector
         var ciphertext = Convert.FromBase64String(parts[2]);
         var plaintext = new byte[ciphertext.Length];
 
-        using var aes = new AesGcm(_keyBytes);
+        using var aes = new AesGcm(_keyBytes, AuthenticationTagSizeInBytes);
         aes.Decrypt(nonce, ciphertext, tag, plaintext);
         return Encoding.UTF8.GetString(plaintext);
     }

@@ -276,12 +276,12 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, $"Signed in as {session.Email}. Account cache still needs to be hydrated."));
             }
 
-            if (!snapshot.PhoneVerified)
+            if (!snapshot.EmailVerified)
             {
                 return BuildContext(
                     StartupGateState.VerificationRequired,
-                    "Phone Verification Required",
-                    "Your account is signed in, but phone verification is still required before the app can be used.",
+                    "Email Verification Required",
+                    "Your account is signed in, but email verification is still required before the app can be used.",
                     canOpenMainApp: false,
                     canResumeLockedInterview: false,
                     canAttemptLogin: false,
@@ -492,6 +492,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 UserId = dto.UserId,
                 AccessTier = string.IsNullOrWhiteSpace(dto.AccessTier) ? "free" : dto.AccessTier,
+                EmailVerified = dto.EmailVerified,
                 PhoneVerified = dto.PhoneVerified,
                 ProAvailableCredits = dto.Wallet.ProAvailableCredits,
                 PremiumAvailableCredits = dto.Wallet.PremiumAvailableCredits,

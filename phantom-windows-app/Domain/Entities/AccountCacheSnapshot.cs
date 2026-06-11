@@ -6,6 +6,7 @@ namespace SecureOverlay.Domain.Entities
     {
         public string UserId { get; set; } = string.Empty;
         public string AccessTier { get; set; } = "free";
+        public bool EmailVerified { get; set; }
         public bool PhoneVerified { get; set; }
         public decimal ProAvailableCredits { get; set; }
         public decimal PremiumAvailableCredits { get; set; }

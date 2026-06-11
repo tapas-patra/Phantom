@@ -4,6 +4,8 @@ public sealed class DesktopAccountRecord
 {
     public string UserId { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
+    public bool EmailVerified { get; set; }
+    public DateTime? EmailVerifiedAtUtc { get; set; }
     public string AccessTier { get; set; } = "free";
     public string PasswordHash { get; set; } = string.Empty;
     public bool PhoneVerified { get; set; }

@@ -4,6 +4,8 @@ Backend authority for the Windows desktop runtime.
 
 Implemented:
 - PostgreSQL-backed account, session, lock, usage, telemetry, and magic-link persistence
+- real hosted registration and email-verification persistence
+- Gmail API OAuth bootstrap endpoints for production email delivery
 - PBKDF2 password hashing
 - desktop password login, refresh, logout, and magic-link auth flows
 - startup account-check APIs
@@ -33,7 +35,9 @@ You can also apply [db/seed-test-users.sql](/Users/tapaskumarpatra/TKP-Other-per
 Default endpoints:
 - `GET /health`
 - `GET /health/ready`
+- `POST /api/desktop/auth/register`
 - `POST /api/desktop/auth/login`
+- `POST /api/desktop/auth/verify-email/request`
 - `POST /api/desktop/auth/refresh`
 - `POST /api/desktop/auth/logout`
 - `POST /api/desktop/auth/magic-link/request`
@@ -46,6 +50,7 @@ Default endpoints:
 - `POST /api/desktop/locks/heartbeat`
 - `POST /api/desktop/locks/release`
 - `GET /magic-link/consume?token=...`
+- `GET /email/verify?token=...`
 - `GET /api/admin/accounts/{userId}`
 - `POST /api/admin/locks/clear`
 - `POST /api/admin/balance/waive-negative-premium`
@@ -63,6 +68,10 @@ If you prefer URI form and the password contains `@`, encode it as `%40`.
 
 Recommended env vars:
 - `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
+- `PHANTOM_PUBLIC_WEBSITE_BASE_URL`
+- `PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY`
+- `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_PATH`
+- `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI`
 - `PHANTOM_WINDOWS_BACKEND_LEASE_HOURS`
 - `PHANTOM_WINDOWS_BACKEND_LOCK_TTL_MINUTES`
 - `PHANTOM_WINDOWS_BACKEND_DEFAULT_PRO_CREDITS`
@@ -81,6 +90,11 @@ Recommended env vars:
 - `PHANTOM_WINDOWS_BACKEND_SMTP_ENABLE_SSL`
 
 Admin endpoints require the `X-Phantom-Admin-Key` header.
+
+Gmail OAuth bootstrap endpoints:
+- `GET /api/admin/integrations/gmail/oauth/status`
+- `POST /api/admin/integrations/gmail/oauth/start`
+- `GET /api/admin/integrations/gmail/oauth/callback`
 
 Default test users after explicit seeding:
 - `free.user@phantom.app` / `PhantomFree123!`

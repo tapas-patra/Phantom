@@ -15,6 +15,9 @@ builder.Services.AddSingleton<PostgresBackendStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
+builder.Services.AddSingleton<EmailVerificationRepository>();
+builder.Services.AddSingleton<IntegrationSecretRepository>();
+builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
@@ -22,9 +25,12 @@ builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<LoginAttemptService>();
+builder.Services.AddSingleton<SecretProtector>();
+builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
+builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -32,6 +38,24 @@ builder.Services.AddSingleton<TelemetryIngestService>();
 builder.Services.AddSingleton<AdminService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddHostedService<MaintenanceService>();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("website", cors =>
+    {
+        var origins = new List<string>();
+        if (!string.IsNullOrWhiteSpace(backendOptions.PublicWebsiteBaseUrl))
+        {
+            origins.Add(backendOptions.PublicWebsiteBaseUrl.TrimEnd('/'));
+        }
+
+        origins.Add("http://localhost:4173");
+        origins.Add("https://localhost:4173");
+
+        cors.WithOrigins(origins.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -77,6 +101,7 @@ app.UseExceptionHandler(exceptionApp =>
 });
 
 app.UseRateLimiter();
+app.UseCors("website");
 
 app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
 {
@@ -91,6 +116,38 @@ app.MapGet("/health/ready", (PostgresBackendStore store) =>
         ? Results.Ok(new { status = "ready", utc = DateTime.UtcNow })
         : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Database unavailable"))
     .RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/register", (
+    HttpContext httpContext,
+    AuthRegisterRequestDto request,
+    RegistrationService registration) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(registration.Register(request, publicBaseUrl));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/verify-email/request", (
+    HttpContext httpContext,
+    AuthEmailVerificationRequestDto request,
+    RegistrationService registration) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(registration.ResendVerification(request, publicBaseUrl));
+}).RequireRateLimiting("auth");
+
+app.MapGet("/email/verify", (
+    HttpContext httpContext,
+    string token,
+    RegistrationService registration,
+    BackendOptions options) =>
+{
+    var result = registration.CompleteVerification(token);
+    var redirectBase = string.IsNullOrWhiteSpace(options.PublicWebsiteBaseUrl)
+        ? $"{httpContext.Request.Scheme}://{httpContext.Request.Host}"
+        : options.PublicWebsiteBaseUrl.TrimEnd('/');
+    return Results.Redirect(
+        $"{redirectBase}/desktop-return?verification=success&email={Uri.EscapeDataString(result.Email)}");
+});
 
 app.MapPost("/api/desktop/auth/login", (
     HttpContext httpContext,
@@ -241,7 +298,7 @@ app.MapPost("/api/desktop/auth/callback/complete", (
     var callbackResult = new AuthCallbackResultDto
     {
         Email = account.Email,
-        Status = account.PhoneVerified ? "ready" : "verify",
+        Status = account.EmailVerified ? "ready" : "verify",
         PhoneVerified = account.PhoneVerified,
         DeviceInstallId = issued.InstallId,
         DeviceFingerprintHash = issued.DeviceFingerprintHash
@@ -366,6 +423,35 @@ adminGroup.MapPost("/credits/grant", (
     AdminService admin) =>
 {
     return Results.Ok(admin.GrantCredits(request));
+});
+
+adminGroup.MapGet("/integrations/gmail/oauth/status", (GoogleMailOAuthService gmailOAuth) =>
+{
+    return Results.Ok(gmailOAuth.GetStatus());
+});
+
+adminGroup.MapPost("/integrations/gmail/oauth/start", (
+    HttpContext httpContext,
+    GoogleMailOAuthService gmailOAuth) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(gmailOAuth.StartAuthorization(publicBaseUrl));
+});
+
+app.MapGet("/api/admin/integrations/gmail/oauth/callback", async (
+    HttpContext httpContext,
+    string code,
+    string state,
+    GoogleMailOAuthService gmailOAuth,
+    BackendOptions options,
+    CancellationToken cancellationToken) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    await gmailOAuth.CompleteAuthorizationAsync(code, state, publicBaseUrl, cancellationToken);
+    var redirectBase = string.IsNullOrWhiteSpace(options.PublicWebsiteBaseUrl)
+        ? publicBaseUrl
+        : options.PublicWebsiteBaseUrl.TrimEnd('/');
+    return Results.Redirect($"{redirectBase}/desktop-return?gmail_oauth=success");
 });
 
 app.Run();

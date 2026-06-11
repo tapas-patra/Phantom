@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS desktop_accounts (
     user_id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    email_verified_at_utc TIMESTAMPTZ NULL,
     access_tier TEXT NOT NULL DEFAULT 'free',
     password_hash TEXT NOT NULL,
     phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -15,6 +17,8 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
 );
 
 ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'free';
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS email_verified_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS pro_available_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
@@ -29,6 +33,8 @@ ALTER TABLE desktop_accounts ADD COLUMN IF NOT EXISTS updated_at_utc TIMESTAMPTZ
 INSERT INTO desktop_accounts (
     user_id,
     email,
+    email_verified,
+    email_verified_at_utc,
     access_tier,
     password_hash,
     phone_verified,
@@ -45,6 +51,8 @@ VALUES
 (
     'free.user@phantom.app',
     'free.user@phantom.app',
+    TRUE,
+    NOW(),
     'free',
     'pbkdf2-sha256$120000$3PianhKVoXGAWQ5kY/tjaQ==$HJCk0VlHUExBveHqU5ZynAFC8uZPrGofvjL7nPmxlPI=',
     TRUE,
@@ -60,6 +68,8 @@ VALUES
 (
     'pro.user@phantom.app',
     'pro.user@phantom.app',
+    TRUE,
+    NOW(),
     'pro_byo',
     'pbkdf2-sha256$120000$Kfp4L4HiRaxO1KVxJM96Nw==$ucoNS3p7L1BcIuwRlSE5VCUhu/C3H6jlaZQp5EcP3bI=',
     TRUE,
@@ -75,6 +85,8 @@ VALUES
 (
     'premium.user@phantom.app',
     'premium.user@phantom.app',
+    TRUE,
+    NOW(),
     'premium',
     'pbkdf2-sha256$120000$2wNflBQCx67mA3R1XURjDg==$Hkw07WGMPtOIXAzRpZTKnotSqYMEQbkv8eDgiyT3QC8=',
     TRUE,
@@ -89,6 +101,8 @@ VALUES
 )
 ON CONFLICT (user_id) DO UPDATE SET
     email = EXCLUDED.email,
+    email_verified = EXCLUDED.email_verified,
+    email_verified_at_utc = EXCLUDED.email_verified_at_utc,
     access_tier = EXCLUDED.access_tier,
     password_hash = EXCLUDED.password_hash,
     phone_verified = EXCLUDED.phone_verified,

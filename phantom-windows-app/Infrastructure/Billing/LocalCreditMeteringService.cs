@@ -56,9 +56,9 @@ namespace SecureOverlay.Infrastructure.Billing
                 return Denied("Account Check Required", "No cached account snapshot is available for interview metering.");
             }
 
-            if (!snapshot.PhoneVerified)
+            if (!snapshot.EmailVerified)
             {
-                return Denied("Phone Verification Required", "Phone verification must complete before the app can start an interview.");
+                return Denied("Email Verification Required", "Email verification must complete before the app can start an interview.");
             }
 
             if (snapshot.PremiumNegativeCredits > 0m)

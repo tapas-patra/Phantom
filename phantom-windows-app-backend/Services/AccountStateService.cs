@@ -50,6 +50,11 @@ public sealed class AccountStateService
             }
         }
 
+        if (!existing.EmailVerified)
+        {
+            throw new BackendValidationException("Please verify your email before signing in.");
+        }
+
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.LastValidatedAtUtc = DateTime.UtcNow;
         _accounts.Save(existing);
@@ -65,6 +70,7 @@ public sealed class AccountStateService
         {
             UserId = account.UserId,
             Email = account.Email,
+            EmailVerified = account.EmailVerified,
             AccessTier = account.AccessTier,
             PhoneVerified = account.PhoneVerified,
             Wallet = new WalletSnapshotDto

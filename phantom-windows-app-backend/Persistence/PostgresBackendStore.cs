@@ -50,6 +50,8 @@ public sealed class PostgresBackendStore
 CREATE TABLE IF NOT EXISTS desktop_accounts (
     user_id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    email_verified_at_utc TIMESTAMPTZ NULL,
     access_tier TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     phone_verified BOOLEAN NOT NULL,
@@ -65,6 +67,10 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
 
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'free';
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS email_verified_at_utc TIMESTAMPTZ NULL;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
     session_id TEXT PRIMARY KEY,
@@ -141,6 +147,37 @@ CREATE TABLE IF NOT EXISTS auth_login_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_ip_time
     ON auth_login_attempts(email, ip_address, attempted_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_email
+    ON email_verification_tokens(email, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS integration_secrets (
+    secret_key TEXT PRIMARY KEY,
+    encrypted_value TEXT NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_pending_states (
+    state_token TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_pending_states_provider_expiry
+    ON oauth_pending_states(provider, expires_at_utc DESC);
 ";
         command.ExecuteNonQuery();
     }

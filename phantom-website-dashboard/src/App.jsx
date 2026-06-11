@@ -4,6 +4,8 @@ import {
   fetchAccountSummary,
   fetchDevices,
   fetchDownloadEntitlement,
+  registerAccount,
+  resendVerificationEmail,
   fetchSupportOverview,
   fetchWalletHistory
 } from "./lib/api";
@@ -253,30 +255,53 @@ function DownloadPage() {
 
 function AuthPage({ mode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const isRegister = mode === "register";
+  const registerParams = new URLSearchParams(location.search);
   const [form, setForm] = useState({
-    email: isRegister ? "premium.user@phantom.app" : "pro.user@phantom.app",
-    password: isRegister ? "PhantomPremium123!" : "PhantomPro123!",
-    phone: "",
-    otp: "",
+    email: isRegister ? "" : "pro.user@phantom.app",
+    password: isRegister ? "" : "PhantomPro123!",
     magicLink: false
   });
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (isRegister) {
-      navigate("/desktop-return", {
-        state: {
-          title: "Registration Started",
-          message:
-            "Production registration still needs real phone OTP and provider-backed activation. This page is the intended entrypoint and desktop handoff surface."
+      setSubmitting(true);
+      setStatus("");
+      try
+      {
+        const result = await registerAccount({
+          email: form.email,
+          password: form.password,
+          appVersion: registerParams.get("appVersion") || "",
+          installId: registerParams.get("installId") || "",
+          deviceLabel: registerParams.get("deviceLabel") || "",
+          deviceFingerprintHash: registerParams.get("deviceFingerprint") || "",
+          secretFingerprintHint: registerParams.get("deviceHint") || ""
+        });
+        if (result.deliveryStatus !== "sent") {
+          throw new Error(result.deliveryError || "Registration completed but verification email could not be delivered.");
         }
-      });
+        navigate(
+          `/desktop-return?verification=pending&email=${encodeURIComponent(result.email)}`
+        );
+      }
+      catch (error)
+      {
+        setStatus(error.message || "Registration failed.");
+      }
+      finally
+      {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -290,7 +315,7 @@ function AuthPage({ mode }) {
         <h1>{isRegister ? "Create a Phantom account." : "Return to your protected workspace."}</h1>
         <p className="hero-text">
           {isRegister
-            ? "Desktop registration hands off to the hosted website with app version and device metadata. Phone OTP and activation belong here."
+            ? "Desktop registration now creates the hosted account and sends a real verification email before first sign-in."
             : "The desktop app supports password and magic-link auth. This page mirrors those paths so the UX stays coherent across web and Windows."}
         </p>
       </section>
@@ -332,20 +357,14 @@ function AuthPage({ mode }) {
                 onChange={(event) => update("password", event.target.value)}
               />
             </label>
-            <label>
-              <span>Phone number</span>
-              <input value={form.phone} onChange={(event) => update("phone", event.target.value)} placeholder="+1 555..." />
-            </label>
-            <label>
-              <span>OTP</span>
-              <input value={form.otp} onChange={(event) => update("otp", event.target.value)} placeholder="verification code" />
-            </label>
           </>
         )}
 
         <button className="button button-primary" type="submit">
-          {isRegister ? "Start Registration" : form.magicLink ? "Continue With Magic Link" : "Open Dashboard"}
+          {isRegister ? (submitting ? "Creating Account..." : "Create Account") : form.magicLink ? "Continue With Magic Link" : "Open Dashboard"}
         </button>
+
+        {status && <p className="hero-text">{status}</p>}
 
         {!isRegister && (
           <Link className="subtle-link" to="/magic-link">
@@ -378,10 +397,54 @@ function MagicLinkPage() {
 
 function DesktopReturnPage() {
   const location = useLocation();
-  const state = location.state || {
-    title: "Desktop callback ready",
-    message: "Open Phantom to complete the hosted callback flow."
-  };
+  const navigate = useNavigate();
+  const query = new URLSearchParams(location.search);
+  const email = query.get("email") || "";
+  const verificationState = query.get("verification");
+  const gmailOauthState = query.get("gmail_oauth");
+
+  const state = location.state || (
+    verificationState === "pending"
+      ? {
+          title: "Verification Email Sent",
+          message: `We sent a verification email to ${email || "your inbox"}. Verify the address, then sign in from the desktop app.`
+        }
+      : verificationState === "success"
+        ? {
+            title: "Email Verified",
+            message: `${email || "Your account"} is now verified. Return to the desktop app and sign in.`
+          }
+        : gmailOauthState === "success"
+          ? {
+              title: "Gmail Delivery Connected",
+              message: "The backend now has a Gmail refresh token and can send verification and sign-in email."
+            }
+          : {
+              title: "Desktop callback ready",
+              message: "Open Phantom to complete the hosted callback flow."
+            }
+  );
+
+  async function handleResendVerification() {
+    if (!email) {
+      return;
+    }
+
+    try {
+      await resendVerificationEmail(email);
+      navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(email)}`, {
+        replace: true
+      });
+    } catch (error) {
+      navigate("/desktop-return", {
+        replace: true,
+        state: {
+          title: "Verification Retry Failed",
+          message: error.message || "Could not resend verification email."
+        }
+      });
+    }
+  }
 
   return (
     <main className="page">
@@ -389,9 +452,35 @@ function DesktopReturnPage() {
         <p className="eyebrow">Desktop return</p>
         <h1>{state.title}</h1>
         <p className="hero-text">{state.message}</p>
-        <a className="button button-primary" href="phantom://auth/callback?token=demo-token">
-          Open Phantom
-        </a>
+        {verificationState === "pending" ? (
+          <div className="hero-actions">
+            <button className="button button-primary" onClick={handleResendVerification}>
+              Resend Verification Email
+            </button>
+            <Link className="button button-secondary" to="/login">
+              Back To Login
+            </Link>
+          </div>
+        ) : verificationState === "success" ? (
+          <div className="hero-actions">
+            <Link className="button button-primary" to="/login">
+              Go To Login
+            </Link>
+            <Link className="button button-secondary" to="/download">
+              Download Desktop
+            </Link>
+          </div>
+        ) : gmailOauthState === "success" ? (
+          <div className="hero-actions">
+            <Link className="button button-primary" to="/register">
+              Open Registration
+            </Link>
+          </div>
+        ) : (
+          <a className="button button-primary" href="phantom://auth/callback?token=demo-token">
+            Open Phantom
+          </a>
+        )}
       </section>
     </main>
   );

@@ -14,7 +14,9 @@ public sealed class BackendOptions
     public int PasswordIterationCount { get; init; } = 120000;
     public int LoginAttemptWindowMinutes { get; init; } = 15;
     public int MaxFailedLoginAttempts { get; init; } = 5;
+    public int EmailVerificationTtlHours { get; init; } = 24;
     public string AdminApiKey { get; init; } = string.Empty;
+    public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
     public string SmtpHost { get; init; } = string.Empty;
     public int SmtpPort { get; init; } = 587;
     public string SmtpUsername { get; init; } = string.Empty;
@@ -22,11 +24,19 @@ public sealed class BackendOptions
     public string SmtpFromEmail { get; init; } = string.Empty;
     public string SmtpFromName { get; init; } = "Phantom";
     public bool SmtpEnableSsl { get; init; } = true;
+    public string GoogleOAuthClientSecretsPath { get; init; } = string.Empty;
+    public string GoogleOAuthClientSecretsJson { get; init; } = string.Empty;
+    public string GoogleOAuthRedirectUri { get; init; } = string.Empty;
+    public string SecretEncryptionKey { get; init; } = string.Empty;
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
     public bool IsSmtpConfigured =>
         !string.IsNullOrWhiteSpace(SmtpHost)
         && !string.IsNullOrWhiteSpace(SmtpFromEmail);
+    public bool HasGoogleOAuthClientSecrets =>
+        !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsPath)
+        || !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsJson);
+    public bool HasSecretEncryptionKey => !string.IsNullOrWhiteSpace(SecretEncryptionKey);
 
     public static BackendOptions FromConfiguration(IConfiguration configuration)
     {
@@ -73,9 +83,17 @@ public sealed class BackendOptions
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_MAX_FAILED_LOGIN_ATTEMPTS"),
                 section["MaxFailedLoginAttempts"],
                 5),
+            EmailVerificationTtlHours = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_EMAIL_VERIFICATION_TTL_HOURS"),
+                section["EmailVerificationTtlHours"],
+                24),
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",
                 section["AdminApiKey"],
+                string.Empty),
+            PublicWebsiteBaseUrl = ReadString(
+                "PHANTOM_PUBLIC_WEBSITE_BASE_URL",
+                section["PublicWebsiteBaseUrl"],
                 string.Empty),
             SmtpHost = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_SMTP_HOST",
@@ -104,7 +122,23 @@ public sealed class BackendOptions
             SmtpEnableSsl = ParseBool(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_SMTP_ENABLE_SSL"),
                 section["SmtpEnableSsl"],
-                true)
+                true),
+            GoogleOAuthClientSecretsPath = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_PATH",
+                section["GoogleOAuthClientSecretsPath"],
+                string.Empty),
+            GoogleOAuthClientSecretsJson = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON",
+                section["GoogleOAuthClientSecretsJson"],
+                string.Empty),
+            GoogleOAuthRedirectUri = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI",
+                section["GoogleOAuthRedirectUri"],
+                string.Empty),
+            SecretEncryptionKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY",
+                section["SecretEncryptionKey"],
+                string.Empty)
         };
     }
 

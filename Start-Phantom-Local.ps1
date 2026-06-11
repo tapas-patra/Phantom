@@ -70,6 +70,7 @@ $dashboardAdminApiKey = Require-EnvVar "PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteBaseUrl = Require-EnvVar "PHANTOM_WEBSITE_BASE_URL"
 $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
+$websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
 
 $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
 $dashboardBackendDir = Join-Path $repoRoot "phantom-dashboard-backend"
@@ -101,6 +102,7 @@ if ($SeedUsers) {
 $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = '$windowsBackendDbUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
+`$env:PHANTOM_PUBLIC_WEBSITE_BASE_URL = '$websiteBaseUrl'
 dotnet restore
 dotnet run --urls http://localhost:5057
 "@
@@ -114,6 +116,7 @@ dotnet run --urls http://localhost:5067
 
 $websiteCommand = @"
 `$env:VITE_PHANTOM_DASHBOARD_API_BASE_URL = '$dashboardApiBaseUrl'
+`$env:VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL = '$websiteWindowsBackendApiBaseUrl'
 npm install
 npm run dev
 "@

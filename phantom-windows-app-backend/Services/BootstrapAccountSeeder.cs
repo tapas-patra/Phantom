@@ -36,6 +36,8 @@ public sealed class BootstrapAccountSeeder
             {
                 UserId = existing?.UserId ?? user.Email,
                 Email = user.Email,
+                EmailVerified = true,
+                EmailVerifiedAtUtc = existing?.EmailVerifiedAtUtc ?? DateTime.UtcNow,
                 AccessTier = user.AccessTier,
                 PasswordHash = _passwordHasher.Hash(user.Password),
                 PhoneVerified = user.PhoneVerified,

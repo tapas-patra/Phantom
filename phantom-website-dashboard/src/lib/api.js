@@ -2,13 +2,48 @@ const DASHBOARD_API_BASE =
   import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
   "http://localhost:5067";
 
-async function request(path) {
-  const response = await fetch(`${DASHBOARD_API_BASE}${path}`);
+const WINDOWS_BACKEND_API_BASE =
+  import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://localhost:5057";
+
+async function request(baseUrl, path, init) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers || {})
+    },
+    ...init
+  });
+
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let message = `Request failed: ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) {
+        message = payload.error;
+      }
+    } catch {
+      // Ignore body parse failures.
+    }
+
+    throw new Error(message);
   }
 
   return response.json();
+}
+
+export async function registerAccount(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function resendVerificationEmail(email) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/verify-email/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
 }
 
 export async function fetchAccountSummary(email) {
@@ -17,7 +52,10 @@ export async function fetchAccountSummary(email) {
   }
 
   try {
-    return await request(`/api/dashboard/account-summary?email=${encodeURIComponent(email)}`);
+    return await request(
+      DASHBOARD_API_BASE,
+      `/api/dashboard/account-summary?email=${encodeURIComponent(email)}`
+    );
   } catch {
     return {
       userId: email,
@@ -40,7 +78,10 @@ export async function fetchWalletHistory(userId) {
   }
 
   try {
-    return await request(`/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`);
+    return await request(
+      DASHBOARD_API_BASE,
+      `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
+    );
   } catch {
     return [
       {
@@ -69,7 +110,10 @@ export async function fetchDevices(userId) {
   }
 
   try {
-    return await request(`/api/dashboard/devices?userId=${encodeURIComponent(userId)}`);
+    return await request(
+      DASHBOARD_API_BASE,
+      `/api/dashboard/devices?userId=${encodeURIComponent(userId)}`
+    );
   } catch {
     return [
       {
@@ -89,7 +133,10 @@ export async function fetchDownloadEntitlement(userId) {
   }
 
   try {
-    return await request(`/api/dashboard/download-entitlement?userId=${encodeURIComponent(userId)}`);
+    return await request(
+      DASHBOARD_API_BASE,
+      `/api/dashboard/download-entitlement?userId=${encodeURIComponent(userId)}`
+    );
   } catch {
     return {
       canDownload: true,
@@ -107,7 +154,10 @@ export async function fetchSupportOverview(userId) {
   }
 
   try {
-    return await request(`/api/dashboard/support/preview?userId=${encodeURIComponent(userId)}`);
+    return await request(
+      DASHBOARD_API_BASE,
+      `/api/dashboard/support/preview?userId=${encodeURIComponent(userId)}`
+    );
   } catch {
     return {
       openLockSessionId: "session-alpha",

@@ -75,6 +75,15 @@ $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
 $dashboardBackendDir = Join-Path $repoRoot "phantom-dashboard-backend"
 $websiteDir = Join-Path $repoRoot "phantom-website-dashboard"
 $windowsAppDir = Join-Path $repoRoot "phantom-windows-app"
+$windowsAppHostedConfigPath = Join-Path $windowsAppDir "phantom.hosted.json"
+
+$windowsAppHostedConfig = @{
+    mode = "remote"
+    websiteBaseUrl = $websiteBaseUrl
+    desktopBackendBaseUrl = $windowsBackendBaseUrl
+} | ConvertTo-Json
+
+Set-Content -Path $windowsAppHostedConfigPath -Value $windowsAppHostedConfig -Encoding UTF8
 
 if ($SeedUsers) {
     Write-Host "Seeding desktop test users into the configured PostgreSQL database..."
@@ -129,3 +138,4 @@ Write-Host "Opened Phantom local stack windows."
 Write-Host "Website: $websiteBaseUrl"
 Write-Host "Windows backend: $windowsBackendBaseUrl"
 Write-Host "Dashboard backend: http://localhost:5067"
+Write-Host "Windows app hosted config: $windowsAppHostedConfigPath"

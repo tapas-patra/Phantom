@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Text.Json;
 
 namespace SecureOverlay.Infrastructure.Hosted
 {
@@ -14,9 +16,10 @@ namespace SecureOverlay.Infrastructure.Hosted
 
         public static HostedRuntimeOptions Load()
         {
-            var mode = Environment.GetEnvironmentVariable("PHANTOM_HOSTED_MODE");
-            var websiteBaseUrl = Environment.GetEnvironmentVariable("PHANTOM_WEBSITE_BASE_URL");
-            var backendBaseUrl = Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_BASE_URL");
+            var fileConfig = LoadFromFile();
+            var mode = ReadSetting("PHANTOM_HOSTED_MODE", fileConfig?.Mode);
+            var websiteBaseUrl = ReadSetting("PHANTOM_WEBSITE_BASE_URL", fileConfig?.WebsiteBaseUrl);
+            var backendBaseUrl = ReadSetting("PHANTOM_WINDOWS_BACKEND_BASE_URL", fileConfig?.DesktopBackendBaseUrl);
 
             var options = new HostedRuntimeOptions
             {
@@ -27,6 +30,68 @@ namespace SecureOverlay.Infrastructure.Hosted
 
             Validate(options);
             return options;
+        }
+
+        private static string? ReadSetting(string envName, string? fileFallback)
+        {
+            var processValue = Environment.GetEnvironmentVariable(envName);
+            if (!string.IsNullOrWhiteSpace(processValue))
+            {
+                return processValue;
+            }
+
+            var userValue = Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.User);
+            if (!string.IsNullOrWhiteSpace(userValue))
+            {
+                return userValue;
+            }
+
+            var machineValue = Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.Machine);
+            if (!string.IsNullOrWhiteSpace(machineValue))
+            {
+                return machineValue;
+            }
+
+            return fileFallback;
+        }
+
+        private static HostedRuntimeFileConfig? LoadFromFile()
+        {
+            var currentDirectoryPath = Path.Combine(Environment.CurrentDirectory, "phantom.hosted.json");
+            if (TryLoadConfig(currentDirectoryPath, out var currentDirectoryConfig))
+            {
+                return currentDirectoryConfig;
+            }
+
+            var baseDirectoryPath = Path.Combine(AppContext.BaseDirectory, "phantom.hosted.json");
+            if (TryLoadConfig(baseDirectoryPath, out var baseDirectoryConfig))
+            {
+                return baseDirectoryConfig;
+            }
+
+            return null;
+        }
+
+        private static bool TryLoadConfig(string path, out HostedRuntimeFileConfig? config)
+        {
+            config = null;
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            var json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            config = JsonSerializer.Deserialize<HostedRuntimeFileConfig>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            return config != null;
         }
 
         private static void Validate(HostedRuntimeOptions options)
@@ -60,6 +125,13 @@ namespace SecureOverlay.Infrastructure.Hosted
                 throw new InvalidOperationException(
                     "PHANTOM_WEBSITE_BASE_URL must be an absolute URL.");
             }
+        }
+
+        private sealed class HostedRuntimeFileConfig
+        {
+            public string? Mode { get; init; }
+            public string? WebsiteBaseUrl { get; init; }
+            public string? DesktopBackendBaseUrl { get; init; }
         }
     }
 }

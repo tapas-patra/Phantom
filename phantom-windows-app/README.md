@@ -20,6 +20,9 @@ Required runtime env vars:
 - `PHANTOM_WEBSITE_BASE_URL`
 - `PHANTOM_HOSTED_MODE=remote` or unset
 
+Runtime config fallback:
+- if environment variables are not visible after elevation, the app also reads `phantom.hosted.json` from the working directory or executable directory
+
 Local development example:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=http://localhost:5057`
 - `PHANTOM_WEBSITE_BASE_URL=http://localhost:4173`

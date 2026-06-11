@@ -52,7 +52,7 @@
                             <StackPanel>
                                 <TextBlock Text="Premium Managed AI" FontSize="14" FontWeight="Bold"
                                           Foreground="White" Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text="Provider and API key setup is hidden for Premium accounts. Phantom manages the model lane for this tier."
+                                <TextBlock Text="Premium accounts use Phantom-managed provider keys. Provider and model can still be switched from the main window, but API key setup stays hidden."
                                           TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0" Margin="0,8,0,0"
                                           Effect="{StaticResource Shadow}"/>
                             </StackPanel>
@@ -64,10 +64,10 @@
                             <StackPanel>
                                 <TextBlock Text="Free Trial Mode" FontSize="14" FontWeight="Bold"
                                           Foreground="White" Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text="This tier uses Phantom-managed trial access. BYO provider, model, and API key setup is hidden until the account upgrades to Pro BYO."
+                                <TextBlock Text="This tier uses Phantom-managed trial access. Provider and model can be switched from the main window, but API key setup stays hidden until the account upgrades to Pro BYO."
                                           TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF" Margin="0,8,0,0"
                                           Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text="Trial allowance: 2 sessions, up to 20 minutes each."
+                                <TextBlock Text="Trial allowance: 2 hosted 15-minute demo blocks."
                                           TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF" Margin="0,6,0,0"
                                           Effect="{StaticResource Shadow}"/>
                             </StackPanel>

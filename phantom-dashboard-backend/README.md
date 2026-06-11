@@ -24,6 +24,8 @@ Environment:
 - `PHANTOM_DASHBOARD_BACKEND_DATABASE_URL`
 - falls back to `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
 - `PHANTOM_DASHBOARD_ADMIN_API_KEY`
+- `PHANTOM_WINDOWS_BACKEND_BASE_URL`
+- `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 
 Recommended PostgreSQL connection string form:
 ```bash
@@ -38,3 +40,6 @@ Endpoints:
 - `GET /api/dashboard/download-entitlement?userId=...`
 - `GET /api/dashboard/support/preview?userId=...`
 - `GET /api/dashboard/admin/overview` with `X-Phantom-Admin-Key`
+- `GET /api/dashboard/admin/managed-ai/credentials` with `X-Phantom-Admin-Key`
+- `POST /api/dashboard/admin/managed-ai/credentials` with `X-Phantom-Admin-Key`
+- `DELETE /api/dashboard/admin/managed-ai/credentials/{credentialId}` with `X-Phantom-Admin-Key`

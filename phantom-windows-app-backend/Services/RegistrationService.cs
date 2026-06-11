@@ -63,7 +63,7 @@ public sealed class RegistrationService
             AccessTier = "free",
             PhoneVerified = false,
             ProAvailableCredits = 0m,
-            PremiumAvailableCredits = 0m,
+            PremiumAvailableCredits = 0.5m,
             PremiumNegativeCredits = 0m,
             LeaseExpiresAtUtc = now.AddHours(_options.DefaultLeaseHours),
             OfflineModeEnabled = false,
@@ -71,6 +71,10 @@ public sealed class RegistrationService
         };
 
         account.Email = normalizedEmail;
+        if (string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase))
+        {
+            account.PremiumAvailableCredits = Math.Max(account.PremiumAvailableCredits, 0.5m);
+        }
         account.EmailVerified = false;
         account.EmailVerifiedAtUtc = null;
         account.PasswordHash = _passwordHasher.Hash(request.Password);

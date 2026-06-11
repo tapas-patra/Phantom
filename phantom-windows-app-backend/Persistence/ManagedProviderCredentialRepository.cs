@@ -1,0 +1,112 @@
+using Npgsql;
+using Phantom.WindowsApp.Backend.Domain;
+
+namespace Phantom.WindowsApp.Backend.Persistence;
+
+public sealed class ManagedProviderCredentialRepository
+{
+    private readonly PostgresBackendStore _store;
+
+    public ManagedProviderCredentialRepository(PostgresBackendStore store)
+    {
+        _store = store;
+    }
+
+    public IReadOnlyList<ManagedProviderCredentialRecord> ListByProvider(string providerId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM managed_provider_credentials
+WHERE provider_id = @providerId
+ORDER BY priority ASC, updated_at_utc DESC;";
+        command.Parameters.AddWithValue("providerId", providerId);
+        using var reader = command.ExecuteReader();
+        var items = new List<ManagedProviderCredentialRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public IReadOnlyList<ManagedProviderCredentialRecord> ListAll()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM managed_provider_credentials
+ORDER BY provider_id ASC, priority ASC, updated_at_utc DESC;";
+        using var reader = command.ExecuteReader();
+        var items = new List<ManagedProviderCredentialRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public ManagedProviderCredentialRecord? FindById(string credentialId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM managed_provider_credentials WHERE credential_id = @credentialId LIMIT 1;";
+        command.Parameters.AddWithValue("credentialId", credentialId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
+    }
+
+    public void Save(ManagedProviderCredentialRecord record)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+INSERT INTO managed_provider_credentials (
+    credential_id, provider_id, label, encrypted_api_key, is_enabled, priority, created_at_utc, updated_at_utc
+) VALUES (
+    @credentialId, @providerId, @label, @encryptedApiKey, @isEnabled, @priority, @createdAtUtc, @updatedAtUtc
+)
+ON CONFLICT (credential_id) DO UPDATE SET
+    provider_id = EXCLUDED.provider_id,
+    label = EXCLUDED.label,
+    encrypted_api_key = EXCLUDED.encrypted_api_key,
+    is_enabled = EXCLUDED.is_enabled,
+    priority = EXCLUDED.priority,
+    updated_at_utc = EXCLUDED.updated_at_utc;";
+        command.Parameters.AddWithValue("credentialId", record.CredentialId);
+        command.Parameters.AddWithValue("providerId", record.ProviderId);
+        command.Parameters.AddWithValue("label", record.Label);
+        command.Parameters.AddWithValue("encryptedApiKey", record.EncryptedApiKey);
+        command.Parameters.AddWithValue("isEnabled", record.IsEnabled);
+        command.Parameters.AddWithValue("priority", record.Priority);
+        command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
+        command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
+        command.ExecuteNonQuery();
+    }
+
+    public void Delete(string credentialId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM managed_provider_credentials WHERE credential_id = @credentialId;";
+        command.Parameters.AddWithValue("credentialId", credentialId);
+        command.ExecuteNonQuery();
+    }
+
+    private static ManagedProviderCredentialRecord Map(NpgsqlDataReader reader)
+    {
+        return new ManagedProviderCredentialRecord
+        {
+            CredentialId = reader.GetString(reader.GetOrdinal("credential_id")),
+            ProviderId = reader.GetString(reader.GetOrdinal("provider_id")),
+            Label = reader.GetString(reader.GetOrdinal("label")),
+            EncryptedApiKey = reader.GetString(reader.GetOrdinal("encrypted_api_key")),
+            IsEnabled = reader.GetBoolean(reader.GetOrdinal("is_enabled")),
+            Priority = reader.GetInt32(reader.GetOrdinal("priority")),
+            CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+            UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
+        };
+    }
+}

@@ -6,6 +6,9 @@ const WINDOWS_BACKEND_API_BASE =
   import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
   "http://localhost:5057";
 
+const DASHBOARD_ADMIN_API_KEY =
+  import.meta.env.VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY || "";
+
 async function request(baseUrl, path, init) {
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
@@ -166,4 +169,31 @@ export async function fetchSupportOverview(userId) {
       supportMessage: "Support tools become live when dashboard backend admin keys and payment events are connected."
     };
   }
+}
+
+export async function fetchManagedAiAdminInventory() {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
+    headers: {
+      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+    }
+  });
+}
+
+export async function upsertManagedAiCredential(payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
+    method: "POST",
+    headers: {
+      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteManagedAiCredential(credentialId) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`, {
+    method: "DELETE",
+    headers: {
+      "X-Phantom-Admin-Key": DASHBOARD_ADMIN_API_KEY
+    }
+  });
 }

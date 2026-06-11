@@ -96,6 +96,7 @@ namespace SecureOverlay
 
         private Window? _currentDropdownMenu = null;
         private readonly AppLaunchContext _launchContext;
+        private readonly IAuthSessionRepository _authSessionRepository;
         private readonly ICreditMeteringService _creditMeteringService;
         private readonly IContextPackService _contextPackService;
         private readonly IInterviewLockService _interviewLockService;
@@ -103,6 +104,7 @@ namespace SecureOverlay
         private readonly IKnowledgeRetrievalService _knowledgeRetrievalService;
         private readonly ITelemetryService _telemetryService;
         private readonly IAccountCacheRepository _accountCacheRepository;
+        private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
         private AccountCacheSnapshot? _accountSnapshot;
@@ -143,15 +145,15 @@ namespace SecureOverlay
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
-            IAuthSessionRepository authSessionRepository = new SqliteAuthSessionRepository(store);
+            _authSessionRepository = new SqliteAuthSessionRepository(store);
             _accountCacheRepository = new SqliteAccountCacheRepository(store);
             IInterviewSessionRepository interviewSessionRepository = new SqliteInterviewSessionRepository(store);
             IContextPackRepository contextPackRepository = new SqliteContextPackRepository(store);
             IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
             ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
-            var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+            _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             _creditMeteringService = new LocalCreditMeteringService(
-                authSessionRepository,
+                _authSessionRepository,
                 _accountCacheRepository,
                 interviewSessionRepository);
             _contextPackService = new LocalContextPackService(contextPackRepository);
@@ -161,11 +163,11 @@ namespace SecureOverlay
                 _accountCacheRepository);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
-                HostedClientFactory.CreateUsageClient(hostedRuntimeOptions));
+                HostedClientFactory.CreateUsageClient(_hostedRuntimeOptions));
             _telemetryService = new HostedTelemetryService(
                 telemetryRepository,
-                HostedClientFactory.CreateTelemetryClient(hostedRuntimeOptions),
-                hostedRuntimeOptions);
+                HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
+                _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
@@ -430,10 +432,9 @@ namespace SecureOverlay
 
         private void ApplyAccountTierChrome()
         {
-            var isByo = IsByoAccount();
-            ProviderSelectorBorder.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
-            ModelSelectorBorder.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
-            if (!isByo)
+            ProviderSelectorBorder.Visibility = Visibility.Visible;
+            ModelSelectorBorder.Visibility = Visibility.Visible;
+            if (!IsByoAccount())
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
@@ -450,7 +451,7 @@ namespace SecureOverlay
 
             if (IsFreeTrialAccount())
             {
-                CreditIndicatorText.Text = "Free Trial | 2 x 20 min sessions";
+                CreditIndicatorText.Text = "Free Trial | 2 x 15 min demo blocks";
                 return;
             }
 
@@ -517,6 +518,39 @@ namespace SecureOverlay
         private bool IsFreeTrialAccount()
         {
             return string.Equals(_accountSnapshot?.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string[] GetAvailableProvidersForCurrentTier()
+        {
+            if (IsByoAccount())
+            {
+                return AIModelRegistry.GetAllProviders();
+            }
+
+            return new[]
+            {
+                AIModelRegistry.Providers.ChatGPT,
+                AIModelRegistry.Providers.Claude,
+                AIModelRegistry.Providers.Gemini,
+                AIModelRegistry.Providers.Mistral
+            };
+        }
+
+        private string[] GetAvailableModelsForSelectedProvider()
+        {
+            if (IsByoAccount())
+            {
+                return AIModelRegistry.GetModelsForProvider(_settings.SelectedAI);
+            }
+
+            return _settings.SelectedAI switch
+            {
+                "ChatGPT" => new[] { "gpt-4o", "gpt-4o-mini" },
+                "Claude" => new[] { "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620" },
+                "Gemini" => new[] { "gemini-2.5-flash", "gemini-2.5-pro" },
+                "Mistral" => new[] { "mistral-large-latest" },
+                _ => Array.Empty<string>()
+            };
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -673,14 +707,36 @@ namespace SecureOverlay
             var keyCount = _rotationManager.GetTotalKeyCount(_settings.SelectedAI);
             var availableKeys = _rotationManager.GetAvailableKeyCount(_settings.SelectedAI);
             Log.WriteLine($"  {_settings.SelectedAI} keys: {keyCount} total, {availableKeys} available");
+
+            var allowedProviders = GetAvailableProvidersForCurrentTier();
+            if (!allowedProviders.Contains(_settings.SelectedAI))
+            {
+                _settings.SelectedAI = allowedProviders.FirstOrDefault() ?? AIModelRegistry.Providers.ChatGPT;
+            }
             
             // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
             var currentModel = _rotationManager.GetCurrentModel(_settings.SelectedAI);
+            var allowedModels = GetAvailableModelsForSelectedProvider();
+            if (!allowedModels.Contains(currentModel))
+            {
+                currentModel = allowedModels.FirstOrDefault() ?? currentModel;
+                if (!string.IsNullOrWhiteSpace(currentModel))
+                {
+                    AIModelRegistry.SetModelForProvider(_settings, _settings.SelectedAI, currentModel);
+                    SettingsManager.Save(_settings);
+                }
+            }
             
             Log.WriteLine($"✓ Loading model from settings: {currentModel}");
             
             // Create AI service with rotation
-            IAIService newAI = AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, _rotationManager);
+            IAIService newAI = IsByoAccount()
+                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, _rotationManager)
+                : new HostedManagedAiService(
+                    _authSessionRepository,
+                    _hostedRuntimeOptions,
+                    _settings.SelectedAI,
+                    currentModel);
             
             AIProviderText.Text = newAI.GetProviderName();
 
@@ -3016,22 +3072,12 @@ namespace SecureOverlay
 
         private void ProviderSelector_Click(object sender, MouseButtonEventArgs e)
         {
-            if (!IsByoAccount())
-            {
-                return;
-            }
-
             Log.WriteLine("Provider selector clicked");
             ShowProviderMenu();
         }
 
         private void ModelSelector_Click(object sender, MouseButtonEventArgs e)
         {
-            if (!IsByoAccount())
-            {
-                return;
-            }
-
             Log.WriteLine("Model selector clicked");
             ShowModelMenu();
         }
@@ -3079,8 +3125,7 @@ namespace SecureOverlay
 
             var menuStack = new StackPanel();
 
-            // ✅ USE REGISTRY - Get all providers
-            var providers = AIModelRegistry.GetAllProviders();
+            var providers = GetAvailableProvidersForCurrentTier();
             
             foreach (var provider in providers)
             {
@@ -3215,7 +3260,7 @@ namespace SecureOverlay
             var menuStack = new StackPanel();
 
             // ✅ USE REGISTRY - Get models for current provider
-            string[] models = AIModelRegistry.GetModelsForProvider(_settings.SelectedAI);
+            string[] models = GetAvailableModelsForSelectedProvider();
             string currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
             
             foreach (var model in models)
@@ -3387,20 +3432,8 @@ namespace SecureOverlay
                 _rotationManager.SetCurrentModel(_settings.SelectedAI, newModel);
                 Log.WriteLine($"✓ Rotation manager updated to model: {newModel}");
             }
-            
-            // ✅ **NEW: Recreate AI service with new model**
-            if (_rotationManager != null && _conversationManager != null)
-            {
-                var currentKey = _rotationManager.GetCurrentApiKey(_settings.SelectedAI);
-                var newAI = AIServiceFactory.CreateService(_settings.SelectedAI, currentKey, newModel);
-                _conversationManager.UpdateAIService(newAI);
-                _currentAI = newAI;
-                Log.WriteLine($"✓ AI service recreated with new model: {newModel}");
-            }
-            
-            // ✅ Update model config in conversation manager
-            var modelConfig = AIModelRegistry.GetModelConfig(newModel);
-            _conversationManager?.UpdateModelConfig(modelConfig);
+
+            InitializeAI();
             
             // ✅ Update UI - This will refresh the display
             UpdateProviderAndModelDisplay();
@@ -3456,24 +3489,6 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING PROVIDER AND MODEL DISPLAY");
 
-            if (IsFreeTrialAccount())
-            {
-                AIProviderText.Text = "Free Trial";
-                ModelText.Text = "2 Trial Sessions";
-                Log.WriteLine("✓ Title bar updated for Free Trial");
-                Log.WriteLine("═══════════════════════════════════════════════════════");
-                return;
-            }
-
-            if (IsPremiumAccount())
-            {
-                AIProviderText.Text = "Phantom AI";
-                ModelText.Text = "Managed Lane";
-                Log.WriteLine("✓ Title bar updated for Premium managed lane");
-                Log.WriteLine("═══════════════════════════════════════════════════════");
-                return;
-            }
-            
             // Update provider display
             var providerName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
             AIProviderText.Text = providerName;

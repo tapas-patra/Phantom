@@ -70,6 +70,7 @@ $dashboardAdminApiKey = Require-EnvVar "PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteBaseUrl = Require-EnvVar "PHANTOM_WEBSITE_BASE_URL"
 $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
+$dashboardWebsiteAdminApiKey = Require-EnvVar "VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
 
 $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
@@ -110,12 +111,15 @@ dotnet run --urls http://localhost:5057
 $dashboardBackendCommand = @"
 `$env:PHANTOM_DASHBOARD_BACKEND_DATABASE_URL = '$dashboardBackendDbUrl'
 `$env:PHANTOM_DASHBOARD_ADMIN_API_KEY = '$dashboardAdminApiKey'
+`$env:PHANTOM_WINDOWS_BACKEND_BASE_URL = '$windowsBackendBaseUrl'
+`$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
 dotnet restore
 dotnet run --urls http://localhost:5067
 "@
 
 $websiteCommand = @"
 `$env:VITE_PHANTOM_DASHBOARD_API_BASE_URL = '$dashboardApiBaseUrl'
+`$env:VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY = '$dashboardWebsiteAdminApiKey'
 `$env:VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL = '$websiteWindowsBackendApiBaseUrl'
 npm install
 npm run dev

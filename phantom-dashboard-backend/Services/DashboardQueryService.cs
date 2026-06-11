@@ -25,6 +25,7 @@ public sealed class DashboardQueryService
 SELECT
     user_id,
     email,
+    access_tier,
     phone_verified,
     pro_available_credits,
     premium_available_credits,
@@ -52,12 +53,17 @@ LIMIT 1;";
         var lastActivityAtUtc = GetLastActivity(resolvedUserId);
         var proCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits"));
         var premiumCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits"));
+        var accessTier = reader.GetString(reader.GetOrdinal("access_tier"));
 
         return new
         {
             userId = resolvedUserId,
             email = resolvedEmail,
-            planLabel = premiumCredits > 0m ? "Premium" : proCredits > 0m ? "Pro BYO" : "Free",
+            planLabel = accessTier.Equals("premium", StringComparison.OrdinalIgnoreCase)
+                ? "Premium"
+                : accessTier.Equals("pro_byo", StringComparison.OrdinalIgnoreCase)
+                    ? "Pro BYO"
+                    : "Free",
             phoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
             proAvailableCredits = proCredits,
             premiumAvailableCredits = premiumCredits,
@@ -228,7 +234,8 @@ LIMIT 1;";
             accountCount = ExecuteCount(connection, "SELECT COUNT(*) FROM desktop_accounts;"),
             activeSessionCount = ExecuteCount(connection, "SELECT COUNT(*) FROM auth_sessions WHERE is_authenticated = TRUE AND revoked_at_utc IS NULL;"),
             activeLockCount = ExecuteCount(connection, "SELECT COUNT(*) FROM interview_locks WHERE expires_at_utc > NOW();"),
-            ledgerEntryCount = ExecuteCount(connection, "SELECT COUNT(*) FROM usage_ledger;")
+            ledgerEntryCount = ExecuteCount(connection, "SELECT COUNT(*) FROM usage_ledger;"),
+            managedCredentialCount = ExecuteCount(connection, "SELECT COUNT(*) FROM managed_provider_credentials;")
         };
     }
 

@@ -8,6 +8,7 @@ var options = DashboardOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<DashboardQueryService>();
+builder.Services.AddSingleton<ManagedAiAdminService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddCors(cors =>
 {
@@ -50,5 +51,26 @@ var adminGroup = app.MapGroup("/api/dashboard/admin")
     .AddEndpointFilter<AdminApiKeyFilter>();
 
 adminGroup.MapGet("/overview", (DashboardQueryService queries) => Results.Ok(queries.GetAdminOverview()));
+adminGroup.MapGet("/managed-ai/credentials", async (
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.GetCredentialInventory(cancellationToken));
+});
+adminGroup.MapPost("/managed-ai/credentials", async (
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpsertCredential(payload, cancellationToken));
+});
+adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
+    string credentialId,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    await managedAi.DeleteCredential(credentialId, cancellationToken);
+    return Results.Ok(new { deleted = true, credentialId });
+});
 
 app.Run();

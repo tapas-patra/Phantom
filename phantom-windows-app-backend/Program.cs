@@ -20,6 +20,7 @@ builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
 builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
+builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
@@ -34,6 +35,7 @@ builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
 builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryIngestService>();
@@ -405,6 +407,24 @@ app.MapPost("/api/desktop/telemetry/ingest", (
     }
 });
 
+app.MapGet("/api/desktop/ai/catalog", (
+    HttpContext httpContext,
+    ManagedAiService managedAi) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(managedAi.GetCatalogForAccount(account));
+});
+
+app.MapPost("/api/desktop/ai/chat", async (
+    HttpContext httpContext,
+    DesktopAiChatRequestDto request,
+    ManagedAiService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
+});
+
 app.MapPost("/api/desktop/locks/acquire", (
     DeviceLockAcquireRequestDto request,
     LockService locks) =>
@@ -460,6 +480,26 @@ adminGroup.MapPost("/credits/grant", (
     AdminService admin) =>
 {
     return Results.Ok(admin.GrantCredits(request));
+});
+
+adminGroup.MapGet("/managed-ai/credentials", (ManagedAiService managedAi) =>
+{
+    return Results.Ok(managedAi.ListAdminCredentials());
+});
+
+adminGroup.MapPost("/managed-ai/credentials", (
+    ManagedAiProviderKeyUpsertRequestDto request,
+    ManagedAiService managedAi) =>
+{
+    return Results.Ok(managedAi.UpsertCredential(request));
+});
+
+adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (
+    string credentialId,
+    ManagedAiService managedAi) =>
+{
+    managedAi.DeleteCredential(credentialId);
+    return Results.Ok(new { deleted = true, credentialId });
 });
 
 adminGroup.MapGet("/integrations/gmail/oauth/status", (GoogleMailOAuthService gmailOAuth) =>

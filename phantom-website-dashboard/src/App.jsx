@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  deleteManagedAiCredential,
   fetchAccountSummary,
+  fetchManagedAiAdminInventory,
   fetchDevices,
   fetchDownloadEntitlement,
+  fetchSupportOverview,
+  fetchWalletHistory,
   registerAccount,
   resendVerificationEmail,
-  fetchSupportOverview,
-  fetchWalletHistory
+  upsertManagedAiCredential
 } from "./lib/api";
 
 const primaryNav = [
@@ -22,7 +25,8 @@ const dashboardNav = [
   { to: "/dashboard/wallet", label: "Wallet" },
   { to: "/dashboard/devices", label: "Devices" },
   { to: "/dashboard/history", label: "Usage History" },
-  { to: "/dashboard/support", label: "Support" }
+  { to: "/dashboard/support", label: "Support" },
+  { to: "/dashboard/admin", label: "Admin" }
 ];
 
 const plans = [
@@ -30,8 +34,8 @@ const plans = [
     label: "Free",
     accent: "Mist",
     price: "$0",
-    note: "Account access and dashboard visibility",
-    bullets: ["Create account", "Verify phone", "See balances and devices", "Cannot start interviews without credits"]
+    note: "Hosted trial lane with managed AI",
+    bullets: ["Create account", "Email verification", "2 managed 15-minute demo blocks", "Provider + model choice without API keys"]
   },
   {
     label: "Pro BYO",
@@ -45,7 +49,7 @@ const plans = [
     accent: "Brass",
     price: "Credit-pack + managed AI",
     note: "Managed AI orchestration and premium balance support",
-    bullets: ["Premium wallet lane", "Managed model takeover", "Negative-balance inspection", "Support/admin assistance surfaces"]
+    bullets: ["Managed provider keys", "Provider + model choice", "Premium wallet lane", "Support/admin assistance surfaces"]
   }
 ];
 
@@ -494,6 +498,20 @@ function DashboardPage() {
   const [devices, setDevices] = useState([]);
   const [download, setDownload] = useState(null);
   const [support, setSupport] = useState(null);
+  const [managedInventory, setManagedInventory] = useState(null);
+  const [adminError, setAdminError] = useState("");
+
+  async function refreshManagedInventory() {
+    try {
+      const nextInventory = await fetchManagedAiAdminInventory();
+      setManagedInventory(nextInventory);
+      setAdminError("");
+      return nextInventory;
+    } catch (error) {
+      setAdminError(error.message);
+      throw error;
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -518,6 +536,7 @@ function DashboardPage() {
         setDownload(downloadEntitlement);
         setSupport(supportOverview);
       }
+
     }
 
     load();
@@ -572,6 +591,16 @@ function DashboardPage() {
           <Route path="devices" element={<DevicesPanel devices={devices} />} />
           <Route path="history" element={<HistoryPanel walletHistory={walletHistory} />} />
           <Route path="support" element={<SupportPanel support={support} />} />
+          <Route
+            path="admin"
+            element={
+              <AdminPanel
+                inventory={managedInventory}
+                adminError={adminError}
+                onRefresh={refreshManagedInventory}
+              />
+            }
+          />
         </Routes>
       </section>
     </main>
@@ -726,6 +755,197 @@ function SupportPanel({ support }) {
             <strong>{support?.offlineLeaseHoursRemaining ?? 0}</strong>
           </div>
         </div>
+      </article>
+    </div>
+  );
+}
+
+function AdminPanel({ inventory, adminError, onRefresh }) {
+  const [providerId, setProviderId] = useState("ChatGPT");
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [priority, setPriority] = useState("0");
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const providers = inventory?.managedProviders || [];
+  const credentials = inventory?.credentials || [];
+
+  useEffect(() => {
+    if (!inventory && !adminError) {
+      onRefresh().catch(() => {});
+    }
+  }, [inventory, adminError, onRefresh]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setLocalError("");
+    setSuccess("");
+
+    try {
+      await upsertManagedAiCredential({
+        providerId,
+        label,
+        apiKey,
+        isEnabled,
+        priority: Number(priority) || 0
+      });
+      setApiKey("");
+      setLabel("");
+      setPriority("0");
+      setSuccess("Managed credential saved.");
+      await onRefresh();
+    } catch (error) {
+      setLocalError(error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(credentialId) {
+    setLocalError("");
+    setSuccess("");
+    try {
+      await deleteManagedAiCredential(credentialId);
+      setSuccess("Managed credential removed.");
+      await onRefresh();
+    } catch (error) {
+      setLocalError(error.message);
+    }
+  }
+
+  return (
+    <div className="dashboard-grid admin-grid">
+      <article className="panel admin-hero-panel">
+        <p className="eyebrow">Managed AI control plane</p>
+        <h1>Rotate hosted model keys without touching the desktop build.</h1>
+        <p className="hero-text">
+          Free and Premium use this managed lane. Credentials stay server-side, provider lanes can fail
+          over by priority, and the Windows runtime only sees the provider and model catalog.
+        </p>
+      </article>
+
+      <article className="panel metric-panel">
+        <span>Managed providers</span>
+        <strong>{providers.length}</strong>
+      </article>
+      <article className="panel metric-panel">
+        <span>Live credentials</span>
+        <strong>{credentials.filter((item) => item.isEnabled).length}</strong>
+      </article>
+      <article className="panel metric-panel">
+        <span>Fallback depth</span>
+        <strong>{credentials.length}</strong>
+      </article>
+
+      <article className="panel admin-form-panel">
+        <div className="admin-panel-head">
+          <div>
+            <p className="story-tag">Add or rotate credentials</p>
+            <h3>Managed provider inventory</h3>
+          </div>
+          <button className="button button-secondary" type="button" onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
+
+        {(adminError || localError) && <p className="admin-error">{adminError || localError}</p>}
+        {success && <p className="admin-success">{success}</p>}
+
+        <form className="admin-form" onSubmit={handleSubmit}>
+          <label>
+            Provider
+            <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+              {providers.map((provider) => (
+                <option key={provider.providerId} value={provider.providerId}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Label
+            <input
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+              placeholder="Primary lane / backup lane"
+            />
+          </label>
+
+          <label>
+            API key
+            <textarea
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder="Paste provider API key"
+              rows={4}
+            />
+          </label>
+
+          <div className="admin-form-inline">
+            <label>
+              Priority
+              <input value={priority} onChange={(event) => setPriority(event.target.value)} />
+            </label>
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={isEnabled}
+                onChange={(event) => setIsEnabled(event.target.checked)}
+              />
+              <span>Enabled</span>
+            </label>
+          </div>
+
+          <button className="button button-primary" type="submit" disabled={submitting}>
+            {submitting ? "Saving..." : "Save Managed Credential"}
+          </button>
+        </form>
+      </article>
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Credential roster</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Label</th>
+              <th>Priority</th>
+              <th>Status</th>
+              <th>Updated</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {credentials.map((item) => (
+              <tr key={item.credentialId}>
+                <td>{item.providerId}</td>
+                <td>{item.label}</td>
+                <td>{item.priority}</td>
+                <td>{item.isEnabled ? "Enabled" : "Disabled"}</td>
+                <td>{formatDate(item.updatedAtUtc)}</td>
+                <td>
+                  <button
+                    className="table-action"
+                    type="button"
+                    onClick={() => handleDelete(item.credentialId)}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {credentials.length === 0 && (
+              <tr>
+                <td colSpan="6">No managed credentials configured yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </article>
     </div>
   );

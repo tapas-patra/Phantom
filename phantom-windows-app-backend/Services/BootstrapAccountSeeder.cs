@@ -12,7 +12,7 @@ public sealed class BootstrapAccountSeeder
 
     private static readonly BootstrapUser[] Users =
     {
-        new("free.user@phantom.app", "PhantomFree123!", "free", 0m, 0m, true),
+        new("free.user@phantom.app", "PhantomFree123!", "free", 0m, 0.5m, true),
         new("pro.user@phantom.app", "PhantomPro123!", "pro_byo", 5m, 0m, true),
         new("premium.user@phantom.app", "PhantomPremium123!", "premium", 5m, 5m, true)
     };

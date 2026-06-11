@@ -64,6 +64,16 @@ LIMIT 1;";
         return reader.Read() ? Map(reader) : null;
     }
 
+    public DesktopSessionRecord? FindByAccessTokenHash(string accessTokenHash)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM auth_sessions WHERE access_token_hash = @accessTokenHash LIMIT 1;";
+        command.Parameters.AddWithValue("accessTokenHash", accessTokenHash);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
+    }
+
     public void RevokeBySessionId(string sessionId)
     {
         using var connection = _store.OpenConnection();

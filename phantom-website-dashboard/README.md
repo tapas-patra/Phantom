@@ -14,6 +14,7 @@ npm run dev
 
 Environment:
 - `VITE_PHANTOM_DASHBOARD_API_BASE_URL=http://localhost:5067`
+- `VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY=change-this-dashboard-admin-key`
 - `VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL=http://localhost:5057`
 
 Routes:
@@ -25,6 +26,7 @@ Routes:
 - `/magic-link`
 - `/desktop-return`
 - `/dashboard`
+- `/dashboard/admin`
 
 Not owned here:
 - wallet mutation authority

@@ -2549,6 +2549,7 @@ namespace SecureOverlay
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = exePath,
+                    Arguments = "--restart-main-window",
                     UseShellExecute = true,
                     WorkingDirectory = Environment.CurrentDirectory
                 });

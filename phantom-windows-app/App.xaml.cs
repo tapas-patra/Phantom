@@ -91,10 +91,30 @@ namespace SecureOverlay
                 var callbackUri = e.Args.FirstOrDefault(arg =>
                     arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
                     || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase));
+                var restartMainWindowOnly = e.Args.Any(arg =>
+                    string.Equals(arg, "--restart-main-window", StringComparison.OrdinalIgnoreCase));
 
                 if (!string.IsNullOrWhiteSpace(callbackUri) && callbackUri.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase))
                 {
                     callbackUri = callbackUri.Substring("--auth-callback=".Length);
+                }
+
+                if (restartMainWindowOnly)
+                {
+                    Log.WriteLine("Restart flag detected - reopening main window directly");
+                    var recoveredMainWindow = new MainWindow(new AppLaunchContext
+                    {
+                        GateState = SecureOverlay.Domain.Enums.StartupGateState.Ready,
+                        Title = "Restart Recovery",
+                        Message = "Recovered directly into the interview shell after an in-app restart.",
+                        Detail = "Authentication and startup gate were intentionally bypassed for main-window recovery.",
+                        CanStartInterview = true,
+                        CanResumeLockedInterview = true
+                    });
+                    MainWindow = recoveredMainWindow;
+                    recoveredMainWindow.Show();
+                    Log.WriteLine("Main window reopened directly from restart flag");
+                    return;
                 }
 
                 Log.WriteLine("Creating startup window...");

@@ -384,6 +384,7 @@ namespace SecureOverlay.Infrastructure.Billing
         {
             session.UsageSegments ??= new List<InterviewSessionUsageSegment>();
             var secondsBySource = new Dictionary<InterviewUsageSource, int>();
+            var orderedSources = new List<InterviewUsageSource>();
 
             foreach (var segment in session.UsageSegments)
             {
@@ -397,6 +398,7 @@ namespace SecureOverlay.Infrastructure.Billing
                 if (!secondsBySource.ContainsKey(segment.Source))
                 {
                     secondsBySource[segment.Source] = 0;
+                    orderedSources.Add(segment.Source);
                 }
 
                 secondsBySource[segment.Source] += seconds;
@@ -404,13 +406,12 @@ namespace SecureOverlay.Infrastructure.Billing
 
             if (secondsBySource.Count == 0)
             {
-                secondsBySource[session.PrimaryLedger == CreditLedgerType.Pro
+                var fallbackSource = session.PrimaryLedger == CreditLedgerType.Pro
                     ? InterviewUsageSource.ProByo
-                    : InterviewUsageSource.PremiumManaged] = Math.Max(1, totalMeteredSeconds);
+                    : InterviewUsageSource.PremiumManaged;
+                secondsBySource[fallbackSource] = Math.Max(1, totalMeteredSeconds);
+                orderedSources.Add(fallbackSource);
             }
-
-            var orderedSources = new List<InterviewUsageSource>(secondsBySource.Keys);
-            orderedSources.Sort();
 
             var allocated = new Dictionary<InterviewUsageSource, decimal>();
             var remainingCharge = requestedCharge;
@@ -431,7 +432,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
                 var proportionalCharge = totalSeconds <= 0
                     ? 0m
-                    : RoundCredits(requestedCharge * secondsBySource[source] / totalSeconds);
+                    : RoundDownCredits(requestedCharge * secondsBySource[source] / totalSeconds);
                 proportionalCharge = Math.Min(proportionalCharge, remainingCharge);
                 allocated[source] = proportionalCharge;
                 remainingCharge -= proportionalCharge;
@@ -448,6 +449,11 @@ namespace SecureOverlay.Infrastructure.Billing
         private static int RoundUpToMinute(TimeSpan duration)
         {
             return Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds / 60d));
+        }
+
+        private static decimal RoundDownCredits(decimal credits)
+        {
+            return Math.Floor(credits * 100m) / 100m;
         }
 
         private static decimal RoundCredits(decimal credits)

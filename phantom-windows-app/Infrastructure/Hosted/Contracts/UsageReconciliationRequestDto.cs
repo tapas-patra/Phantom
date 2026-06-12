@@ -10,5 +10,6 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public DateTime EndedAtUtc { get; set; }
         public decimal ChargedCredits { get; set; }
         public int ChargedBlocks { get; set; }
+        public decimal PremiumDebtAdded { get; set; }
     }
 }

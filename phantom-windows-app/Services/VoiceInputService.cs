@@ -9,26 +9,20 @@ namespace SecureOverlay.Services
 {
     public class VoiceInputService : IDisposable
     {
-        private readonly AppSettings _settings;
         private WebView2? _webView;
         private System.Windows.Controls.Grid? _hostContainer;
         private bool _isListening = false;
         private bool _isInitialized = false;
         private bool _isInitializing = false;
         private bool _permissionGranted = false;
-        private bool _isReadyForCapture = false;
         private bool _isDisposed = false;
-        private bool _browserProcessFailed = false;
         private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
-        private EventHandler<CoreWebView2ProcessFailedEventArgs>? _processFailedHandler;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? StatusChanged;
 
         public VoiceInputService()
         {
-            _settings = SettingsManager.Load();
-            _permissionGranted = _settings.MicrophonePermissionGranted;
             Log.WriteLine("VoiceInputService constructor");
         }
 
@@ -113,11 +107,6 @@ namespace SecureOverlay.Services
                         StatusChanged?.Invoke(this, "Initializing browser core...");
                         
                         await _webView.EnsureCoreWebView2Async(env);
-                        var coreWebView = _webView.CoreWebView2;
-                        if (coreWebView == null)
-                        {
-                            throw new NullReferenceException("CoreWebView2 was null after EnsureCoreWebView2Async.");
-                        }
                         
                         Log.WriteLine("  ✓✓✓ CoreWebView2 initialized successfully!");
                         
@@ -125,14 +114,12 @@ namespace SecureOverlay.Services
 
                         // Set up permission handler
                         _permissionRequestedHandler = OnPermissionRequested;
-                        coreWebView.PermissionRequested += _permissionRequestedHandler;
-                        _processFailedHandler = OnBrowserProcessFailed;
-                        coreWebView.ProcessFailed += _processFailedHandler;
+                        _webView.CoreWebView2.PermissionRequested += _permissionRequestedHandler;
 
                         Log.WriteLine("  ✓ Permission handler configured");
 
                         Log.WriteLine("Step 6: Setting up message handler...");
-                        coreWebView.WebMessageReceived += OnWebMessageReceived;
+                        _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
                         Log.WriteLine("Step 7: Loading speech recognition HTML...");
                         StatusChanged?.Invoke(this, "Loading speech engine...");
@@ -151,7 +138,7 @@ namespace SecureOverlay.Services
                         Log.WriteLine($"  HTML saved to: {htmlFilePath}");
 
                         // Navigate to file:// (secure context, shares permissions)
-                        coreWebView.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                        _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
                         
                         Log.WriteLine("Step 8: Waiting for page load...");
                         
@@ -171,11 +158,11 @@ namespace SecureOverlay.Services
                             }
                         }
                         
-                        coreWebView.NavigationCompleted += navigationCompleted;
+                        _webView.CoreWebView2.NavigationCompleted += navigationCompleted;
                         
                         var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(10000));
                         
-                        coreWebView.NavigationCompleted -= navigationCompleted;
+                        _webView.CoreWebView2.NavigationCompleted -= navigationCompleted;
                         
                         if (completedTask == tcs.Task && await tcs.Task)
                         {
@@ -185,15 +172,15 @@ namespace SecureOverlay.Services
                             // Check if permission is already granted
                             try
                             {
-                                var permResult = await coreWebView.ExecuteScriptAsync(@"
+                                var permResult = await _webView.CoreWebView2.ExecuteScriptAsync(@"
                                     navigator.permissions.query({name:'microphone'}).then(r => r.state);
                                 ");
                                 Log.WriteLine($"  Microphone permission status: {permResult}");
-                                _permissionGranted = _permissionGranted || permResult.Contains("granted");
+                                _permissionGranted = permResult.Contains("granted");
                             }
                             catch
                             {
-                                _permissionGranted = _settings.MicrophonePermissionGranted;
+                                _permissionGranted = false;
                             }
                             
                             Log.WriteLine("════════════════════════════════════════════════");
@@ -225,8 +212,6 @@ namespace SecureOverlay.Services
                 });
 
                 _isInitialized = await result;
-                _browserProcessFailed = false;
-                _isReadyForCapture = false;
                 _isInitializing = false;
                 
                 return _isInitialized;
@@ -244,30 +229,6 @@ namespace SecureOverlay.Services
                 StatusChanged?.Invoke(this, $"Error: {ex.Message}");
                 return false;
             }
-        }
-
-        public bool HasMicrophonePermission() => _permissionGranted;
-        public bool NeedsReinitialization() => _browserProcessFailed || !_isInitialized || _webView?.CoreWebView2 == null;
-        public bool IsReadyForCapture() => _isReadyForCapture && !NeedsReinitialization();
-
-        public async Task<bool> EnsureReadyAsync()
-        {
-            if (_isDisposed || NeedsReinitialization())
-            {
-                _isReadyForCapture = false;
-                return false;
-            }
-
-            if (!_permissionGranted)
-            {
-                var permissionGranted = await ShowPermissionPromptAsync();
-                if (!permissionGranted)
-                {
-                    return false;
-                }
-            }
-
-            return await PreWarmRecognitionAsync();
         }
 
         private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -299,7 +260,7 @@ namespace SecureOverlay.Services
                     {
                         System.Windows.Application.Current.Dispatcher.Invoke(() =>
                         {
-                            _ = ShowPermissionPromptAsync();
+                            ShowPermissionPrompt();
                         });
                     }
                     else
@@ -312,10 +273,6 @@ namespace SecureOverlay.Services
                     var permission = message.Substring("PERMISSION:".Length);
                     Log.WriteLine($"📋 Permission status: {permission}");
                     _permissionGranted = (permission == "granted");
-                    if (_permissionGranted)
-                    {
-                        PersistMicrophonePermission(true);
-                    }
                 }
             }
             catch (Exception ex)
@@ -335,29 +292,9 @@ namespace SecureOverlay.Services
             }
         }
 
-        private void OnBrowserProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+        private async void ShowPermissionPrompt()
         {
-            Log.WriteLine("════════════════════════════════════════════════");
-            Log.WriteLine("✗ WEBVIEW2 BROWSER PROCESS FAILED");
-            Log.WriteLine($"Kind: {e.ProcessFailedKind}");
-            Log.WriteLine($"Reason: {e.Reason}");
-            Log.WriteLine("════════════════════════════════════════════════");
-
-            _browserProcessFailed = true;
-            _isInitialized = false;
-            _isInitializing = false;
-            _isListening = false;
-            _isReadyForCapture = false;
-
-            StatusChanged?.Invoke(this, "Voice engine crashed");
-        }
-
-        private Task<bool> ShowPermissionPromptAsync()
-        {
-            if (_webView == null)
-            {
-                return Task.FromResult(false);
-            }
+            if (_webView == null) return;
 
             Log.WriteLine("════════════════════════════════════════════════");
             Log.WriteLine("OPENING PERMISSION WINDOW");
@@ -372,10 +309,22 @@ namespace SecureOverlay.Services
                 {
                     Log.WriteLine("✅ User granted microphone permission!");
                     _permissionGranted = true;
-                    PersistMicrophonePermission(true);
                     
                     StatusChanged?.Invoke(this, "Permission granted");
-                    return Task.FromResult(true);
+                    
+                    InvisibleMessageBox.Show(
+                        "✅ Microphone permission granted!\n\n" +
+                        "Voice input is now ready to use.\n\n" +
+                        "Click the 🎤 button to start speaking!",
+                        "Success"
+                    );
+                    
+                    // Try to start listening again
+                    if (_webView?.CoreWebView2 != null)
+                    {
+                        await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
+                        _isListening = true;
+                    }
                 }
                 else
                 {
@@ -388,67 +337,15 @@ namespace SecureOverlay.Services
                         "Click the 🎤 button again to retry.",
                         "Permission Required"
                     );
-                    return Task.FromResult(false);
                 }
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"❌ Permission window error: {ex.Message}");
-                return Task.FromResult(false);
             }
             finally
             {
                 Log.WriteLine("════════════════════════════════════════════════");
-            }
-        }
-
-        private async Task<bool> PreWarmRecognitionAsync()
-        {
-            if (NeedsReinitialization())
-            {
-                return false;
-            }
-
-            try
-            {
-                StatusChanged?.Invoke(this, "Warming microphone...");
-                var coreWebView = _webView?.CoreWebView2;
-                if (coreWebView == null)
-                {
-                    return false;
-                }
-
-                var result = await coreWebView.ExecuteScriptAsync(@"
-                    (async function() {
-                        try {
-                            if (!recognition) {
-                                initSpeechRecognition();
-                            }
-
-                            return await ensureWarmMicrophone() ? 'ready' : 'error:warmup_failed';
-                        } catch (error) {
-                            return 'error:' + error.name + ':' + error.message;
-                        }
-                    })();
-                ");
-
-                var normalized = result?.Trim('"') ?? string.Empty;
-                if (!normalized.Equals("ready", StringComparison.OrdinalIgnoreCase))
-                {
-                    Log.WriteLine($"⚠️ Voice pre-warm did not complete: {normalized}");
-                    _isReadyForCapture = false;
-                    return false;
-                }
-
-                _isReadyForCapture = true;
-                StatusChanged?.Invoke(this, "Ready");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log.WriteLine($"⚠️ Voice pre-warm failed: {ex.Message}");
-                _isReadyForCapture = false;
-                return false;
             }
         }
 
@@ -489,43 +386,6 @@ namespace SecureOverlay.Services
                 let recognition = null;
                 let isListening = false;
                 let shouldBeListening = false; // Track if we WANT to be listening
-                let warmupStream = null;
-                let warmupAudioContext = null;
-                let warmupSource = null;
-                let warmupGain = null;
-
-                async function ensureWarmMicrophone() {
-                    try {
-                        if (warmupStream && warmupStream.active) {
-                            return true;
-                        }
-
-                        warmupStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-                        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-                        if (AudioContextCtor) {
-                            warmupAudioContext = warmupAudioContext || new AudioContextCtor();
-                            if (warmupAudioContext.state === 'suspended') {
-                                await warmupAudioContext.resume();
-                            }
-
-                            warmupSource = warmupAudioContext.createMediaStreamSource(warmupStream);
-                            warmupGain = warmupAudioContext.createGain();
-                            warmupGain.gain.value = 0;
-                            warmupSource.connect(warmupGain);
-                            warmupGain.connect(warmupAudioContext.destination);
-                        }
-
-                        console.log('✓ Microphone warmed and held open');
-                        document.getElementById('status').textContent = 'Microphone ready';
-                        window.chrome.webview.postMessage('STATUS:Microphone warmed');
-                        return true;
-                    } catch (error) {
-                        console.error('Warm microphone failed:', error);
-                        window.chrome.webview.postMessage('ERROR:' + error.message);
-                        return false;
-                    }
-                }
 
                 function initSpeechRecognition() {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -621,7 +481,7 @@ namespace SecureOverlay.Services
                     return true;
                 }
 
-                async function startListening() {
+                function startListening() {
                     console.log('startListening() called');
                     
                     if (!recognition) {
@@ -637,12 +497,6 @@ namespace SecureOverlay.Services
                     }
 
                     shouldBeListening = true; // Mark that we want to keep listening
-
-                    const warmed = await ensureWarmMicrophone();
-                    if (!warmed) {
-                        shouldBeListening = false;
-                        return;
-                    }
                     
                     try {
                         console.log('Starting continuous recognition...');
@@ -691,15 +545,9 @@ namespace SecureOverlay.Services
         {
             Log.WriteLine("StartListening() called");
             
-            if (NeedsReinitialization())
+            if (!_isInitialized || _webView?.CoreWebView2 == null)
             {
                 Log.WriteLine("Not initialized");
-                return;
-            }
-
-            if (!_isReadyForCapture)
-            {
-                Log.WriteLine("Voice engine is initialized but not ready for capture");
                 return;
             }
 
@@ -711,14 +559,7 @@ namespace SecureOverlay.Services
 
             try
             {
-                var coreWebView = _webView?.CoreWebView2;
-                if (coreWebView == null)
-                {
-                    Log.WriteLine("CoreWebView2 unavailable during start");
-                    return;
-                }
-
-                await coreWebView.ExecuteScriptAsync("startListening()");
+                await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
                 _isListening = true;
                 Log.WriteLine("✓ Started listening");
             }
@@ -730,7 +571,7 @@ namespace SecureOverlay.Services
 
         public async void StopListening()
         {
-            if (!_isListening || NeedsReinitialization())
+            if (!_isListening || _webView?.CoreWebView2 == null)
             {
                 _isListening = false;
                 return;
@@ -738,23 +579,10 @@ namespace SecureOverlay.Services
 
             try
             {
-                var coreWebView = _webView?.CoreWebView2;
-                if (coreWebView == null)
-                {
-                    _isListening = false;
-                    return;
-                }
-
-                await coreWebView.ExecuteScriptAsync("stopListening()");
+                await _webView.CoreWebView2.ExecuteScriptAsync("stopListening()");
                 _isListening = false;
             }
             catch { }
-        }
-
-        private void PersistMicrophonePermission(bool granted)
-        {
-            _settings.MicrophonePermissionGranted = granted;
-            SettingsManager.Save(_settings);
         }
 
         public bool IsListening() => _isListening;
@@ -768,7 +596,6 @@ namespace SecureOverlay.Services
             _isDisposed = true;
             _isListening = false;
             _isInitializing = false;
-            _isReadyForCapture = false;
 
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
@@ -778,12 +605,6 @@ namespace SecureOverlay.Services
                     {
                         _webView.CoreWebView2.PermissionRequested -= _permissionRequestedHandler;
                         _permissionRequestedHandler = null;
-                    }
-
-                    if (_processFailedHandler != null)
-                    {
-                        _webView.CoreWebView2.ProcessFailed -= _processFailedHandler;
-                        _processFailedHandler = null;
                     }
 
                     _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
@@ -807,8 +628,6 @@ namespace SecureOverlay.Services
             _webView = null;
             _hostContainer = null;
             _isInitialized = false;
-            _browserProcessFailed = false;
-            _isReadyForCapture = false;
         }
     }
 }

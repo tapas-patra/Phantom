@@ -205,7 +205,7 @@ namespace SecureOverlay
             }
 
             InitializeAI();
-            _ = InitializeVoiceAsync();
+            InitializeVoice();
 
             // Initialize Task View monitor
             _taskViewMonitor = new TaskViewMonitor(this);
@@ -2003,10 +2003,10 @@ namespace SecureOverlay
         // VOICE INPUT
         // ═══════════════════════════════════════════════════════════════
 
-        private async Task InitializeVoiceAsync()
+        private async void InitializeVoice()
         {
             Log.WriteLine("═══════════════════════════════════════════════");
-            Log.WriteLine("InitializeVoiceAsync() called");
+            Log.WriteLine("InitializeVoice() called");
             Log.WriteLine($"  VoiceInputEnabled: {_settings.VoiceInputEnabled}");
             
             if (!_settings.VoiceInputEnabled) 
@@ -2020,12 +2020,6 @@ namespace SecureOverlay
 
             try
             {
-                if (_voiceService != null)
-                {
-                    _voiceService.Dispose();
-                    _voiceService = null;
-                }
-
                 Log.WriteLine("Creating browser-based VoiceInputService...");
                 _voiceService = new VoiceInputService();
                 
@@ -2041,27 +2035,10 @@ namespace SecureOverlay
                 if (success)
                 {
                     Log.WriteLine("✓ Voice service initialized successfully");
-                    VoiceStatusText.Text = "Warming up...";
-                    VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-
-                    var readyForCapture = await _voiceService.EnsureReadyAsync();
-                    VoiceButton.IsEnabled = readyForCapture || !_voiceService.HasMicrophonePermission();
-                    VoiceButton.Opacity = VoiceButton.IsEnabled ? 1.0 : 0.5;
-                    VoiceStatusText.Text = readyForCapture
-                        ? "Ready"
-                        : (_voiceService.HasMicrophonePermission() ? "Warm-up incomplete" : "Permission needed");
-                    VoiceStatusText.Foreground = readyForCapture
-                        ? Brushes.LightGreen
-                        : new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-
-                    if (readyForCapture)
-                    {
-                        Log.WriteLine("✓ Voice capture pipeline pre-warmed");
-                    }
-                    else
-                    {
-                        Log.WriteLine("⚠️ Voice initialized but warm-up did not fully complete");
-                    }
+                    VoiceButton.IsEnabled = true;
+                    VoiceButton.Opacity = 1.0;
+                    VoiceStatusText.Text = "Ready";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
                 }
                 else
                 {
@@ -2184,18 +2161,6 @@ namespace SecureOverlay
                 return;
             }
 
-            if (_voiceService.NeedsReinitialization())
-            {
-                Log.WriteLine("  Voice engine needs reinitialization");
-                VoiceButton.IsEnabled = false;
-                VoiceButton.Opacity = 0.5;
-                VoiceStatusText.Text = "Recovering...";
-                VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-                _ = InitializeVoiceAsync();
-                FocusInput();
-                return;
-            }
-
             if (!_voiceService.IsInitialized())
             {
                 Log.WriteLine("  Voice not initialized yet");
@@ -2203,30 +2168,6 @@ namespace SecureOverlay
                     "Voice recognition is initializing...\n\nPlease wait and try again.", 
                     "Please Wait"
                 );
-                FocusInput();
-                return;
-            }
-
-            if (!_voiceService.IsReadyForCapture())
-            {
-                Log.WriteLine("  Voice engine not ready for capture - retrying warm-up");
-                VoiceButton.IsEnabled = false;
-                VoiceButton.Opacity = 0.5;
-                VoiceStatusText.Text = "Retrying microphone warm-up...";
-                VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-
-                _ = Dispatcher.InvokeAsync(async () =>
-                {
-                    var recovered = await _voiceService.EnsureReadyAsync();
-                    VoiceButton.IsEnabled = recovered || !_voiceService.HasMicrophonePermission();
-                    VoiceButton.Opacity = VoiceButton.IsEnabled ? 1.0 : 0.5;
-                    VoiceStatusText.Text = recovered
-                        ? "Ready"
-                        : (_voiceService.HasMicrophonePermission() ? "Warm-up incomplete" : "Permission needed");
-                    VoiceStatusText.Foreground = recovered
-                        ? Brushes.LightGreen
-                        : new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-                });
                 FocusInput();
                 return;
             }
@@ -2303,17 +2244,6 @@ namespace SecureOverlay
                 _autoSendAfterVoice = false;
                 
                 _voiceService.StartListening();
-                if (!_voiceService.IsListening())
-                {
-                    Log.WriteLine("  Voice start request was rejected because engine is not ready");
-                    VoiceButton.Content = "🎤";
-                    VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
-                    VoiceStatusText.Text = "Microphone not ready";
-                    VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
-                    FocusInput();
-                    return;
-                }
-
                 VoiceButton.Content = "⏹️";
                 VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 255, 0, 0));
                 VoiceStatusText.Text = "🎙️ Getting microphone ready";
@@ -2537,7 +2467,7 @@ namespace SecureOverlay
                 if (_settings.VoiceInputEnabled && _voiceService == null)
                 {
                     Log.WriteLine("Voice was disabled, now enabled - initializing");
-                    _ = InitializeVoiceAsync();
+                    InitializeVoice();
                 }
                 else if (!_settings.VoiceInputEnabled && _voiceService != null)
                 {

@@ -223,6 +223,7 @@ namespace SecureOverlay.Infrastructure.Billing
             var proByoCharge = chargesBySource.TryGetValue(InterviewUsageSource.ProByo, out var proCharge) ? proCharge : 0m;
             var premiumManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumManaged, out var managedCharge) ? managedCharge : 0m;
             var premiumExtensionCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumDebtExtension, out var extensionCharge) ? extensionCharge : 0m;
+            var freeTrialManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.FreeTrialManaged, out var freeCharge) ? freeCharge : 0m;
 
             var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, proByoCharge);
             var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, premiumManagedCharge);
@@ -279,9 +280,16 @@ namespace SecureOverlay.Infrastructure.Billing
             session.ChargedBlocks = blocks;
             session.ChargedCredits = chargedCredits;
             session.PremiumDebtAdded = premiumDebtAdded;
+            session.LastHeartbeatAtUtc = endedAtUtc;
 
             _interviewSessionRepository.Save(session);
             _accountCacheRepository.Save(snapshot);
+
+            System.Diagnostics.Debug.WriteLine(
+                $"Interview billing summary: session={session.SessionId}, total={requestedCharge:0.##}, " +
+                $"free_managed={freeTrialManagedCharge:0.##}, pro_byo={proByoCharge:0.##}, " +
+                $"premium_managed={premiumManagedCharge:0.##}, premium_extension={premiumExtensionCharge:0.##}, " +
+                $"consumed_pro={consumedProCredits:0.##}, consumed_premium={consumedPremiumCredits:0.##}, debt={premiumDebtAdded:0.##}");
 
             return new InterviewSessionCompletionResult
             {

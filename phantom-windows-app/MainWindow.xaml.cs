@@ -463,21 +463,22 @@ namespace SecureOverlay
                 return;
             }
 
-            if (HasPremiumManagedEntitlement() && HasByoEntitlement())
+            var hasPremiumLaneOrDebt = HasPremiumManagedEntitlement() || (_accountSnapshot.PremiumNegativeCredits > 0m);
+            if (hasPremiumLaneOrDebt && HasByoEntitlement())
             {
                 CreditIndicatorText.Text =
                     $"Premium -> BYO | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | BYO {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
                 return;
             }
 
-            if (HasPremiumManagedEntitlement())
+            if (hasPremiumLaneOrDebt)
             {
                 CreditIndicatorText.Text =
                     $"Premium | Credits {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
                 return;
             }
 
-            CreditIndicatorText.Text = $"Pro BYO | Credits {_accountSnapshot.ProAvailableCredits:0.##}";
+            CreditIndicatorText.Text = $"Pro BYO | Credits {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
         }
 
         private void StartSessionStatusTimer()

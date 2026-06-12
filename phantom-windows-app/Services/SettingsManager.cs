@@ -56,6 +56,7 @@ namespace SecureOverlay.Services
         
         // UI Settings
         public bool VoiceInputEnabled { get; set; } = true;
+        public bool MicrophonePermissionGranted { get; set; } = false;
         public double WindowOpacity { get; set; } = 0.85;
         public bool UseFakeCursor { get; set; } = true;
         public double FakeCursorSize { get; set; } = 1.0;

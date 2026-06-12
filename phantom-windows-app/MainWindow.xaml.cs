@@ -1257,6 +1257,17 @@ namespace SecureOverlay
                 return;
             }
 
+            if (_currentAI is HostedManagedAiService managedAi && !managedAi.HasUsableSession())
+            {
+                Log.WriteLine("Hosted desktop auth session is no longer valid - prompting re-login before metering");
+                _authSessionRepository.Clear();
+                StatusText.Text = "⚠️ Session expired";
+                StatusIndicator.Fill = Brushes.Orange;
+                AddToChat("⚠️ **Desktop session expired**\n\nPlease sign in again to continue.", false);
+                FocusInput();
+                return;
+            }
+
             if (_attachedScreenshot != null && !CurrentModelSupportsVision())
             {
                 Log.WriteLine("✗ Screenshot attached but current model doesn't support vision");
@@ -1432,6 +1443,21 @@ namespace SecureOverlay
                 else if (!string.IsNullOrEmpty(error))
                 {
                     Log.WriteLine($"✗ AI Error: {error}");
+
+                    var isDesktopAuthFailure =
+                        error.IndexOf("Desktop session is no longer valid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        error.IndexOf("Hosted desktop session not found", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        error.IndexOf("Refresh token is no longer valid", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                    if (isDesktopAuthFailure)
+                    {
+                        _authSessionRepository.Clear();
+                        _creditMeteringService.AbandonActiveSession();
+                        _interviewLockService.MarkLockReleased();
+                        RefreshAccountSnapshot();
+                        UpdateCreditIndicator();
+                        UpdateSessionStatus();
+                    }
                     
                     if (_currentStreamingParagraph != null)
                     {
@@ -1440,6 +1466,11 @@ namespace SecureOverlay
                     }
                     
                     AddToChat($"❌ **Error:** {error}", true);
+
+                    if (isDesktopAuthFailure)
+                    {
+                        AddToChat("⚠️ **Desktop session expired**\n\nPlease sign in again to continue.", false);
+                    }
                     
                     StatusText.Text = "✗ Error occurred";
                     StatusIndicator.Fill = Brushes.Red;

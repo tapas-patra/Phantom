@@ -50,6 +50,11 @@ namespace SecureOverlay.Services
                 && !string.IsNullOrWhiteSpace(_options.DesktopBackendBaseUrl);
         }
 
+        public bool HasUsableSession()
+        {
+            return EnsureValidSession() != null;
+        }
+
         public async Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
         {
             var builder = new StringBuilder();
@@ -278,6 +283,7 @@ namespace SecureOverlay.Services
                 var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 if (!response.IsSuccessStatusCode)
                 {
+                    _authSessions.Clear();
                     return null;
                 }
 
@@ -293,6 +299,7 @@ namespace SecureOverlay.Services
             }
             catch
             {
+                _authSessions.Clear();
                 return null;
             }
         }

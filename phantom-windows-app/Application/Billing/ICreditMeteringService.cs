@@ -7,5 +7,6 @@ namespace SecureOverlay.Application.Billing
         InterviewSessionActivationResult EnsureInterviewSession();
         InterviewSessionRecord? GetActiveSession();
         InterviewSessionCompletionResult? FinalizeActiveSession();
+        void AbandonActiveSession();
     }
 }

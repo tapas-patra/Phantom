@@ -179,6 +179,32 @@ namespace SecureOverlay.Infrastructure.Billing
             };
         }
 
+        public void AbandonActiveSession()
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || session.State != InterviewSessionState.Active)
+            {
+                return;
+            }
+
+            session.State = InterviewSessionState.Completed;
+            session.EndedAtUtc = DateTime.UtcNow;
+            session.ChargedBlocks = 0;
+            session.ChargedCredits = 0m;
+            session.PremiumDebtAdded = 0m;
+            _interviewSessionRepository.Save(session);
+
+            var snapshot = _accountCacheRepository.Load();
+            if (snapshot != null)
+            {
+                snapshot.HasResumableLockedSession = false;
+                snapshot.LastLockedSessionId = string.Empty;
+                snapshot.LastLockTokenHash = string.Empty;
+                snapshot.LastValidatedAtUtc = DateTime.UtcNow;
+                _accountCacheRepository.Save(snapshot);
+            }
+        }
+
         private static CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
             if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits > 0m)

@@ -30,7 +30,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
         public InterviewSessionActivationResult EnsureInterviewSession()
         {
-            var existingSession = _interviewSessionRepository.Load();
+            var existingSession = LoadUsableActiveSession();
             if (existingSession != null && existingSession.State == InterviewSessionState.Active)
             {
                 return new InterviewSessionActivationResult
@@ -112,13 +112,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
         public InterviewSessionRecord? GetActiveSession()
         {
-            var session = _interviewSessionRepository.Load();
-            if (session == null || session.State != InterviewSessionState.Active)
-            {
-                return null;
-            }
-
-            return session;
+            return LoadUsableActiveSession();
         }
 
         public InterviewSessionCompletionResult? FinalizeActiveSession()
@@ -239,6 +233,38 @@ namespace SecureOverlay.Infrastructure.Billing
         {
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
             return Convert.ToHexString(bytes);
+        }
+
+        private InterviewSessionRecord? LoadUsableActiveSession()
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || session.State != InterviewSessionState.Active)
+            {
+                return null;
+            }
+
+            var lockExpiresAtUtc = session.LockExpiresAtUtc
+                ?? session.LastHeartbeatAtUtc.AddSeconds(session.LockTtlSeconds > 0 ? session.LockTtlSeconds : 300);
+            if (lockExpiresAtUtc > DateTime.UtcNow)
+            {
+                return session;
+            }
+
+            session.State = InterviewSessionState.Completed;
+            session.EndedAtUtc = session.EndedAtUtc ?? DateTime.UtcNow;
+            _interviewSessionRepository.Save(session);
+
+            var snapshot = _accountCacheRepository.Load();
+            if (snapshot != null)
+            {
+                snapshot.HasResumableLockedSession = false;
+                snapshot.LastLockedSessionId = string.Empty;
+                snapshot.LastLockTokenHash = string.Empty;
+                snapshot.LastValidatedAtUtc = DateTime.UtcNow;
+                _accountCacheRepository.Save(snapshot);
+            }
+
+            return null;
         }
     }
 }

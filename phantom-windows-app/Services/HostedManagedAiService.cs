@@ -11,6 +11,7 @@ using Newtonsoft.Json.Linq;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Hosted;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Services
 {
@@ -61,7 +62,7 @@ namespace SecureOverlay.Services
             CancellationToken cancellationToken = default,
             string? imageBase64 = null)
         {
-            var session = _authSessions.Load();
+            var session = EnsureValidSession();
             if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
             {
                 return "Error: Hosted desktop session not found. Please sign in again.";
@@ -93,6 +94,20 @@ namespace SecureOverlay.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorBody = await response.Content.ReadAsStringAsync();
+                    if (ShouldRetryWithRefresh(response.StatusCode, errorBody))
+                    {
+                        var refreshedSession = TryRefreshSession(_authSessions.Load());
+                        if (refreshedSession != null && !string.IsNullOrWhiteSpace(refreshedSession.AccessToken))
+                        {
+                            return await RetryWithSessionAsync(
+                                refreshedSession,
+                                messages,
+                                onChunkReceived,
+                                cancellationToken,
+                                imageBase64);
+                        }
+                    }
+
                     return $"Error: {(int)response.StatusCode} - {errorBody}";
                 }
 
@@ -143,6 +158,176 @@ namespace SecureOverlay.Services
             {
                 return $"Error: {ex.Message}";
             }
+        }
+
+        private AuthSessionCache? EnsureValidSession()
+        {
+            var session = _authSessions.Load();
+            if (session == null || !session.IsAuthenticated)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                return TryRefreshSession(session);
+            }
+
+            if (session.ExpiresAtUtc.HasValue && session.ExpiresAtUtc.Value <= DateTime.UtcNow.AddMinutes(1))
+            {
+                return TryRefreshSession(session) ?? session;
+            }
+
+            return session;
+        }
+
+        private async Task<string> RetryWithSessionAsync(
+            AuthSessionCache session,
+            List<ConversationMessage> messages,
+            Action<string> onChunkReceived,
+            CancellationToken cancellationToken,
+            string? imageBase64)
+        {
+            var payload = new
+            {
+                provider = _provider,
+                model = _model,
+                imageBase64,
+                messages = messages.ConvertAll(message => new
+                {
+                    role = message.Role,
+                    content = message.Content
+                })
+            };
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{_options.DesktopBackendBaseUrl}/api/desktop/ai/chat");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+            request.Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+            using var response = await HttpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                return $"Error: {(int)response.StatusCode} - {errorBody}";
+            }
+
+            var fullResponse = new StringBuilder();
+            using (var stream = await response.Content.ReadAsStreamAsync())
+            using (var reader = new StreamReader(stream))
+            {
+                while (!reader.EndOfStream)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var line = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: "))
+                    {
+                        continue;
+                    }
+
+                    var data = line.Substring(6);
+                    if (data == "[DONE]")
+                    {
+                        break;
+                    }
+
+                    try
+                    {
+                        var chunk = JObject.Parse(data);
+                        var delta = chunk["delta"]?.Value<string>();
+                        if (!string.IsNullOrWhiteSpace(delta))
+                        {
+                            fullResponse.Append(delta);
+                            onChunkReceived?.Invoke(delta);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            return fullResponse.ToString();
+        }
+
+        private AuthSessionCache? TryRefreshSession(AuthSessionCache? session)
+        {
+            if (session == null
+                || string.IsNullOrWhiteSpace(session.RefreshToken)
+                || string.IsNullOrWhiteSpace(_options.DesktopBackendBaseUrl))
+            {
+                return null;
+            }
+
+            try
+            {
+                var request = new AuthRefreshRequestDto
+                {
+                    RefreshToken = session.RefreshToken,
+                    InstallId = session.DeviceInstallId,
+                    DeviceFingerprintHash = session.DeviceFingerprintHash
+                };
+
+                using var response = HttpClient.PostAsync(
+                    $"{_options.DesktopBackendBaseUrl}/api/desktop/auth/refresh",
+                    new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+                var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var refreshed = JsonConvert.DeserializeObject<AuthSessionDto>(body);
+                if (refreshed == null)
+                {
+                    return null;
+                }
+
+                var updated = MapAuthSession(refreshed);
+                _authSessions.Save(updated);
+                return updated;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool ShouldRetryWithRefresh(System.Net.HttpStatusCode statusCode, string errorBody)
+        {
+            if ((int)statusCode == 401)
+            {
+                return true;
+            }
+
+            if ((int)statusCode != 400)
+            {
+                return false;
+            }
+
+            return errorBody.IndexOf("Desktop session is no longer valid", StringComparison.OrdinalIgnoreCase) >= 0
+                || errorBody.IndexOf("Desktop session not found", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static AuthSessionCache MapAuthSession(AuthSessionDto sessionDto)
+        {
+            return new AuthSessionCache
+            {
+                UserId = sessionDto.UserId,
+                Email = sessionDto.Email,
+                AccessToken = sessionDto.AccessToken,
+                RefreshToken = sessionDto.RefreshToken,
+                DeviceInstallId = sessionDto.DeviceInstallId,
+                DeviceFingerprintHash = sessionDto.DeviceFingerprintHash,
+                AuthMethod = sessionDto.AuthMethod,
+                AuthenticatedAtUtc = sessionDto.AuthenticatedAtUtc,
+                ExpiresAtUtc = sessionDto.ExpiresAtUtc,
+                IsAuthenticated = sessionDto.IsAuthenticated
+            };
         }
     }
 }

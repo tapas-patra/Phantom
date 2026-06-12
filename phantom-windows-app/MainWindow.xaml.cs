@@ -110,6 +110,7 @@ namespace SecureOverlay
         private AccountCacheSnapshot? _accountSnapshot;
         private bool _sessionExtensionOptInRequired;
         private bool _isBoundaryFinalizationInProgress;
+        private string? _forcedManagedExtensionProviderId;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -814,6 +815,12 @@ namespace SecureOverlay
                 return false;
             }
 
+            if (!string.IsNullOrWhiteSpace(_forcedManagedExtensionProviderId)
+                && string.Equals(_forcedManagedExtensionProviderId, provider, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
             if (!IsManagedProvider(provider))
             {
                 return true;
@@ -835,6 +842,19 @@ namespace SecureOverlay
             }
 
             return true;
+        }
+
+        private bool CanUseManagedExtensionFallbackForProvider(string provider)
+        {
+            return _settings.AllowByoSessionExtension
+                && HasByoEntitlement()
+                && IsManagedProvider(provider);
+        }
+
+        private void ForceManagedExtensionForCurrentProvider(string provider)
+        {
+            _forcedManagedExtensionProviderId = provider;
+            InitializeAI();
         }
 
         private string[] GetAvailableProvidersForCurrentTier()
@@ -1559,6 +1579,63 @@ namespace SecureOverlay
                 }, _currentRequestCancellation.Token);
                 
                 _streamUpdateTimer?.Stop();
+
+                var canRetryWithManagedFallback =
+                    !string.IsNullOrEmpty(error) &&
+                    !string.Equals(error, "Cancelled", StringComparison.OrdinalIgnoreCase) &&
+                    !(_currentAI is HostedManagedAiService) &&
+                    CanUseManagedExtensionFallbackForProvider(_settings.SelectedAI);
+
+                if (canRetryWithManagedFallback)
+                {
+                    Log.WriteLine($"BYO runtime failed for {_settings.SelectedAI}. Retrying same request with managed extension fallback.");
+                    ForceManagedExtensionForCurrentProvider(_settings.SelectedAI);
+                    _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
+
+                    lock (_streamBuffer)
+                    {
+                        _streamBuffer.Clear();
+                    }
+
+                    if (_currentStreamingParagraph != null)
+                    {
+                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
+                        _currentStreamingParagraph = null;
+                    }
+
+                    StatusText.Text = "🔄 Switching to managed extension...";
+                    StatusIndicator.Fill = Brushes.Yellow;
+
+                    aiName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
+                    _currentStreamingParagraph = new Paragraph
+                    {
+                        Foreground = Brushes.White,
+                        Margin = new Thickness(0, 5, 0, 5)
+                    };
+                    var retryHeaderRun = new Run($"{aiName}:\n") { FontWeight = FontWeights.Bold };
+                    _currentStreamingParagraph.Inlines.Add(retryHeaderRun);
+                    ChatDocument.Blocks.Add(_currentStreamingParagraph);
+
+                    _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(50)
+                    };
+                    _streamUpdateTimer.Tick += StreamUpdateTimer_Tick;
+                    _streamUpdateTimer.Start();
+
+                    (response, error) = await Task.Run(async () =>
+                    {
+                        return await _conversationManager.SendMessageStreamAsync(
+                            message,
+                            onChunk,
+                            _currentRequestCancellation.Token,
+                            imageBase64,
+                            ResetCurrentStreamingAttempt
+                        );
+                    }, _currentRequestCancellation.Token);
+
+                    _streamUpdateTimer?.Stop();
+                }
                 
                 var elapsed = (DateTime.Now - startTime).TotalSeconds;
                 if (error == "Cancelled")
@@ -2602,6 +2679,7 @@ namespace SecureOverlay
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
+                _forcedManagedExtensionProviderId = null;
                 
                 // Reload settings
                 _settings = SettingsManager.Load();

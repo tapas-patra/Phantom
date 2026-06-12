@@ -31,15 +31,19 @@ namespace SecureOverlay.Infrastructure.Billing
         public InterviewSessionActivationResult EnsureInterviewSession()
         {
             var existingSession = LoadUsableActiveSession();
-            if (existingSession != null && existingSession.State == InterviewSessionState.Active)
+            if (existingSession != null
+                && (existingSession.State == InterviewSessionState.Active || existingSession.State == InterviewSessionState.Paused))
             {
+                var isPaused = existingSession.State == InterviewSessionState.Paused;
                 return new InterviewSessionActivationResult
                 {
                     Allowed = true,
                     StartedNewSession = false,
                     ResumedExistingSession = true,
-                    Title = "Interview Resumed",
-                    Message = "Resuming the current locked interview session on this device.",
+                    Title = isPaused ? "Interview Paused" : "Interview Resumed",
+                    Message = isPaused
+                        ? "The current locked interview is paused on this device and will remain paused until a later response succeeds."
+                        : "Resuming the current locked interview session on this device.",
                     Session = existingSession
                 };
             }
@@ -115,17 +119,63 @@ namespace SecureOverlay.Infrastructure.Billing
             return LoadUsableActiveSession();
         }
 
+        public TimeSpan GetMeteredElapsed(InterviewSessionRecord session)
+        {
+            var effectiveEnd = session.State == InterviewSessionState.Completed
+                ? (session.EndedAtUtc ?? DateTime.UtcNow)
+                : DateTime.UtcNow;
+            var pausedSeconds = session.TotalPausedSeconds;
+            if (session.State == InterviewSessionState.Paused && session.PausedAtUtc.HasValue)
+            {
+                pausedSeconds += Math.Max(0, (int)Math.Floor((effectiveEnd - session.PausedAtUtc.Value).TotalSeconds));
+            }
+
+            var metered = effectiveEnd - session.StartedAtUtc - TimeSpan.FromSeconds(pausedSeconds);
+            return metered < TimeSpan.Zero ? TimeSpan.Zero : metered;
+        }
+
+        public bool PauseActiveSession()
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || session.State != InterviewSessionState.Active)
+            {
+                return false;
+            }
+
+            session.State = InterviewSessionState.Paused;
+            session.PausedAtUtc = DateTime.UtcNow;
+            _interviewSessionRepository.Save(session);
+            return true;
+        }
+
+        public bool ResumePausedSession()
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || session.State != InterviewSessionState.Paused || !session.PausedAtUtc.HasValue)
+            {
+                return false;
+            }
+
+            session.TotalPausedSeconds += Math.Max(0, (int)Math.Floor((DateTime.UtcNow - session.PausedAtUtc.Value).TotalSeconds));
+            session.PausedAtUtc = null;
+            session.State = InterviewSessionState.Active;
+            session.LastHeartbeatAtUtc = DateTime.UtcNow;
+            _interviewSessionRepository.Save(session);
+            return true;
+        }
+
         public InterviewSessionCompletionResult? FinalizeActiveSession()
         {
             var session = _interviewSessionRepository.Load();
             var snapshot = _accountCacheRepository.Load();
-            if (session == null || snapshot == null || session.State != InterviewSessionState.Active)
+            if (session == null || snapshot == null ||
+                (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
             {
                 return null;
             }
 
             var endedAtUtc = DateTime.UtcNow;
-            var duration = endedAtUtc - session.StartedAtUtc;
+            var duration = GetMeteredElapsed(session);
             var blocks = Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes / MeteringBlock.TotalMinutes));
             var requestedCharge = EstimateChargeForElapsed(duration);
 
@@ -158,6 +208,8 @@ namespace SecureOverlay.Infrastructure.Billing
 
             session.State = InterviewSessionState.Completed;
             session.EndedAtUtc = endedAtUtc;
+            session.TotalPausedSeconds = (int)Math.Floor(duration.TotalSeconds < 0 ? 0 : (endedAtUtc - session.StartedAtUtc - duration).TotalSeconds);
+            session.PausedAtUtc = null;
             session.ChargedBlocks = blocks;
             session.ChargedCredits = chargedCredits;
             session.PremiumDebtAdded = premiumDebtAdded;
@@ -182,13 +234,19 @@ namespace SecureOverlay.Infrastructure.Billing
         public void AbandonActiveSession()
         {
             var session = _interviewSessionRepository.Load();
-            if (session == null || session.State != InterviewSessionState.Active)
+            if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
             {
                 return;
             }
 
+            var wasPaused = session.State == InterviewSessionState.Paused;
             session.State = InterviewSessionState.Completed;
             session.EndedAtUtc = DateTime.UtcNow;
+            if (wasPaused && session.PausedAtUtc.HasValue)
+            {
+                session.TotalPausedSeconds += Math.Max(0, (int)Math.Floor((DateTime.UtcNow - session.PausedAtUtc.Value).TotalSeconds));
+            }
+            session.PausedAtUtc = null;
             session.ChargedBlocks = 0;
             session.ChargedCredits = 0m;
             session.PremiumDebtAdded = 0m;
@@ -264,7 +322,7 @@ namespace SecureOverlay.Infrastructure.Billing
         private InterviewSessionRecord? LoadUsableActiveSession()
         {
             var session = _interviewSessionRepository.Load();
-            if (session == null || session.State != InterviewSessionState.Active)
+            if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
             {
                 return null;
             }

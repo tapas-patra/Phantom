@@ -501,13 +501,25 @@ namespace SecureOverlay
                 return;
             }
 
+            if (activeSession.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
+            {
+                var pausedElapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
+                var pausedBilledMinutes = Math.Max(1, (int)Math.Ceiling(pausedElapsed.TotalSeconds / 60d));
+                var pausedProjectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(pausedElapsed);
+
+                SessionTimerBorder.Visibility = Visibility.Visible;
+                SessionTimerText.Text = $"Session {pausedElapsed:hh\\:mm\\:ss}";
+                SessionStatusText.Text = $"Paused | {pausedBilledMinutes} min | {pausedProjectedCharge:0.##} cr";
+                return;
+            }
+
             if (ShouldFinalizeAtCurrentBoundary(activeSession))
             {
                 FinalizeActiveInterviewSessionAtBoundary();
                 return;
             }
 
-            var elapsed = DateTime.UtcNow - activeSession.StartedAtUtc;
+            var elapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
             var billedMinutes = Math.Max(1, (int)Math.Ceiling(elapsed.TotalSeconds / 60d));
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(elapsed);
 
@@ -533,10 +545,15 @@ namespace SecureOverlay
 
         private bool ShouldFinalizeAtCurrentBoundary(InterviewSessionRecord session)
         {
+            if (session.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
+            {
+                return false;
+            }
+
             if (IsFreeTrialAccount())
             {
                 return !IsSessionExtensionEnabledForCurrentTier()
-                    && DateTime.UtcNow - session.StartedAtUtc >= TimeSpan.FromMinutes(15);
+                    && _creditMeteringService.GetMeteredElapsed(session) >= TimeSpan.FromMinutes(15);
             }
 
             if (!HasPaidCreditExhaustionGate() || IsSessionExtensionEnabledForCurrentTier())
@@ -544,8 +561,39 @@ namespace SecureOverlay
                 return false;
             }
 
-            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(DateTime.UtcNow - session.StartedAtUtc);
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
             return projectedCharge > GetTotalPaidCreditsAvailable();
+        }
+
+        private void PauseInterviewSessionForError(string reason)
+        {
+            if (!_creditMeteringService.PauseActiveSession())
+            {
+                return;
+            }
+
+            Log.WriteLine($"Interview paused after error: {reason}");
+            UpdateSessionStatus();
+            _telemetryService.Track("billing", "interview_session_paused", new Dictionary<string, string>
+            {
+                ["reason"] = reason,
+                ["tier"] = _accountSnapshot?.AccessTier ?? "unknown"
+            });
+        }
+
+        private void ResumeInterviewSessionAfterSuccess()
+        {
+            if (!_creditMeteringService.ResumePausedSession())
+            {
+                return;
+            }
+
+            Log.WriteLine("Interview resumed after successful response");
+            UpdateSessionStatus();
+            _telemetryService.Track("billing", "interview_session_resumed", new Dictionary<string, string>
+            {
+                ["tier"] = _accountSnapshot?.AccessTier ?? "unknown"
+            });
         }
 
         private void FinalizeActiveInterviewSessionAtBoundary()
@@ -1267,6 +1315,7 @@ namespace SecureOverlay
                     && !HasConfiguredByoKeysForProvider(_settings.SelectedAI))
                 {
                     Log.WriteLine("BYO runtime selected but no provider key is configured - pausing interview continuation");
+                    PauseInterviewSessionForError("byo_provider_unavailable");
                     AddToChat(
                         $"⚠️ **{_settings.SelectedAI} key required**\n\n" +
                         $"This interview is currently using your BYO {_settings.SelectedAI} provider. Add a key in Settings to continue." +
@@ -1281,6 +1330,7 @@ namespace SecureOverlay
                 }
 
                 Log.WriteLine("AI not configured, cannot send message");
+                PauseInterviewSessionForError("ai_not_configured");
                 AddToChat("⚠️ **AI not configured!**\n\nClick ⚙️ Settings to configure your API key.", false);
                 FocusInput();
                 return;
@@ -1500,12 +1550,18 @@ namespace SecureOverlay
                     {
                         AddToChat("⚠️ **Desktop session expired**\n\nPlease sign in again to continue.", false);
                     }
+                    else
+                    {
+                        PauseInterviewSessionForError("runtime_error_response");
+                        AddToChat("⏸️ **Interview paused**\n\nPhantom paused the active interview after this error. The session timer and billing stay frozen until a later response succeeds.", false);
+                    }
                     
                     StatusText.Text = "✗ Error occurred";
                     StatusIndicator.Fill = Brushes.Red;
                 }
                 else
                 {
+                    ResumeInterviewSessionAfterSuccess();
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
                     
                     if (_currentStreamingParagraph != null)
@@ -1622,6 +1678,8 @@ namespace SecureOverlay
                 }
                 
                 AddToChat($"❌ **Exception:** {ex.Message}", true);
+                PauseInterviewSessionForError("runtime_exception");
+                AddToChat("⏸️ **Interview paused**\n\nPhantom paused the active interview after this exception. The session timer and billing stay frozen until a later response succeeds.", false);
                 
                 StatusText.Text = "✗ Exception occurred";
                 StatusIndicator.Fill = Brushes.Red;

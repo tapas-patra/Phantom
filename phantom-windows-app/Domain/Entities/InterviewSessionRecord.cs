@@ -11,6 +11,8 @@ namespace SecureOverlay.Domain.Entities
         public DateTime LastHeartbeatAtUtc { get; set; }
         public DateTime? LockExpiresAtUtc { get; set; }
         public DateTime? EndedAtUtc { get; set; }
+        public DateTime? PausedAtUtc { get; set; }
+        public int TotalPausedSeconds { get; set; }
         public InterviewSessionState State { get; set; } = InterviewSessionState.Active;
         public CreditLedgerType PrimaryLedger { get; set; } = CreditLedgerType.Pro;
         public string LockTokenHash { get; set; } = string.Empty;

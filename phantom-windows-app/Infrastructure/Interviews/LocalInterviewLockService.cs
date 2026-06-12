@@ -44,7 +44,7 @@ namespace SecureOverlay.Infrastructure.Interviews
         public InterviewLockHeartbeatResult HeartbeatActiveLock()
         {
             var session = _interviewSessionRepository.Load();
-            if (session == null || session.State != InterviewSessionState.Active)
+            if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
             {
                 return new InterviewLockHeartbeatResult
                 {

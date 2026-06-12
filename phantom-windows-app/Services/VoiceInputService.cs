@@ -112,6 +112,11 @@ namespace SecureOverlay.Services
                         StatusChanged?.Invoke(this, "Initializing browser core...");
                         
                         await _webView.EnsureCoreWebView2Async(env);
+                        var coreWebView = _webView.CoreWebView2;
+                        if (coreWebView == null)
+                        {
+                            throw new NullReferenceException("CoreWebView2 was null after EnsureCoreWebView2Async.");
+                        }
                         
                         Log.WriteLine("  ✓✓✓ CoreWebView2 initialized successfully!");
                         
@@ -119,14 +124,14 @@ namespace SecureOverlay.Services
 
                         // Set up permission handler
                         _permissionRequestedHandler = OnPermissionRequested;
-                        _webView.CoreWebView2.PermissionRequested += _permissionRequestedHandler;
+                        coreWebView.PermissionRequested += _permissionRequestedHandler;
                         _processFailedHandler = OnBrowserProcessFailed;
-                        _webView.CoreWebView2.ProcessFailed += _processFailedHandler;
+                        coreWebView.ProcessFailed += _processFailedHandler;
 
                         Log.WriteLine("  ✓ Permission handler configured");
 
                         Log.WriteLine("Step 6: Setting up message handler...");
-                        _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+                        coreWebView.WebMessageReceived += OnWebMessageReceived;
 
                         Log.WriteLine("Step 7: Loading speech recognition HTML...");
                         StatusChanged?.Invoke(this, "Loading speech engine...");
@@ -145,7 +150,7 @@ namespace SecureOverlay.Services
                         Log.WriteLine($"  HTML saved to: {htmlFilePath}");
 
                         // Navigate to file:// (secure context, shares permissions)
-                        _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                        coreWebView.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
                         
                         Log.WriteLine("Step 8: Waiting for page load...");
                         
@@ -165,11 +170,11 @@ namespace SecureOverlay.Services
                             }
                         }
                         
-                        _webView.CoreWebView2.NavigationCompleted += navigationCompleted;
+                        coreWebView.NavigationCompleted += navigationCompleted;
                         
                         var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(10000));
                         
-                        _webView.CoreWebView2.NavigationCompleted -= navigationCompleted;
+                        coreWebView.NavigationCompleted -= navigationCompleted;
                         
                         if (completedTask == tcs.Task && await tcs.Task)
                         {
@@ -179,7 +184,7 @@ namespace SecureOverlay.Services
                             // Check if permission is already granted
                             try
                             {
-                                var permResult = await _webView.CoreWebView2.ExecuteScriptAsync(@"
+                                var permResult = await coreWebView.ExecuteScriptAsync(@"
                                     navigator.permissions.query({name:'microphone'}).then(r => r.state);
                                 ");
                                 Log.WriteLine($"  Microphone permission status: {permResult}");

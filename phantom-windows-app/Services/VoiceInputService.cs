@@ -16,7 +16,9 @@ namespace SecureOverlay.Services
         private bool _isInitializing = false;
         private bool _permissionGranted = false;
         private bool _isDisposed = false;
+        private bool _browserProcessFailed = false;
         private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
+        private EventHandler<CoreWebView2ProcessFailedEventArgs>? _processFailedHandler;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? StatusChanged;
@@ -115,6 +117,8 @@ namespace SecureOverlay.Services
                         // Set up permission handler
                         _permissionRequestedHandler = OnPermissionRequested;
                         _webView.CoreWebView2.PermissionRequested += _permissionRequestedHandler;
+                        _processFailedHandler = OnBrowserProcessFailed;
+                        _webView.CoreWebView2.ProcessFailed += _processFailedHandler;
 
                         Log.WriteLine("  ✓ Permission handler configured");
 
@@ -212,6 +216,7 @@ namespace SecureOverlay.Services
                 });
 
                 _isInitialized = await result;
+                _browserProcessFailed = false;
                 _isInitializing = false;
                 
                 return _isInitialized;
@@ -232,10 +237,11 @@ namespace SecureOverlay.Services
         }
 
         public bool HasMicrophonePermission() => _permissionGranted;
+        public bool NeedsReinitialization() => _browserProcessFailed || !_isInitialized || _webView?.CoreWebView2 == null;
 
         public async Task<bool> EnsureReadyAsync()
         {
-            if (_isDisposed || !_isInitialized || _webView?.CoreWebView2 == null)
+            if (_isDisposed || NeedsReinitialization())
             {
                 return false;
             }
@@ -313,6 +319,22 @@ namespace SecureOverlay.Services
             }
         }
 
+        private void OnBrowserProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            Log.WriteLine("════════════════════════════════════════════════");
+            Log.WriteLine("✗ WEBVIEW2 BROWSER PROCESS FAILED");
+            Log.WriteLine($"Kind: {e.ProcessFailedKind}");
+            Log.WriteLine($"Reason: {e.Reason}");
+            Log.WriteLine("════════════════════════════════════════════════");
+
+            _browserProcessFailed = true;
+            _isInitialized = false;
+            _isInitializing = false;
+            _isListening = false;
+
+            StatusChanged?.Invoke(this, "Voice engine crashed");
+        }
+
         private async Task<bool> ShowPermissionPromptAsync()
         {
             if (_webView == null)
@@ -366,7 +388,7 @@ namespace SecureOverlay.Services
 
         private async Task<bool> PreWarmRecognitionAsync()
         {
-            if (_webView?.CoreWebView2 == null)
+            if (NeedsReinitialization())
             {
                 return false;
             }
@@ -382,14 +404,6 @@ namespace SecureOverlay.Services
 
                             if (!recognition) {
                                 initSpeechRecognition();
-                            }
-
-                            if (recognition && !isListening) {
-                                shouldBeListening = true;
-                                recognition.start();
-                                await new Promise(resolve => setTimeout(resolve, 600));
-                                shouldBeListening = false;
-                                recognition.stop();
                             }
 
                             return 'ready';
@@ -612,7 +626,7 @@ namespace SecureOverlay.Services
         {
             Log.WriteLine("StartListening() called");
             
-            if (!_isInitialized || _webView?.CoreWebView2 == null)
+            if (NeedsReinitialization())
             {
                 Log.WriteLine("Not initialized");
                 return;
@@ -638,7 +652,7 @@ namespace SecureOverlay.Services
 
         public async void StopListening()
         {
-            if (!_isListening || _webView?.CoreWebView2 == null)
+            if (!_isListening || NeedsReinitialization())
             {
                 _isListening = false;
                 return;
@@ -674,6 +688,12 @@ namespace SecureOverlay.Services
                         _permissionRequestedHandler = null;
                     }
 
+                    if (_processFailedHandler != null)
+                    {
+                        _webView.CoreWebView2.ProcessFailed -= _processFailedHandler;
+                        _processFailedHandler = null;
+                    }
+
                     _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 }
 
@@ -695,6 +715,7 @@ namespace SecureOverlay.Services
             _webView = null;
             _hostContainer = null;
             _isInitialized = false;
+            _browserProcessFailed = false;
         }
     }
 }

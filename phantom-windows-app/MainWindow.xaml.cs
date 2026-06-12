@@ -2020,6 +2020,12 @@ namespace SecureOverlay
 
             try
             {
+                if (_voiceService != null)
+                {
+                    _voiceService.Dispose();
+                    _voiceService = null;
+                }
+
                 Log.WriteLine("Creating browser-based VoiceInputService...");
                 _voiceService = new VoiceInputService();
                 
@@ -2174,6 +2180,18 @@ namespace SecureOverlay
                     "Voice input not available.\n\nEnable it in Settings.", 
                     "Voice Input"
                 );
+                FocusInput();
+                return;
+            }
+
+            if (_voiceService.NeedsReinitialization())
+            {
+                Log.WriteLine("  Voice engine needs reinitialization");
+                VoiceButton.IsEnabled = false;
+                VoiceButton.Opacity = 0.5;
+                VoiceStatusText.Text = "Recovering...";
+                VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+                _ = InitializeVoiceAsync();
                 FocusInput();
                 return;
             }

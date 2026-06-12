@@ -8,6 +8,7 @@ namespace SecureOverlay.Application.Billing
         InterviewSessionActivationResult EnsureInterviewSession();
         InterviewSessionRecord? GetActiveSession();
         TimeSpan GetMeteredElapsed(InterviewSessionRecord session);
+        bool ActivatePremiumDebtExtension();
         bool PauseActiveSession();
         bool ResumePausedSession();
         InterviewSessionCompletionResult? FinalizeActiveSession();

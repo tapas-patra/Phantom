@@ -8,6 +8,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class UsageReconciliationService
 {
+    private const decimal ProtectedContinuationCap = 1.0m;
     private readonly UsageLedgerRepository _usageLedger;
     private readonly AccountStateService _accounts;
 
@@ -37,7 +38,9 @@ public sealed class UsageReconciliationService
         }
 
         var account = _accounts.RequireAccount(request.UserId);
-        var remainingCharge = request.ChargedCredits;
+        var requestedDebt = Math.Max(0m, Math.Min(request.PremiumDebtAdded, ProtectedContinuationCap));
+        requestedDebt = Math.Min(requestedDebt, request.ChargedCredits);
+        var remainingCharge = Math.Max(0m, request.ChargedCredits - requestedDebt);
         var appliedCredits = 0m;
         var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
 
@@ -57,7 +60,7 @@ public sealed class UsageReconciliationService
             appliedCredits += fromPro;
         }
 
-        var addedDebt = !isFreeTier && remainingCharge > 0m ? remainingCharge : 0m;
+        var addedDebt = !isFreeTier ? requestedDebt : 0m;
         account.PremiumNegativeCredits += addedDebt;
         _accounts.Save(account);
 

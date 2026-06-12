@@ -134,6 +134,24 @@ namespace SecureOverlay.Infrastructure.Billing
             return metered < TimeSpan.Zero ? TimeSpan.Zero : metered;
         }
 
+        public bool ActivatePremiumDebtExtension()
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
+            {
+                return false;
+            }
+
+            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
+            {
+                return false;
+            }
+
+            session.PremiumExtensionStartMeteredSeconds = Math.Max(0, (int)Math.Floor(GetMeteredElapsed(session).TotalSeconds));
+            _interviewSessionRepository.Save(session);
+            return true;
+        }
+
         public bool PauseActiveSession()
         {
             var session = _interviewSessionRepository.Load();
@@ -178,18 +196,44 @@ namespace SecureOverlay.Infrastructure.Billing
             var duration = GetMeteredElapsed(session);
             var blocks = Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes / MeteringBlock.TotalMinutes));
             var requestedCharge = EstimateChargeForElapsed(duration);
+            var baseCharge = requestedCharge;
+            var premiumExtensionCharge = 0m;
+
+            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
+            {
+                var baseSeconds = Math.Max(0, Math.Min(session.PremiumExtensionStartMeteredSeconds.Value, (int)Math.Floor(duration.TotalSeconds)));
+                baseCharge = baseSeconds <= 0
+                    ? 0m
+                    : EstimateChargeForElapsed(TimeSpan.FromSeconds(baseSeconds));
+                premiumExtensionCharge = Math.Max(0m, requestedCharge - baseCharge);
+            }
 
             var availablePrimaryCredits = session.PrimaryLedger == CreditLedgerType.Pro
                 ? snapshot.ProAvailableCredits
                 : snapshot.PremiumAvailableCredits;
+            var consumedPrimaryCredits = Math.Min(availablePrimaryCredits, baseCharge);
+            var primaryShortfall = Math.Max(0m, baseCharge - consumedPrimaryCredits);
+            var premiumDebtAdded = 0m;
+
+            if (!IsFreeTier(snapshot))
+            {
+                var remainingDebtBudget = ProtectedContinuationCap;
+                if (primaryShortfall > 0m)
+                {
+                    var shortfallDebt = Math.Min(primaryShortfall, remainingDebtBudget);
+                    premiumDebtAdded += shortfallDebt;
+                    remainingDebtBudget -= shortfallDebt;
+                }
+
+                if (premiumExtensionCharge > 0m && remainingDebtBudget > 0m)
+                {
+                    premiumDebtAdded += Math.Min(premiumExtensionCharge, remainingDebtBudget);
+                }
+            }
+
             var chargedCredits = IsFreeTier(snapshot)
                 ? Math.Min(availablePrimaryCredits, requestedCharge)
-                : requestedCharge;
-            var consumedPrimaryCredits = Math.Min(availablePrimaryCredits, chargedCredits);
-            var shortfall = chargedCredits - consumedPrimaryCredits;
-            var premiumDebtAdded = IsFreeTier(snapshot)
-                ? 0m
-                : Math.Min(shortfall, ProtectedContinuationCap);
+                : consumedPrimaryCredits + premiumDebtAdded;
 
             if (session.PrimaryLedger == CreditLedgerType.Pro)
             {

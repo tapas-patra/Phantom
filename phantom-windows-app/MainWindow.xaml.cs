@@ -556,9 +556,14 @@ namespace SecureOverlay
                     && _creditMeteringService.GetMeteredElapsed(session) >= TimeSpan.FromMinutes(15);
             }
 
-            if (!HasPaidCreditExhaustionGate() || IsSessionExtensionEnabledForCurrentTier())
+            if (!HasPaidCreditExhaustionGate())
             {
                 return false;
+            }
+
+            if (IsSessionExtensionEnabledForCurrentTier())
+            {
+                return GetProjectedPremiumExtensionCharge(session) > 1.0m;
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
@@ -641,7 +646,9 @@ namespace SecureOverlay
                 var title = IsFreeTrialAccount() ? "Free Trial Block Complete" : "Paid Credits Exhausted";
                 var message = IsFreeTrialAccount()
                     ? "The first 15-minute demo block has ended. Enable session extension in Settings if you want to continue into the next free-trial block."
-                    : "The current interview has consumed the available paid credits. Enable paid session extension in Settings if you want the interview to continue beyond the available Premium and BYO credits.";
+                    : (IsSessionExtensionEnabledForCurrentTier()
+                        ? "The current interview reached the maximum 1.0 credit managed extension limit. Start a new session after clearing the Premium debt or restoring your BYO provider."
+                        : "The current interview has consumed the available paid credits. Enable paid session extension in Settings if you want the interview to continue beyond the available Premium and BYO credits.");
 
                 StatusText.Text = $"⚠️ {title}";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -721,6 +728,35 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
+        private bool ShouldUseManagedPremiumDebtExtension(string provider)
+        {
+            if (!_settings.AllowByoSessionExtension
+                || !HasByoEntitlement()
+                || !IsManagedProvider(provider)
+                || HasConfiguredByoKeysForProvider(provider))
+            {
+                return false;
+            }
+
+            return !HasPremiumManagedEntitlement() || !PremiumCreditsCanStillCoverCurrentSession();
+        }
+
+        private decimal GetProjectedPremiumExtensionCharge(InterviewSessionRecord session)
+        {
+            var meteredElapsed = _creditMeteringService.GetMeteredElapsed(session);
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(meteredElapsed);
+            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
+            {
+                var baseSeconds = Math.Max(0, Math.Min(session.PremiumExtensionStartMeteredSeconds.Value, (int)Math.Floor(meteredElapsed.TotalSeconds)));
+                var baseCharge = baseSeconds <= 0
+                    ? 0m
+                    : LocalCreditMeteringService.EstimateChargeForElapsed(TimeSpan.FromSeconds(baseSeconds));
+                return Math.Max(0m, projectedCharge - baseCharge);
+            }
+
+            return Math.Max(0m, projectedCharge - GetTotalPaidCreditsAvailable());
+        }
+
         private static bool IsManagedProvider(string provider)
         {
             return provider == AIModelRegistry.Providers.ChatGPT
@@ -748,7 +784,7 @@ namespace SecureOverlay
                 return true;
             }
 
-            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(DateTime.UtcNow - activeSession.StartedAtUtc);
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(activeSession));
             return projectedCharge <= premiumCredits;
         }
 
@@ -1400,6 +1436,11 @@ namespace SecureOverlay
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
+            }
+
+            if (ShouldUseManagedPremiumDebtExtension(_settings.SelectedAI))
+            {
+                _creditMeteringService.ActivatePremiumDebtExtension();
             }
 
             string? imageBase64 = null;

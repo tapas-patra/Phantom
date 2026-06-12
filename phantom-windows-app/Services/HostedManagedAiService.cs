@@ -26,17 +26,20 @@ namespace SecureOverlay.Services
         private readonly HostedRuntimeOptions _options;
         private readonly string _provider;
         private readonly string _model;
+        private readonly bool _allowPaidSessionExtension;
 
         public HostedManagedAiService(
             IAuthSessionRepository authSessions,
             HostedRuntimeOptions options,
             string provider,
-            string model)
+            string model,
+            bool allowPaidSessionExtension)
         {
             _authSessions = authSessions;
             _options = options;
             _provider = provider;
             _model = model;
+            _allowPaidSessionExtension = allowPaidSessionExtension;
         }
 
         public string GetProviderName() => _provider;
@@ -79,6 +82,7 @@ namespace SecureOverlay.Services
                 {
                     provider = _provider,
                     model = _model,
+                    allowPaidSessionExtension = _allowPaidSessionExtension,
                     imageBase64,
                     messages = messages.ConvertAll(message => new
                     {
@@ -197,6 +201,7 @@ namespace SecureOverlay.Services
             {
                 provider = _provider,
                 model = _model,
+                allowPaidSessionExtension = _allowPaidSessionExtension,
                 imageBase64,
                 messages = messages.ConvertAll(message => new
                 {

@@ -37,7 +37,7 @@ public sealed class ManagedAiService
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
     {
-        EnsureManagedTier(account);
+        EnsureManagedAccess(account, allowPaidSessionExtension: false);
         return ManagedAiCatalog.CreateCatalog();
     }
 
@@ -135,13 +135,12 @@ public sealed class ManagedAiService
         var account = _accounts.FindByUserId(session.UserId)
             ?? throw new BackendValidationException("Account not found.");
 
-        EnsureManagedTier(account);
         return account;
     }
 
     public async Task StreamChatAsync(HttpResponse response, DesktopAccountRecord account, DesktopAiChatRequestDto request, CancellationToken cancellationToken)
     {
-        EnsureManagedTier(account);
+        EnsureManagedAccess(account, request.AllowPaidSessionExtension);
 
         if (string.IsNullOrWhiteSpace(request.Provider) || !ManagedAiCatalog.IsAllowedProvider(request.Provider))
         {
@@ -195,13 +194,14 @@ public sealed class ManagedAiService
                 : $"Managed AI request failed: {lastError.Message}");
     }
 
-    private static void EnsureManagedTier(DesktopAccountRecord account)
+    private static void EnsureManagedAccess(DesktopAccountRecord account, bool allowPaidSessionExtension)
     {
         var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
         var hasPremiumManagedLane = account.PremiumAvailableCredits > 0m
             || string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
+        var isByoTier = string.Equals(account.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
 
-        if (!isFreeTier && !hasPremiumManagedLane)
+        if (!isFreeTier && !hasPremiumManagedLane && !(isByoTier && allowPaidSessionExtension))
         {
             throw new BackendValidationException("Managed AI is available only for Free and Premium tiers.");
         }

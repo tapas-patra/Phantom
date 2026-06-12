@@ -662,7 +662,7 @@ namespace SecureOverlay
         private decimal GetTotalPaidCreditsAvailable()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
-            var byoCredits = HasConfiguredByoKeysForProvider(_settings.SelectedAI)
+            var byoCredits = HasByoEntitlement()
                 ? (_accountSnapshot?.ProAvailableCredits ?? 0m)
                 : 0m;
             return premiumCredits + byoCredits;
@@ -721,7 +721,17 @@ namespace SecureOverlay
                 return false;
             }
 
-            return HasConfiguredByoKeysForProvider(provider);
+            if (HasConfiguredByoKeysForProvider(provider))
+            {
+                return true;
+            }
+
+            if (_settings.AllowByoSessionExtension)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private string[] GetAvailableProvidersForCurrentTier()
@@ -943,7 +953,8 @@ namespace SecureOverlay
                     _authSessionRepository,
                     _hostedRuntimeOptions,
                     _settings.SelectedAI,
-                    currentModel);
+                    currentModel,
+                    _settings.AllowByoSessionExtension);
             
             AIProviderText.Text = newAI.GetProviderName();
 
@@ -1251,6 +1262,24 @@ namespace SecureOverlay
 
             if (_currentAI == null || !_currentAI.IsConfigured())
             {
+                if (HasByoEntitlement()
+                    && ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI)
+                    && !HasConfiguredByoKeysForProvider(_settings.SelectedAI))
+                {
+                    Log.WriteLine("BYO runtime selected but no provider key is configured - pausing interview continuation");
+                    AddToChat(
+                        $"⚠️ **{_settings.SelectedAI} key required**\n\n" +
+                        $"This interview is currently using your BYO {_settings.SelectedAI} provider. Add a key in Settings to continue." +
+                        (_settings.AllowByoSessionExtension
+                            ? "\n\nManaged paid fallback is enabled, but Phantom could not switch to it for this request."
+                            : "\n\nIf you want Phantom to continue with managed paid fallback when your BYO provider becomes unavailable, enable paid session extension in Settings."),
+                        false);
+                    StatusText.Text = "⚠️ BYO provider unavailable";
+                    StatusIndicator.Fill = Brushes.Orange;
+                    FocusInput();
+                    return;
+                }
+
                 Log.WriteLine("AI not configured, cannot send message");
                 AddToChat("⚠️ **AI not configured!**\n\nClick ⚙️ Settings to configure your API key.", false);
                 FocusInput();

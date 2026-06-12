@@ -84,6 +84,25 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: "No local authenticated session was found.");
             }
 
+            var refreshedSession = TryRefreshSessionIfNeeded(session);
+            if (refreshedSession == null)
+            {
+                _authSessionRepository.Clear();
+                _accountCacheRepository.Clear();
+                return BuildContext(
+                    StartupGateState.AuthChoice,
+                    "Session Expired",
+                    "Your desktop session has expired. Sign in again to continue.",
+                    canOpenMainApp: false,
+                    canResumeLockedInterview: false,
+                    canAttemptLogin: true,
+                    canRegister: true,
+                    canRetry: false,
+                    detail: "The saved desktop authentication session could not be refreshed.");
+            }
+
+            session = refreshedSession;
+
             var cachedSnapshot = _accountCacheRepository.Load();
             try
             {
@@ -481,6 +500,40 @@ namespace SecureOverlay.Infrastructure.Hosted
             return snapshot.LeaseExpiresAtUtc.HasValue
                 && snapshot.LeaseExpiresAtUtc.Value <= DateTime.UtcNow
                 && snapshot.OfflineModeEnabled;
+        }
+
+        private AuthSessionCache? TryRefreshSessionIfNeeded(AuthSessionCache session)
+        {
+            if (string.IsNullOrWhiteSpace(session.RefreshToken))
+            {
+                return session.ExpiresAtUtc.HasValue && session.ExpiresAtUtc.Value <= DateTime.UtcNow
+                    ? null
+                    : session;
+            }
+
+            var expiresSoon = !session.ExpiresAtUtc.HasValue || session.ExpiresAtUtc.Value <= DateTime.UtcNow.AddMinutes(2);
+            if (!expiresSoon)
+            {
+                return session;
+            }
+
+            try
+            {
+                var refreshed = _authClient.RefreshSession(new AuthRefreshRequestDto
+                {
+                    RefreshToken = session.RefreshToken,
+                    InstallId = session.DeviceInstallId,
+                    DeviceFingerprintHash = session.DeviceFingerprintHash
+                });
+                var mapped = MapAuthSession(refreshed);
+                _authSessionRepository.Save(mapped);
+                return mapped;
+            }
+            catch (HostedServiceException ex)
+            {
+                Log.WriteLine($"Desktop auth refresh failed during startup: {ex.Message}");
+                return null;
+            }
         }
 
         private static StartupGateContext BuildContext(

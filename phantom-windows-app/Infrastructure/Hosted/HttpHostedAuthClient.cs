@@ -27,6 +27,14 @@ namespace SecureOverlay.Infrastructure.Hosted
             return PostJson<AuthLoginRequestDto, AuthSessionDto>("/api/desktop/auth/login", request);
         }
 
+        public AuthSessionDto RefreshSession(AuthRefreshRequestDto request)
+        {
+            request.InstallId = string.IsNullOrWhiteSpace(request.InstallId) ? _deviceProfile.InstallId : request.InstallId;
+            request.DeviceFingerprintHash = string.IsNullOrWhiteSpace(request.DeviceFingerprintHash) ? _deviceProfile.MachineFingerprintHash : request.DeviceFingerprintHash;
+
+            return PostJson<AuthRefreshRequestDto, AuthSessionDto>("/api/desktop/auth/refresh", request);
+        }
+
         public AuthMagicLinkIssuedDto RequestMagicLink(AuthMagicLinkRequestDto request)
         {
             request.AppVersion = string.IsNullOrWhiteSpace(request.AppVersion)

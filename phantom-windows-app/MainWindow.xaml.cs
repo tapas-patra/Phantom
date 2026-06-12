@@ -2045,8 +2045,8 @@ namespace SecureOverlay
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
 
                     var readyForCapture = await _voiceService.EnsureReadyAsync();
-                    VoiceButton.IsEnabled = true;
-                    VoiceButton.Opacity = 1.0;
+                    VoiceButton.IsEnabled = readyForCapture || !_voiceService.HasMicrophonePermission();
+                    VoiceButton.Opacity = VoiceButton.IsEnabled ? 1.0 : 0.5;
                     VoiceStatusText.Text = readyForCapture
                         ? "Ready"
                         : (_voiceService.HasMicrophonePermission() ? "Warm-up incomplete" : "Permission needed");
@@ -2207,6 +2207,30 @@ namespace SecureOverlay
                 return;
             }
 
+            if (!_voiceService.IsReadyForCapture())
+            {
+                Log.WriteLine("  Voice engine not ready for capture - retrying warm-up");
+                VoiceButton.IsEnabled = false;
+                VoiceButton.Opacity = 0.5;
+                VoiceStatusText.Text = "Retrying microphone warm-up...";
+                VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+
+                _ = Dispatcher.InvokeAsync(async () =>
+                {
+                    var recovered = await _voiceService.EnsureReadyAsync();
+                    VoiceButton.IsEnabled = recovered || !_voiceService.HasMicrophonePermission();
+                    VoiceButton.Opacity = VoiceButton.IsEnabled ? 1.0 : 0.5;
+                    VoiceStatusText.Text = recovered
+                        ? "Ready"
+                        : (_voiceService.HasMicrophonePermission() ? "Warm-up incomplete" : "Permission needed");
+                    VoiceStatusText.Foreground = recovered
+                        ? Brushes.LightGreen
+                        : new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+                });
+                FocusInput();
+                return;
+            }
+
             if (_voiceService.IsListening())
             {
                 Log.WriteLine("  Currently listening - stopping");
@@ -2279,6 +2303,17 @@ namespace SecureOverlay
                 _autoSendAfterVoice = false;
                 
                 _voiceService.StartListening();
+                if (!_voiceService.IsListening())
+                {
+                    Log.WriteLine("  Voice start request was rejected because engine is not ready");
+                    VoiceButton.Content = "🎤";
+                    VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
+                    VoiceStatusText.Text = "Microphone not ready";
+                    VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+                    FocusInput();
+                    return;
+                }
+
                 VoiceButton.Content = "⏹️";
                 VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 255, 0, 0));
                 VoiceStatusText.Text = "🎙️ Getting microphone ready";

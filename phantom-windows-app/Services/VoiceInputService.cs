@@ -16,6 +16,7 @@ namespace SecureOverlay.Services
         private bool _isInitialized = false;
         private bool _isInitializing = false;
         private bool _permissionGranted = false;
+        private bool _isReadyForCapture = false;
         private bool _isDisposed = false;
         private bool _browserProcessFailed = false;
         private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
@@ -225,6 +226,7 @@ namespace SecureOverlay.Services
 
                 _isInitialized = await result;
                 _browserProcessFailed = false;
+                _isReadyForCapture = false;
                 _isInitializing = false;
                 
                 return _isInitialized;
@@ -246,11 +248,13 @@ namespace SecureOverlay.Services
 
         public bool HasMicrophonePermission() => _permissionGranted;
         public bool NeedsReinitialization() => _browserProcessFailed || !_isInitialized || _webView?.CoreWebView2 == null;
+        public bool IsReadyForCapture() => _isReadyForCapture && !NeedsReinitialization();
 
         public async Task<bool> EnsureReadyAsync()
         {
             if (_isDisposed || NeedsReinitialization())
             {
+                _isReadyForCapture = false;
                 return false;
             }
 
@@ -343,6 +347,7 @@ namespace SecureOverlay.Services
             _isInitialized = false;
             _isInitializing = false;
             _isListening = false;
+            _isReadyForCapture = false;
 
             StatusChanged?.Invoke(this, "Voice engine crashed");
         }
@@ -431,15 +436,18 @@ namespace SecureOverlay.Services
                 if (!normalized.Equals("ready", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.WriteLine($"⚠️ Voice pre-warm did not complete: {normalized}");
+                    _isReadyForCapture = false;
                     return false;
                 }
 
+                _isReadyForCapture = true;
                 StatusChanged?.Invoke(this, "Ready");
                 return true;
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"⚠️ Voice pre-warm failed: {ex.Message}");
+                _isReadyForCapture = false;
                 return false;
             }
         }
@@ -689,6 +697,12 @@ namespace SecureOverlay.Services
                 return;
             }
 
+            if (!_isReadyForCapture)
+            {
+                Log.WriteLine("Voice engine is initialized but not ready for capture");
+                return;
+            }
+
             if (_isListening)
             {
                 Log.WriteLine("Already listening");
@@ -754,6 +768,7 @@ namespace SecureOverlay.Services
             _isDisposed = true;
             _isListening = false;
             _isInitializing = false;
+            _isReadyForCapture = false;
 
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
@@ -793,6 +808,7 @@ namespace SecureOverlay.Services
             _hostContainer = null;
             _isInitialized = false;
             _browserProcessFailed = false;
+            _isReadyForCapture = false;
         }
     }
 }

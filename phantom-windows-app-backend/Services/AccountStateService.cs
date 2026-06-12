@@ -32,22 +32,17 @@ public sealed class AccountStateService
         var existing = _accounts.FindByEmail(normalizedEmail);
         if (existing == null)
         {
-            throw new BackendValidationException(request.UseMagicLink
-                ? "Account not found."
-                : "Invalid email or password.");
+            throw new BackendValidationException("Invalid email or password.");
         }
 
-        if (!request.UseMagicLink)
+        if (string.IsNullOrWhiteSpace(request.Password))
         {
-            if (string.IsNullOrWhiteSpace(request.Password))
-            {
-                throw new BackendValidationException("Password is required.");
-            }
+            throw new BackendValidationException("Password is required.");
+        }
 
-            if (!_passwordHasher.Verify(request.Password, existing.PasswordHash))
-            {
-                throw new BackendValidationException("Invalid email or password.");
-            }
+        if (!_passwordHasher.Verify(request.Password, existing.PasswordHash))
+        {
+            throw new BackendValidationException("Invalid email or password.");
         }
 
         if (!existing.EmailVerified)

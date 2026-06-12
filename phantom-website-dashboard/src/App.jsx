@@ -12,7 +12,6 @@ import {
   loginAccount,
   logoutAccount,
   registerAccount,
-  requestMagicLink,
   resendVerificationEmail,
   upsertManagedAiCredential
 } from "./lib/api";
@@ -153,7 +152,6 @@ export default function App() {
           element={<UserLoginPage onAuthenticated={handleUserAuthenticated} userSession={userSession} />}
         />
         <Route path="/register" element={<RegisterPage />} />
-        <Route path="/magic-link" element={<MagicLinkPage />} />
         <Route path="/desktop-return" element={<DesktopReturnPage />} />
         <Route
           path="/dashboard/*"
@@ -524,11 +522,9 @@ function UserLoginPage({ onAuthenticated, userSession }) {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     email: "",
-    password: "",
-    magicLink: false
+    password: ""
   });
   const [status, setStatus] = useState("");
-  const [magicLinkInfo, setMagicLinkInfo] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -545,22 +541,14 @@ function UserLoginPage({ onAuthenticated, userSession }) {
     event.preventDefault();
     setSubmitting(true);
     setStatus("");
-    setMagicLinkInfo(null);
 
     try {
-      if (form.magicLink) {
-        const result = await requestMagicLink({ email: form.email });
-        setMagicLinkInfo(result);
-        setStatus("Magic link issued. Check the inbox and open the link from the desktop-compatible flow.");
-      } else {
-        const session = await loginAccount({
-          email: form.email,
-          password: form.password,
-          useMagicLink: false
-        });
-        onAuthenticated(session);
-        navigate("/dashboard", { replace: true });
-      }
+      const session = await loginAccount({
+        email: form.email,
+        password: form.password
+      });
+      onAuthenticated(session);
+      navigate("/dashboard", { replace: true });
     } catch (error) {
       setStatus(error.message || "Sign-in failed.");
     } finally {
@@ -582,10 +570,6 @@ function UserLoginPage({ onAuthenticated, userSession }) {
             <strong>Password login</strong>
             <span>Validates against the hosted backend</span>
           </div>
-          <div>
-            <strong>Magic link</strong>
-            <span>Useful when the user wants the same browser-to-desktop handoff model</span>
-          </div>
         </div>
       </section>
 
@@ -595,39 +579,20 @@ function UserLoginPage({ onAuthenticated, userSession }) {
           <input value={form.email} onChange={(event) => update("email", event.target.value)} />
         </label>
 
-        {!form.magicLink && (
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              value={form.password}
-              onChange={(event) => update("password", event.target.value)}
-            />
-          </label>
-        )}
-
-        <label className="toggle-row">
+        <label>
+          <span>Password</span>
           <input
-            type="checkbox"
-            checked={form.magicLink}
-            onChange={(event) => update("magicLink", event.target.checked)}
+            type="password"
+            value={form.password}
+            onChange={(event) => update("password", event.target.value)}
           />
-          <span>Use magic link instead of password</span>
         </label>
 
         <button className="button button-primary" type="submit" disabled={submitting}>
-          {submitting ? "Working..." : form.magicLink ? "Send Magic Link" : "Open User Dashboard"}
+          {submitting ? "Working..." : "Open User Dashboard"}
         </button>
 
         {status && <p className={`status-message ${status.includes("failed") ? "status-error" : ""}`}>{status}</p>}
-
-        {magicLinkInfo?.magicLinkUrl && (
-          <div className="code-block">
-            <strong>Magic link:</strong>
-            <br />
-            {magicLinkInfo.magicLinkUrl}
-          </div>
-        )}
 
         <div className="auth-links-row">
           <Link className="subtle-link" to="/register">
@@ -717,22 +682,6 @@ function RegisterPage() {
   );
 }
 
-function MagicLinkPage() {
-  return (
-    <main className="page">
-      <section className="panel auth-panel auth-panel-wide">
-        <p className="eyebrow">Magic-link handoff</p>
-        <h1>The website can issue the link. The desktop app completes the session.</h1>
-        <p className="hero-text">
-          Magic-link login exists so users can move between hosted email delivery and the Windows runtime
-          without inventing a separate auth system just for the browser dashboard.
-        </p>
-        <div className="code-block">phantom://auth/callback?token=opaque-desktop-auth-token</div>
-      </section>
-    </main>
-  );
-}
-
 function DesktopReturnPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -755,7 +704,7 @@ function DesktopReturnPage() {
         : gmailOauthState === "success"
           ? {
               title: "Gmail delivery connected",
-              message: "The backend can now send verification and magic-link mail through Gmail."
+              message: "The backend can now send verification mail through Gmail."
             }
           : {
               title: "Desktop callback ready",
@@ -815,9 +764,11 @@ function DesktopReturnPage() {
             </Link>
           </div>
         ) : (
-          <a className="button button-primary" href="phantom://auth/callback?token=demo-token">
-            Open Phantom
-          </a>
+          <div className="hero-actions">
+            <Link className="button button-primary" to="/login">
+              Go To Login
+            </Link>
+          </div>
         )}
       </section>
     </main>

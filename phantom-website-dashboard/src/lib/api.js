@@ -70,16 +70,6 @@ export async function loginAccount(payload) {
   });
 }
 
-export async function requestMagicLink(payload) {
-  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/magic-link/request", {
-    method: "POST",
-    body: JSON.stringify({
-      ...getBrowserDeviceProfile(),
-      ...payload
-    })
-  });
-}
-
 export async function logoutAccount(refreshToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/logout", {
     method: "POST",

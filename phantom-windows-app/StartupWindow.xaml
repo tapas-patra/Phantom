@@ -62,10 +62,10 @@
                         <Border Grid.Column="0" CornerRadius="18" Background="#88101927" Padding="24" Margin="0,0,18,0" MinHeight="250">
                             <StackPanel>
                                 <TextBlock x:Name="LeftPanelTitleText" Text="Login Methods" Foreground="White" FontSize="18" FontWeight="SemiBold"/>
-                                <TextBlock x:Name="LeftPanelMessageText" Text="Choose a sign-in method. Login stays in-app and validates against the hosted backend. Registration opens on the hosted website." TextWrapping="Wrap" Foreground="#9AB6D3" FontSize="13" Margin="0,10,0,18"/>
+                                <TextBlock x:Name="LeftPanelMessageText" Text="Choose login to continue. Login stays in-app and validates against the hosted backend. Registration opens on the hosted website." TextWrapping="Wrap" Foreground="#9AB6D3" FontSize="13" Margin="0,10,0,18"/>
 
                                 <Border x:Name="ChoicePanel" Background="#44273B53" CornerRadius="14" Padding="16" Margin="0,0,0,12">
-                                    <TextBlock Text="Select Login or Magic Link to continue. The credentials form appears on the next step so the first screen stays uncluttered on smaller displays." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
+                                    <TextBlock Text="Select Login to continue. The credentials form appears on the next step so the first screen stays uncluttered on smaller displays." TextWrapping="Wrap" Foreground="#D9E8F4" FontSize="12" LineHeight="18"/>
                                 </Border>
 
                                 <StackPanel x:Name="CredentialsPanel" Visibility="Collapsed">
@@ -77,13 +77,6 @@
                                 </StackPanel>
 
                                 <TextBlock x:Name="InlineStatusText" Foreground="#FFCC7A" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                                <Border x:Name="MagicLinkResultPanel" Background="#223654" CornerRadius="12" Padding="14" Margin="0,12,0,0" Visibility="Collapsed">
-                                    <StackPanel>
-                                        <TextBlock Text="Issued Magic Link" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                        <TextBlock Text="Open the hosted link in your browser to complete the real backend-backed magic-link flow. Then either let the website return into Phantom via the callback URI, or press Complete Magic Link in this window." Foreground="#B9D0E4" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                                        <TextBlock x:Name="MagicLinkUrlText" Foreground="#D3E5F5" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                </Border>
                             </StackPanel>
                         </Border>
 
@@ -110,11 +103,8 @@
 
                     <WrapPanel Grid.Row="3" Margin="0,24,0,0" Orientation="Horizontal">
                         <Button x:Name="LoginButton" Content="Login" Width="140" Background="#1976D2" Style="{StaticResource ActionButtonStyle}" Click="LoginButton_Click"/>
-                        <Button x:Name="MagicLinkButton" Content="Magic Link" Width="140" Background="#2A4E77" Style="{StaticResource ActionButtonStyle}" Click="MagicLinkButton_Click"/>
                         <Button x:Name="RegisterButton" Content="Register On Website" Width="190" Background="#264653" Style="{StaticResource ActionButtonStyle}" Click="RegisterButton_Click"/>
                         <Button x:Name="BackButton" Content="Back" Width="120" Background="#455A64" Style="{StaticResource ActionButtonStyle}" Click="BackButton_Click" Visibility="Collapsed"/>
-                        <Button x:Name="OpenMagicLinkButton" Content="Open Magic Link" Width="160" Background="#355C7D" Style="{StaticResource ActionButtonStyle}" Click="OpenMagicLinkButton_Click" Visibility="Collapsed"/>
-                        <Button x:Name="CompleteMagicLinkButton" Content="Complete Magic Link" Width="170" Background="#6C5CE7" Style="{StaticResource ActionButtonStyle}" Click="CompleteMagicLinkButton_Click" Visibility="Collapsed"/>
                         <Button x:Name="SignOutButton" Content="Sign Out" Width="120" Background="#8C3A3A" Style="{StaticResource ActionButtonStyle}" Click="SignOutButton_Click" Visibility="Collapsed"/>
                         <Button x:Name="RetryButton" Content="Retry" Width="120" Background="#5E6472" Style="{StaticResource ActionButtonStyle}" Click="RetryButton_Click" Visibility="Collapsed"/>
                         <Button x:Name="ContinueButton" Content="Open App" Width="140" Background="#2A9D8F" Style="{StaticResource ActionButtonStyle}" Click="ContinueButton_Click" Visibility="Collapsed"/>

@@ -24,8 +24,6 @@ namespace SecureOverlay
         private readonly IDeviceIdentityService _deviceIdentityService;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private StartupGateContext _currentContext;
-        private string? _pendingMagicLinkCallbackUri;
-        private string? _pendingMagicLinkUrl;
 
         public StartupWindow(IStartupGateService startupGateService)
         {
@@ -45,7 +43,7 @@ namespace SecureOverlay
         {
             if (_currentContext.State == StartupGateState.Login)
             {
-                _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password, useMagicLink: false);
+                _currentContext = _startupGateService.CompleteLogin(EmailTextBox.Text, PasswordTextBox.Password);
                 ApplyContext(_currentContext);
                 if (_currentContext.State == StartupGateState.CheckingAccount)
                 {
@@ -60,33 +58,6 @@ namespace SecureOverlay
             InlineStatusText.Text = "Enter credentials and press Login again to continue.";
         }
 
-        private void MagicLinkButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentContext.State != StartupGateState.Login)
-            {
-                _currentContext = _startupGateService.BeginLogin();
-                ApplyContext(_currentContext);
-                InlineStatusText.Text = "Enter your email, then press Send Magic Link. You can return to the previous screen with Back.";
-                return;
-            }
-
-            try
-            {
-                var issuedLink = _startupGateService.RequestMagicLink(EmailTextBox.Text);
-                _pendingMagicLinkCallbackUri = issuedLink.CallbackUri;
-                _pendingMagicLinkUrl = issuedLink.MagicLinkUrl;
-                MagicLinkUrlText.Text = $"{issuedLink.MagicLinkUrl}\nExpires: {issuedLink.ExpiresAtUtc:yyyy-MM-dd HH:mm:ss}";
-                MagicLinkResultPanel.Visibility = Visibility.Visible;
-                OpenMagicLinkButton.Visibility = Visibility.Visible;
-                CompleteMagicLinkButton.Visibility = Visibility.Visible;
-                InlineStatusText.Text = $"Magic link issued for {issuedLink.Email}. Use Complete Magic Link to finish in-app, or open the link externally.";
-            }
-            catch (Exception ex)
-            {
-                InlineStatusText.Text = $"Failed to issue magic link: {ex.Message}";
-            }
-        }
-
         private async void ContinueButton_Click(object sender, RoutedEventArgs e)
         {
             await OpenMainWindowAsync();
@@ -98,48 +69,9 @@ namespace SecureOverlay
             ApplyContext(_currentContext);
         }
 
-        private void CompleteMagicLinkButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(_pendingMagicLinkCallbackUri))
-            {
-                InlineStatusText.Text = "No pending magic link callback is available.";
-                return;
-            }
-
-            _currentContext = _startupGateService.ProcessAuthCallback(_pendingMagicLinkCallbackUri);
-            _pendingMagicLinkCallbackUri = null;
-            _pendingMagicLinkUrl = null;
-            ApplyContext(_currentContext);
-        }
-
-        private void OpenMagicLinkButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(_pendingMagicLinkUrl))
-            {
-                InlineStatusText.Text = "No issued magic link URL is available.";
-                return;
-            }
-
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = _pendingMagicLinkUrl,
-                    UseShellExecute = true
-                });
-                InlineStatusText.Text = "Magic link opened in your browser. Complete the hosted page, then return to Phantom.";
-            }
-            catch (Exception ex)
-            {
-                InlineStatusText.Text = $"Failed to open magic link: {ex.Message}";
-            }
-        }
-
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
             ClearCredentials();
-            _pendingMagicLinkCallbackUri = null;
-            _pendingMagicLinkUrl = null;
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
         }
@@ -147,8 +79,6 @@ namespace SecureOverlay
         private void SignOutButton_Click(object sender, RoutedEventArgs e)
         {
             ClearCredentials();
-            _pendingMagicLinkCallbackUri = null;
-            _pendingMagicLinkUrl = null;
             _currentContext = _startupGateService.ResetToAuthChoice();
             ApplyContext(_currentContext);
             InlineStatusText.Text = "Signed out from the current desktop session.";
@@ -194,7 +124,6 @@ namespace SecureOverlay
             InlineStatusText.Text = context.Detail ?? string.Empty;
 
             LoginButton.Visibility = context.CanAttemptLogin ? Visibility.Visible : Visibility.Collapsed;
-            MagicLinkButton.Visibility = context.CanAttemptLogin ? Visibility.Visible : Visibility.Collapsed;
             RegisterButton.Visibility = context.CanRegister ? Visibility.Visible : Visibility.Collapsed;
             BackButton.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             SignOutButton.Visibility = showSignOut ? Visibility.Visible : Visibility.Collapsed;
@@ -202,16 +131,10 @@ namespace SecureOverlay
             RetryButton.Visibility = context.CanRetry ? Visibility.Visible : Visibility.Collapsed;
             CredentialsPanel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             ChoicePanel.Visibility = isAuthChoiceState ? Visibility.Visible : Visibility.Collapsed;
-            if (!isLoginState)
-            {
-                MagicLinkResultPanel.Visibility = Visibility.Collapsed;
-                OpenMagicLinkButton.Visibility = Visibility.Collapsed;
-                CompleteMagicLinkButton.Visibility = Visibility.Collapsed;
-            }
 
             LeftPanelTitleText.Text = isLoginState ? "Credentials" : "Login Methods";
             LeftPanelMessageText.Text = isLoginState
-                ? "Enter your email and continue with either password login or a magic link. This flow validates against the configured hosted backend."
+                ? "Enter your email and password. This flow validates against the configured hosted backend."
                 : "Choose a sign-in method. Login stays in-app. Registration opens on the hosted website.";
             PasswordLabel.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
             PasswordTextBox.Visibility = isLoginState ? Visibility.Visible : Visibility.Collapsed;
@@ -232,7 +155,6 @@ namespace SecureOverlay
             }
 
             LoginButton.Content = context.State == StartupGateState.Login ? "Submit Login" : "Login";
-            MagicLinkButton.Content = context.State == StartupGateState.Login ? "Send Magic Link" : "Magic Link";
         }
 
         private void ClearCredentials()

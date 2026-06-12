@@ -22,10 +22,9 @@ namespace SecureOverlay.Infrastructure.Hosted
         private readonly IHostedAuthClient _authClient;
         private readonly IHostedAccountClient _accountClient;
         private readonly ITelemetryService _telemetryService;
-        private readonly string? _pendingCallbackUri;
         private readonly DeviceProfile _deviceProfile;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
-        public LocalStartupGateService(string? pendingCallbackUri)
+        public LocalStartupGateService()
         {
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -38,7 +37,6 @@ namespace SecureOverlay.Infrastructure.Hosted
             _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             _authClient = HostedClientFactory.CreateAuthClient(_deviceProfile, _hostedRuntimeOptions);
             _accountClient = HostedClientFactory.CreateAccountClient(_hostedRuntimeOptions);
-            _pendingCallbackUri = pendingCallbackUri;
         }
 
         public StartupGateContext GetInitialContext()
@@ -55,11 +53,6 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canRegister: false,
                     canRetry: true,
                     detail: "Writes are disabled until storage bootstrap succeeds again.");
-            }
-
-            if (!string.IsNullOrWhiteSpace(_pendingCallbackUri))
-            {
-                return ProcessAuthCallback(_pendingCallbackUri);
             }
 
             var session = _authSessionRepository.Load();
@@ -150,28 +143,10 @@ namespace SecureOverlay.Infrastructure.Hosted
                 canAttemptLogin: true,
                 canRegister: true,
                 canRetry: false,
-                detail: "Submit Login or Magic Link to complete authentication and refresh the startup account snapshot.");
+                detail: "Submit your email and password to authenticate and refresh the startup account snapshot.");
         }
 
-        public StartupGateContext CompleteLogin(string email, bool useMagicLink)
-        {
-            return CompleteLogin(email, string.Empty, useMagicLink);
-        }
-
-        public AuthMagicLinkIssuedDto RequestMagicLink(string email)
-        {
-            return _authClient.RequestMagicLink(new AuthMagicLinkRequestDto
-            {
-                Email = email,
-                AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
-                InstallId = _deviceProfile.InstallId,
-                DeviceLabel = _deviceProfile.DeviceLabel,
-                DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,
-                SecretFingerprintHint = _deviceProfile.SecretFingerprintHint
-            });
-        }
-
-        public StartupGateContext CompleteLogin(string email, string password, bool useMagicLink)
+        public StartupGateContext CompleteLogin(string email, string password)
         {
             try
             {
@@ -179,7 +154,6 @@ namespace SecureOverlay.Infrastructure.Hosted
                 {
                     Email = email,
                     Password = password,
-                    UseMagicLink = useMagicLink,
                     AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
                     InstallId = _deviceProfile.InstallId,
                     DeviceLabel = _deviceProfile.DeviceLabel,
@@ -192,7 +166,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 _accountCacheRepository.Save(MapAccountSnapshot(accountCheckDto));
                 _telemetryService.Track("auth", "login_completed", new Dictionary<string, string>
                 {
-                    ["method"] = useMagicLink ? "magic_link" : "password",
+                    ["method"] = "password",
                     ["user"] = sessionDto.Email
                 });
 
@@ -220,40 +194,6 @@ namespace SecureOverlay.Infrastructure.Hosted
                     canRegister: true,
                     canRetry: true,
                     detail: ex.Message);
-            }
-        }
-
-        public StartupGateContext ProcessAuthCallback(string callbackUri)
-        {
-            try
-            {
-                var callbackCompletion = _authClient.CompleteCallback(new AuthCallbackCompletionRequestDto
-                {
-                    CallbackUri = callbackUri,
-                    InstallId = _deviceProfile.InstallId,
-                    DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash
-                });
-                var sessionDto = callbackCompletion.Session;
-                var callbackResult = callbackCompletion.CallbackResult;
-                var accountCheckDto = _accountClient.GetStartupAccountCheck(sessionDto);
-
-                _authSessionRepository.Save(MapAuthSession(sessionDto));
-                var snapshot = MapAccountSnapshot(accountCheckDto);
-                _accountCacheRepository.Save(snapshot);
-                _telemetryService.Track("auth", "callback_processed", new Dictionary<string, string>
-                {
-                    ["status"] = callbackResult.Status,
-                    ["user"] = callbackResult.Email
-                });
-                return EvaluateAccountState(_authSessionRepository.Load()!, snapshot);
-            }
-            catch (HostedServiceException ex)
-            {
-                Log.WriteLine($"Auth callback completion failed: {ex.Message}");
-                return BuildBackendUnavailableContext(
-                    "Callback Validation Failed",
-                    "The desktop app could not complete the website sign-in callback.",
-                    ex.Message);
             }
         }
 

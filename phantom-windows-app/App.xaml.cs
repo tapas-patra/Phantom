@@ -42,9 +42,7 @@ namespace SecureOverlay
                     hostedRuntimeOptions);
                 _telemetryService.Track("app", "startup", new Dictionary<string, string>
                 {
-                    ["has_callback"] = (!string.IsNullOrWhiteSpace(e.Args.FirstOrDefault(arg =>
-                        arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
-                        || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase)))).ToString(),
+                    ["has_callback"] = false.ToString(),
                     ["hosted_mode"] = hostedRuntimeOptions.Mode,
                     ["hosted_backend"] = hostedRuntimeOptions.DesktopBackendBaseUrl
                 });
@@ -89,16 +87,8 @@ namespace SecureOverlay
                 Log.WriteLine("Prerequisites check complete - starting startup gate");
                 Log.WriteLine("═══════════════════════════════════════════════════════");
 
-                var callbackUri = e.Args.FirstOrDefault(arg =>
-                    arg.StartsWith("phantom://auth/callback", StringComparison.OrdinalIgnoreCase)
-                    || arg.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase));
                 var restartMainWindowOnly = e.Args.Any(arg =>
                     string.Equals(arg, "--restart-main-window", StringComparison.OrdinalIgnoreCase));
-
-                if (!string.IsNullOrWhiteSpace(callbackUri) && callbackUri.StartsWith("--auth-callback=", StringComparison.OrdinalIgnoreCase))
-                {
-                    callbackUri = callbackUri.Substring("--auth-callback=".Length);
-                }
 
                 if (restartMainWindowOnly)
                 {
@@ -119,7 +109,7 @@ namespace SecureOverlay
                 }
 
                 Log.WriteLine("Creating startup window...");
-                var startupWindow = new StartupWindow(new LocalStartupGateService(callbackUri));
+                var startupWindow = new StartupWindow(new LocalStartupGateService());
                 MainWindow = startupWindow;
                 startupWindow.Show();
                 Log.WriteLine("Startup window shown successfully");

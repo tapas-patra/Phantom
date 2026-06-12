@@ -205,7 +205,7 @@ namespace SecureOverlay
             }
 
             InitializeAI();
-            InitializeVoice();
+            _ = InitializeVoiceAsync();
 
             // Initialize Task View monitor
             _taskViewMonitor = new TaskViewMonitor(this);
@@ -436,6 +436,12 @@ namespace SecureOverlay
         {
             ProviderSelectorBorder.Visibility = Visibility.Visible;
             ModelSelectorBorder.Visibility = Visibility.Visible;
+            DebugButton.Visibility = HasByoEntitlement() ? Visibility.Visible : Visibility.Collapsed;
+            if (!HasByoEntitlement())
+            {
+                DebugPanel.Visibility = Visibility.Collapsed;
+            }
+
             if (!HasByoEntitlement())
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
@@ -866,10 +872,11 @@ namespace SecureOverlay
             Log.WriteLine("Initializing AI service...");
 
             // NEW: Configure debug mode
-            ErrorSimulator.IsDebugModeEnabled = _settings.DebugModeEnabled;
-            ErrorSimulator.SimulationMode = _settings.DebugErrorSimulation;
+            var debugModeEnabled = HasByoEntitlement() && _settings.DebugModeEnabled;
+            ErrorSimulator.IsDebugModeEnabled = debugModeEnabled;
+            ErrorSimulator.SimulationMode = debugModeEnabled ? _settings.DebugErrorSimulation : "None";
             
-            if (_settings.DebugModeEnabled)
+            if (debugModeEnabled)
             {
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 Log.WriteLine("🧪 DEBUG MODE ENABLED");
@@ -1996,10 +2003,10 @@ namespace SecureOverlay
         // VOICE INPUT
         // ═══════════════════════════════════════════════════════════════
 
-        private async void InitializeVoice()
+        private async Task InitializeVoiceAsync()
         {
             Log.WriteLine("═══════════════════════════════════════════════");
-            Log.WriteLine("InitializeVoice() called");
+            Log.WriteLine("InitializeVoiceAsync() called");
             Log.WriteLine($"  VoiceInputEnabled: {_settings.VoiceInputEnabled}");
             
             if (!_settings.VoiceInputEnabled) 
@@ -2028,10 +2035,27 @@ namespace SecureOverlay
                 if (success)
                 {
                     Log.WriteLine("✓ Voice service initialized successfully");
+                    VoiceStatusText.Text = "Warming up...";
+                    VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+
+                    var readyForCapture = await _voiceService.EnsureReadyAsync();
                     VoiceButton.IsEnabled = true;
                     VoiceButton.Opacity = 1.0;
-                    VoiceStatusText.Text = "Ready";
-                    VoiceStatusText.Foreground = Brushes.LightGreen;
+                    VoiceStatusText.Text = readyForCapture
+                        ? "Ready"
+                        : (_voiceService.HasMicrophonePermission() ? "Warm-up incomplete" : "Permission needed");
+                    VoiceStatusText.Foreground = readyForCapture
+                        ? Brushes.LightGreen
+                        : new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
+
+                    if (readyForCapture)
+                    {
+                        Log.WriteLine("✓ Voice capture pipeline pre-warmed");
+                    }
+                    else
+                    {
+                        Log.WriteLine("⚠️ Voice initialized but warm-up did not fully complete");
+                    }
                 }
                 else
                 {
@@ -2460,7 +2484,7 @@ namespace SecureOverlay
                 if (_settings.VoiceInputEnabled && _voiceService == null)
                 {
                     Log.WriteLine("Voice was disabled, now enabled - initializing");
-                    InitializeVoice();
+                    _ = InitializeVoiceAsync();
                 }
                 else if (!_settings.VoiceInputEnabled && _voiceService != null)
                 {

@@ -333,15 +333,15 @@ namespace SecureOverlay.Infrastructure.Hosted
             }
 
             var isFreeTier = IsFreeTier(snapshot);
-            var hasMeteringBlock = snapshot.ProAvailableCredits >= 0.25m || snapshot.PremiumAvailableCredits >= 0.25m;
-            var hasFreeTrialBlock = snapshot.PremiumAvailableCredits >= 0.25m;
+            var hasMeteringCredits = snapshot.ProAvailableCredits > 0m || snapshot.PremiumAvailableCredits > 0m;
+            var hasFreeTrialCredits = snapshot.PremiumAvailableCredits > 0m;
 
-            if (isFreeTier && !hasFreeTrialBlock && !snapshot.HasResumableLockedSession)
+            if (isFreeTier && !hasFreeTrialCredits && !snapshot.HasResumableLockedSession)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
                     "Free Trial Exhausted",
-                    "The free trial does not have a full 15 minute demo block remaining for a new interview.",
+                    "The free trial does not have any demo credit remaining for a new interview.",
                     canOpenMainApp: true,
                     canResumeLockedInterview: false,
                     canAttemptLogin: false,
@@ -350,12 +350,12 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, "The app shell can open, but a new interview stays blocked until trial credits are restored by Phantom."));
             }
 
-            if (isFreeTier && !hasFreeTrialBlock)
+            if (isFreeTier && !hasFreeTrialCredits)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
                     "Free Trial Exhausted",
-                    "The free trial has no full demo block left for a new interview, but the current locked session may continue on this device.",
+                    "The free trial has no demo credit left for a new interview, but the current locked session may continue on this device.",
                     canOpenMainApp: true,
                     canResumeLockedInterview: true,
                     canAttemptLogin: false,
@@ -364,12 +364,12 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, "Resume the current locked session or restore trial credits before starting another interview."));
             }
 
-            if (!isFreeTier && !hasMeteringBlock && !snapshot.HasResumableLockedSession)
+            if (!isFreeTier && !hasMeteringCredits && !snapshot.HasResumableLockedSession)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
                     "No Credits Available",
-                    "You are signed in, but no plan has at least one full first metering block available for a new interview.",
+                    "You are signed in, but no paid credits are available for a new interview.",
                     canOpenMainApp: true,
                     canResumeLockedInterview: false,
                     canAttemptLogin: false,
@@ -378,12 +378,12 @@ namespace SecureOverlay.Infrastructure.Hosted
                     detail: ComposeDetail(detailPrefix, "The app shell can open, but interview start must remain blocked until credits are added."));
             }
 
-            if (!isFreeTier && !hasMeteringBlock)
+            if (!isFreeTier && !hasMeteringCredits)
             {
                 return BuildContext(
                     StartupGateState.NoCredits,
                     "No Credits Available",
-                    "No plan has one full first metering block available for a new interview, but the current locked session may continue on this device.",
+                    "No paid credits are available for a new interview, but the current locked session may continue on this device.",
                     canOpenMainApp: true,
                     canResumeLockedInterview: true,
                     canAttemptLogin: false,

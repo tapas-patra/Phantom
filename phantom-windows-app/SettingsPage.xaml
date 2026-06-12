@@ -553,6 +553,7 @@
                                         HorizontalAlignment="Center" Margin="0,8,0,0"/>
                             </StackPanel>
                         </Border>
+                        <StackPanel x:Name="DebugModeSection">
                         <TextBlock Text="🧪 Debug Mode (Testing)" FontSize="14" FontWeight="Bold" 
                                 Foreground="White" Margin="0,20,0,10" Effect="{StaticResource Shadow}"/>
                         <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15">
@@ -582,6 +583,7 @@
                                 </TextBlock>
                             </StackPanel>
                         </Border>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
                 

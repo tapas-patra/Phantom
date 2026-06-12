@@ -231,6 +231,27 @@ namespace SecureOverlay.Services
             }
         }
 
+        public bool HasMicrophonePermission() => _permissionGranted;
+
+        public async Task<bool> EnsureReadyAsync()
+        {
+            if (_isDisposed || !_isInitialized || _webView?.CoreWebView2 == null)
+            {
+                return false;
+            }
+
+            if (!_permissionGranted)
+            {
+                var permissionGranted = await ShowPermissionPromptAsync();
+                if (!permissionGranted)
+                {
+                    return false;
+                }
+            }
+
+            return await PreWarmRecognitionAsync();
+        }
+
         private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
@@ -260,7 +281,7 @@ namespace SecureOverlay.Services
                     {
                         System.Windows.Application.Current.Dispatcher.Invoke(() =>
                         {
-                            ShowPermissionPrompt();
+                            _ = ShowPermissionPromptAsync();
                         });
                     }
                     else
@@ -292,9 +313,12 @@ namespace SecureOverlay.Services
             }
         }
 
-        private async void ShowPermissionPrompt()
+        private async Task<bool> ShowPermissionPromptAsync()
         {
-            if (_webView == null) return;
+            if (_webView == null)
+            {
+                return false;
+            }
 
             Log.WriteLine("════════════════════════════════════════════════");
             Log.WriteLine("OPENING PERMISSION WINDOW");
@@ -311,20 +335,7 @@ namespace SecureOverlay.Services
                     _permissionGranted = true;
                     
                     StatusChanged?.Invoke(this, "Permission granted");
-                    
-                    InvisibleMessageBox.Show(
-                        "✅ Microphone permission granted!\n\n" +
-                        "Voice input is now ready to use.\n\n" +
-                        "Click the 🎤 button to start speaking!",
-                        "Success"
-                    );
-                    
-                    // Try to start listening again
-                    if (_webView?.CoreWebView2 != null)
-                    {
-                        await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
-                        _isListening = true;
-                    }
+                    return true;
                 }
                 else
                 {
@@ -337,15 +348,71 @@ namespace SecureOverlay.Services
                         "Click the 🎤 button again to retry.",
                         "Permission Required"
                     );
+                    return false;
                 }
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"❌ Permission window error: {ex.Message}");
+                return false;
             }
             finally
             {
                 Log.WriteLine("════════════════════════════════════════════════");
+            }
+
+            return false;
+        }
+
+        private async Task<bool> PreWarmRecognitionAsync()
+        {
+            if (_webView?.CoreWebView2 == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                StatusChanged?.Invoke(this, "Warming microphone...");
+                var result = await _webView.CoreWebView2.ExecuteScriptAsync(@"
+                    (async function() {
+                        try {
+                            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                            stream.getTracks().forEach(track => track.stop());
+
+                            if (!recognition) {
+                                initSpeechRecognition();
+                            }
+
+                            if (recognition && !isListening) {
+                                shouldBeListening = true;
+                                recognition.start();
+                                await new Promise(resolve => setTimeout(resolve, 600));
+                                shouldBeListening = false;
+                                recognition.stop();
+                            }
+
+                            return 'ready';
+                        } catch (error) {
+                            return 'error:' + error.name + ':' + error.message;
+                        }
+                    })();
+                ");
+
+                var normalized = result?.Trim('"') ?? string.Empty;
+                if (!normalized.Equals("ready", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.WriteLine($"⚠️ Voice pre-warm did not complete: {normalized}");
+                    return false;
+                }
+
+                StatusChanged?.Invoke(this, "Ready");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"⚠️ Voice pre-warm failed: {ex.Message}");
+                return false;
             }
         }
 

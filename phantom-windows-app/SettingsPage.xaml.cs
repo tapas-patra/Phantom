@@ -710,8 +710,10 @@ namespace SecureOverlay
                 _settings.SystemPrompt = SystemPromptBox.Text;
 
                 // debug mode:
-                _settings.DebugModeEnabled = DebugModeCheckBox.IsChecked == true;
-                _settings.DebugErrorSimulation = (DebugErrorTypeComboBox.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "None";
+                _settings.DebugModeEnabled = HasByoEntitlement() && DebugModeCheckBox.IsChecked == true;
+                _settings.DebugErrorSimulation = _settings.DebugModeEnabled
+                    ? (DebugErrorTypeComboBox.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "None"
+                    : "None";
 
                 if (_settings.DebugModeEnabled)
                 {
@@ -815,6 +817,22 @@ namespace SecureOverlay
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!isByo)
+            {
+                _settings.DebugModeEnabled = false;
+                _settings.DebugErrorSimulation = "None";
+                if (DebugModeCheckBox != null)
+                {
+                    DebugModeCheckBox.IsChecked = false;
+                }
+
+                if (DebugErrorTypeComboBox != null)
+                {
+                    DebugErrorTypeComboBox.SelectedIndex = 0;
+                }
+            }
 
             if (isPremiumOnly)
             {

@@ -10,7 +10,6 @@ namespace SecureOverlay.Infrastructure.Billing
 {
     public sealed class LocalCreditMeteringService : ICreditMeteringService
     {
-        private const decimal CreditsPerBlock = 0.25m;
         private const decimal CreditsPerMinute = 1m / 60m;
         private const decimal ProtectedContinuationCap = 1.0m;
         private static readonly TimeSpan MeteringBlock = TimeSpan.FromMinutes(15);
@@ -72,10 +71,10 @@ namespace SecureOverlay.Infrastructure.Billing
             {
                 if (IsFreeTier(snapshot))
                 {
-                    return Denied("Free Trial Exhausted", "A full 15 minute free-trial block must be available before a new interview starts.");
+                    return Denied("Free Trial Exhausted", "Some free-trial credit must be available before a new interview starts.");
                 }
 
-                return Denied("No Credits Available", "At least one full 15 minute block must be available before a new interview starts.");
+                return Denied("No Credits Available", "Some paid credit must be available before a new interview starts.");
             }
 
             var session = new InterviewSessionRecord
@@ -188,17 +187,17 @@ namespace SecureOverlay.Infrastructure.Billing
 
         private static CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
-            if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits >= CreditsPerBlock)
+            if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits > 0m)
             {
                 return CreditLedgerType.Premium;
             }
 
-            if (snapshot.ProAvailableCredits >= CreditsPerBlock)
+            if (snapshot.ProAvailableCredits > 0m)
             {
                 return CreditLedgerType.Pro;
             }
 
-            if (snapshot.PremiumAvailableCredits >= CreditsPerBlock)
+            if (snapshot.PremiumAvailableCredits > 0m)
             {
                 return CreditLedgerType.Premium;
             }

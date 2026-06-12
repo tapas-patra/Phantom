@@ -411,14 +411,11 @@ namespace SecureOverlay.Services
                 var result = await coreWebView.ExecuteScriptAsync(@"
                     (async function() {
                         try {
-                            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                            stream.getTracks().forEach(track => track.stop());
-
                             if (!recognition) {
                                 initSpeechRecognition();
                             }
 
-                            return 'ready';
+                            return await ensureWarmMicrophone() ? 'ready' : 'error:warmup_failed';
                         } catch (error) {
                             return 'error:' + error.name + ':' + error.message;
                         }
@@ -479,6 +476,43 @@ namespace SecureOverlay.Services
                 let recognition = null;
                 let isListening = false;
                 let shouldBeListening = false; // Track if we WANT to be listening
+                let warmupStream = null;
+                let warmupAudioContext = null;
+                let warmupSource = null;
+                let warmupGain = null;
+
+                async function ensureWarmMicrophone() {
+                    try {
+                        if (warmupStream && warmupStream.active) {
+                            return true;
+                        }
+
+                        warmupStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+                        if (AudioContextCtor) {
+                            warmupAudioContext = warmupAudioContext || new AudioContextCtor();
+                            if (warmupAudioContext.state === 'suspended') {
+                                await warmupAudioContext.resume();
+                            }
+
+                            warmupSource = warmupAudioContext.createMediaStreamSource(warmupStream);
+                            warmupGain = warmupAudioContext.createGain();
+                            warmupGain.gain.value = 0;
+                            warmupSource.connect(warmupGain);
+                            warmupGain.connect(warmupAudioContext.destination);
+                        }
+
+                        console.log('✓ Microphone warmed and held open');
+                        document.getElementById('status').textContent = 'Microphone ready';
+                        window.chrome.webview.postMessage('STATUS:Microphone warmed');
+                        return true;
+                    } catch (error) {
+                        console.error('Warm microphone failed:', error);
+                        window.chrome.webview.postMessage('ERROR:' + error.message);
+                        return false;
+                    }
+                }
 
                 function initSpeechRecognition() {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -574,7 +608,7 @@ namespace SecureOverlay.Services
                     return true;
                 }
 
-                function startListening() {
+                async function startListening() {
                     console.log('startListening() called');
                     
                     if (!recognition) {
@@ -590,6 +624,12 @@ namespace SecureOverlay.Services
                     }
 
                     shouldBeListening = true; // Mark that we want to keep listening
+
+                    const warmed = await ensureWarmMicrophone();
+                    if (!warmed) {
+                        shouldBeListening = false;
+                        return;
+                    }
                     
                     try {
                         console.log('Starting continuous recognition...');

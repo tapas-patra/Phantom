@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using SecureOverlay.Application.Billing;
@@ -134,7 +135,7 @@ namespace SecureOverlay.Infrastructure.Billing
             return metered < TimeSpan.Zero ? TimeSpan.Zero : metered;
         }
 
-        public bool ActivatePremiumDebtExtension()
+        public bool TrackUsageSource(InterviewUsageSource source, string providerId)
         {
             var session = _interviewSessionRepository.Load();
             if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
@@ -142,12 +143,31 @@ namespace SecureOverlay.Infrastructure.Billing
                 return false;
             }
 
-            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
+            session.UsageSegments ??= new List<InterviewSessionUsageSegment>();
+            var currentMeteredSecond = Math.Max(0, (int)Math.Floor(GetMeteredElapsed(session).TotalSeconds));
+            var lastSegment = session.UsageSegments.Count > 0
+                ? session.UsageSegments[^1]
+                : null;
+
+            if (lastSegment != null
+                && lastSegment.Source == source
+                && string.Equals(lastSegment.ProviderId, providerId ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                && !lastSegment.EndedMeteredSecond.HasValue)
             {
                 return false;
             }
 
-            session.PremiumExtensionStartMeteredSeconds = Math.Max(0, (int)Math.Floor(GetMeteredElapsed(session).TotalSeconds));
+            if (lastSegment != null && !lastSegment.EndedMeteredSecond.HasValue)
+            {
+                lastSegment.EndedMeteredSecond = currentMeteredSecond;
+            }
+
+            session.UsageSegments.Add(new InterviewSessionUsageSegment
+            {
+                Source = source,
+                ProviderId = providerId ?? string.Empty,
+                StartedMeteredSecond = currentMeteredSecond
+            });
             _interviewSessionRepository.Save(session);
             return true;
         }
@@ -196,23 +216,17 @@ namespace SecureOverlay.Infrastructure.Billing
             var duration = GetMeteredElapsed(session);
             var blocks = Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes / MeteringBlock.TotalMinutes));
             var requestedCharge = EstimateChargeForElapsed(duration);
-            var baseCharge = requestedCharge;
-            var premiumExtensionCharge = 0m;
+            var totalMeteredSeconds = Math.Max(0, (int)Math.Floor(duration.TotalSeconds));
+            CloseOpenUsageSegment(session, totalMeteredSeconds);
 
-            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
-            {
-                var baseSeconds = Math.Max(0, Math.Min(session.PremiumExtensionStartMeteredSeconds.Value, (int)Math.Floor(duration.TotalSeconds)));
-                baseCharge = baseSeconds <= 0
-                    ? 0m
-                    : EstimateChargeForElapsed(TimeSpan.FromSeconds(baseSeconds));
-                premiumExtensionCharge = Math.Max(0m, requestedCharge - baseCharge);
-            }
+            var chargesBySource = AllocateChargeBySource(session, requestedCharge, totalMeteredSeconds);
+            var proByoCharge = chargesBySource.TryGetValue(InterviewUsageSource.ProByo, out var proCharge) ? proCharge : 0m;
+            var premiumManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumManaged, out var managedCharge) ? managedCharge : 0m;
+            var premiumExtensionCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumDebtExtension, out var extensionCharge) ? extensionCharge : 0m;
 
-            var availablePrimaryCredits = session.PrimaryLedger == CreditLedgerType.Pro
-                ? snapshot.ProAvailableCredits
-                : snapshot.PremiumAvailableCredits;
-            var consumedPrimaryCredits = Math.Min(availablePrimaryCredits, baseCharge);
-            var primaryShortfall = Math.Max(0m, baseCharge - consumedPrimaryCredits);
+            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, proByoCharge);
+            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, premiumManagedCharge);
+            var primaryShortfall = Math.Max(0m, proByoCharge - consumedProCredits) + Math.Max(0m, premiumManagedCharge - consumedPremiumCredits);
             var premiumDebtAdded = 0m;
 
             if (!IsFreeTier(snapshot))
@@ -232,16 +246,24 @@ namespace SecureOverlay.Infrastructure.Billing
             }
 
             var chargedCredits = IsFreeTier(snapshot)
-                ? Math.Min(availablePrimaryCredits, requestedCharge)
-                : consumedPrimaryCredits + premiumDebtAdded;
+                ? Math.Min(session.PrimaryLedger == CreditLedgerType.Pro ? snapshot.ProAvailableCredits : snapshot.PremiumAvailableCredits, requestedCharge)
+                : consumedProCredits + consumedPremiumCredits + premiumDebtAdded;
 
-            if (session.PrimaryLedger == CreditLedgerType.Pro)
+            if (IsFreeTier(snapshot))
             {
-                snapshot.ProAvailableCredits = Math.Max(0m, snapshot.ProAvailableCredits - consumedPrimaryCredits);
+                if (session.PrimaryLedger == CreditLedgerType.Pro)
+                {
+                    snapshot.ProAvailableCredits = Math.Max(0m, snapshot.ProAvailableCredits - chargedCredits);
+                }
+                else
+                {
+                    snapshot.PremiumAvailableCredits = Math.Max(0m, snapshot.PremiumAvailableCredits - chargedCredits);
+                }
             }
             else
             {
-                snapshot.PremiumAvailableCredits = Math.Max(0m, snapshot.PremiumAvailableCredits - consumedPrimaryCredits);
+                snapshot.ProAvailableCredits = Math.Max(0m, snapshot.ProAvailableCredits - consumedProCredits);
+                snapshot.PremiumAvailableCredits = Math.Max(0m, snapshot.PremiumAvailableCredits - consumedPremiumCredits);
             }
 
             snapshot.PremiumNegativeCredits += premiumDebtAdded;
@@ -330,6 +352,84 @@ namespace SecureOverlay.Infrastructure.Billing
         private static bool IsFreeTier(AccountCacheSnapshot snapshot)
         {
             return string.Equals(snapshot.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void CloseOpenUsageSegment(InterviewSessionRecord session, int meteredSeconds)
+        {
+            session.UsageSegments ??= new List<InterviewSessionUsageSegment>();
+            if (session.UsageSegments.Count == 0)
+            {
+                return;
+            }
+
+            var lastSegment = session.UsageSegments[^1];
+            if (!lastSegment.EndedMeteredSecond.HasValue)
+            {
+                lastSegment.EndedMeteredSecond = meteredSeconds;
+            }
+        }
+
+        private static Dictionary<InterviewUsageSource, decimal> AllocateChargeBySource(
+            InterviewSessionRecord session,
+            decimal requestedCharge,
+            int totalMeteredSeconds)
+        {
+            session.UsageSegments ??= new List<InterviewSessionUsageSegment>();
+            var secondsBySource = new Dictionary<InterviewUsageSource, int>();
+
+            foreach (var segment in session.UsageSegments)
+            {
+                var segmentEnd = segment.EndedMeteredSecond ?? totalMeteredSeconds;
+                var seconds = Math.Max(0, segmentEnd - segment.StartedMeteredSecond);
+                if (seconds == 0)
+                {
+                    continue;
+                }
+
+                if (!secondsBySource.ContainsKey(segment.Source))
+                {
+                    secondsBySource[segment.Source] = 0;
+                }
+
+                secondsBySource[segment.Source] += seconds;
+            }
+
+            if (secondsBySource.Count == 0)
+            {
+                secondsBySource[session.PrimaryLedger == CreditLedgerType.Pro
+                    ? InterviewUsageSource.ProByo
+                    : InterviewUsageSource.PremiumManaged] = Math.Max(1, totalMeteredSeconds);
+            }
+
+            var orderedSources = new List<InterviewUsageSource>(secondsBySource.Keys);
+            orderedSources.Sort();
+
+            var allocated = new Dictionary<InterviewUsageSource, decimal>();
+            var remainingCharge = requestedCharge;
+            var totalSeconds = 0;
+            foreach (var seconds in secondsBySource.Values)
+            {
+                totalSeconds += seconds;
+            }
+
+            for (var index = 0; index < orderedSources.Count; index++)
+            {
+                var source = orderedSources[index];
+                if (index == orderedSources.Count - 1)
+                {
+                    allocated[source] = RoundCredits(Math.Max(0m, remainingCharge));
+                    break;
+                }
+
+                var proportionalCharge = totalSeconds <= 0
+                    ? 0m
+                    : RoundCredits(requestedCharge * secondsBySource[source] / totalSeconds);
+                proportionalCharge = Math.Min(proportionalCharge, remainingCharge);
+                allocated[source] = proportionalCharge;
+                remainingCharge -= proportionalCharge;
+            }
+
+            return allocated;
         }
 
         public static decimal EstimateChargeForElapsed(TimeSpan elapsed)

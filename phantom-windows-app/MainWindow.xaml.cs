@@ -728,33 +728,51 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
-        private bool ShouldUseManagedPremiumDebtExtension(string provider)
+        private SecureOverlay.Domain.Enums.InterviewUsageSource DetermineUsageSourceForCurrentRuntime(string provider)
         {
-            if (!_settings.AllowByoSessionExtension
-                || !HasByoEntitlement()
-                || !IsManagedProvider(provider)
-                || HasConfiguredByoKeysForProvider(provider))
+            if (IsFreeTrialAccount())
             {
-                return false;
+                return SecureOverlay.Domain.Enums.InterviewUsageSource.FreeTrialManaged;
             }
 
-            return !HasPremiumManagedEntitlement() || !PremiumCreditsCanStillCoverCurrentSession();
+            if (_currentAI is HostedManagedAiService)
+            {
+                if (_settings.AllowByoSessionExtension
+                    && (!HasPremiumManagedEntitlement() || !PremiumCreditsCanStillCoverCurrentSession()))
+                {
+                    return SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumDebtExtension;
+                }
+
+                return SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumManaged;
+            }
+
+            return SecureOverlay.Domain.Enums.InterviewUsageSource.ProByo;
         }
 
         private decimal GetProjectedPremiumExtensionCharge(InterviewSessionRecord session)
         {
             var meteredElapsed = _creditMeteringService.GetMeteredElapsed(session);
-            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(meteredElapsed);
-            if (session.PremiumExtensionStartMeteredSeconds.HasValue)
+            var requestedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(meteredElapsed);
+            var totalMeteredSeconds = Math.Max(0, (int)Math.Floor(meteredElapsed.TotalSeconds));
+            var debtSeconds = 0;
+
+            foreach (var segment in session.UsageSegments ?? Enumerable.Empty<SecureOverlay.Domain.Entities.InterviewSessionUsageSegment>())
             {
-                var baseSeconds = Math.Max(0, Math.Min(session.PremiumExtensionStartMeteredSeconds.Value, (int)Math.Floor(meteredElapsed.TotalSeconds)));
-                var baseCharge = baseSeconds <= 0
-                    ? 0m
-                    : LocalCreditMeteringService.EstimateChargeForElapsed(TimeSpan.FromSeconds(baseSeconds));
-                return Math.Max(0m, projectedCharge - baseCharge);
+                if (segment.Source != SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumDebtExtension)
+                {
+                    continue;
+                }
+
+                var segmentEnd = segment.EndedMeteredSecond ?? totalMeteredSeconds;
+                debtSeconds += Math.Max(0, segmentEnd - segment.StartedMeteredSecond);
             }
 
-            return Math.Max(0m, projectedCharge - GetTotalPaidCreditsAvailable());
+            if (debtSeconds <= 0 || totalMeteredSeconds <= 0)
+            {
+                return 0m;
+            }
+
+            return Math.Round(requestedCharge * debtSeconds / totalMeteredSeconds, 2, MidpointRounding.AwayFromZero);
         }
 
         private static bool IsManagedProvider(string provider)
@@ -1438,10 +1456,7 @@ namespace SecureOverlay
                 UpdateSessionStatus();
             }
 
-            if (ShouldUseManagedPremiumDebtExtension(_settings.SelectedAI))
-            {
-                _creditMeteringService.ActivatePremiumDebtExtension();
-            }
+            _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
 
             string? imageBase64 = null;
             if (_attachedScreenshot != null)

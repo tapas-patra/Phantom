@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using SecureOverlay.Domain.Enums;
 
 namespace SecureOverlay.Domain.Entities
@@ -13,7 +14,7 @@ namespace SecureOverlay.Domain.Entities
         public DateTime? EndedAtUtc { get; set; }
         public DateTime? PausedAtUtc { get; set; }
         public int TotalPausedSeconds { get; set; }
-        public int? PremiumExtensionStartMeteredSeconds { get; set; }
+        public List<InterviewSessionUsageSegment> UsageSegments { get; set; } = new List<InterviewSessionUsageSegment>();
         public InterviewSessionState State { get; set; } = InterviewSessionState.Active;
         public CreditLedgerType PrimaryLedger { get; set; } = CreditLedgerType.Pro;
         public string LockTokenHash { get; set; } = string.Empty;

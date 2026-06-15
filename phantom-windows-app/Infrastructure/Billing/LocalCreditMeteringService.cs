@@ -233,6 +233,8 @@ namespace SecureOverlay.Infrastructure.Billing
             if (!IsFreeTier(snapshot))
             {
                 var remainingDebtBudget = ProtectedContinuationCap;
+
+                // Convert any shortfall (when available credits are insufficient) into debt.
                 if (primaryShortfall > 0m)
                 {
                     var shortfallDebt = Math.Min(primaryShortfall, remainingDebtBudget);
@@ -240,6 +242,7 @@ namespace SecureOverlay.Infrastructure.Billing
                     remainingDebtBudget -= shortfallDebt;
                 }
 
+                // Add explicit extension charge to debt rather than credit balance.
                 if (premiumExtensionCharge > 0m && remainingDebtBudget > 0m)
                 {
                     premiumDebtAdded += Math.Min(premiumExtensionCharge, remainingDebtBudget);

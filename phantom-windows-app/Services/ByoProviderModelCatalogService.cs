@@ -27,8 +27,13 @@ namespace SecureOverlay.Services
                     continue;
                 }
 
+                var cachedProvider = ProviderModelCatalogCache.GetProvider(settings, provider);
+                var cacheMissing = cachedProvider?.Models == null || cachedProvider.Models.Count == 0;
+                var stillUsingDefaultSeedModels = UsesSeedModelList(settings, provider);
                 if (settings.ProviderModelCatalogRefreshedAtUtc.TryGetValue(provider, out var refreshedAtUtc)
-                    && refreshedAtUtc > DateTime.UtcNow - RefreshInterval)
+                    && refreshedAtUtc > DateTime.UtcNow - RefreshInterval
+                    && !cacheMissing
+                    && !stillUsingDefaultSeedModels)
                 {
                     continue;
                 }
@@ -51,9 +56,22 @@ namespace SecureOverlay.Services
                 }
                 catch (Exception ex)
                 {
-                    Log.WriteLine($"BYO model refresh skipped for {provider}: {ex.Message}");
+                    Log.WriteLine($"BYO model refresh skipped for {provider}: {ex.GetType().Name} - {ex.Message}");
                 }
             }
+        }
+
+        private static bool UsesSeedModelList(AppSettings settings, string provider)
+        {
+            var currentModels = ProviderModelCatalogCache.GetModelIds(settings, provider);
+            var seededModels = AIModelRegistry.GetModelsForProvider(provider);
+            if (currentModels.Length == 0 || seededModels.Length == 0)
+            {
+                return currentModels.Length == seededModels.Length;
+            }
+
+            return currentModels.Length == seededModels.Length
+                && currentModels.All(model => seededModels.Contains(model, StringComparer.OrdinalIgnoreCase));
         }
 
         private static List<ManagedAiModelOptionDto> FetchModels(string provider, string apiKey)

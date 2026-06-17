@@ -40,7 +40,6 @@ public sealed class ManagedAiService
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
     {
-        EnsureManagedAccess(account, allowPaidSessionExtension: false);
         return _catalogService.GetCatalogForAccount(account);
     }
 

@@ -450,13 +450,18 @@
                                   FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}"/>
                         <Border Background="#30FFFFFF" CornerRadius="8" Padding="10" Margin="0,0,0,15">
                             <ComboBox x:Name="InterviewTypeComboBox"
-                                      Background="#40FFFFFF"
+                                      Background="White"
                                       Foreground="Black"
                                       BorderThickness="0"
                                       FontSize="12">
+                                <ComboBox.Resources>
+                                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="Black"/>
+                                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="Black"/>
+                                </ComboBox.Resources>
                                 <ComboBox.ItemContainerStyle>
                                     <Style TargetType="ComboBoxItem">
                                         <Setter Property="Foreground" Value="Black"/>
+                                        <Setter Property="Background" Value="White"/>
                                     </Style>
                                 </ComboBox.ItemContainerStyle>
                             </ComboBox>

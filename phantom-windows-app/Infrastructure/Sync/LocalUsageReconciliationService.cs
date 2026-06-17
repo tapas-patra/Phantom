@@ -70,7 +70,8 @@ namespace SecureOverlay.Infrastructure.Sync
                         StartedAtUtc = record.Payload.StartedAtUtc,
                         EndedAtUtc = record.Payload.EndedAtUtc,
                         ChargedCredits = record.Payload.ChargedCredits,
-                        ChargedBlocks = record.Payload.ChargedBlocks
+                        ChargedBlocks = record.Payload.ChargedBlocks,
+                        PremiumDebtAdded = record.Payload.PremiumDebtAdded
                     });
 
                     if (response.Accepted)

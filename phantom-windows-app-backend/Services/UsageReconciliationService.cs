@@ -38,11 +38,15 @@ public sealed class UsageReconciliationService
         }
 
         var account = _accounts.RequireAccount(request.UserId);
-        var requestedDebt = Math.Max(0m, Math.Min(request.PremiumDebtAdded, ProtectedContinuationCap));
+        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        var existingDebt = Math.Max(0m, account.PremiumNegativeCredits);
+        var remainingDebtBudget = Math.Max(0m, ProtectedContinuationCap - existingDebt);
+        var requestedDebt = isFreeTier
+            ? 0m
+            : Math.Max(0m, Math.Min(request.PremiumDebtAdded, remainingDebtBudget));
         requestedDebt = Math.Min(requestedDebt, request.ChargedCredits);
         var remainingCharge = Math.Max(0m, request.ChargedCredits - requestedDebt);
         var appliedCredits = 0m;
-        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
 
         if (remainingCharge > 0m && account.PremiumAvailableCredits > 0m)
         {
@@ -61,6 +65,23 @@ public sealed class UsageReconciliationService
         }
 
         var addedDebt = !isFreeTier ? requestedDebt : 0m;
+
+        if (!isFreeTier && remainingCharge > 0m)
+        {
+            var overflowDebtBudget = Math.Max(0m, remainingDebtBudget - addedDebt);
+            if (overflowDebtBudget > 0m)
+            {
+                var overflowDebt = Math.Min(remainingCharge, overflowDebtBudget);
+                addedDebt += overflowDebt;
+                remainingCharge -= overflowDebt;
+            }
+        }
+
+        if (remainingCharge > 0m)
+        {
+            throw new BackendValidationException("Insufficient credit to reconcile this session.");
+        }
+
         account.PremiumNegativeCredits += addedDebt;
         _accounts.Save(account);
 

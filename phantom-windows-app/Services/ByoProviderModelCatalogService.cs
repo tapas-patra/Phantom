@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using SecureOverlay.Helpers;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Services

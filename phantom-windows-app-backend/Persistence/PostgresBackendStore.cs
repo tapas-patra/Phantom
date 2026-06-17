@@ -192,6 +192,13 @@ CREATE TABLE IF NOT EXISTS managed_provider_credentials (
 
 CREATE INDEX IF NOT EXISTS idx_managed_provider_credentials_provider_priority
     ON managed_provider_credentials(provider_id, priority, updated_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS managed_provider_catalog (
+    provider_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    models_json JSONB NOT NULL,
+    refreshed_at_utc TIMESTAMPTZ NOT NULL
+);
 ";
         command.ExecuteNonQuery();
     }

@@ -6,6 +6,7 @@ using Newtonsoft.Json;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Helpers;
 using SecureOverlay.Infrastructure.Persistence;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Platform.Windows;
 using SecureOverlay.Platform.Windows.Secrets;
 
@@ -23,6 +24,7 @@ namespace SecureOverlay.Services
         public List<string> MistralApiKeys { get; set; } = new List<string>();
         public List<string> GeminiApiKeys { get; set; } = new List<string>();
         public List<string> GroqApiKeys { get; set; } = new List<string>();
+        public List<string> NvidiaApiKeys { get; set; } = new List<string>();
         
         // Legacy single keys (for backward compatibility - auto-migrated)
         public string ChatGPTApiKey { get; set; } = "";
@@ -30,6 +32,7 @@ namespace SecureOverlay.Services
         public string MistralApiKey { get; set; } = "";
         public string GeminiApiKey { get; set; } = "";
         public string GroqApiKey { get; set; } = "";
+        public string NvidiaApiKey { get; set; } = "";
         
         // Models (lists for model switching)
         public List<string> ChatGPTModels { get; set; } = new List<string> { "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo" };
@@ -37,6 +40,7 @@ namespace SecureOverlay.Services
         public List<string> MistralModels { get; set; } = new List<string> { "mistral-large-latest", "mistral-medium-latest" };
         public List<string> GeminiModels { get; set; } = new List<string> { "gemini-2.5-flash", "gemini-2.0-flash" };
         public List<string> GroqModels { get; set; } = new List<string> { "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "meta-llama/llama-4-scout-17b-16e-instruct" };
+        public List<string> NvidiaModels { get; set; } = new List<string>();
         
         // Legacy single models (for backward compatibility)
         public string ChatGPTModel { get; set; } = "gpt-4";
@@ -44,6 +48,7 @@ namespace SecureOverlay.Services
         public string MistralModel { get; set; } = "mistral-large-latest";
         public string GeminiModel { get; set; } = "gemini-2.5-flash";
         public string GroqModel { get; set; } = "llama-3.3-70b-versatile";
+        public string NvidiaModel { get; set; } = "";
         
         // Rotation settings
         public bool AutoSwitchKeysOnError { get; set; } = true;
@@ -55,6 +60,7 @@ namespace SecureOverlay.Services
         
         // Rotation state (persisted)
         public APIRotationState RotationState { get; set; } = new APIRotationState();
+        public Dictionary<string, DateTime> ProviderModelCatalogRefreshedAtUtc { get; set; } = new Dictionary<string, DateTime>();
         
         // UI Settings
         public bool VoiceInputEnabled { get; set; } = true;
@@ -66,6 +72,8 @@ namespace SecureOverlay.Services
         // AI Configuration
         public string InterviewPromptType { get; set; } = InterviewPromptRegistry.InterviewTypes.Technical;
         public string SystemPrompt { get; set; } = InterviewPromptRegistry.ResolveSystemPrompt(InterviewPromptRegistry.InterviewTypes.Technical);
+        public ManagedAiCatalogDto ManagedAiCatalogCache { get; set; } = new ManagedAiCatalogDto();
+        public List<string> PremiumConfiguredProviders { get; set; } = new List<string>();
         
         // User Data
         public string Resume { get; set; } = "";
@@ -83,6 +91,7 @@ namespace SecureOverlay.Services
         public List<int> Mistral_Failed { get; set; } = new List<int>();
         public List<int> Gemini_Failed { get; set; } = new List<int>();
         public List<int> Groq_Failed { get; set; } = new List<int>();
+        public List<int> NVIDIA_Failed { get; set; } = new List<int>();
 
         // ✅ REMOVED: CachedConversation and LastConversationSaved
         // These are now ONLY in conversation_cache.json (separate file)
@@ -210,6 +219,14 @@ namespace SecureOverlay.Services
             if (settings.GroqModels.Count != originalGroqCount)
             {
                 Log.WriteLine($"  Cleaned Groq models: {originalGroqCount} → {settings.GroqModels.Count}");
+                hadDuplicates = true;
+            }
+
+            var originalNvidiaCount = settings.NvidiaModels.Count;
+            settings.NvidiaModels = settings.NvidiaModels.Distinct().ToList();
+            if (settings.NvidiaModels.Count != originalNvidiaCount)
+            {
+                Log.WriteLine($"  Cleaned NVIDIA models: {originalNvidiaCount} → {settings.NvidiaModels.Count}");
                 hadDuplicates = true;
             }
 
@@ -390,6 +407,13 @@ namespace SecureOverlay.Services
                 migrated = true;
             }
 
+            if (settings.NvidiaApiKeys.Count == 0 && !string.IsNullOrWhiteSpace(settings.NvidiaApiKey))
+            {
+                settings.NvidiaApiKeys.Add(settings.NvidiaApiKey);
+                Log.WriteLine("  ✓ Migrated legacy NVIDIA key");
+                migrated = true;
+            }
+
             if (migrated)
             {
                 Log.WriteLine("═══════════════════════════════════════════════════════");
@@ -404,6 +428,7 @@ namespace SecureOverlay.Services
             Log.WriteLine($"  Mistral: {settings.MistralApiKeys.Count} keys");
             Log.WriteLine($"  Gemini: {settings.GeminiApiKeys.Count} keys");
             Log.WriteLine($"  Groq: {settings.GroqApiKeys.Count} keys");
+            Log.WriteLine($"  NVIDIA: {settings.NvidiaApiKeys.Count} keys");
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
@@ -420,7 +445,7 @@ namespace SecureOverlay.Services
             
             // Sync ChatGPT models
             var chatGPTModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.ChatGPT).ToList();
-            if (settings.ChatGPTModels.Count != chatGPTModels.Count || !settings.ChatGPTModels.SequenceEqual(chatGPTModels))
+            if (settings.ChatGPTModels.Count == 0)
             {
                 settings.ChatGPTModels = chatGPTModels;
                 Log.WriteLine($"✓ Updated ChatGPT models: {chatGPTModels.Count} models");
@@ -429,7 +454,7 @@ namespace SecureOverlay.Services
             
             // Sync Claude models
             var claudeModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Claude).ToList();
-            if (settings.ClaudeModels.Count != claudeModels.Count || !settings.ClaudeModels.SequenceEqual(claudeModels))
+            if (settings.ClaudeModels.Count == 0)
             {
                 settings.ClaudeModels = claudeModels;
                 Log.WriteLine($"✓ Updated Claude models: {claudeModels.Count} models");
@@ -438,7 +463,7 @@ namespace SecureOverlay.Services
             
             // Sync Mistral models
             var mistralModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Mistral).ToList();
-            if (settings.MistralModels.Count != mistralModels.Count || !settings.MistralModels.SequenceEqual(mistralModels))
+            if (settings.MistralModels.Count == 0)
             {
                 settings.MistralModels = mistralModels;
                 Log.WriteLine($"✓ Updated Mistral models: {mistralModels.Count} models");
@@ -447,7 +472,7 @@ namespace SecureOverlay.Services
             
             // Sync Gemini models
             var geminiModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Gemini).ToList();
-            if (settings.GeminiModels.Count != geminiModels.Count || !settings.GeminiModels.SequenceEqual(geminiModels))
+            if (settings.GeminiModels.Count == 0)
             {
                 settings.GeminiModels = geminiModels;
                 Log.WriteLine($"✓ Updated Gemini models: {geminiModels.Count} models");
@@ -456,10 +481,18 @@ namespace SecureOverlay.Services
             
             // Sync Groq models
             var groqModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Groq).ToList();
-            if (settings.GroqModels.Count != groqModels.Count || !settings.GroqModels.SequenceEqual(groqModels))
+            if (settings.GroqModels.Count == 0)
             {
                 settings.GroqModels = groqModels;
                 Log.WriteLine($"✓ Updated Groq models: {groqModels.Count} models");
+                changed = true;
+            }
+
+            var nvidiaModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Nvidia).ToList();
+            if (settings.NvidiaModels.Count == 0 && nvidiaModels.Count > 0)
+            {
+                settings.NvidiaModels = nvidiaModels;
+                Log.WriteLine($"✓ Updated NVIDIA models: {nvidiaModels.Count} models");
                 changed = true;
             }
             
@@ -486,6 +519,8 @@ namespace SecureOverlay.Services
             MigrateLegacyKeys(settings);
             CleanupDuplicateModels(settings);
             SyncModelListsWithRegistry(settings);
+            ProviderModelCatalogCache.BackfillFromLegacySettings(settings);
+            ByoProviderModelCatalogService.RefreshStaleCatalogs(settings);
             ApplyDerivedSettings(settings);
 
             if (persistChanges)
@@ -499,6 +534,11 @@ namespace SecureOverlay.Services
             settings.InterviewPromptType = NormalizeInterviewPromptType(settings.InterviewPromptType);
             settings.SystemPrompt = InterviewPromptRegistry.ResolveSystemPrompt(settings.InterviewPromptType);
             settings.AutoPauseOnInactivityMinutes = Math.Max(5, settings.AutoPauseOnInactivityMinutes);
+            settings.PremiumConfiguredProviders = settings.PremiumConfiguredProviders
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings);
         }
 
         private static string NormalizeInterviewPromptType(string? interviewPromptType)
@@ -570,12 +610,14 @@ namespace SecureOverlay.Services
             settings.MistralApiKeys = providerKeys.TryGetValue("Mistral", out var mistralKeys) ? mistralKeys : new List<string>();
             settings.GeminiApiKeys = providerKeys.TryGetValue("Gemini", out var geminiKeys) ? geminiKeys : new List<string>();
             settings.GroqApiKeys = providerKeys.TryGetValue("Groq", out var groqKeys) ? groqKeys : new List<string>();
+            settings.NvidiaApiKeys = providerKeys.TryGetValue("NVIDIA", out var nvidiaKeys) ? nvidiaKeys : new List<string>();
 
             settings.ChatGPTApiKey = settings.ChatGPTApiKeys.FirstOrDefault() ?? "";
             settings.ClaudeApiKey = settings.ClaudeApiKeys.FirstOrDefault() ?? "";
             settings.MistralApiKey = settings.MistralApiKeys.FirstOrDefault() ?? "";
             settings.GeminiApiKey = settings.GeminiApiKeys.FirstOrDefault() ?? "";
             settings.GroqApiKey = settings.GroqApiKeys.FirstOrDefault() ?? "";
+            settings.NvidiaApiKey = settings.NvidiaApiKeys.FirstOrDefault() ?? "";
         }
 
         private static Dictionary<string, List<string>> ExtractProviderKeys(AppSettings settings)
@@ -586,7 +628,8 @@ namespace SecureOverlay.Services
                 ["Claude"] = settings.ClaudeApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["Mistral"] = settings.MistralApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["Gemini"] = settings.GeminiApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
-                ["Groq"] = settings.GroqApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
+                ["Groq"] = settings.GroqApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["NVIDIA"] = settings.NvidiaApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
             };
         }
 
@@ -600,12 +643,14 @@ namespace SecureOverlay.Services
             clone.MistralApiKeys = new List<string>();
             clone.GeminiApiKeys = new List<string>();
             clone.GroqApiKeys = new List<string>();
+            clone.NvidiaApiKeys = new List<string>();
 
             clone.ChatGPTApiKey = "";
             clone.ClaudeApiKey = "";
             clone.MistralApiKey = "";
             clone.GeminiApiKey = "";
             clone.GroqApiKey = "";
+            clone.NvidiaApiKey = "";
 
             return clone;
         }

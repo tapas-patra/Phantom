@@ -26,6 +26,7 @@ using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Context;
 using SecureOverlay.Infrastructure.Billing;
 using SecureOverlay.Infrastructure.Hosted;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Interviews;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Sync;
@@ -97,6 +98,7 @@ namespace SecureOverlay
         private Window? _currentDropdownMenu = null;
         private readonly AppLaunchContext _launchContext;
         private readonly IAuthSessionRepository _authSessionRepository;
+        private readonly IHostedAccountClient _hostedAccountClient;
         private readonly ICreditMeteringService _creditMeteringService;
         private readonly IContextPackService _contextPackService;
         private readonly IInterviewLockService _interviewLockService;
@@ -157,6 +159,7 @@ namespace SecureOverlay
             IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
             ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
             _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+            _hostedAccountClient = HostedClientFactory.CreateAccountClient(_hostedRuntimeOptions);
             _creditMeteringService = new LocalCreditMeteringService(
                 _authSessionRepository,
                 _accountCacheRepository,
@@ -174,6 +177,7 @@ namespace SecureOverlay
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
+            RefreshManagedCatalogCache();
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
@@ -803,6 +807,75 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
+        private void RefreshManagedCatalogCache()
+        {
+            try
+            {
+                var session = _authSessionRepository.Load();
+                if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+                {
+                    return;
+                }
+
+                var catalog = _hostedAccountClient.GetManagedCatalog(session.AccessToken);
+                if (catalog != null)
+                {
+                    _settings.PremiumConfiguredProviders = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
+                        .Select(item => item.ProviderId)
+                        .Where(item => !string.IsNullOrWhiteSpace(item))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    ProviderModelCatalogCache.MergeCatalog(_settings, catalog);
+                    SettingsManager.Save(_settings);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Managed catalog refresh skipped: {ex.Message}");
+            }
+        }
+
+        private ManagedAiProviderOptionDto? GetManagedProviderCatalog(string provider)
+        {
+            return ProviderModelCatalogCache.GetProvider(_settings, provider);
+        }
+
+        private string[] GetConfiguredModelsForProvider(string provider)
+        {
+            return ProviderModelCatalogCache.GetModelIds(_settings, provider);
+        }
+
+        private ModelConfig GetModelConfigForCurrentSelection(string provider, string modelId)
+        {
+            var registryConfig = AIModelRegistry.GetModelConfig(modelId);
+            if (!string.Equals(registryConfig.Name, "Unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                return registryConfig;
+            }
+
+            var managedModel = ProviderModelCatalogCache.GetModel(_settings, provider, modelId);
+            return new ModelConfig
+            {
+                Name = managedModel?.DisplayName ?? modelId,
+                MaxContextTokens = 128000,
+                MaxResponseTokens = 4000,
+                SlidingWindowSize = 15
+            };
+        }
+
+        private string GetModelDisplayName(string provider, string modelId)
+        {
+            var registryName = AIModelRegistry.GetDisplayName(modelId);
+            if (!string.Equals(registryName, modelId, StringComparison.Ordinal)
+                && !string.Equals(registryName, "Unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                return registryName;
+            }
+
+            return ProviderModelCatalogCache.GetModel(_settings, provider, modelId)?.DisplayName
+                ?? modelId;
+        }
+
         private SecureOverlay.Domain.Enums.InterviewUsageSource DetermineUsageSourceForCurrentRuntime(string provider)
         {
             if (IsFreeTrialAccount())
@@ -862,7 +935,8 @@ namespace SecureOverlay
             return provider == AIModelRegistry.Providers.ChatGPT
                 || provider == AIModelRegistry.Providers.Claude
                 || provider == AIModelRegistry.Providers.Gemini
-                || provider == AIModelRegistry.Providers.Mistral;
+                || provider == AIModelRegistry.Providers.Mistral
+                || provider == AIModelRegistry.Providers.Nvidia;
         }
 
         private bool HasConfiguredByoKeysForProvider(string provider)
@@ -944,30 +1018,18 @@ namespace SecureOverlay
                 return AIModelRegistry.GetAllProviders();
             }
 
-            return new[]
-            {
-                AIModelRegistry.Providers.ChatGPT,
-                AIModelRegistry.Providers.Claude,
-                AIModelRegistry.Providers.Gemini,
-                AIModelRegistry.Providers.Mistral
-            };
+            var providers = _settings.PremiumConfiguredProviders?
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return providers != null && providers.Length > 0
+                ? providers
+                : new[] { _settings.SelectedAI };
         }
 
         private string[] GetAvailableModelsForSelectedProvider()
         {
-            if (!IsManagedProvider(_settings.SelectedAI) || ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
-            {
-                return AIModelRegistry.GetModelsForProvider(_settings.SelectedAI);
-            }
-
-            return _settings.SelectedAI switch
-            {
-                "ChatGPT" => new[] { "gpt-4o", "gpt-4o-mini" },
-                "Claude" => new[] { "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620" },
-                "Gemini" => new[] { "gemini-2.5-flash", "gemini-2.5-pro" },
-                "Mistral" => new[] { "mistral-large-latest" },
-                _ => Array.Empty<string>()
-            };
+            return GetConfiguredModelsForProvider(_settings.SelectedAI);
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -1130,7 +1192,9 @@ namespace SecureOverlay
             var allowedProviders = GetAvailableProvidersForCurrentTier();
             if (!allowedProviders.Contains(_settings.SelectedAI))
             {
-                _settings.SelectedAI = allowedProviders.FirstOrDefault() ?? AIModelRegistry.Providers.ChatGPT;
+                _settings.SelectedAI = allowedProviders.FirstOrDefault()
+                    ?? _settings.ManagedAiCatalogCache?.Providers?.FirstOrDefault()?.ProviderId
+                    ?? AIModelRegistry.Providers.ChatGPT;
             }
             
             // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
@@ -1162,7 +1226,7 @@ namespace SecureOverlay
             
             AIProviderText.Text = newAI.GetProviderName();
 
-            var modelConfig = AIModelRegistry.GetModelConfig(currentModel);  // ✅ Use registry
+            var modelConfig = GetModelConfigForCurrentSelection(_settings.SelectedAI, currentModel);
             
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
@@ -2769,6 +2833,7 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
+                RefreshManagedCatalogCache();
                 RefreshAccountSnapshot();
                 ApplyAccountTierChrome();
                 UpdateCreditIndicator();
@@ -2824,7 +2889,7 @@ namespace SecureOverlay
                     InvisibleMessageBox.Show(
                         $"✓ Settings Applied\n\n" +
                         $"Provider: {newProvider}\n" +
-                        $"Model: {AIModelRegistry.GetDisplayName(newModel)}\n\n" +
+                        $"Model: {GetModelDisplayName(_settings.SelectedAI, newModel)}\n\n" +
                         "Your conversation history has been preserved!",
                         "Settings Saved"
                     );
@@ -3569,7 +3634,6 @@ namespace SecureOverlay
         // CHECK IF CURRENT MODEL SUPPORTS VISION
         // ═══════════════════════════════════════════════════════════════
 
-        // ✅ SIMPLIFIED - Uses registry
         private bool CurrentModelSupportsVision()
         {
             if (_settings == null || _rotationManager == null) 
@@ -3583,8 +3647,8 @@ namespace SecureOverlay
             
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
-            // ✅ USE REGISTRY
-            bool supportsVision = AIModelRegistry.SupportsVision(currentModel);
+            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel);
+            bool supportsVision = model?.SupportsVision ?? AIModelRegistry.SupportsVision(currentModel);
             
             Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");
             
@@ -3848,7 +3912,7 @@ namespace SecureOverlay
             foreach (var model in models)
             {
                 // ✅ USE REGISTRY - Get display name
-                var displayName = AIModelRegistry.GetDisplayName(model);
+            var displayName = GetModelDisplayName(_settings.SelectedAI, model);
                 
                 var button = new Button
                 {
@@ -4027,7 +4091,7 @@ namespace SecureOverlay
                 _settingsPage.RefreshSettings();
             }
             
-            StatusText.Text = $"✓ Switched to {AIModelRegistry.GetDisplayName(newModel)}";
+            StatusText.Text = $"✓ Switched to {GetModelDisplayName(_settings.SelectedAI, newModel)}";
             StatusIndicator.Fill = Brushes.LightGreen;
             
             var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -4081,7 +4145,7 @@ namespace SecureOverlay
             Log.WriteLine($"  Current model ID: {currentModel}");
             
             // ✅ USE REGISTRY - Get display name
-            var displayModel = AIModelRegistry.GetDisplayName(currentModel);
+            var displayModel = GetModelDisplayName(_settings.SelectedAI, currentModel);
             Log.WriteLine($"  Display name: {displayModel}");
             
             ModelText.Text = displayModel;

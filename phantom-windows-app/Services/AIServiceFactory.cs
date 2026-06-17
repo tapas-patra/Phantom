@@ -29,6 +29,7 @@ namespace SecureOverlay.Services
                 "Mistral" => new MistralService(apiKey, model),
                 "Gemini" => new GeminiService(apiKey, model),
                 "Groq" => new GroqService(apiKey, model),
+                "NVIDIA" => new NvidiaService(apiKey, model),
                 _ => throw new ArgumentException($"Unknown AI provider: {provider}")
             };
         }

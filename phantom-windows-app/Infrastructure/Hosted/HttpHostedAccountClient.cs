@@ -22,5 +22,10 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "/api/desktop/account/startup-check/callback",
                 callbackResult);
         }
+
+        public ManagedAiCatalogDto GetManagedCatalog(string accessToken)
+        {
+            return GetJson<ManagedAiCatalogDto>("/api/desktop/ai/catalog", accessToken);
+        }
     }
 }

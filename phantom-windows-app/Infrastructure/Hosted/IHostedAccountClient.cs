@@ -6,5 +6,6 @@ namespace SecureOverlay.Infrastructure.Hosted
     {
         StartupAccountCheckResultDto GetStartupAccountCheck(AuthSessionDto session);
         StartupAccountCheckResultDto GetStartupAccountCheck(AuthCallbackResultDto callbackResult);
+        ManagedAiCatalogDto GetManagedCatalog(string accessToken);
     }
 }

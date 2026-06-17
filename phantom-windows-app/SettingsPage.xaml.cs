@@ -13,6 +13,7 @@ using SecureOverlay.Services;
 using SecureOverlay.Helpers;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Context;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Persistence;
 
 namespace SecureOverlay
@@ -33,6 +34,7 @@ namespace SecureOverlay
         private ObservableCollection<ApiKeyItem> _mistralKeys = new ObservableCollection<ApiKeyItem>();
         private ObservableCollection<ApiKeyItem> _geminiKeys = new ObservableCollection<ApiKeyItem>();
         private ObservableCollection<ApiKeyItem> _groqKeys = new ObservableCollection<ApiKeyItem>();
+        private ObservableCollection<ApiKeyItem> _nvidiaKeys = new ObservableCollection<ApiKeyItem>();
 
         public event EventHandler<bool>? SettingsClosed;
 
@@ -61,16 +63,14 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(MistralModelBox);
             ComboBoxProtection.ProtectComboBox(GeminiModelBox);
             ComboBoxProtection.ProtectComboBox(GroqModelBox);
+            ComboBoxProtection.ProtectComboBox(NvidiaModelBox);
             ComboBoxProtection.ProtectComboBox(InterviewTypeComboBox);
+            ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
         }
 
         private void InitializeControls()
         {
-            // ✅ USE REGISTRY - AI Providers
-            foreach (var provider in AIModelRegistry.GetAllProviders())
-            {
-                AIProviderComboBox.Items.Add(provider);
-            }
+            PopulateProviderChoices();
 
             foreach (var interviewType in InterviewPromptRegistry.GetAllInterviewTypes())
             {
@@ -78,40 +78,51 @@ namespace SecureOverlay
             }
 
             // ✅ USE REGISTRY - ChatGPT Models
-            foreach (var model in AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.ChatGPT))
+            foreach (var model in _settings.ChatGPTModels)
             {
                 ChatGPTModelBox.Items.Add(model);
             }
 
             // ✅ USE REGISTRY - Claude Models
-            foreach (var model in AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Claude))
+            foreach (var model in _settings.ClaudeModels)
             {
                 ClaudeModelBox.Items.Add(model);
             }
 
             // ✅ USE REGISTRY - Mistral Models
-            foreach (var model in AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Mistral))
+            foreach (var model in _settings.MistralModels)
             {
                 MistralModelBox.Items.Add(model);
             }
 
             // ✅ USE REGISTRY - Gemini Models
-            foreach (var model in AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Gemini))
+            foreach (var model in _settings.GeminiModels)
             {
                 GeminiModelBox.Items.Add(model);
             }
 
             // ✅ USE REGISTRY - Groq Models
-            foreach (var model in AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Groq))
+            foreach (var model in _settings.GroqModels)
             {
                 GroqModelBox.Items.Add(model);
+            }
+
+            foreach (var model in _settings.NvidiaModels)
+            {
+                NvidiaModelBox.Items.Add(model);
             }
         }
 
 
         private void LoadSettings()
         {
+            PopulateProviderChoices();
+            PopulateByoModelChoices();
             AIProviderComboBox.SelectedItem = _settings.SelectedAI;
+            if (AIProviderComboBox.SelectedItem == null && AIProviderComboBox.Items.Count > 0)
+            {
+                AIProviderComboBox.SelectedIndex = 0;
+            }
             
             // Load API keys
             LoadApiKeys();
@@ -125,6 +136,7 @@ namespace SecureOverlay
             string mistralModel = _settings.MistralModel;
             string geminiModel = _settings.GeminiModel;
             string groqModel = _settings.GroqModel;
+            string nvidiaModel = _settings.NvidiaModel;
             
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("LOADING SETTINGS PAGE");
@@ -133,6 +145,7 @@ namespace SecureOverlay
             Log.WriteLine($"  Mistral model from settings: {mistralModel}");
             Log.WriteLine($"  Gemini model from settings: {geminiModel}");
             Log.WriteLine($"  Groq model from settings: {groqModel}");
+            Log.WriteLine($"  NVIDIA model from settings: {nvidiaModel}");
             Log.WriteLine("═══════════════════════════════════════════════════════");
             
             // Set selected models in ComboBoxes
@@ -141,6 +154,8 @@ namespace SecureOverlay
             MistralModelBox.SelectedItem = mistralModel;
             GeminiModelBox.SelectedItem = geminiModel;
             GroqModelBox.SelectedItem = groqModel;
+            NvidiaModelBox.SelectedItem = nvidiaModel;
+            PopulateManagedModelChoices();
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
             
@@ -274,6 +289,17 @@ namespace SecureOverlay
                 _groqKeys.Add(new ApiKeyItem { Index = $"#{i + 1}", Key = _settings.GroqApiKeys[i] });
             }
             GroqKeysList.ItemsSource = _groqKeys;
+
+            _nvidiaKeys.Clear();
+            if (_settings.NvidiaApiKeys.Count == 0 && !string.IsNullOrWhiteSpace(_settings.NvidiaApiKey))
+            {
+                _settings.NvidiaApiKeys.Add(_settings.NvidiaApiKey);
+            }
+            for (int i = 0; i < _settings.NvidiaApiKeys.Count; i++)
+            {
+                _nvidiaKeys.Add(new ApiKeyItem { Index = $"#{i + 1}", Key = _settings.NvidiaApiKeys[i] });
+            }
+            NvidiaKeysList.ItemsSource = _nvidiaKeys;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -355,6 +381,21 @@ namespace SecureOverlay
             }
         }
 
+        private void AddNvidiaKey_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CanAddProviderKey(_nvidiaKeys, "NVIDIA")) return;
+            _nvidiaKeys.Add(new ApiKeyItem { Index = $"#{_nvidiaKeys.Count + 1}", Key = "" });
+        }
+
+        private void RemoveNvidiaKey_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.Tag is ApiKeyItem item)
+            {
+                _nvidiaKeys.Remove(item);
+                ReindexKeys(_nvidiaKeys);
+            }
+        }
+
         private void ReindexKeys(ObservableCollection<ApiKeyItem> keys)
         {
             for (int i = 0; i < keys.Count; i++)
@@ -369,6 +410,7 @@ namespace SecureOverlay
 
         private void AIProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            PopulateManagedModelChoices();
             UpdatePanelVisibility();
         }
 
@@ -434,6 +476,10 @@ namespace SecureOverlay
 
         private void UpdatePanelVisibility()
         {
+            if (AIProviderComboBox.SelectedItem == null) return;
+
+            var selected = AIProviderComboBox.SelectedItem as string;
+            PremiumManagedModelRow.Visibility = IsPremiumOnlyAccount() ? Visibility.Visible : Visibility.Collapsed;
             if (IsPremiumOnlyAccount())
             {
                 ChatGPTPanel.Visibility = Visibility.Collapsed;
@@ -441,18 +487,80 @@ namespace SecureOverlay
                 MistralPanel.Visibility = Visibility.Collapsed;
                 GeminiPanel.Visibility = Visibility.Collapsed;
                 GroqPanel.Visibility = Visibility.Collapsed;
+                NvidiaPanel.Visibility = Visibility.Collapsed;
                 return;
             }
-
-            if (AIProviderComboBox.SelectedItem == null) return;
-
-            var selected = AIProviderComboBox.SelectedItem as string;
 
             ChatGPTPanel.Visibility = selected == "ChatGPT" ? Visibility.Visible : Visibility.Collapsed;
             ClaudePanel.Visibility = selected == "Claude" ? Visibility.Visible : Visibility.Collapsed;
             MistralPanel.Visibility = selected == "Mistral" ? Visibility.Visible : Visibility.Collapsed;
             GeminiPanel.Visibility = selected == "Gemini" ? Visibility.Visible : Visibility.Collapsed;
             GroqPanel.Visibility = selected == "Groq" ? Visibility.Visible : Visibility.Collapsed;
+            NvidiaPanel.Visibility = selected == "NVIDIA" ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void PopulateProviderChoices()
+        {
+            AIProviderComboBox.Items.Clear();
+
+            IEnumerable<string> providers = IsPremiumOnlyAccount()
+                ? _settings.PremiumConfiguredProviders
+                : AIModelRegistry.GetAllProviders();
+
+            foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                AIProviderComboBox.Items.Add(provider);
+            }
+
+            if (AIProviderComboBox.Items.Count == 0 && !string.IsNullOrWhiteSpace(_settings.SelectedAI))
+            {
+                AIProviderComboBox.Items.Add(_settings.SelectedAI);
+            }
+        }
+
+        private void PopulateManagedModelChoices()
+        {
+            ManagedModelComboBox.Items.Clear();
+            if (!IsPremiumOnlyAccount())
+            {
+                return;
+            }
+
+            var selectedProvider = AIProviderComboBox.SelectedItem as string ?? _settings.SelectedAI;
+            var provider = ProviderModelCatalogCache.GetProvider(_settings, selectedProvider);
+            if (provider == null)
+            {
+                return;
+            }
+
+            foreach (var model in provider.Models)
+            {
+                ManagedModelComboBox.Items.Add(model.ModelId);
+            }
+
+            var selectedModel = AIModelRegistry.GetCurrentModelForProvider(_settings, provider.ProviderId);
+            ManagedModelComboBox.SelectedItem = provider.Models.Any(item => item.ModelId == selectedModel)
+                ? selectedModel
+                : provider.Models.FirstOrDefault()?.ModelId;
+        }
+
+        private void PopulateByoModelChoices()
+        {
+            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT));
+            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude));
+            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral));
+            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini));
+            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq));
+            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia));
+        }
+
+        private static void RebindModelCombo(ComboBox comboBox, IEnumerable<string> models)
+        {
+            comboBox.Items.Clear();
+            foreach (var model in models.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                comboBox.Items.Add(model);
+            }
         }
 
         private void UseFakeCursorCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -660,6 +768,7 @@ namespace SecureOverlay
                     _settings.MistralApiKeys = new System.Collections.Generic.List<string>();
                     _settings.GeminiApiKeys = new System.Collections.Generic.List<string>();
                     _settings.GroqApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.NvidiaApiKeys = new System.Collections.Generic.List<string>();
                 }
                 else
                 {
@@ -668,6 +777,7 @@ namespace SecureOverlay
                     _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
                     _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
                     _settings.GroqApiKeys = _groqKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
                 }
 
                 ValidateByoProviderLimits();
@@ -680,6 +790,7 @@ namespace SecureOverlay
                 Log.WriteLine($"  Mistral: {_settings.MistralApiKeys.Count} keys");
                 Log.WriteLine($"  Gemini: {_settings.GeminiApiKeys.Count} keys");
                 Log.WriteLine($"  Groq: {_settings.GroqApiKeys.Count} keys");
+                Log.WriteLine($"  NVIDIA: {_settings.NvidiaApiKeys.Count} keys");
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 
                 // Save legacy single keys (use first key if available)
@@ -688,6 +799,7 @@ namespace SecureOverlay
                 _settings.MistralApiKey = _settings.MistralApiKeys.FirstOrDefault() ?? "";
                 _settings.GeminiApiKey = _settings.GeminiApiKeys.FirstOrDefault() ?? "";
                 _settings.GroqApiKey = _settings.GroqApiKeys.FirstOrDefault() ?? "";
+                _settings.NvidiaApiKey = _settings.NvidiaApiKeys.FirstOrDefault() ?? "";
                 
                 // Save models
                 _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? "gpt-4";
@@ -695,6 +807,15 @@ namespace SecureOverlay
                 _settings.MistralModel = MistralModelBox.SelectedItem as string ?? "mistral-large-latest";
                 _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? "gemini-2.5-flash";
                 _settings.GroqModel = GroqModelBox.SelectedItem as string ?? "llama-3.3-70b-versatile";
+                _settings.NvidiaModel = NvidiaModelBox.SelectedItem as string ?? _settings.NvidiaModel;
+
+                if (IsPremiumOnlyAccount())
+                {
+                    AIModelRegistry.SetModelForProvider(
+                        _settings,
+                        _settings.SelectedAI,
+                        ManagedModelComboBox.SelectedItem as string ?? AIModelRegistry.GetCurrentModelForProvider(_settings, _settings.SelectedAI));
+                }
 
                 // Save rotation settings
                 _settings.AutoSwitchKeysOnError = AutoSwitchKeysCheckBox.IsChecked == true;
@@ -738,6 +859,7 @@ namespace SecureOverlay
                     Log.WriteLine($"✓ Debug mode enabled: {_settings.DebugErrorSimulation}");
                 }
                 
+                ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
                 SettingsManager.Save(_settings);
 
                 var selectedPack = _contextPackService.GetSelectedPack();
@@ -766,6 +888,7 @@ namespace SecureOverlay
                 Log.WriteLine($"  Mistral keys: {_settings.MistralApiKeys.Count}");
                 Log.WriteLine($"  Gemini keys: {_settings.GeminiApiKeys.Count}");
                 Log.WriteLine($"  Groq keys: {_settings.GroqApiKeys.Count}");
+                Log.WriteLine($"  NVIDIA keys: {_settings.NvidiaApiKeys.Count}");
                 Log.WriteLine($"  Auto-switch keys: {_settings.AutoSwitchKeysOnError}");
                 Log.WriteLine($"  Auto-switch models: {_settings.AutoSwitchModelsOnError}");
 
@@ -834,7 +957,7 @@ namespace SecureOverlay
             SessionContinuationNotice.Visibility = (isFreeTrial || (!isFreeTrial && (isPremium || isByo)))
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            ByoConfigurationSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
             DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
 
             if (!isByo)
@@ -856,7 +979,7 @@ namespace SecureOverlay
             {
                 PremiumManagedNoticeTitle.Text = "Premium Managed AI";
                 PremiumManagedNoticeBody.Text =
-                    "Premium-only accounts use Phantom-managed provider keys. Provider and model can still be switched from the main window, but API key setup stays hidden.";
+                    "Premium-only accounts use Phantom-managed provider keys. Only providers with configured managed API keys are listed here, and model capabilities come from the backend catalog.";
             }
             else if (isPremium && isByo)
             {
@@ -957,6 +1080,7 @@ namespace SecureOverlay
             if (_mistralKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _mistralKeys) count++;
             if (_geminiKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _geminiKeys) count++;
             if (_groqKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _groqKeys) count++;
+            if (_nvidiaKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _nvidiaKeys) count++;
             return count;
         }
 
@@ -973,7 +1097,8 @@ namespace SecureOverlay
                 new { Name = "Claude", Keys = _settings.ClaudeApiKeys },
                 new { Name = "Mistral", Keys = _settings.MistralApiKeys },
                 new { Name = "Gemini", Keys = _settings.GeminiApiKeys },
-                new { Name = "Groq", Keys = _settings.GroqApiKeys }
+                new { Name = "Groq", Keys = _settings.GroqApiKeys },
+                new { Name = "NVIDIA", Keys = _settings.NvidiaApiKeys }
             };
 
             var configuredProviders = providerLists.Count(item => item.Keys.Count > 0);

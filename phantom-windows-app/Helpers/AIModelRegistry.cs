@@ -21,6 +21,7 @@ namespace SecureOverlay.Helpers
             public const string Mistral = "Mistral";
             public const string Gemini = "Gemini";
             public const string Groq = "Groq";
+            public const string Nvidia = "NVIDIA";
         }
 
         public static string[] GetAllProviders()
@@ -31,7 +32,8 @@ namespace SecureOverlay.Helpers
                 Providers.Claude, 
                 Providers.Mistral, 
                 Providers.Gemini, 
-                Providers.Groq 
+                Providers.Groq,
+                Providers.Nvidia
             };
         }
 
@@ -257,6 +259,9 @@ namespace SecureOverlay.Helpers
                     SlidingWindowSize = 12,
                     SupportsVision = false
                 }
+            },
+            [Providers.Nvidia] = new List<ModelInfo>
+            {
             }
         };
 
@@ -357,6 +362,7 @@ namespace SecureOverlay.Helpers
                 "Mistral" => settings.MistralModel,
                 "Gemini" => settings.GeminiModel,
                 "Groq" => settings.GroqModel,
+                "NVIDIA" => settings.NvidiaModel,
                 _ => GetModelsForProvider(provider).FirstOrDefault() ?? ""
             };
         }
@@ -382,6 +388,9 @@ namespace SecureOverlay.Helpers
                     break;
                 case "Groq":
                     settings.GroqModel = model;
+                    break;
+                case "NVIDIA":
+                    settings.NvidiaModel = model;
                     break;
             }
         }

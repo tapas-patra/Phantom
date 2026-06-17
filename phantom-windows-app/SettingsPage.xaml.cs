@@ -61,6 +61,7 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(MistralModelBox);
             ComboBoxProtection.ProtectComboBox(GeminiModelBox);
             ComboBoxProtection.ProtectComboBox(GroqModelBox);
+            ComboBoxProtection.ProtectComboBox(InterviewTypeComboBox);
         }
 
         private void InitializeControls()
@@ -69,6 +70,11 @@ namespace SecureOverlay
             foreach (var provider in AIModelRegistry.GetAllProviders())
             {
                 AIProviderComboBox.Items.Add(provider);
+            }
+
+            foreach (var interviewType in InterviewPromptRegistry.GetAllInterviewTypes())
+            {
+                InterviewTypeComboBox.Items.Add(interviewType);
             }
 
             // ✅ USE REGISTRY - ChatGPT Models
@@ -159,7 +165,9 @@ namespace SecureOverlay
             _isUpdatingSlider = false;
             
             UpdateFakeCursorPanelVisibility();
-            SystemPromptBox.Text = _settings.SystemPrompt;
+            InterviewTypeComboBox.SelectedItem = _settings.InterviewPromptType;
+            AutoPauseInactivityCheckBox.IsChecked = _settings.AutoPauseOnInactivityEnabled;
+            AutoPauseMinutesTextBox.Text = Math.Max(5, _settings.AutoPauseOnInactivityMinutes).ToString();
 
             var selectedPack = _contextPackService.GetSelectedPack();
             ResumeBox.Text = selectedPack.ResumeText;
@@ -707,7 +715,17 @@ namespace SecureOverlay
                     _settings.FakeCursorSize = 1.0;
                 }
                 
-                _settings.SystemPrompt = SystemPromptBox.Text;
+                _settings.InterviewPromptType = InterviewTypeComboBox.SelectedItem as string
+                    ?? InterviewPromptRegistry.InterviewTypes.Technical;
+                _settings.AutoPauseOnInactivityEnabled = AutoPauseInactivityCheckBox.IsChecked == true;
+                if (int.TryParse(AutoPauseMinutesTextBox.Text, out var autoPauseMinutes))
+                {
+                    _settings.AutoPauseOnInactivityMinutes = Math.Max(5, autoPauseMinutes);
+                }
+                else
+                {
+                    _settings.AutoPauseOnInactivityMinutes = 10;
+                }
 
                 // debug mode:
                 _settings.DebugModeEnabled = HasByoEntitlement() && DebugModeCheckBox.IsChecked == true;

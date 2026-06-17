@@ -107,10 +107,12 @@ namespace SecureOverlay
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
+        private System.Windows.Threading.DispatcherTimer? _sessionInactivityTimer;
         private AccountCacheSnapshot? _accountSnapshot;
         private bool _sessionExtensionOptInRequired;
         private bool _isBoundaryFinalizationInProgress;
         private string? _forcedManagedExtensionProviderId;
+        private DateTime? _lastInterviewActivityUtc;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -177,6 +179,7 @@ namespace SecureOverlay
             if (activeInterviewSession != null)
             {
                 ActivateInterviewLock(activeInterviewSession);
+                _lastInterviewActivityUtc = DateTime.UtcNow;
             }
 
             var reconciliationFlush = _usageReconciliationService.FlushPending();
@@ -493,11 +496,23 @@ namespace SecureOverlay
             _sessionStatusTimer.Start();
         }
 
+        private void StartSessionInactivityTimer()
+        {
+            _sessionInactivityTimer?.Stop();
+            _sessionInactivityTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(30)
+            };
+            _sessionInactivityTimer.Tick += (s, e) => CheckInterviewInactivity();
+            _sessionInactivityTimer.Start();
+        }
+
         private void UpdateSessionStatus()
         {
             var activeSession = _creditMeteringService.GetActiveSession();
             if (activeSession == null)
             {
+                _lastInterviewActivityUtc = null;
                 SessionTimerBorder.Visibility = Visibility.Collapsed;
                 SessionStatusText.Text = string.Empty;
                 return;
@@ -528,6 +543,39 @@ namespace SecureOverlay
             SessionTimerBorder.Visibility = Visibility.Visible;
             SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
             SessionStatusText.Text = $"Live | {billedMinutes} min | {projectedCharge:0.##} cr";
+        }
+
+        private void CheckInterviewInactivity()
+        {
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null || activeSession.State != SecureOverlay.Domain.Enums.InterviewSessionState.Active)
+            {
+                return;
+            }
+
+            if (!_settings.AutoPauseOnInactivityEnabled || _isProcessingRequest)
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc ??= DateTime.UtcNow;
+            var inactivityThreshold = TimeSpan.FromMinutes(Math.Max(5, _settings.AutoPauseOnInactivityMinutes));
+            if (DateTime.UtcNow - _lastInterviewActivityUtc.Value < inactivityThreshold)
+            {
+                return;
+            }
+
+            PauseInterviewSessionForInactivity(inactivityThreshold);
+        }
+
+        private void RecordInterviewActivity(string reason)
+        {
+            if (_creditMeteringService.GetActiveSession() == null)
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc = DateTime.UtcNow;
         }
 
         private bool IsSessionExtensionEnabledForCurrentTier()
@@ -565,7 +613,7 @@ namespace SecureOverlay
 
             if (IsSessionExtensionEnabledForCurrentTier())
             {
-                return GetProjectedPremiumExtensionCharge(session) > 1.0m;
+                return GetProjectedTotalPremiumDebt(session) >= 1.0m;
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
@@ -588,6 +636,29 @@ namespace SecureOverlay
             });
         }
 
+        private void PauseInterviewSessionForInactivity(TimeSpan inactivityThreshold)
+        {
+            if (!_creditMeteringService.PauseActiveSession())
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc = null;
+            Log.WriteLine($"Interview paused after inactivity: threshold={inactivityThreshold.TotalMinutes:0} minutes");
+            UpdateSessionStatus();
+            StatusText.Text = "⏸️ Interview auto-paused";
+            StatusIndicator.Fill = Brushes.Orange;
+            AddToChat(
+                $"⏸️ **Interview auto-paused**\n\nNo active question/answer activity was detected for {inactivityThreshold.TotalMinutes:0} minutes. Send another message to resume the session.",
+                false);
+            _telemetryService.Track("billing", "interview_session_auto_paused", new Dictionary<string, string>
+            {
+                ["reason"] = "inactivity",
+                ["threshold_minutes"] = inactivityThreshold.TotalMinutes.ToString("0"),
+                ["tier"] = _accountSnapshot?.AccessTier ?? "unknown"
+            });
+        }
+
         private void ResumeInterviewSessionAfterSuccess()
         {
             if (!_creditMeteringService.ResumePausedSession())
@@ -595,6 +666,7 @@ namespace SecureOverlay
                 return;
             }
 
+            _lastInterviewActivityUtc = DateTime.UtcNow;
             Log.WriteLine("Interview resumed after successful response");
             UpdateSessionStatus();
             _telemetryService.Track("billing", "interview_session_resumed", new Dictionary<string, string>
@@ -639,6 +711,7 @@ namespace SecureOverlay
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
+                _lastInterviewActivityUtc = null;
                 _sessionExtensionOptInRequired = IsFreeTrialAccount() || HasPaidCreditExhaustionGate();
 
                 RefreshAccountSnapshot();
@@ -775,6 +848,13 @@ namespace SecureOverlay
             }
 
             return Math.Round(requestedCharge * debtSeconds / totalMeteredSeconds, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private decimal GetProjectedTotalPremiumDebt(InterviewSessionRecord session)
+        {
+            var existingDebt = _accountSnapshot?.PremiumNegativeCredits ?? 0m;
+            var projectedExtensionDebt = GetProjectedPremiumExtensionCharge(session);
+            return Math.Round(existingDebt + projectedExtensionDebt, 2, MidpointRounding.AwayFromZero);
         }
 
         private static bool IsManagedProvider(string provider)
@@ -987,6 +1067,7 @@ namespace SecureOverlay
             UpdateCreditIndicator();
             UpdateSessionStatus();
             StartSessionStatusTimer();
+            StartSessionInactivityTimer();
 
             FocusInput();
             ApplyLaunchRestrictions();
@@ -1472,6 +1553,7 @@ namespace SecureOverlay
             if (meteringActivation.Session != null)
             {
                 ActivateInterviewLock(meteringActivation.Session);
+                RecordInterviewActivity("session_active");
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
@@ -1492,6 +1574,8 @@ namespace SecureOverlay
                     Log.WriteLine("✗ Failed to encode screenshot - sending without image");
                 }
             }
+
+            RecordInterviewActivity("request_started");
 
             if (_isProcessingRequest && _currentRequestCancellation != null)
             {
@@ -1560,6 +1644,7 @@ namespace SecureOverlay
                 {
                     if (_currentRequestCancellation != null && !_currentRequestCancellation.Token.IsCancellationRequested)
                     {
+                        Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                         lock (_streamBuffer)
                         {
                             _streamBuffer.Append(chunk);
@@ -1763,6 +1848,7 @@ namespace SecureOverlay
                         timer.Stop();
                     };
                     timer.Start();
+                    RecordInterviewActivity("response_completed");
                     
                 }
                 // ✅ NEW: Clear screenshot after successful send
@@ -2752,6 +2838,7 @@ namespace SecureOverlay
                 UpdateAPIKeyIndicator();
                 UpdateScreenshotButtonVisibility();
                 UpdateProviderAndModelDisplay();  // ✅ Critical for sync!
+                StartSessionInactivityTimer();
                 
                 Log.WriteLine("✓ Settings reloaded successfully");
                 Log.WriteLine($"  Final model: {newModel}");

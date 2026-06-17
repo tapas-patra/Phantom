@@ -27,7 +27,6 @@ namespace SecureOverlay
 
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
-        private const int WS_EX_NOACTIVATE = 0x08000000;
 
         // ═══════════════════════════════════════════════════════════════
         // EXISTING FIELDS (unchanged)
@@ -70,8 +69,13 @@ namespace SecureOverlay
             this.Loaded += ScreenshotCapture_Loaded;
             this.Closing += (s, e) => _cursorManager?.Dispose();
             
-            // ✅ FIX: Ensure screenshot window doesn't block fake cursor
-            this.Deactivated += (s, e) => _cursorManager?.DeactivateCustomCursor();
+            // Keep the overlay keyboard-focusable so shortcut keys remain reliable.
+            this.Deactivated += (s, e) =>
+            {
+                _cursorManager?.DeactivateCustomCursor();
+                EnsureKeyboardFocus();
+            };
+            this.Activated += (s, e) => EnsureKeyboardFocus();
             
             this.Focusable = true;
             this.Focus();
@@ -91,10 +95,9 @@ namespace SecureOverlay
                 
                 if (hwnd != IntPtr.Zero)
                 {
-                    // Hide from Alt+Tab and Win+Tab
+                    // Hide from Alt+Tab and Win+Tab while still allowing focus for keyboard shortcuts.
                     int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
                     exStyle |= WS_EX_TOOLWINDOW;
-                    exStyle |= WS_EX_NOACTIVATE;
                     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
                     
                     Log.WriteLine("✓ Screenshot window hidden from taskbar/Alt+Tab/Win+Tab");
@@ -128,8 +131,7 @@ namespace SecureOverlay
             // Now activate cursor
             _cursorManager?.ActivateCustomCursor();
             
-            this.Focus();
-            Keyboard.Focus(this);
+            EnsureKeyboardFocus();
             
             Log.WriteLine("✓ Screenshot cursor activated and keyboard focused");
         }
@@ -148,6 +150,7 @@ namespace SecureOverlay
 
         private void ScreenshotCapture_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            EnsureKeyboardFocus();
             _startPoint = e.GetPosition(this);
             _isSelecting = true;
             
@@ -324,6 +327,23 @@ namespace SecureOverlay
             }
             
             return null;
+        }
+
+        private void EnsureKeyboardFocus()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    Activate();
+                    Focus();
+                    Keyboard.Focus(this);
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"⚠️ Failed to focus screenshot window: {ex.Message}");
+                }
+            }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)

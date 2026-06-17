@@ -232,7 +232,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
             if (!IsFreeTier(snapshot))
             {
-                var remainingDebtBudget = ProtectedContinuationCap;
+                var remainingDebtBudget = Math.Max(0m, ProtectedContinuationCap - snapshot.PremiumNegativeCredits);
 
                 // Convert any shortfall (when available credits are insufficient) into debt.
                 if (primaryShortfall > 0m)

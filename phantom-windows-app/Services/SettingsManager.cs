@@ -50,6 +50,8 @@ namespace SecureOverlay.Services
         public bool AutoSwitchModelsOnError { get; set; } = true;
         public bool AllowByoSessionExtension { get; set; } = false;
         public bool AllowFreeTrialSessionExtension { get; set; } = false;
+        public bool AutoPauseOnInactivityEnabled { get; set; } = true;
+        public int AutoPauseOnInactivityMinutes { get; set; } = 10;
         
         // Rotation state (persisted)
         public APIRotationState RotationState { get; set; } = new APIRotationState();
@@ -62,7 +64,8 @@ namespace SecureOverlay.Services
         public double FakeCursorSize { get; set; } = 1.0;
         
         // AI Configuration
-        public string SystemPrompt { get; set; } = "You are a helpful AI assistant integrated into a secure, screen-capture-proof application. Be concise, clear, and helpful. Maintain context from previous messages in the conversation.";
+        public string InterviewPromptType { get; set; } = InterviewPromptRegistry.InterviewTypes.Technical;
+        public string SystemPrompt { get; set; } = InterviewPromptRegistry.ResolveSystemPrompt(InterviewPromptRegistry.InterviewTypes.Technical);
         
         // User Data
         public string Resume { get; set; } = "";
@@ -235,6 +238,7 @@ namespace SecureOverlay.Services
             {
                 lock (SyncLock)
                 {
+                    ApplyDerivedSettings(settings);
                     SecretVault.SaveProviderKeys(ExtractProviderKeys(settings));
                     var sanitizedSettings = CloneSettingsWithoutSecrets(settings);
                     SettingsRepository.Save(sanitizedSettings);
@@ -482,11 +486,31 @@ namespace SecureOverlay.Services
             MigrateLegacyKeys(settings);
             CleanupDuplicateModels(settings);
             SyncModelListsWithRegistry(settings);
+            ApplyDerivedSettings(settings);
 
             if (persistChanges)
             {
                 Save(settings);
             }
+        }
+
+        private static void ApplyDerivedSettings(AppSettings settings)
+        {
+            settings.InterviewPromptType = NormalizeInterviewPromptType(settings.InterviewPromptType);
+            settings.SystemPrompt = InterviewPromptRegistry.ResolveSystemPrompt(settings.InterviewPromptType);
+            settings.AutoPauseOnInactivityMinutes = Math.Max(5, settings.AutoPauseOnInactivityMinutes);
+        }
+
+        private static string NormalizeInterviewPromptType(string? interviewPromptType)
+        {
+            if (string.IsNullOrWhiteSpace(interviewPromptType))
+            {
+                return InterviewPromptRegistry.InterviewTypes.Technical;
+            }
+
+            return InterviewPromptRegistry.GetAllInterviewTypes()
+                .FirstOrDefault(item => string.Equals(item, interviewPromptType, StringComparison.OrdinalIgnoreCase))
+                ?? InterviewPromptRegistry.InterviewTypes.Technical;
         }
 
         private static AppSettings? LoadLegacySettingsReadOnly()

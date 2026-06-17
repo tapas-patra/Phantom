@@ -384,21 +384,49 @@
                         </Border>
                         </StackPanel>
 
-                        <!-- System Prompt -->
-                        <TextBlock Text="System Prompt (AI Instructions)" FontSize="14" FontWeight="Bold" 
+                        <!-- Interview Type -->
+                        <TextBlock Text="Interview Type" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
-                        <TextBlock Text="This defines how the AI should behave and respond" 
-                                  FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                        <TextBlock Text="Phantom now keeps the system prompt internal and applies a tuned prompt preset based on the interview type." 
+                                  FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}"/>
                         <Border Background="#30FFFFFF" CornerRadius="8" Padding="10" Margin="0,0,0,15">
-                            <TextBox x:Name="SystemPromptBox" 
-                                     TextWrapping="Wrap" 
-                                     AcceptsReturn="True"
-                                     Height="100" 
-                                     VerticalScrollBarVisibility="Auto"
-                                     Background="Transparent"
-                                     Foreground="White"
-                                     BorderThickness="0"
-                                     FontSize="12"/>
+                            <ComboBox x:Name="InterviewTypeComboBox"
+                                      Background="#40FFFFFF"
+                                      Foreground="White"
+                                      BorderThickness="0"
+                                      FontSize="12"/>
+                        </Border>
+
+                        <!-- Auto Pause -->
+                        <TextBlock Text="Session Auto Pause" FontSize="14" FontWeight="Bold"
+                                  Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15">
+                            <StackPanel>
+                                <CheckBox x:Name="AutoPauseInactivityCheckBox"
+                                         Content="Pause the interview after inactivity"
+                                         Foreground="White"
+                                         FontSize="13"
+                                         Margin="0,0,0,10"/>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Idle minutes:"
+                                              Foreground="White"
+                                              FontSize="12"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,10,0"/>
+                                    <TextBox x:Name="AutoPauseMinutesTextBox"
+                                             Width="60"
+                                             Text="10"
+                                             Background="#40FFFFFF"
+                                             Foreground="White"
+                                             BorderThickness="0"
+                                             Padding="6,4"/>
+                                    <TextBlock Text="(minimum 5)"
+                                              Foreground="#CCCCCC"
+                                              FontSize="11"
+                                              VerticalAlignment="Center"
+                                              Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
                         </Border>
 
                         <!-- Resume -->

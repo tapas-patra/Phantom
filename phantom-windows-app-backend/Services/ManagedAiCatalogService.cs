@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -18,16 +19,19 @@ public sealed class ManagedAiCatalogService
     private readonly ManagedProviderCredentialRepository _credentials;
     private readonly ManagedProviderCatalogRepository _catalogRepository;
     private readonly SecretProtector _protector;
+    private readonly ILogger<ManagedAiCatalogService> _logger;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
     public ManagedAiCatalogService(
         ManagedProviderCredentialRepository credentials,
         ManagedProviderCatalogRepository catalogRepository,
-        SecretProtector protector)
+        SecretProtector protector,
+        ILogger<ManagedAiCatalogService> logger)
     {
         _credentials = credentials;
         _catalogRepository = catalogRepository;
         _protector = protector;
+        _logger = logger;
     }
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
@@ -100,20 +104,34 @@ public sealed class ManagedAiCatalogService
                     continue;
                 }
 
-                var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
-                if (models.Count == 0)
+                try
                 {
-                    continue;
-                }
+                    var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
+                    var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    if (models.Count == 0)
+                    {
+                        continue;
+                    }
 
-                _catalogRepository.Save(new ManagedProviderCatalogRecord
+                    _catalogRepository.Save(new ManagedProviderCatalogRecord
+                    {
+                        ProviderId = providerId,
+                        Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                        ModelsJson = JsonSerializer.Serialize(models),
+                        RefreshedAtUtc = DateTime.UtcNow
+                    });
+                }
+                catch (OperationCanceledException)
                 {
-                    ProviderId = providerId,
-                    Label = ManagedAiCatalog.GetProviderLabel(providerId),
-                    ModelsJson = JsonSerializer.Serialize(models),
-                    RefreshedAtUtc = DateTime.UtcNow
-                });
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Managed AI catalog refresh failed for provider {ProviderId}. Serving cached catalog when available.",
+                        providerId);
+                }
             }
         }
         finally

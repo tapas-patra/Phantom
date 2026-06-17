@@ -17,7 +17,7 @@ public sealed class ManagedProviderCatalogRepository
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
-SELECT provider_id, label, models_json, refreshed_at_utc
+SELECT provider_id, label, models_json::text AS models_json, refreshed_at_utc
 FROM managed_provider_catalog
 ORDER BY provider_id ASC;";
         using var reader = command.ExecuteReader();
@@ -35,7 +35,7 @@ ORDER BY provider_id ASC;";
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
-SELECT provider_id, label, models_json, refreshed_at_utc
+SELECT provider_id, label, models_json::text AS models_json, refreshed_at_utc
 FROM managed_provider_catalog
 WHERE provider_id = @providerId
 LIMIT 1;";
@@ -52,7 +52,7 @@ LIMIT 1;";
 INSERT INTO managed_provider_catalog (
     provider_id, label, models_json, refreshed_at_utc
 ) VALUES (
-    @providerId, @label, @modelsJson, @refreshedAtUtc
+    @providerId, @label, CAST(@modelsJson AS jsonb), @refreshedAtUtc
 )
 ON CONFLICT (provider_id) DO UPDATE SET
     label = EXCLUDED.label,

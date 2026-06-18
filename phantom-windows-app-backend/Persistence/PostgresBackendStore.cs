@@ -199,6 +199,57 @@ CREATE TABLE IF NOT EXISTS managed_provider_catalog (
     models_json JSONB NOT NULL,
     refreshed_at_utc TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS hosted_knowledge_bases (
+    knowledge_base_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    document_count INTEGER NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    last_processed_at_utc TIMESTAMPTZ NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_knowledge_bases_user_id
+    ON hosted_knowledge_bases(user_id);
+
+CREATE TABLE IF NOT EXISTS hosted_kb_documents (
+    document_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    character_count INTEGER NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL,
+    uploaded_at_utc TIMESTAMPTZ NOT NULL,
+    processed_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_kb
+    ON hosted_kb_documents(knowledge_base_id, uploaded_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS hosted_kb_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    document_title TEXT NOT NULL,
+    text TEXT NOT NULL,
+    search_text TEXT NOT NULL,
+    embedding_json JSONB NOT NULL,
+    token_count INTEGER NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_kb
+    ON hosted_kb_chunks(knowledge_base_id, document_id, chunk_index);
 ";
         command.ExecuteNonQuery();
     }

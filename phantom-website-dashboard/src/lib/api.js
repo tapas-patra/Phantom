@@ -9,10 +9,11 @@ const WINDOWS_BACKEND_API_BASE =
 const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
 async function request(baseUrl, path, init) {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(init?.headers || {})
     }
   });
@@ -192,4 +193,37 @@ export async function deleteManagedAiCredential(adminApiKey, credentialId) {
       }
     }
   );
+}
+
+export async function fetchHostedKnowledgeBase(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function createHostedKnowledgeBase(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
+  const formData = new FormData();
+  Array.from(files || []).forEach((file) => {
+    formData.append("files", file);
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/documents", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: formData
+  });
 }

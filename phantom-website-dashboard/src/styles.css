@@ -820,6 +820,19 @@ a {
   font: inherit;
 }
 
+.button-file {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+}
+
+.button-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .toggle-row {
   grid-template-columns: auto 1fr;
   align-items: center;

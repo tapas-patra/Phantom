@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
@@ -38,6 +39,7 @@ builder.Services.AddSingleton<BootstrapAccountSeeder>();
 builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
+builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -317,6 +319,48 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
+});
+
+app.MapGet("/api/desktop/kb", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
+});
+
+app.MapPost("/api/desktop/kb", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseCreateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.CreateOrUpdateKnowledgeBase(account, request));
+});
+
+app.MapPost("/api/desktop/kb/documents", async (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    if (!httpContext.Request.HasFormContentType)
+    {
+        throw new BackendValidationException("Knowledge-base uploads must use multipart/form-data.");
+    }
+
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    var form = await httpContext.Request.ReadFormAsync(cancellationToken);
+    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
+});
+
+app.MapGet("/api/desktop/kb/search", (
+    HttpContext httpContext,
+    string query,
+    int? maxSnippets,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
 });
 
 app.MapPost("/api/desktop/locks/acquire", (

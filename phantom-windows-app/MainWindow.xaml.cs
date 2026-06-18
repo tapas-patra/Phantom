@@ -165,7 +165,11 @@ namespace SecureOverlay
                 _accountCacheRepository,
                 interviewSessionRepository);
             _contextPackService = new LocalContextPackService(contextPackRepository);
-            _knowledgeRetrievalService = new LocalKnowledgeRetrievalService();
+            _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
+                new LocalKnowledgeRetrievalService(),
+                _authSessionRepository,
+                _accountCacheRepository,
+                _hostedAccountClient);
             _interviewLockService = new LocalInterviewLockService(
                 interviewSessionRepository,
                 _accountCacheRepository);

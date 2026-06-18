@@ -961,6 +961,7 @@ namespace SecureOverlay
             SessionContinuationNotice.Visibility = (isFreeTrial || (!isFreeTrial && (isPremium || isByo)))
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            KnowledgeBaseStatusNotice.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
             DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1011,7 +1012,40 @@ namespace SecureOverlay
                 SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;
             }
 
+            UpdateKnowledgeBaseStatusNotice();
+
             UpdatePanelVisibility();
+        }
+
+        private void UpdateKnowledgeBaseStatusNotice()
+        {
+            if (KnowledgeBaseStatusBody == null || KnowledgeBaseStatusTitle == null)
+            {
+                return;
+            }
+
+            var hostedKnowledgeBase = _accountSnapshot?.HostedKnowledgeBase;
+            if (!IsPremiumAccount())
+            {
+                KnowledgeBaseStatusNotice.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            KnowledgeBaseStatusNotice.Visibility = Visibility.Visible;
+            if (hostedKnowledgeBase == null || string.IsNullOrWhiteSpace(hostedKnowledgeBase.KnowledgeBaseId))
+            {
+                KnowledgeBaseStatusTitle.Text = "Premium Knowledge Base";
+                KnowledgeBaseStatusBody.Text =
+                    "No hosted knowledge base is linked to this Premium account yet. Create one from the website dashboard to sync interview context across devices.";
+                return;
+            }
+
+            KnowledgeBaseStatusTitle.Text = hostedKnowledgeBase.Name;
+            KnowledgeBaseStatusBody.Text = hostedKnowledgeBase.CanUseInInterview
+                ? $"Ready across devices. {hostedKnowledgeBase.DocumentCount} documents and {hostedKnowledgeBase.ChunkCount} retrieval chunks are linked for interview use."
+                : string.IsNullOrWhiteSpace(hostedKnowledgeBase.BlockedReason)
+                    ? $"Linked, but not ready yet. Status: {hostedKnowledgeBase.Status}."
+                    : $"{hostedKnowledgeBase.BlockedReason} Current status: {hostedKnowledgeBase.Status}.";
         }
 
         private bool IsPremiumAccount()

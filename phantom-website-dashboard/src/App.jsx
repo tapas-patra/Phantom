@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  createHostedKnowledgeBase,
   deleteManagedAiCredential,
   fetchAccountSummary,
   fetchAdminOverview,
   fetchDevices,
   fetchDownloadEntitlement,
+  fetchHostedKnowledgeBase,
   fetchManagedAiAdminInventory,
   fetchSupportOverview,
   fetchWalletHistory,
@@ -14,6 +16,7 @@ import {
   registerAccount,
   resendVerificationEmail,
   triggerManagedAiCatalogRefresh,
+  uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential
 } from "./lib/api";
 
@@ -29,6 +32,7 @@ const marketingNav = [
 
 const userNav = [
   { to: "/dashboard", label: "Overview" },
+  { to: "/dashboard/knowledge-base", label: "Knowledge Base" },
   { to: "/dashboard/wallet", label: "Wallet" },
   { to: "/dashboard/devices", label: "Devices" },
   { to: "/dashboard/history", label: "Usage" },
@@ -78,8 +82,9 @@ const plans = [
     description: "Hosted model operations, managed keys, and support visibility for users who want zero key management.",
     bullets: [
       "Managed ChatGPT, Claude, Gemini, Mistral, Groq, and NVIDIA lanes",
+      "Hosted knowledge base synced across desktop devices",
       "Provider + model choice without API keys",
-      "Premium wallet with continuation support",
+      "Premium-only interview retrieval with credit-aware access checks",
       "Admin-controlled failover and rotation"
     ],
     cta: "Unlock Premium",
@@ -778,6 +783,7 @@ function DesktopReturnPage() {
 
 function UserDashboardPage({ session }) {
   const [summary, setSummary] = useState(null);
+  const [knowledgeBase, setKnowledgeBase] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
   const [devices, setDevices] = useState([]);
   const [download, setDownload] = useState(null);
@@ -803,9 +809,11 @@ function UserDashboardPage({ session }) {
           fetchDownloadEntitlement(account.userId),
           fetchSupportOverview(account.userId)
         ]);
+        const knowledgeBaseStatus = await fetchHostedKnowledgeBase(session.accessToken);
 
         if (!cancelled) {
           setSummary(account);
+          setKnowledgeBase(knowledgeBaseStatus);
           setWalletHistory(history);
           setDevices(deviceRows);
           setDownload(downloadEntitlement);
@@ -826,7 +834,7 @@ function UserDashboardPage({ session }) {
     return () => {
       cancelled = true;
     };
-  }, [session.email]);
+  }, [session.accessToken, session.email]);
 
   if (loading) {
     return (
@@ -881,7 +889,24 @@ function UserDashboardPage({ session }) {
           <Route
             index
             element={
-              <UserOverviewPanel summary={summary} devices={devices} download={download} support={support} />
+              <UserOverviewPanel
+                summary={summary}
+                devices={devices}
+                download={download}
+                support={support}
+                knowledgeBase={knowledgeBase}
+              />
+            }
+          />
+          <Route
+            path="knowledge-base"
+            element={
+              <KnowledgeBasePanel
+                accessToken={session.accessToken}
+                summary={summary}
+                knowledgeBase={knowledgeBase}
+                onKnowledgeBaseChanged={setKnowledgeBase}
+              />
             }
           />
           <Route path="wallet" element={<WalletPanel summary={summary} walletHistory={walletHistory} />} />
@@ -894,7 +919,7 @@ function UserDashboardPage({ session }) {
   );
 }
 
-function UserOverviewPanel({ summary, devices, download, support }) {
+function UserOverviewPanel({ summary, devices, download, support, knowledgeBase }) {
   const activeDeviceCount = devices.filter((item) => item.isActive).length;
 
   return (
@@ -920,6 +945,10 @@ function UserOverviewPanel({ summary, devices, download, support }) {
         <span>Premium credits</span>
         <strong>{summary.premiumAvailableCredits.toFixed(2)}</strong>
       </article>
+      <article className="panel metric-panel">
+        <span>Hosted KB</span>
+        <strong>{knowledgeBase?.documentCount ?? 0} docs</strong>
+      </article>
       <article className="panel">
         <p className="story-tag">Download entitlement</p>
         <h3>{download?.installerLabel || "Installer access pending"}</h3>
@@ -939,6 +968,172 @@ function UserOverviewPanel({ summary, devices, download, support }) {
         <p className="story-tag">Support state</p>
         <h3>{support?.openLockSessionId || "No active lock issue"}</h3>
         <p>{support?.supportMessage || "No support signal available."}</p>
+      </article>
+      <article className="panel">
+        <p className="story-tag">Premium knowledge base</p>
+        <h3>{knowledgeBase?.name || "No hosted KB linked yet"}</h3>
+        <p>
+          {knowledgeBase?.canUseInInterview
+            ? `Ready for interview retrieval across devices · ${knowledgeBase.documentCount} docs`
+            : knowledgeBase?.blockedReason || "Create a hosted KB from the dashboard to sync interview context into the app."}
+        </p>
+      </article>
+    </div>
+  );
+}
+
+function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBaseChanged }) {
+  const [name, setName] = useState(knowledgeBase?.name || "My Premium Knowledge Base");
+  const [description, setDescription] = useState(knowledgeBase?.description || "");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setName(knowledgeBase?.name || "My Premium Knowledge Base");
+    setDescription(knowledgeBase?.description || "");
+  }, [knowledgeBase?.description, knowledgeBase?.name]);
+
+  const isPremiumBlocked = !knowledgeBase?.canManage;
+  const blockedMessage = knowledgeBase?.blockedReason
+    || "Hosted knowledge bases are available only while Premium access and credits are active.";
+
+  async function handleCreate(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+
+    try {
+      const result = await createHostedKnowledgeBase(accessToken, { name, description });
+      onKnowledgeBaseChanged(result);
+      setStatus("Knowledge base saved.");
+    } catch (error) {
+      setStatus(error.message || "Could not save the knowledge base.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUpload(event) {
+    const files = event.target.files;
+    if (!files?.length) {
+      return;
+    }
+
+    setSubmitting(true);
+    setStatus("");
+
+    try {
+      const result = await uploadHostedKnowledgeBaseDocuments(accessToken, files);
+      onKnowledgeBaseChanged(result.knowledgeBase);
+      setStatus(`Processed ${result.addedDocuments.length} document${result.addedDocuments.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setStatus(error.message || "Could not process those documents.");
+    } finally {
+      setSubmitting(false);
+      event.target.value = "";
+    }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="panel dashboard-hero-panel">
+        <p className="eyebrow">Premium knowledge base</p>
+        <h1>Upload interview context once, then let Phantom link it on every desktop.</h1>
+        <p className="hero-text">
+          Hosted knowledge bases are stored on the backend, embedded for retrieval, and auto-linked into
+          the Windows app when this account signs in.
+        </p>
+      </article>
+
+      <article className="panel">
+        <p className="story-tag">Current entitlement</p>
+        <h3>{summary.planLabel}</h3>
+        <p>
+          {knowledgeBase?.canUseInInterview
+            ? `Interview retrieval enabled with ${summary.premiumAvailableCredits.toFixed(2)} Premium credits available.`
+            : blockedMessage}
+        </p>
+      </article>
+
+      <article className="panel">
+        <p className="story-tag">Hosted status</p>
+        <h3>{knowledgeBase?.status || "not_created"}</h3>
+        <p>
+          {knowledgeBase?.name || "No hosted KB created"} · {knowledgeBase?.documentCount ?? 0} docs ·{" "}
+          {knowledgeBase?.chunkCount ?? 0} chunks
+        </p>
+      </article>
+
+      <form className="panel auth-form" onSubmit={handleCreate}>
+        <p className="eyebrow">1. Create or rename</p>
+        <label>
+          <span>Knowledge base name</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Description</span>
+          <input
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            disabled={isPremiumBlocked || submitting}
+            placeholder="Role packet, company notes, architecture docs, STAR stories"
+          />
+        </label>
+        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting}>
+          {submitting ? "Saving..." : "Save Knowledge Base"}
+        </button>
+      </form>
+
+      <article className="panel support-panel">
+        <p className="eyebrow">2. Upload documents</p>
+        <h2>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h2>
+        <p>
+          Premium limits: up to 20 docs total, 5 files per upload, 2 MB per file. If Premium credits hit zero,
+          interview-time KB retrieval is blocked in the desktop app until credits return.
+        </p>
+        <label className="button button-secondary button-file">
+          Upload Documents
+          <input
+            type="file"
+            multiple
+            onChange={handleUpload}
+            disabled={isPremiumBlocked || submitting}
+            accept=".txt,.md,.json,.csv,.log,.docx"
+          />
+        </label>
+      </article>
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Processed documents</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Chars</th>
+              <th>Chunks</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(knowledgeBase?.documents || []).length === 0 ? (
+              <tr>
+                <td colSpan="5">No hosted documents processed yet.</td>
+              </tr>
+            ) : (
+              knowledgeBase.documents.map((document) => (
+                <tr key={document.documentId}>
+                  <td>{document.fileName}</td>
+                  <td>{document.sourceType || document.contentType || "file"}</td>
+                  <td>{document.characterCount}</td>
+                  <td>{document.chunkCount}</td>
+                  <td>{document.status}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        {status && <p className={`status-message ${status.includes("Could not") ? "status-error" : ""}`}>{status}</p>}
       </article>
     </div>
   );

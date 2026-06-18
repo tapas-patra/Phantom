@@ -89,6 +89,19 @@
                             </StackPanel>
                         </Border>
 
+                        <Border x:Name="KnowledgeBaseStatusNotice" Background="#30304B2A" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#90D7C46B" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock x:Name="KnowledgeBaseStatusTitle" Text="Premium Knowledge Base"
+                                          FontSize="14" FontWeight="Bold" Foreground="White"
+                                          Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="KnowledgeBaseStatusBody"
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF"
+                                          Margin="0,8,0,0" Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 

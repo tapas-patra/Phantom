@@ -24,7 +24,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             try
             {
-                return PostJson(relativePath, request, bearerToken: null);
+                return PostJson<TRequest, TResponse>(relativePath, request, bearerToken: null);
             }
             catch (HostedServiceException)
             {

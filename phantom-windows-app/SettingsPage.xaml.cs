@@ -398,7 +398,31 @@ namespace SecureOverlay
                 return null;
             }
 
-            var selectedPackId = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.PackId ?? string.Empty;
+            var resumeText = ResumeBox.Text?.Trim() ?? string.Empty;
+            var jobDescriptionText = JobDescriptionBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(resumeText) && string.IsNullOrWhiteSpace(jobDescriptionText))
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show(
+                        "Add a resume, a job description, or both before saving a context pack.",
+                        "Context Pack");
+                }
+
+                return null;
+            }
+
+            var selectedItem = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            var selectedPack = selectedItem == null || selectedItem.IsBlank
+                ? null
+                : _hostedContextPacks.FirstOrDefault(item => string.Equals(item.PackId, selectedItem.PackId, StringComparison.Ordinal));
+
+            // Save updates the selected pack only when the user keeps the original name.
+            // Changing the name creates a new pack instead of silently overwriting the old one.
+            var selectedPackId = selectedPack != null
+                && string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
+                ? selectedPack.PackId
+                : string.Empty;
 
             try
             {
@@ -406,8 +430,8 @@ namespace SecureOverlay
                 {
                     PackId = selectedPackId,
                     Name = packName,
-                    ResumeText = ResumeBox.Text,
-                    JobDescriptionText = JobDescriptionBox.Text
+                    ResumeText = resumeText,
+                    JobDescriptionText = jobDescriptionText
                 });
 
                 SavePackToLocalState(savedPack);

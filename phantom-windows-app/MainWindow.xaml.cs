@@ -936,6 +936,7 @@ namespace SecureOverlay
                 || provider == AIModelRegistry.Providers.Claude
                 || provider == AIModelRegistry.Providers.Gemini
                 || provider == AIModelRegistry.Providers.Mistral
+                || provider == AIModelRegistry.Providers.Groq
                 || provider == AIModelRegistry.Providers.Nvidia;
         }
 
@@ -1021,6 +1022,15 @@ namespace SecureOverlay
             var providers = _settings.PremiumConfiguredProviders?
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+            if (providers == null || providers.Length == 0)
+            {
+                providers = (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
 
             return providers != null && providers.Length > 0
                 ? providers

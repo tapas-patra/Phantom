@@ -23,6 +23,7 @@ public sealed class ManagedAiAdminService
     {
         EnsureConfigured();
         var credentials = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", null, cancellationToken);
+        var catalogs = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", null, cancellationToken);
         return new
         {
             managedProviders = new[]
@@ -34,7 +35,8 @@ public sealed class ManagedAiAdminService
                 new { providerId = "Groq", label = "Groq", lane = "managed" },
                 new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" }
             },
-            credentials
+            credentials,
+            catalogs
         };
     }
 

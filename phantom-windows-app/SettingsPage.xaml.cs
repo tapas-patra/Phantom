@@ -505,7 +505,10 @@ namespace SecureOverlay
             AIProviderComboBox.Items.Clear();
 
             IEnumerable<string> providers = IsPremiumOnlyAccount()
-                ? _settings.PremiumConfiguredProviders
+                ? (_settings.PremiumConfiguredProviders?.Count > 0
+                    ? _settings.PremiumConfiguredProviders
+                    : (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                        .Select(item => item.ProviderId))
                 : AIModelRegistry.GetAllProviders();
 
             foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))

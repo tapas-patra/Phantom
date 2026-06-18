@@ -1137,6 +1137,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
   const [inventory, setInventory] = useState(null);
+  const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -1237,6 +1238,8 @@ function AdminDashboardPage({ adminSession }) {
                 adminApiKey={adminSession.apiKey}
                 inventory={inventory}
                 onRefresh={refreshManagedInventory}
+                catalogRefreshResult={catalogRefreshResult}
+                onCatalogRefreshResult={setCatalogRefreshResult}
               />
             }
           />
@@ -1249,6 +1252,7 @@ function AdminDashboardPage({ adminSession }) {
 function AdminOverviewPanel({ overview, inventory }) {
   const credentials = inventory?.credentials || [];
   const providers = inventory?.managedProviders || [];
+  const catalogProviders = inventory?.catalogs?.providers || [];
 
   return (
     <div className="dashboard-grid admin-grid">
@@ -1273,6 +1277,10 @@ function AdminOverviewPanel({ overview, inventory }) {
         <span>Managed providers</span>
         <strong>{providers.length}</strong>
       </article>
+      <article className="panel metric-panel">
+        <span>Catalog models</span>
+        <strong>{catalogProviders.reduce((total, provider) => total + (provider.models?.length || 0), 0)}</strong>
+      </article>
       <article className="panel table-panel table-panel-full">
         <p className="eyebrow">Managed provider readiness</p>
         <table>
@@ -1280,6 +1288,8 @@ function AdminOverviewPanel({ overview, inventory }) {
             <tr>
               <th>Provider</th>
               <th>Configured credentials</th>
+              <th>Fetched models</th>
+              <th>Catalog refreshed</th>
             </tr>
           </thead>
           <tbody>
@@ -1287,6 +1297,8 @@ function AdminOverviewPanel({ overview, inventory }) {
               <tr key={provider.providerId}>
                 <td>{provider.label}</td>
                 <td>{credentials.filter((item) => item.providerId === provider.providerId).length}</td>
+                <td>{catalogProviders.find((item) => item.providerId === provider.providerId)?.models?.length || 0}</td>
+                <td>{formatDate(catalogProviders.find((item) => item.providerId === provider.providerId)?.refreshedAtUtc)}</td>
               </tr>
             ))}
           </tbody>
@@ -1296,7 +1308,13 @@ function AdminOverviewPanel({ overview, inventory }) {
   );
 }
 
-function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
+function ManagedAiAdminPanel({
+  adminApiKey,
+  inventory,
+  onRefresh,
+  catalogRefreshResult,
+  onCatalogRefreshResult
+}) {
   const [providerId, setProviderId] = useState("ChatGPT");
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -1309,6 +1327,8 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
 
   const providers = inventory?.managedProviders || [];
   const credentials = inventory?.credentials || [];
+  const catalogProviders = inventory?.catalogs?.providers || [];
+  const refreshProviders = catalogRefreshResult?.providers || [];
 
   useEffect(() => {
     if (providers.length > 0 && !providers.some((item) => item.providerId === providerId)) {
@@ -1359,7 +1379,8 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
     setLocalError("");
     setSuccess("");
     try {
-      await triggerManagedAiCatalogRefresh(adminApiKey);
+      const refreshResult = await triggerManagedAiCatalogRefresh(adminApiKey);
+      onCatalogRefreshResult(refreshResult);
       await onRefresh();
       setSuccess("Managed model catalog refreshed.");
     } catch (refreshError) {
@@ -1465,6 +1486,68 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
       </article>
 
       <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Catalog status by provider</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Enabled creds</th>
+              <th>Fetched models</th>
+              <th>Catalog refreshed</th>
+              <th>Last refresh outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            {providers.map((provider) => {
+              const enabledCredentialCount = credentials.filter(
+                (item) => item.providerId === provider.providerId && item.isEnabled
+              ).length;
+              const catalog = catalogProviders.find((item) => item.providerId === provider.providerId);
+              const refreshResult = refreshProviders.find((item) => item.providerId === provider.providerId);
+
+              return (
+                <tr key={provider.providerId}>
+                  <td>{provider.label}</td>
+                  <td>{enabledCredentialCount}</td>
+                  <td>{catalog?.models?.length || 0}</td>
+                  <td>{formatDate(catalog?.refreshedAtUtc)}</td>
+                  <td>{refreshResult ? refreshResult.message : "No refresh run in this session."}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </article>
+
+      {catalogRefreshResult && (
+        <article className="panel table-panel table-panel-full">
+          <p className="eyebrow">Latest refresh result</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Status</th>
+                <th>Models</th>
+                <th>Catalog timestamp</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {refreshProviders.map((item) => (
+                <tr key={item.providerId}>
+                  <td>{item.label}</td>
+                  <td>{item.succeeded ? "Success" : item.attempted ? "Failed" : "Skipped"}</td>
+                  <td>{item.modelCount}</td>
+                  <td>{formatDate(item.refreshedAtUtc)}</td>
+                  <td>{item.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+      )}
+
+      <article className="panel table-panel table-panel-full">
         <p className="eyebrow">Current managed credential roster</p>
         <table>
           <thead>
@@ -1503,6 +1586,47 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
           </tbody>
         </table>
       </article>
+
+      {providers.map((provider) => {
+        const catalog = catalogProviders.find((item) => item.providerId === provider.providerId);
+        const providerModels = catalog?.models || [];
+
+        return (
+          <article className="panel table-panel table-panel-full" key={`${provider.providerId}-catalog`}>
+            <p className="eyebrow">{provider.label} catalog</p>
+            <h3>
+              {providerModels.length} model{providerModels.length === 1 ? "" : "s"} fetched
+            </h3>
+            <p>
+              Last updated: {formatDate(catalog?.refreshedAtUtc)}
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Model ID</th>
+                  <th>Display name</th>
+                  <th>Vision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {providerModels.length === 0 ? (
+                  <tr>
+                    <td colSpan="3">No stored catalog for this provider yet.</td>
+                  </tr>
+                ) : (
+                  providerModels.map((model) => (
+                    <tr key={`${provider.providerId}-${model.modelId}`}>
+                      <td>{model.modelId}</td>
+                      <td>{model.displayName}</td>
+                      <td>{model.supportsVision ? "Yes" : "No"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </article>
+        );
+      })}
     </div>
   );
 }

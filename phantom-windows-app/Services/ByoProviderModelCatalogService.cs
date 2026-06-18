@@ -198,18 +198,23 @@ namespace SecureOverlay.Services
             return normalized.Contains("gpt")
                 || normalized.StartsWith("o1")
                 || normalized.StartsWith("o3")
+                || normalized.StartsWith("o4")
                 || normalized.Contains("claude")
                 || normalized.Contains("mistral")
                 || normalized.Contains("mixtral")
                 || normalized.Contains("pixtral")
                 || normalized.Contains("gemini")
+                || normalized.Contains("compound")
                 || normalized.Contains("llama")
                 || normalized.Contains("nemotron")
                 || normalized.Contains("gemma")
                 || normalized.Contains("qwen")
                 || normalized.Contains("deepseek")
                 || normalized.Contains("kimi")
-                || normalized.Contains("glm");
+                || normalized.Contains("glm")
+                || normalized.Contains("instruct")
+                || normalized.Contains("chat")
+                || normalized.Contains("reasoning");
         }
 
         private static List<string> GetKeysForProvider(AppSettings settings, string provider)

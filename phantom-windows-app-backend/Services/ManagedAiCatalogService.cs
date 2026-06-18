@@ -59,6 +59,14 @@ public sealed class ManagedAiCatalogService
         };
     }
 
+    public IReadOnlyList<ManagedAiProviderOptionDto> ListCatalogProviders()
+    {
+        return _catalogRepository.ListAll()
+            .Select(MapProvider)
+            .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public bool IsAllowedModel(string provider, string model)
     {
         EnsureCatalogFreshAsync().GetAwaiter().GetResult();
@@ -72,12 +80,24 @@ public sealed class ManagedAiCatalogService
             .Any(item => string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase));
     }
 
-    public async Task RefreshConfiguredProvidersAsync(CancellationToken cancellationToken = default)
+    public async Task<ManagedAiCatalogRefreshResultDto> RefreshConfiguredProvidersAsync(CancellationToken cancellationToken = default)
     {
-        await EnsureCatalogFreshAsync(force: true, cancellationToken);
+        var providers = await RefreshCatalogAsync(force: true, cancellationToken);
+        return new ManagedAiCatalogRefreshResultDto
+        {
+            RefreshedAtUtc = DateTime.UtcNow,
+            Providers = providers
+        };
     }
 
     private async Task EnsureCatalogFreshAsync(bool force = false, CancellationToken cancellationToken = default)
+    {
+        await RefreshCatalogAsync(force, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ManagedAiCatalogRefreshProviderResultDto>> RefreshCatalogAsync(
+        bool force,
+        CancellationToken cancellationToken)
     {
         await _refreshLock.WaitAsync(cancellationToken);
         try
@@ -90,17 +110,37 @@ public sealed class ManagedAiCatalogService
                     group => group.OrderBy(item => item.Priority).ThenByDescending(item => item.UpdatedAtUtc).First(),
                     StringComparer.OrdinalIgnoreCase);
 
+            var results = new List<ManagedAiCatalogRefreshProviderResultDto>();
+
             foreach (var providerId in ManagedAiCatalog.GetAllProviders())
             {
+                var existing = _catalogRepository.FindByProviderId(providerId);
+                var existingModels = existing == null
+                    ? Array.Empty<ManagedAiModelOptionDto>()
+                    : DeserializeModels(existing.ModelsJson);
+
                 if (!credentialsByProvider.TryGetValue(providerId, out var credential))
                 {
+                    results.Add(BuildRefreshResult(
+                        providerId,
+                        attempted: false,
+                        succeeded: false,
+                        message: "No enabled credential configured.",
+                        models: existingModels,
+                        refreshedAtUtc: existing?.RefreshedAtUtc));
                     continue;
                 }
 
-                var existing = _catalogRepository.FindByProviderId(providerId);
                 var isStale = existing == null || existing.RefreshedAtUtc <= DateTime.UtcNow - RefreshInterval;
                 if (!force && !isStale)
                 {
+                    results.Add(BuildRefreshResult(
+                        providerId,
+                        attempted: false,
+                        succeeded: true,
+                        message: "Catalog is still fresh.",
+                        models: existingModels,
+                        refreshedAtUtc: existing?.RefreshedAtUtc));
                     continue;
                 }
 
@@ -108,14 +148,23 @@ public sealed class ManagedAiCatalogService
                 {
                     var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
                     var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    var refreshedAtUtc = DateTime.UtcNow;
 
                     _catalogRepository.Save(new ManagedProviderCatalogRecord
                     {
                         ProviderId = providerId,
                         Label = ManagedAiCatalog.GetProviderLabel(providerId),
                         ModelsJson = JsonSerializer.Serialize(models),
-                        RefreshedAtUtc = DateTime.UtcNow
+                        RefreshedAtUtc = refreshedAtUtc
                     });
+
+                    results.Add(BuildRefreshResult(
+                        providerId,
+                        attempted: true,
+                        succeeded: true,
+                        message: $"Fetched {models.Count} model(s).",
+                        models: models,
+                        refreshedAtUtc: refreshedAtUtc));
                 }
                 catch (OperationCanceledException)
                 {
@@ -127,8 +176,20 @@ public sealed class ManagedAiCatalogService
                         ex,
                         "Managed AI catalog refresh failed for provider {ProviderId}. Serving cached catalog when available.",
                         providerId);
+
+                    results.Add(BuildRefreshResult(
+                        providerId,
+                        attempted: true,
+                        succeeded: false,
+                        message: GetSingleLineMessage(ex),
+                        models: existingModels,
+                        refreshedAtUtc: existing?.RefreshedAtUtc));
                 }
             }
+
+            return results
+                .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
         finally
         {
@@ -327,11 +388,13 @@ public sealed class ManagedAiCatalogService
         return normalized.Contains("gpt")
             || normalized.StartsWith("o1")
             || normalized.StartsWith("o3")
+            || normalized.StartsWith("o4")
             || normalized.Contains("claude")
             || normalized.Contains("mistral")
             || normalized.Contains("mixtral")
             || normalized.Contains("pixtral")
             || normalized.Contains("gemini")
+            || normalized.Contains("compound")
             || normalized.Contains("nemotron")
             || normalized.Contains("llama")
             || normalized.Contains("qwen")
@@ -339,6 +402,9 @@ public sealed class ManagedAiCatalogService
             || normalized.Contains("deepseek")
             || normalized.Contains("kimi")
             || normalized.Contains("glm")
+            || normalized.Contains("instruct")
+            || normalized.Contains("chat")
+            || normalized.Contains("reasoning")
             || normalized.Contains("nvidia");
     }
 
@@ -354,6 +420,36 @@ public sealed class ManagedAiCatalogService
             || normalized.Contains("pixtral")
             || normalized.Contains("vlm")
             || normalized.Contains("image")
-            || normalized.Contains("multimodal");
+            || normalized.Contains("multimodal")
+            || normalized.Contains("llama-4")
+            || normalized.Contains("scout")
+            || normalized.Contains("maverick");
+    }
+
+    private static ManagedAiCatalogRefreshProviderResultDto BuildRefreshResult(
+        string providerId,
+        bool attempted,
+        bool succeeded,
+        string message,
+        IReadOnlyList<ManagedAiModelOptionDto> models,
+        DateTime? refreshedAtUtc)
+    {
+        return new ManagedAiCatalogRefreshProviderResultDto
+        {
+            ProviderId = providerId,
+            Label = ManagedAiCatalog.GetProviderLabel(providerId),
+            Attempted = attempted,
+            Succeeded = succeeded,
+            Message = message,
+            ModelCount = models.Count,
+            RefreshedAtUtc = refreshedAtUtc
+        };
+    }
+
+    private static string GetSingleLineMessage(Exception ex)
+    {
+        var message = ex.Message?.Trim() ?? ex.GetType().Name;
+        var newlineIndex = message.IndexOfAny(['\r', '\n']);
+        return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
     }
 }

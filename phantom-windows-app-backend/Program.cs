@@ -392,11 +392,14 @@ adminGroup.MapPost("/managed-ai/catalog/refresh", async (
     ManagedAiCatalogService catalogService,
     CancellationToken cancellationToken) =>
 {
-    await catalogService.RefreshConfiguredProvidersAsync(cancellationToken);
+    return Results.Ok(await catalogService.RefreshConfiguredProvidersAsync(cancellationToken));
+});
+
+adminGroup.MapGet("/managed-ai/catalog", (ManagedAiCatalogService catalogService) =>
+{
     return Results.Ok(new
     {
-        refreshed = true,
-        refreshedAtUtc = DateTime.UtcNow
+        providers = catalogService.ListCatalogProviders()
     });
 });
 

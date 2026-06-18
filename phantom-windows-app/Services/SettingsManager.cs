@@ -74,6 +74,7 @@ namespace SecureOverlay.Services
         public string SystemPrompt { get; set; } = InterviewPromptRegistry.ResolveSystemPrompt(InterviewPromptRegistry.InterviewTypes.Technical);
         public ManagedAiCatalogDto ManagedAiCatalogCache { get; set; } = new ManagedAiCatalogDto();
         public List<string> PremiumConfiguredProviders { get; set; } = new List<string>();
+        public string SelectedHostedContextPackId { get; set; } = string.Empty;
         
         // User Data
         public string Resume { get; set; } = "";

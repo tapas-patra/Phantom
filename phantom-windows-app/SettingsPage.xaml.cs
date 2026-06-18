@@ -268,7 +268,10 @@ namespace SecureOverlay
                     .ToList()
                     ?? new List<DesktopContextPackDto>();
 
-                var selectedPackId = forceSelectedPackId ?? preferredPackId ?? _contextPackService.GetSelectedPack().PackId;
+                var selectedPackId = forceSelectedPackId
+                    ?? preferredPackId
+                    ?? _settings.SelectedHostedContextPackId
+                    ?? string.Empty;
                 PopulateHostedContextPackChoices(selectedPackId);
 
                 if (_hostedContextPacks.Count == 0)
@@ -467,6 +470,8 @@ namespace SecureOverlay
                     JobDescriptionText = jobDescriptionText
                 });
 
+                _settings.SelectedHostedContextPackId = savedPack.PackId;
+                SettingsManager.Save(_settings);
                 SavePackToLocalState(savedPack);
                 _isEditingSelectedHostedPack = false;
                 LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
@@ -512,6 +517,8 @@ namespace SecureOverlay
             try
             {
                 _hostedAccountClient.DeleteContextPack(session.AccessToken, selection.PackId);
+                _settings.SelectedHostedContextPackId = string.Empty;
+                SettingsManager.Save(_settings);
                 _contextPackService.ClearSelectedPack(clearResume: true, clearJobDescription: true);
                 _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(true);
@@ -1196,6 +1203,10 @@ namespace SecureOverlay
                 
                 _settings.InterviewPromptType = InterviewTypeComboBox.SelectedItem as string
                     ?? InterviewPromptRegistry.InterviewTypes.Technical;
+                _settings.SelectedHostedContextPackId =
+                    (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false
+                        ? (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.PackId ?? string.Empty
+                        : string.Empty;
                 _settings.AutoPauseOnInactivityEnabled = AutoPauseInactivityCheckBox.IsChecked == true;
                 if (int.TryParse(AutoPauseMinutesTextBox.Text, out var autoPauseMinutes))
                 {

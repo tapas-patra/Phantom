@@ -247,13 +247,14 @@ namespace SecureOverlay
         {
             ContextPackSection.Visibility = Visibility.Visible;
             ContextPackStatusText.Text = string.Empty;
+            var localDraftPack = _contextPackService.GetSelectedPack();
 
             var session = _authSessionRepository.Load();
             if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
             {
                 _hostedContextPacks = new List<DesktopContextPackDto>();
                 PopulateHostedContextPackChoices(forceSelectedPackId: null);
-                ClearContextPackEditors();
+                LoadPackIntoEditors(localDraftPack);
                 ContextPackStatusText.Text = "Sign in again to load Premium context packs.";
                 return;
             }
@@ -271,7 +272,7 @@ namespace SecureOverlay
 
                 if (_hostedContextPacks.Count == 0)
                 {
-                    ClearContextPackEditors();
+                    LoadPackIntoEditors(localDraftPack);
                     ContextPackStatusText.Text = "No saved context packs yet. Save one here to reuse your full resume and job description later.";
                 }
             }
@@ -279,7 +280,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine($"Hosted context pack load failed: {ex.Message}");
                 PopulateHostedContextPackChoices(forceSelectedPackId: null);
-                LoadPackIntoEditors(_contextPackService.GetSelectedPack());
+                LoadPackIntoEditors(localDraftPack);
                 ContextPackStatusText.Text = $"Could not load Premium context packs right now: {ex.Message}";
             }
         }
@@ -334,7 +335,7 @@ namespace SecureOverlay
             {
                 ContextPackNameTextBox.Text = string.Empty;
                 DeleteContextPackButton.IsEnabled = false;
-                ClearContextPackEditors();
+                LoadPackIntoEditors(_contextPackService.GetSelectedPack());
 
                 return;
             }

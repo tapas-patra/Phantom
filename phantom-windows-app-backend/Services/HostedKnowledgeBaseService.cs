@@ -294,7 +294,7 @@ public sealed class HostedKnowledgeBaseService
 
     private static bool HasPremiumKnowledgeBaseEntitlement(DesktopAccountRecord account, out string blockedReason)
     {
-        if (!string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase))
+        if (!AccessModeResolver.HasPremiumFeatureAccess(account))
         {
             blockedReason = "Hosted knowledge bases are a Premium-only feature.";
             return false;

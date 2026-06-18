@@ -39,6 +39,9 @@ app.MapGet("/api/dashboard/account-summary", (string? userId, string? email, Das
 app.MapGet("/api/dashboard/wallet-history", (string userId, DashboardQueryService queries) =>
     Results.Ok(queries.GetWalletHistory(userId)));
 
+app.MapGet("/api/dashboard/wallet-purchases", (string userId, DashboardQueryService queries) =>
+    Results.Ok(queries.GetWalletPurchases(userId)));
+
 app.MapGet("/api/dashboard/devices", (string userId, DashboardQueryService queries) =>
     Results.Ok(queries.GetDevices(userId)));
 

@@ -85,6 +85,23 @@ export async function registerAccount(payload) {
   });
 }
 
+export async function sendPhoneOtp(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/phone/send-otp", {
+    method: "POST",
+    body: JSON.stringify({
+      ...getBrowserDeviceProfile(),
+      ...payload
+    })
+  });
+}
+
+export async function verifyPhoneOtp(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/phone/verify-otp", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function resendVerificationEmail(email) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/verify-email/request", {
     method: "POST",
@@ -111,6 +128,17 @@ export async function fetchWalletHistory(userId) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
+  );
+}
+
+export async function fetchWalletPurchases(userId) {
+  if (!userId) {
+    return [];
+  }
+
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/wallet-purchases?userId=${encodeURIComponent(userId)}`
   );
 }
 
@@ -225,5 +253,41 @@ export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
       Authorization: `Bearer ${accessToken}`
     },
     body: formData
+  });
+}
+
+export async function fetchPaymentCatalog(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/catalog", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function fetchPaymentOrders(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/orders", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function createPaymentCheckout(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/checkout", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function confirmPaymentCheckout(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/client-confirm", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
   });
 }

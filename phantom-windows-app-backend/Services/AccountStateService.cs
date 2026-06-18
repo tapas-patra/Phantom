@@ -69,7 +69,7 @@ public sealed class AccountStateService
             UserId = account.UserId,
             Email = account.Email,
             EmailVerified = account.EmailVerified,
-            AccessTier = account.AccessTier,
+            AccessTier = AccessModeResolver.GetEffectiveAccessTier(account),
             PhoneVerified = account.PhoneVerified,
             Wallet = new WalletSnapshotDto
             {
@@ -121,6 +121,7 @@ public sealed class AccountStateService
 
     public void Save(DesktopAccountRecord account)
     {
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.UpdatedAtUtc = DateTime.UtcNow;
         account.LastValidatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);

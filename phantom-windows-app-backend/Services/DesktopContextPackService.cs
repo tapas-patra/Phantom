@@ -49,7 +49,7 @@ public sealed class DesktopContextPackService
         var account = _accounts.FindByUserId(session.UserId)
             ?? throw new BackendValidationException("Account not found.");
 
-        if (!string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase))
+        if (!AccessModeResolver.HasPremiumFeatureAccess(account))
         {
             throw new BackendValidationException("Context Packs are available only for Premium accounts.");
         }

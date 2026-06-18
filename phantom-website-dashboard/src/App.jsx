@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  confirmPaymentCheckout,
+  createPaymentCheckout,
   createHostedKnowledgeBase,
   deleteManagedAiCredential,
   fetchAccountSummary,
@@ -9,15 +11,19 @@ import {
   fetchDownloadEntitlement,
   fetchHostedKnowledgeBase,
   fetchManagedAiAdminInventory,
+  fetchPaymentCatalog,
   fetchSupportOverview,
   fetchWalletHistory,
+  fetchWalletPurchases,
   loginAccount,
   logoutAccount,
   registerAccount,
   resendVerificationEmail,
+  sendPhoneOtp,
   triggerManagedAiCatalogRefresh,
   uploadHostedKnowledgeBaseDocuments,
-  upsertManagedAiCredential
+  upsertManagedAiCredential,
+  verifyPhoneOtp
 } from "./lib/api";
 
 const USER_SESSION_KEY = "phantom.website.user-session";
@@ -47,14 +53,14 @@ const adminNav = [
 const plans = [
   {
     name: "Free Trial",
-    price: "$0",
+    price: "₹0",
     ribbon: "Managed Demo",
     description: "Let candidates feel the real product before they commit to credits.",
     bullets: [
       "Hosted AI with provider + model choice",
-      "2 managed 15-minute demo blocks",
+      "2 trial sessions, 20 minutes each",
       "No BYO key setup",
-      "Email verification required before access"
+      "Phone OTP and email verification required before access"
     ],
     cta: "Start Free",
     to: "/register",
@@ -62,13 +68,13 @@ const plans = [
   },
   {
     name: "Pro BYO",
-    price: "Credit Packs",
+    price: "₹699 to ₹2,499",
     ribbon: "Power Users",
     description: "The full desktop workflow for users who want provider flexibility and their own AI spend.",
     bullets: [
       "Choose any 3 supported providers",
       "Store up to 2 keys per provider",
-      "Desktop usage credit wallet",
+      "3, 8, or 15 Pro credits",
       "Offline resume and lock safeguards"
     ],
     cta: "See Pro Workflow",
@@ -77,15 +83,15 @@ const plans = [
   },
   {
     name: "Premium AI",
-    price: "Credits + Managed AI",
+    price: "₹1,799 to ₹5,599",
     ribbon: "Hands-Off",
     description: "Hosted model operations, managed keys, and support visibility for users who want zero key management.",
     bullets: [
       "Managed ChatGPT, Claude, Gemini, Mistral, Groq, and NVIDIA lanes",
       "Hosted knowledge base synced across desktop devices",
-      "Provider + model choice without API keys",
+      "3, 8, or 15 Premium credits",
       "Premium-only interview retrieval with credit-aware access checks",
-      "Admin-controlled failover and rotation"
+      "Protected continuation debt can be settled directly"
     ],
     cta: "Unlock Premium",
     to: "/download",
@@ -617,12 +623,74 @@ function RegisterPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const registerParams = new URLSearchParams(location.search);
-  const [form, setForm] = useState({ email: "", password: "" });
+  const [form, setForm] = useState({ email: "", password: "", phoneNumber: "", otpCode: "" });
   const [status, setStatus] = useState("");
+  const [otpState, setOtpState] = useState({
+    challengeId: "",
+    verificationToken: "",
+    maskedPhoneNumber: "",
+    verifiedAtUtc: ""
+  });
   const [submitting, setSubmitting] = useState(false);
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const deviceFingerprintHash = registerParams.get("deviceFingerprint") || getBrowserRegistrationFingerprint();
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function handleSendOtp() {
+    setOtpSubmitting(true);
+    setStatus("");
+
+    try {
+      const result = await sendPhoneOtp({
+        phoneNumber: form.phoneNumber,
+        deviceFingerprintHash,
+        installId: registerParams.get("installId") || "",
+        emailHint: form.email
+      });
+      setOtpState((current) => ({
+        ...current,
+        challengeId: result.challengeId,
+        maskedPhoneNumber: result.maskedPhoneNumber,
+        verificationToken: "",
+        verifiedAtUtc: ""
+      }));
+      setStatus(`OTP sent to ${result.maskedPhoneNumber}.`);
+    } catch (error) {
+      setStatus(error.message || "Could not send OTP.");
+    } finally {
+      setOtpSubmitting(false);
+    }
+  }
+
+  async function handleVerifyOtp() {
+    if (!otpState.challengeId) {
+      setStatus("Send OTP before verifying.");
+      return;
+    }
+
+    setOtpSubmitting(true);
+    setStatus("");
+
+    try {
+      const result = await verifyPhoneOtp({
+        challengeId: otpState.challengeId,
+        otpCode: form.otpCode
+      });
+      setOtpState((current) => ({
+        ...current,
+        verificationToken: result.verificationToken,
+        maskedPhoneNumber: result.maskedPhoneNumber,
+        verifiedAtUtc: result.verifiedAtUtc
+      }));
+      setStatus(`Phone verified for ${result.maskedPhoneNumber}.`);
+    } catch (error) {
+      setStatus(error.message || "Could not verify OTP.");
+    } finally {
+      setOtpSubmitting(false);
+    }
   }
 
   async function handleSubmit(event) {
@@ -631,13 +699,19 @@ function RegisterPage() {
     setStatus("");
 
     try {
+      if (!otpState.verificationToken) {
+        throw new Error("Verify your phone number before creating the account.");
+      }
+
       const result = await registerAccount({
         email: form.email,
         password: form.password,
+        phoneNumber: form.phoneNumber,
+        phoneVerificationToken: otpState.verificationToken,
         appVersion: registerParams.get("appVersion") || "",
         installId: registerParams.get("installId") || "",
         deviceLabel: registerParams.get("deviceLabel") || "",
-        deviceFingerprintHash: registerParams.get("deviceFingerprint") || "",
+        deviceFingerprintHash,
         secretFingerprintHint: registerParams.get("deviceHint") || ""
       });
 
@@ -664,6 +738,12 @@ function RegisterPage() {
           Registration creates the hosted identity, sends the verification email, and prepares the account
           for login from the Windows app or the browser dashboard.
         </p>
+        <div className="auth-summary-list">
+          <div>
+            <strong>Phone OTP required</strong>
+            <span>One device and one verified mobile number per launch trial</span>
+          </div>
+        </div>
       </section>
 
       <form className="panel auth-form" onSubmit={handleSubmit}>
@@ -679,10 +759,49 @@ function RegisterPage() {
             onChange={(event) => update("password", event.target.value)}
           />
         </label>
+        <label>
+          <span>Phone number</span>
+          <input
+            value={form.phoneNumber}
+            onChange={(event) => update("phoneNumber", event.target.value)}
+            placeholder="+91 9876543210"
+          />
+        </label>
+        <div className="hero-actions">
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={handleSendOtp}
+            disabled={otpSubmitting || submitting}
+          >
+            {otpSubmitting ? "Sending..." : "Send OTP"}
+          </button>
+          <span className="download-status">
+            {otpState.maskedPhoneNumber
+              ? `OTP challenge active for ${otpState.maskedPhoneNumber}`
+              : "Phone OTP is required before registration"}
+          </span>
+        </div>
+        <label>
+          <span>OTP code</span>
+          <input
+            value={form.otpCode}
+            onChange={(event) => update("otpCode", event.target.value)}
+            placeholder="6-digit OTP"
+          />
+        </label>
+        <button
+          className="button button-secondary"
+          type="button"
+          onClick={handleVerifyOtp}
+          disabled={otpSubmitting || submitting}
+        >
+          {otpSubmitting ? "Working..." : otpState.verificationToken ? "Phone Verified" : "Verify OTP"}
+        </button>
         <button className="button button-primary" type="submit" disabled={submitting}>
           {submitting ? "Creating Account..." : "Create Account"}
         </button>
-        {status && <p className="status-message status-error">{status}</p>}
+        {status && <p className={`status-message ${status.includes("verified") || status.includes("sent") ? "" : "status-error"}`}>{status}</p>}
       </form>
     </main>
   );
@@ -785,6 +904,8 @@ function UserDashboardPage({ session }) {
   const [summary, setSummary] = useState(null);
   const [knowledgeBase, setKnowledgeBase] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
+  const [walletPurchases, setWalletPurchases] = useState([]);
+  const [paymentCatalog, setPaymentCatalog] = useState(null);
   const [devices, setDevices] = useState([]);
   const [download, setDownload] = useState(null);
   const [support, setSupport] = useState(null);
@@ -803,18 +924,30 @@ function UserDashboardPage({ session }) {
           return;
         }
 
-        const [history, deviceRows, downloadEntitlement, supportOverview] = await Promise.all([
+        const [
+          history,
+          purchases,
+          deviceRows,
+          downloadEntitlement,
+          supportOverview,
+          knowledgeBaseStatus,
+          catalog
+        ] = await Promise.all([
           fetchWalletHistory(account.userId),
+          fetchWalletPurchases(account.userId),
           fetchDevices(account.userId),
           fetchDownloadEntitlement(account.userId),
-          fetchSupportOverview(account.userId)
+          fetchSupportOverview(account.userId),
+          fetchHostedKnowledgeBase(session.accessToken),
+          fetchPaymentCatalog(session.accessToken).catch(() => null)
         ]);
-        const knowledgeBaseStatus = await fetchHostedKnowledgeBase(session.accessToken);
 
         if (!cancelled) {
           setSummary(account);
           setKnowledgeBase(knowledgeBaseStatus);
           setWalletHistory(history);
+          setWalletPurchases(purchases);
+          setPaymentCatalog(catalog);
           setDevices(deviceRows);
           setDownload(downloadEntitlement);
           setSupport(supportOverview);
@@ -835,6 +968,24 @@ function UserDashboardPage({ session }) {
       cancelled = true;
     };
   }, [session.accessToken, session.email]);
+
+  async function refreshWalletState() {
+    const account = await fetchAccountSummary(session.email);
+    if (!account) {
+      throw new Error("Account summary could not be resolved.");
+    }
+
+    const [history, purchases, catalog] = await Promise.all([
+      fetchWalletHistory(account.userId),
+      fetchWalletPurchases(account.userId),
+      fetchPaymentCatalog(session.accessToken).catch(() => null)
+    ]);
+
+    setSummary(account);
+    setWalletHistory(history);
+    setWalletPurchases(purchases);
+    setPaymentCatalog(catalog);
+  }
 
   if (loading) {
     return (
@@ -909,7 +1060,19 @@ function UserDashboardPage({ session }) {
               />
             }
           />
-          <Route path="wallet" element={<WalletPanel summary={summary} walletHistory={walletHistory} />} />
+          <Route
+            path="wallet"
+            element={
+              <WalletPanel
+                accessToken={session.accessToken}
+                summary={summary}
+                walletHistory={walletHistory}
+                walletPurchases={walletPurchases}
+                paymentCatalog={paymentCatalog}
+                onWalletUpdated={refreshWalletState}
+              />
+            }
+          />
           <Route path="devices" element={<DevicesPanel devices={devices} />} />
           <Route path="history" element={<HistoryPanel walletHistory={walletHistory} />} />
           <Route path="support" element={<SupportPanel support={support} />} />
@@ -1139,7 +1302,33 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   );
 }
 
-function WalletPanel({ summary, walletHistory }) {
+function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, paymentCatalog, onWalletUpdated }) {
+  const [status, setStatus] = useState("");
+  const [submittingTarget, setSubmittingTarget] = useState("");
+
+  async function handleCheckout(target, packCode) {
+    setSubmittingTarget(`${target}:${packCode}`);
+    setStatus("");
+
+    try {
+      const checkout = await createPaymentCheckout(accessToken, { target, packCode });
+      await openRazorpayCheckout(checkout, async (response) => {
+        await confirmPaymentCheckout(accessToken, {
+          checkoutId: checkout.checkoutId,
+          razorpayOrderId: response.razorpay_order_id,
+          razorpayPaymentId: response.razorpay_payment_id,
+          razorpaySignature: response.razorpay_signature
+        });
+        await onWalletUpdated();
+        setStatus("Payment acknowledged. Wallet refresh complete.");
+      });
+    } catch (error) {
+      setStatus(error.message || "Could not start checkout.");
+    } finally {
+      setSubmittingTarget("");
+    }
+  }
+
   return (
     <div className="dashboard-grid">
       <article className="panel metric-panel panel-brass">
@@ -1153,6 +1342,94 @@ function WalletPanel({ summary, walletHistory }) {
       <article className="panel metric-panel panel-brass">
         <span>Premium debt</span>
         <strong>{summary.premiumNegativeCredits.toFixed(2)}</strong>
+      </article>
+      <article className="panel dashboard-hero-panel">
+        <p className="eyebrow">Wallet checkout</p>
+        <h1>Buy the lane you need and settle protected continuation debt only when it exists.</h1>
+        <p className="hero-text">
+          Premium takes runtime priority whenever Premium credits are available. If Premium reaches zero and Pro
+          remains, Phantom falls back to Pro BYO. Premium debt settlement is shown only when debt exists.
+        </p>
+      </article>
+      {(paymentCatalog?.proPacks || []).map((pack) => (
+        <article className="panel" key={pack.packCode}>
+          <p className="story-tag">Pro BYO Pack</p>
+          <h3>{pack.label}</h3>
+          <p>{pack.description}</p>
+          <strong>{formatInr(pack.displayAmountInr)} · {pack.credits} credits</strong>
+          <button
+            className="button button-primary"
+            onClick={() => handleCheckout(pack.target, pack.packCode)}
+            disabled={submittingTarget === `${pack.target}:${pack.packCode}`}
+          >
+            {submittingTarget === `${pack.target}:${pack.packCode}` ? "Opening..." : "Buy Pro Credits"}
+          </button>
+        </article>
+      ))}
+      {(paymentCatalog?.premiumPacks || []).map((pack) => (
+        <article className="panel" key={pack.packCode}>
+          <p className="story-tag">Premium Pack</p>
+          <h3>{pack.label}</h3>
+          <p>{pack.description}</p>
+          <strong>{formatInr(pack.displayAmountInr)} · {pack.credits} credits</strong>
+          <button
+            className="button button-primary"
+            onClick={() => handleCheckout(pack.target, pack.packCode)}
+            disabled={submittingTarget === `${pack.target}:${pack.packCode}`}
+          >
+            {submittingTarget === `${pack.target}:${pack.packCode}` ? "Opening..." : "Buy Premium Credits"}
+          </button>
+        </article>
+      ))}
+      {paymentCatalog?.premiumDebtSettlement ? (
+        <article className="panel panel-brass">
+          <p className="story-tag">Debt Settlement</p>
+          <h3>Clear Premium continuation debt</h3>
+          <p>
+            Outstanding debt: {summary.premiumNegativeCredits.toFixed(2)} Premium credits.
+            This direct payment does not add new credits.
+          </p>
+          <strong>{formatInr(paymentCatalog.premiumDebtSettlement.displayAmountInr)}</strong>
+          <button
+            className="button button-primary"
+            onClick={() => handleCheckout("premium_debt_settlement", "premium_debt_settlement")}
+            disabled={submittingTarget === "premium_debt_settlement:premium_debt_settlement"}
+          >
+            {submittingTarget === "premium_debt_settlement:premium_debt_settlement" ? "Opening..." : "Settle Debt"}
+          </button>
+        </article>
+      ) : null}
+      {status && <article className="panel table-panel table-panel-full"><p className={`status-message ${status.includes("acknowledged") ? "" : "status-error"}`}>{status}</p></article>}
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Purchase history</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Purchase</th>
+              <th>Amount</th>
+              <th>Credits</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {walletPurchases.length === 0 ? (
+              <tr>
+                <td colSpan="5">No credit purchases recorded yet.</td>
+              </tr>
+            ) : (
+              walletPurchases.map((item) => (
+                <tr key={item.checkoutId}>
+                  <td>{item.displayLabel}</td>
+                  <td>{formatInr(item.amountInr)}</td>
+                  <td>{item.target === "premium_debt_settlement" ? `Debt ${item.premiumDebtCreditsCovered}` : item.credits}</td>
+                  <td>{item.status}</td>
+                  <td>{formatDate(item.createdAtUtc)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </article>
       <article className="panel table-panel table-panel-full">
         <p className="eyebrow">Wallet history</p>
@@ -1845,6 +2122,83 @@ function writeStoredJson(key, value) {
 
 function clearStoredJson(key) {
   window.localStorage.removeItem(key);
+}
+
+function getBrowserRegistrationFingerprint() {
+  const existing = readStoredJson("phantom.website.device-profile");
+  if (existing?.deviceFingerprintHash) {
+    return existing.deviceFingerprintHash;
+  }
+
+  const installId = `web-${crypto.randomUUID()}`;
+  const deviceProfile = {
+    appVersion: "phantom-website-dashboard",
+    installId,
+    deviceLabel: "Browser Dashboard",
+    deviceFingerprintHash: `browser-${installId}`,
+    secretFingerprintHint: "browser"
+  };
+  writeStoredJson("phantom.website.device-profile", deviceProfile);
+  return deviceProfile.deviceFingerprintHash;
+}
+
+function formatInr(value) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(value || 0);
+}
+
+async function loadRazorpayScript() {
+  if (window.Razorpay) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-phantom-razorpay="true"]');
+    if (existing) {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.phantomRazorpay = "true";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not load Razorpay checkout."));
+    document.body.appendChild(script);
+  });
+}
+
+async function openRazorpayCheckout(checkout, onSuccess) {
+  await loadRazorpayScript();
+
+  await new Promise((resolve, reject) => {
+    const razorpay = new window.Razorpay({
+      key: checkout.razorpayKeyId,
+      amount: checkout.amountMinor,
+      currency: checkout.currency,
+      name: "Phantom",
+      description: checkout.displayLabel,
+      order_id: checkout.razorpayOrderId,
+      handler: async (response) => {
+        try {
+          await onSuccess(response);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      },
+      modal: {
+        ondismiss: () => reject(new Error("Checkout was dismissed."))
+      }
+    });
+
+    razorpay.open();
+  });
 }
 
 function formatDate(value) {

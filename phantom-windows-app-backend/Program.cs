@@ -18,6 +18,7 @@ builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
+builder.Services.AddSingleton<PhoneVerificationRepository>();
 builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
@@ -26,22 +27,27 @@ builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
 builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
+builder.Services.AddSingleton<PaymentOrderRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<LoginAttemptService>();
+builder.Services.AddSingleton<TwoFactorOtpClient>();
 builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<PaymentCatalog>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
+builder.Services.AddSingleton<PhoneVerificationService>();
 builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
+builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -152,6 +158,22 @@ app.MapPost("/api/desktop/auth/register", (
     {
         return Results.BadRequest(new { error = validationException.Message });
     }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/phone/send-otp", async (
+    PhoneVerificationStartRequestDto request,
+    PhoneVerificationService phoneVerification,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await phoneVerification.StartAsync(request, cancellationToken));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/phone/verify-otp", async (
+    PhoneVerificationConfirmRequestDto request,
+    PhoneVerificationService phoneVerification,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await phoneVerification.ConfirmAsync(request, cancellationToken));
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/verify-email/request", (
@@ -390,6 +412,57 @@ app.MapPost("/api/desktop/context-packs/delete", (
     var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     contextPacks.Delete(account, request.PackId);
     return Results.Ok(new { deleted = true });
+});
+
+app.MapGet("/api/desktop/payments/catalog", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.GetCatalog(account));
+});
+
+app.MapGet("/api/desktop/payments/orders", (
+    HttpContext httpContext,
+    int? limit,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.ListOrdersForUser(account.UserId, limit ?? 20));
+});
+
+app.MapPost("/api/desktop/payments/checkout", async (
+    HttpContext httpContext,
+    PaymentCheckoutCreateRequestDto request,
+    HostedKnowledgeBaseService access,
+    PaymentService payments,
+    CancellationToken cancellationToken) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(await payments.CreateCheckoutAsync(account, request, cancellationToken));
+});
+
+app.MapPost("/api/desktop/payments/client-confirm", (
+    HttpContext httpContext,
+    PaymentClientConfirmationRequestDto request,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.ConfirmClientPayment(account, request));
+});
+
+app.MapPost("/api/payments/razorpay/webhook", async (
+    HttpContext httpContext,
+    PaymentService payments,
+    CancellationToken cancellationToken) =>
+{
+    using var reader = new StreamReader(httpContext.Request.Body);
+    var payload = await reader.ReadToEndAsync(cancellationToken);
+    var signature = httpContext.Request.Headers["X-Razorpay-Signature"].ToString();
+    return Results.Ok(await payments.ProcessWebhookAsync(payload, signature, cancellationToken));
 });
 
 app.MapPost("/api/desktop/locks/acquire", (

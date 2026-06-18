@@ -1,33 +1,129 @@
 {
   "version": 2,
-  "dgSpecHash": "WcYG9PxwUgU=",
+  "dgSpecHash": "Eadvx54mBWM=",
   "success": false,
   "projectFilePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
   "expectedPackageFiles": [],
   "logs": [
     {
-      "code": "NU1301",
-      "level": "Error",
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
       "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
       "targetGraphs": []
     },
     {
-      "code": "NU1301",
-      "level": "Error",
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
       "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
       "targetGraphs": []
     },
     {
-      "code": "NU1301",
-      "level": "Error",
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
       "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
       "targetGraphs": []
+    },
+    {
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1801",
+      "level": "Warning",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Google.Apis.Auth. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Google.Apis.Auth",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Google.Apis.Gmail.v1. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Google.Apis.Gmail.v1",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Npgsql. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Npgsql",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Microsoft.NETCore.App.Ref. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Microsoft.NETCore.App.Ref",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Microsoft.AspNetCore.App.Ref. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Microsoft.AspNetCore.App.Ref",
+      "targetGraphs": [
+        "net8.0"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Microsoft.NETCore.App.Host.osx-x64. No packages exist with this id in source(s): nuget.org",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "libraryId": "Microsoft.NETCore.App.Host.osx-x64",
+      "targetGraphs": [
+        "net8.0"
+      ]
     },
     {
       "code": "NU1900",

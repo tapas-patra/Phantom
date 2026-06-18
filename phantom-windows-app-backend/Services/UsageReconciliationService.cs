@@ -38,7 +38,7 @@ public sealed class UsageReconciliationService
         }
 
         var account = _accounts.RequireAccount(request.UserId);
-        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
+        var isFreeTier = AccessModeResolver.IsFree(account);
         var existingDebt = Math.Max(0m, account.PremiumNegativeCredits);
         var remainingDebtBudget = Math.Max(0m, ProtectedContinuationCap - existingDebt);
         var requestedDebt = isFreeTier
@@ -83,6 +83,7 @@ public sealed class UsageReconciliationService
         }
 
         account.PremiumNegativeCredits += addedDebt;
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         _accounts.Save(account);
 
         var ledger = new UsageLedgerRecord

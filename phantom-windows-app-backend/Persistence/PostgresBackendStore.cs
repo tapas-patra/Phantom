@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
     email_verified_at_utc TIMESTAMPTZ NULL,
     access_tier TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    phone_number_e164 TEXT NOT NULL DEFAULT '',
     phone_verified BOOLEAN NOT NULL,
+    phone_verified_at_utc TIMESTAMPTZ NULL,
+    registration_device_fingerprint_hash TEXT NOT NULL DEFAULT '',
     pro_available_credits NUMERIC(18,2) NOT NULL,
     premium_available_credits NUMERIC(18,2) NOT NULL,
     premium_negative_credits NUMERIC(18,2) NOT NULL,
@@ -71,6 +74,17 @@ ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS email_verified_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS phone_number_e164 TEXT NOT NULL DEFAULT '';
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS phone_verified_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS registration_device_fingerprint_hash TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_desktop_accounts_phone_number_e164
+    ON desktop_accounts(phone_number_e164);
+CREATE INDEX IF NOT EXISTS idx_desktop_accounts_registration_fingerprint
+    ON desktop_accounts(registration_device_fingerprint_hash);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
     session_id TEXT PRIMARY KEY,
@@ -162,6 +176,68 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_email
     ON email_verification_tokens(email, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS phone_verification_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    phone_number_e164 TEXT NOT NULL,
+    phone_number_masked TEXT NOT NULL,
+    device_fingerprint_hash TEXT NOT NULL,
+    install_id TEXT NOT NULL,
+    email_hint TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    provider_session_id TEXT NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    verified_at_utc TIMESTAMPTZ NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    cooldown_until_utc TIMESTAMPTZ NULL,
+    send_attempt_count INTEGER NOT NULL,
+    verify_attempt_count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    verification_token_hash TEXT NOT NULL,
+    failure_reason TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_verification_challenges_phone_time
+    ON phone_verification_challenges(phone_number_e164, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_phone_verification_challenges_fingerprint_time
+    ON phone_verification_challenges(device_fingerprint_hash, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS payment_orders (
+    checkout_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    target TEXT NOT NULL,
+    pack_code TEXT NOT NULL,
+    display_label TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    credits NUMERIC(18,2) NOT NULL,
+    premium_debt_credits_covered NUMERIC(18,2) NOT NULL,
+    razorpay_order_id TEXT NOT NULL UNIQUE,
+    razorpay_payment_id TEXT NOT NULL DEFAULT '',
+    razorpay_signature TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    client_confirmed BOOLEAN NOT NULL,
+    credited_at_utc TIMESTAMPTZ NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_orders_user_created
+    ON payment_orders(user_id, created_at_utc DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_payment_id
+    ON payment_orders(razorpay_payment_id)
+    WHERE razorpay_payment_id <> '';
+
+CREATE TABLE IF NOT EXISTS payment_webhook_events (
+    event_record_id TEXT PRIMARY KEY,
+    external_event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    processed_at_utc TIMESTAMPTZ NULL
+);
 
 CREATE TABLE IF NOT EXISTS integration_secrets (
     secret_key TEXT PRIMARY KEY,

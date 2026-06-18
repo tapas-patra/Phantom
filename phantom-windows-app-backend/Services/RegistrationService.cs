@@ -13,6 +13,7 @@ public sealed class RegistrationService
     private readonly EmailVerificationRepository _verifications;
     private readonly MagicLinkEmailService _emailService;
     private readonly TokenService _tokenService;
+    private readonly PhoneVerificationService _phoneVerification;
 
     public RegistrationService(
         BackendOptions options,
@@ -20,7 +21,8 @@ public sealed class RegistrationService
         PasswordHasher passwordHasher,
         EmailVerificationRepository verifications,
         MagicLinkEmailService emailService,
-        TokenService tokenService)
+        TokenService tokenService,
+        PhoneVerificationService phoneVerification)
     {
         _options = options;
         _accounts = accounts;
@@ -28,6 +30,7 @@ public sealed class RegistrationService
         _verifications = verifications;
         _emailService = emailService;
         _tokenService = tokenService;
+        _phoneVerification = phoneVerification;
     }
 
     public AuthRegisterResultDto Register(AuthRegisterRequestDto request, string publicBackendBaseUrl)
@@ -49,6 +52,16 @@ public sealed class RegistrationService
         }
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var deviceFingerprintHash = request.DeviceFingerprintHash?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(deviceFingerprintHash))
+        {
+            throw new BackendValidationException("Device fingerprint is required for registration.");
+        }
+
+        var verifiedPhone = _phoneVerification.ConsumeVerifiedToken(
+            request.PhoneVerificationToken,
+            request.PhoneNumber,
+            deviceFingerprintHash);
         var existing = _accounts.FindByEmail(normalizedEmail);
         if (existing != null && existing.EmailVerified)
         {
@@ -61,7 +74,10 @@ public sealed class RegistrationService
             UserId = $"user-{Guid.NewGuid():N}",
             Email = normalizedEmail,
             AccessTier = "free",
-            PhoneVerified = false,
+            PhoneNumberE164 = verifiedPhone.PhoneNumberE164,
+            PhoneVerified = true,
+            PhoneVerifiedAtUtc = verifiedPhone.VerifiedAtUtc,
+            RegistrationDeviceFingerprintHash = deviceFingerprintHash,
             ProAvailableCredits = 0m,
             PremiumAvailableCredits = 0.5m,
             PremiumNegativeCredits = 0m,
@@ -71,13 +87,18 @@ public sealed class RegistrationService
         };
 
         account.Email = normalizedEmail;
-        if (string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase))
+        account.PhoneNumberE164 = verifiedPhone.PhoneNumberE164;
+        account.PhoneVerified = true;
+        account.PhoneVerifiedAtUtc = verifiedPhone.VerifiedAtUtc;
+        account.RegistrationDeviceFingerprintHash = deviceFingerprintHash;
+        if (AccessModeResolver.IsFree(account))
         {
             account.PremiumAvailableCredits = Math.Max(account.PremiumAvailableCredits, 0.5m);
         }
         account.EmailVerified = false;
         account.EmailVerifiedAtUtc = null;
         account.PasswordHash = _passwordHasher.Hash(request.Password);
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.LastValidatedAtUtc = now;
         account.UpdatedAtUtc = now;
 

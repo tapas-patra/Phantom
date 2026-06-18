@@ -198,10 +198,10 @@ public sealed class ManagedAiService
 
     private static void EnsureManagedAccess(DesktopAccountRecord account, bool allowPaidSessionExtension)
     {
-        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
-        var hasPremiumManagedLane = account.PremiumAvailableCredits > 0m
-            || string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
-        var isByoTier = string.Equals(account.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
+        var effectiveTier = AccessModeResolver.GetEffectiveAccessTier(account);
+        var isFreeTier = string.Equals(effectiveTier, AccessModeResolver.Free, StringComparison.OrdinalIgnoreCase);
+        var hasPremiumManagedLane = string.Equals(effectiveTier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase);
+        var isByoTier = string.Equals(effectiveTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase);
 
         if (!isFreeTier && !hasPremiumManagedLane && !(isByoTier && allowPaidSessionExtension))
         {

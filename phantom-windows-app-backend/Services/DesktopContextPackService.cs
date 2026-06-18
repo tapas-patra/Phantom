@@ -89,9 +89,21 @@ public sealed class DesktopContextPackService
             CreatedAtUtc = now
         };
 
-        record.Name = request.Name.Trim();
-        record.ResumeText = request.ResumeText?.Trim() ?? string.Empty;
-        record.JobDescriptionText = request.JobDescriptionText?.Trim() ?? string.Empty;
+        var trimmedName = request.Name.Trim();
+        var trimmedResumeText = request.ResumeText?.Trim() ?? string.Empty;
+        var trimmedJobDescriptionText = request.JobDescriptionText?.Trim() ?? string.Empty;
+
+        if (existing != null
+            && string.Equals(existing.Name, trimmedName, StringComparison.Ordinal)
+            && string.Equals(existing.ResumeText, trimmedResumeText, StringComparison.Ordinal)
+            && string.Equals(existing.JobDescriptionText, trimmedJobDescriptionText, StringComparison.Ordinal))
+        {
+            return Map(existing);
+        }
+
+        record.Name = trimmedName;
+        record.ResumeText = trimmedResumeText;
+        record.JobDescriptionText = trimmedJobDescriptionText;
         record.UpdatedAtUtc = now;
 
         _packs.Save(record);

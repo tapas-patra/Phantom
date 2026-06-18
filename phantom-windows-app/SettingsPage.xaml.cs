@@ -451,14 +451,31 @@ namespace SecureOverlay
                 ? null
                 : _hostedContextPacks.FirstOrDefault(item => string.Equals(item.PackId, selectedItem.PackId, StringComparison.Ordinal));
 
-            // Save updates the selected pack only when the user keeps the original name.
-            // Saved packs must be explicitly unlocked for editing before they can be overwritten.
-            // Changing the name creates a new pack instead of silently overwriting the old one.
             var selectedPackId = selectedPack != null
-                && _isEditingSelectedHostedPack
                 && string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
                 ? selectedPack.PackId
                 : string.Empty;
+
+            var hasChanges = selectedPack == null
+                || !string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
+                || !string.Equals(selectedPack.ResumeText, resumeText, StringComparison.Ordinal)
+                || !string.Equals(selectedPack.JobDescriptionText, jobDescriptionText, StringComparison.Ordinal);
+
+            if (!hasChanges)
+            {
+                _settings.SelectedHostedContextPackId = selectedPack?.PackId ?? string.Empty;
+                SettingsManager.Save(_settings);
+                _isEditingSelectedHostedPack = false;
+                SetContextEditorsEditable(false);
+                ContextPackStatusText.Text = $"No changes to save for '{packName}'.";
+
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show($"No changes to save for '{packName}'.", "Context Pack");
+                }
+
+                return selectedPack;
+            }
 
             try
             {
@@ -472,8 +489,13 @@ namespace SecureOverlay
 
                 _settings.SelectedHostedContextPackId = savedPack.PackId;
                 SettingsManager.Save(_settings);
-                SavePackToLocalState(savedPack);
+                if (selectedPack == null)
+                {
+                    SaveEditorsToLocalDraft();
+                }
+
                 _isEditingSelectedHostedPack = false;
+                SetContextEditorsEditable(false);
                 LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
                 ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account.";
 
@@ -519,10 +541,8 @@ namespace SecureOverlay
                 _hostedAccountClient.DeleteContextPack(session.AccessToken, selection.PackId);
                 _settings.SelectedHostedContextPackId = string.Empty;
                 SettingsManager.Save(_settings);
-                _contextPackService.ClearSelectedPack(clearResume: true, clearJobDescription: true);
                 _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(true);
-                ClearContextPackEditors();
                 LoadHostedContextPacks();
                 ContextPackStatusText.Text = "Context pack deleted.";
             }
@@ -534,26 +554,30 @@ namespace SecureOverlay
             }
         }
 
-        private void SavePackToLocalState(DesktopContextPackDto savedPack)
+        private void SaveEditorsToLocalDraft()
         {
             var selectedPack = _contextPackService.GetSelectedPack();
+            SaveEditorsToLocalDraft(selectedPack);
+        }
+
+        private void SaveEditorsToLocalDraft(ContextPack selectedPack)
+        {
             var oldResume = selectedPack.ResumeText;
             var oldJobDescription = selectedPack.JobDescriptionText;
 
-            selectedPack.PackId = savedPack.PackId;
-            selectedPack.Name = savedPack.Name;
-            selectedPack.ResumeText = savedPack.ResumeText;
-            selectedPack.JobDescriptionText = savedPack.JobDescriptionText;
-            selectedPack.UpdatedAtUtc = savedPack.UpdatedAtUtc;
+            selectedPack.ResumeText = ResumeBox.Text;
+            selectedPack.JobDescriptionText = JobDescriptionBox.Text;
 
-            if (!string.Equals(oldResume, savedPack.ResumeText, StringComparison.Ordinal))
+            if (!string.Equals(oldResume, selectedPack.ResumeText, StringComparison.Ordinal))
             {
                 selectedPack.ResumeSummary = string.Empty;
+                Log.WriteLine("Resume changed - cached summary cleared");
             }
 
-            if (!string.Equals(oldJobDescription, savedPack.JobDescriptionText, StringComparison.Ordinal))
+            if (!string.Equals(oldJobDescription, selectedPack.JobDescriptionText, StringComparison.Ordinal))
             {
                 selectedPack.JobDescriptionSummary = string.Empty;
+                Log.WriteLine("Job description changed - cached summary cleared");
             }
 
             _contextPackService.SaveSelectedPack(selectedPack);
@@ -1239,34 +1263,14 @@ namespace SecureOverlay
                 ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
                 SettingsManager.Save(_settings);
 
-                var savedHostedPack = IsPremiumAccount()
-                    ? SaveHostedContextPack(showSuccessMessage: false)
-                    : null;
-
-                if (savedHostedPack == null)
+                var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
+                if (!IsPremiumAccount() || !selectedHostedPack)
                 {
                     var selectedPack = _contextPackService.GetSelectedPack();
-                    var oldResume = selectedPack.ResumeText;
-                    var oldJobDescription = selectedPack.JobDescriptionText;
                     selectedPack.Name = string.IsNullOrWhiteSpace(ContextPackNameTextBox.Text)
                         ? selectedPack.Name
                         : ContextPackNameTextBox.Text.Trim();
-                    selectedPack.ResumeText = ResumeBox.Text;
-                    selectedPack.JobDescriptionText = JobDescriptionBox.Text;
-
-                    if (oldResume != selectedPack.ResumeText)
-                    {
-                        selectedPack.ResumeSummary = string.Empty;
-                        Log.WriteLine("Resume changed - cached summary cleared");
-                    }
-
-                    if (oldJobDescription != selectedPack.JobDescriptionText)
-                    {
-                        selectedPack.JobDescriptionSummary = string.Empty;
-                        Log.WriteLine("Job description changed - cached summary cleared");
-                    }
-
-                    _contextPackService.SaveSelectedPack(selectedPack);
+                    SaveEditorsToLocalDraft(selectedPack);
                 }
 
                 Log.WriteLine($"✓ Settings saved:");

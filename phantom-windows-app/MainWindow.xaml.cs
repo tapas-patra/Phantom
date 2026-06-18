@@ -567,7 +567,7 @@ namespace SecureOverlay
             }
 
             _lastInterviewActivityUtc ??= DateTime.UtcNow;
-            var inactivityThreshold = TimeSpan.FromMinutes(Math.Max(5, _settings.AutoPauseOnInactivityMinutes));
+            var inactivityThreshold = TimeSpan.FromMinutes(Math.Max(10, _settings.AutoPauseOnInactivityMinutes));
             if (DateTime.UtcNow - _lastInterviewActivityUtc.Value < inactivityThreshold)
             {
                 return;

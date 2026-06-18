@@ -503,7 +503,7 @@
                                              Foreground="White"
                                              BorderThickness="0"
                                              Padding="6,4"/>
-                                    <TextBlock Text="(minimum 5)"
+                                    <TextBlock Text="(minimum 10)"
                                               Foreground="#CCCCCC"
                                               FontSize="11"
                                               VerticalAlignment="Center"
@@ -551,6 +551,17 @@
                                            Click="SaveContextPackButton_Click"
                                            Background="#505A9B2D"
                                            BorderBrush="#90A7D76B"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                    <Button x:Name="EditContextPackButton"
+                                           Content="Edit Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Margin="10,0,0,0"
+                                           Click="EditContextPackButton_Click"
+                                           Background="#50406D9C"
+                                           BorderBrush="#908BBBE8"
                                            BorderThickness="1"
                                            Foreground="White"
                                            Style="{StaticResource ButtonStyle}"/>

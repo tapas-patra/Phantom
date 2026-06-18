@@ -33,6 +33,7 @@ namespace SecureOverlay
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
         private bool _isUpdatingContextPackSelection;
+        private bool _isEditingSelectedHostedPack;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
@@ -192,7 +193,7 @@ namespace SecureOverlay
             UpdateFakeCursorPanelVisibility();
             InterviewTypeComboBox.SelectedItem = _settings.InterviewPromptType;
             AutoPauseInactivityCheckBox.IsChecked = _settings.AutoPauseOnInactivityEnabled;
-            AutoPauseMinutesTextBox.Text = Math.Max(5, _settings.AutoPauseOnInactivityMinutes).ToString();
+            AutoPauseMinutesTextBox.Text = Math.Max(10, _settings.AutoPauseOnInactivityMinutes).ToString();
 
             LoadContextPackEditors();
 
@@ -327,14 +328,18 @@ namespace SecureOverlay
         {
             if (!IsPremiumAccount())
             {
+                SetContextEditorsEditable(true);
                 return;
             }
 
             var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
             if (selection == null || selection.IsBlank)
             {
+                _isEditingSelectedHostedPack = false;
                 ContextPackNameTextBox.Text = string.Empty;
                 DeleteContextPackButton.IsEnabled = false;
+                EditContextPackButton.IsEnabled = false;
+                SetContextEditorsEditable(true);
                 LoadPackIntoEditors(_contextPackService.GetSelectedPack());
 
                 return;
@@ -347,7 +352,10 @@ namespace SecureOverlay
             }
 
             ContextPackNameTextBox.Text = pack.Name;
+            _isEditingSelectedHostedPack = false;
             DeleteContextPackButton.IsEnabled = true;
+            EditContextPackButton.IsEnabled = true;
+            SetContextEditorsEditable(false);
             LoadPackIntoEditors(new ContextPack
             {
                 PackId = pack.PackId,
@@ -358,6 +366,28 @@ namespace SecureOverlay
                 JobDescriptionSummary = string.Empty,
                 UpdatedAtUtc = pack.UpdatedAtUtc
             });
+        }
+
+        private void EditContextPackButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsPremiumAccount())
+            {
+                SetContextEditorsEditable(true);
+                return;
+            }
+
+            var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            if (selection == null || selection.IsBlank)
+            {
+                SetContextEditorsEditable(true);
+                return;
+            }
+
+            _isEditingSelectedHostedPack = true;
+            SetContextEditorsEditable(true);
+            ResumeBox.Focus();
+            ResumeBox.CaretIndex = ResumeBox.Text.Length;
+            ContextPackStatusText.Text = $"Editing '{ContextPackNameTextBox.Text}'. Save the pack when you're done.";
         }
 
         private void SaveContextPackButton_Click(object sender, RoutedEventArgs e)
@@ -419,8 +449,10 @@ namespace SecureOverlay
                 : _hostedContextPacks.FirstOrDefault(item => string.Equals(item.PackId, selectedItem.PackId, StringComparison.Ordinal));
 
             // Save updates the selected pack only when the user keeps the original name.
+            // Saved packs must be explicitly unlocked for editing before they can be overwritten.
             // Changing the name creates a new pack instead of silently overwriting the old one.
             var selectedPackId = selectedPack != null
+                && _isEditingSelectedHostedPack
                 && string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
                 ? selectedPack.PackId
                 : string.Empty;
@@ -436,6 +468,7 @@ namespace SecureOverlay
                 });
 
                 SavePackToLocalState(savedPack);
+                _isEditingSelectedHostedPack = false;
                 LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
                 ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account.";
 
@@ -480,6 +513,8 @@ namespace SecureOverlay
             {
                 _hostedAccountClient.DeleteContextPack(session.AccessToken, selection.PackId);
                 _contextPackService.ClearSelectedPack(clearResume: true, clearJobDescription: true);
+                _isEditingSelectedHostedPack = false;
+                SetContextEditorsEditable(true);
                 ClearContextPackEditors();
                 LoadHostedContextPacks();
                 ContextPackStatusText.Text = "Context pack deleted.";
@@ -531,6 +566,21 @@ namespace SecureOverlay
         private void ClearContextPackEditors()
         {
             LoadPackIntoEditors(new ContextPack());
+        }
+
+        private void SetContextEditorsEditable(bool isEditable)
+        {
+            if (ResumeBox != null)
+            {
+                ResumeBox.IsReadOnly = !isEditable;
+                ResumeBox.Opacity = isEditable ? 1.0 : 0.82;
+            }
+
+            if (JobDescriptionBox != null)
+            {
+                JobDescriptionBox.IsReadOnly = !isEditable;
+                JobDescriptionBox.Opacity = isEditable ? 1.0 : 0.82;
+            }
         }
 
         private void LoadApiKeys()
@@ -1149,7 +1199,15 @@ namespace SecureOverlay
                 _settings.AutoPauseOnInactivityEnabled = AutoPauseInactivityCheckBox.IsChecked == true;
                 if (int.TryParse(AutoPauseMinutesTextBox.Text, out var autoPauseMinutes))
                 {
-                    _settings.AutoPauseOnInactivityMinutes = Math.Max(5, autoPauseMinutes);
+                    if (autoPauseMinutes < 10)
+                    {
+                        InvisibleMessageBox.Show(
+                            "Session auto pause must be at least 10 minutes.",
+                            "Invalid Auto Pause");
+                        return;
+                    }
+
+                    _settings.AutoPauseOnInactivityMinutes = autoPauseMinutes;
                 }
                 else
                 {
@@ -1329,6 +1387,8 @@ namespace SecureOverlay
 
             UpdateKnowledgeBaseStatusNotice();
             SaveContextPackButton.IsEnabled = IsPremiumAccount();
+            EditContextPackButton.IsEnabled = IsPremiumAccount()
+                && (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
             DeleteContextPackButton.IsEnabled = IsPremiumAccount()
                 && (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
 

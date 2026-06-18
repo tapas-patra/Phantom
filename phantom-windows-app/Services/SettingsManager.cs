@@ -533,7 +533,7 @@ namespace SecureOverlay.Services
         {
             settings.InterviewPromptType = NormalizeInterviewPromptType(settings.InterviewPromptType);
             settings.SystemPrompt = InterviewPromptRegistry.ResolveSystemPrompt(settings.InterviewPromptType);
-            settings.AutoPauseOnInactivityMinutes = Math.Max(5, settings.AutoPauseOnInactivityMinutes);
+            settings.AutoPauseOnInactivityMinutes = Math.Max(10, settings.AutoPauseOnInactivityMinutes);
             settings.PremiumConfiguredProviders = settings.PremiumConfiguredProviders
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)

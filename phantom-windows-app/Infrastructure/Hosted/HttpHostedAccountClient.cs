@@ -41,5 +41,31 @@ namespace SecureOverlay.Infrastructure.Hosted
                 $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}",
                 accessToken);
         }
+
+        public DesktopContextPackDto[] GetContextPacks(string accessToken)
+        {
+            return GetJson<DesktopContextPackDto[]>("/api/desktop/context-packs", accessToken);
+        }
+
+        public DesktopContextPackDto SaveContextPack(string accessToken, DesktopContextPackUpsertRequestDto request)
+        {
+            return PostJson<DesktopContextPackUpsertRequestDto, DesktopContextPackDto>(
+                "/api/desktop/context-packs",
+                request,
+                accessToken);
+        }
+
+        public void DeleteContextPack(string accessToken, string packId)
+        {
+            PostJson<DesktopContextPackDeleteRequestDto, DeleteResult>(
+                "/api/desktop/context-packs/delete",
+                new DesktopContextPackDeleteRequestDto { PackId = packId ?? string.Empty },
+                accessToken);
+        }
+
+        private sealed class DeleteResult
+        {
+            public bool Deleted { get; set; }
+        }
     }
 }

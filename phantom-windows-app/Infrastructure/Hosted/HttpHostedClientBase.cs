@@ -24,13 +24,38 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             try
             {
-                var response = HttpClient.PostAsync(
-                    $"{_baseUrl}{relativePath}",
-                    new StringContent(
+                return PostJson(relativePath, request, bearerToken: null);
+            }
+            catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HostedServiceException(
+                    $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
+                    ex);
+            }
+        }
+
+        protected TResponse PostJson<TRequest, TResponse>(string relativePath, TRequest request, string? bearerToken)
+        {
+            try
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}{relativePath}")
+                {
+                    Content = new StringContent(
                         JsonConvert.SerializeObject(request),
                         Encoding.UTF8,
-                        "application/json")).GetAwaiter().GetResult();
+                        "application/json")
+                };
 
+                if (!string.IsNullOrWhiteSpace(bearerToken))
+                {
+                    message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                }
+
+                var response = HttpClient.SendAsync(message).GetAwaiter().GetResult();
                 var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 if (!response.IsSuccessStatusCode)
                 {

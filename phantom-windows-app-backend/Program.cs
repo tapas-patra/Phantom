@@ -23,6 +23,7 @@ builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
+builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
@@ -40,6 +41,7 @@ builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
+builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -361,6 +363,33 @@ app.MapGet("/api/desktop/kb/search", (
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
+});
+
+app.MapGet("/api/desktop/context-packs", (
+    HttpContext httpContext,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(contextPacks.List(account));
+});
+
+app.MapPost("/api/desktop/context-packs", (
+    HttpContext httpContext,
+    DesktopContextPackUpsertRequestDto request,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(contextPacks.Upsert(account, request));
+});
+
+app.MapPost("/api/desktop/context-packs/delete", (
+    HttpContext httpContext,
+    DesktopContextPackDeleteRequestDto request,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    contextPacks.Delete(account, request.PackId);
+    return Results.Ok(new { deleted = true });
 });
 
 app.MapPost("/api/desktop/locks/acquire", (

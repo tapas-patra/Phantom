@@ -512,6 +512,70 @@
                             </StackPanel>
                         </Border>
 
+                        <Border x:Name="ContextPackSection" Background="#303A245D" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#9071D9D7" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock Text="Premium Context Packs" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="ContextPackSectionDescription"
+                                          Text="Save full resume and job-description pairs to your Premium account, then reload them later by name."
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0"
+                                          Margin="0,8,0,12" Effect="{StaticResource Shadow}"/>
+
+                                <TextBlock Text="Saved Pack" FontSize="12" Foreground="White"
+                                          Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
+                                <ComboBox x:Name="SavedContextPackComboBox"
+                                         Height="35"
+                                         Margin="0,0,0,10"
+                                         Foreground="Black"
+                                         DisplayMemberPath="DisplayName"
+                                         SelectionChanged="SavedContextPackComboBox_SelectionChanged"/>
+
+                                <TextBlock Text="Pack Name" FontSize="12" Foreground="White"
+                                          Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
+                                <TextBox x:Name="ContextPackNameTextBox"
+                                        Height="35"
+                                        Margin="0,0,0,10"
+                                        Background="#40FFFFFF"
+                                        Foreground="White"
+                                        BorderBrush="#70FFFFFF"
+                                        BorderThickness="1"
+                                        Padding="8,4"/>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="SaveContextPackButton"
+                                           Content="Save Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Click="SaveContextPackButton_Click"
+                                           Background="#505A9B2D"
+                                           BorderBrush="#90A7D76B"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                    <Button x:Name="DeleteContextPackButton"
+                                           Content="Delete Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Margin="10,0,0,0"
+                                           Click="DeleteContextPackButton_Click"
+                                           Background="#505D2C2C"
+                                           BorderBrush="#90E28A8A"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+
+                                <TextBlock x:Name="ContextPackStatusText"
+                                          Text=""
+                                          TextWrapping="Wrap"
+                                          FontSize="11"
+                                          Foreground="#F7EFCF"
+                                          Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Resume -->
                         <TextBlock Text="📄 Resume / Professional Profile" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>

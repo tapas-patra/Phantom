@@ -10,10 +10,12 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Navigation;
 using SecureOverlay.Application.Context;
+using SecureOverlay.Application.Persistence;
 using SecureOverlay.Services;
 using SecureOverlay.Helpers;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Context;
+using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Persistence;
 
@@ -26,8 +28,12 @@ namespace SecureOverlay
         private AppSettings _settings;
         private readonly IContextPackService _contextPackService;
         private readonly AccountCacheSnapshot? _accountSnapshot;
+        private readonly IAuthSessionRepository _authSessionRepository;
+        private readonly IHostedAccountClient _hostedAccountClient;
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
+        private bool _isUpdatingContextPackSelection;
+        private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
         private ObservableCollection<ApiKeyItem> _chatGPTKeys = new ObservableCollection<ApiKeyItem>();
@@ -47,6 +53,8 @@ namespace SecureOverlay
             _accountSnapshot = accountSnapshot;
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
+            _authSessionRepository = new SqliteAuthSessionRepository(store);
+            _hostedAccountClient = HostedClientFactory.CreateAccountClient(HostedClientFactory.LoadOptions());
 
             InitializeControls();
             LoadSettings();
@@ -67,6 +75,7 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(NvidiaModelBox);
             ComboBoxProtection.ProtectComboBox(InterviewTypeComboBox);
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
+            ComboBoxProtection.ProtectComboBox(SavedContextPackComboBox);
         }
 
         private void InitializeControls()
@@ -185,14 +194,7 @@ namespace SecureOverlay
             AutoPauseInactivityCheckBox.IsChecked = _settings.AutoPauseOnInactivityEnabled;
             AutoPauseMinutesTextBox.Text = Math.Max(5, _settings.AutoPauseOnInactivityMinutes).ToString();
 
-            var selectedPack = _contextPackService.GetSelectedPack();
-            ResumeBox.Text = selectedPack.ResumeText;
-            UpdateResumeWordCount();
-            UpdateResumeSummaryStatus(selectedPack);
-
-            JobDescriptionBox.Text = selectedPack.JobDescriptionText;
-            UpdateJobDescriptionWordCount();
-            UpdateJobDescriptionSummaryStatus(selectedPack);
+            LoadContextPackEditors();
 
             if (DebugModeCheckBox != null)
             {
@@ -227,6 +229,283 @@ namespace SecureOverlay
             ApplyAccountTierRestrictions();
             
             Log.WriteLine("✓ Settings page refreshed");
+        }
+
+        private void LoadContextPackEditors()
+        {
+            if (IsPremiumAccount())
+            {
+                LoadHostedContextPacks();
+                return;
+            }
+
+            ContextPackSection.Visibility = Visibility.Collapsed;
+            LoadPackIntoEditors(_contextPackService.GetSelectedPack());
+        }
+
+        private void LoadHostedContextPacks(string? preferredPackId = null, string? forceSelectedPackId = null)
+        {
+            ContextPackSection.Visibility = Visibility.Visible;
+            ContextPackStatusText.Text = string.Empty;
+
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                _hostedContextPacks = new List<DesktopContextPackDto>();
+                PopulateHostedContextPackChoices(forceSelectedPackId: null);
+                ClearContextPackEditors();
+                ContextPackStatusText.Text = "Sign in again to load Premium context packs.";
+                return;
+            }
+
+            try
+            {
+                _hostedContextPacks = _hostedAccountClient.GetContextPacks(session.AccessToken)
+                    ?.OrderByDescending(item => item.UpdatedAtUtc)
+                    .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+                    ?? new List<DesktopContextPackDto>();
+
+                var selectedPackId = forceSelectedPackId ?? preferredPackId ?? _contextPackService.GetSelectedPack().PackId;
+                PopulateHostedContextPackChoices(selectedPackId);
+
+                if (_hostedContextPacks.Count == 0)
+                {
+                    ClearContextPackEditors();
+                    ContextPackStatusText.Text = "No saved context packs yet. Save one here to reuse your full resume and job description later.";
+                }
+            }
+            catch (HostedServiceException ex)
+            {
+                Log.WriteLine($"Hosted context pack load failed: {ex.Message}");
+                PopulateHostedContextPackChoices(forceSelectedPackId: null);
+                LoadPackIntoEditors(_contextPackService.GetSelectedPack());
+                ContextPackStatusText.Text = $"Could not load Premium context packs right now: {ex.Message}";
+            }
+        }
+
+        private void PopulateHostedContextPackChoices(string? forceSelectedPackId)
+        {
+            _isUpdatingContextPackSelection = true;
+            try
+            {
+                SavedContextPackComboBox.Items.Clear();
+                SavedContextPackComboBox.Items.Add(ContextPackSelectionItem.CreateBlank());
+                foreach (var pack in _hostedContextPacks)
+                {
+                    SavedContextPackComboBox.Items.Add(new ContextPackSelectionItem
+                    {
+                        PackId = pack.PackId,
+                        DisplayName = pack.Name,
+                        IsBlank = false
+                    });
+                }
+
+                var selectedItem = SavedContextPackComboBox.Items
+                    .OfType<ContextPackSelectionItem>()
+                    .FirstOrDefault(item => !item.IsBlank && string.Equals(item.PackId, forceSelectedPackId, StringComparison.Ordinal))
+                    ?? SavedContextPackComboBox.Items.OfType<ContextPackSelectionItem>().FirstOrDefault(item => item.IsBlank);
+
+                SavedContextPackComboBox.SelectedItem = selectedItem;
+            }
+            finally
+            {
+                _isUpdatingContextPackSelection = false;
+            }
+
+            ApplySelectedHostedContextPack();
+        }
+
+        private void SavedContextPackComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isUpdatingContextPackSelection || _isInitializing) return;
+            ApplySelectedHostedContextPack();
+        }
+
+        private void ApplySelectedHostedContextPack()
+        {
+            if (!IsPremiumAccount())
+            {
+                return;
+            }
+
+            var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            if (selection == null || selection.IsBlank)
+            {
+                ContextPackNameTextBox.Text = string.Empty;
+                DeleteContextPackButton.IsEnabled = false;
+                ClearContextPackEditors();
+
+                return;
+            }
+
+            var pack = _hostedContextPacks.FirstOrDefault(item => string.Equals(item.PackId, selection.PackId, StringComparison.Ordinal));
+            if (pack == null)
+            {
+                return;
+            }
+
+            ContextPackNameTextBox.Text = pack.Name;
+            DeleteContextPackButton.IsEnabled = true;
+            LoadPackIntoEditors(new ContextPack
+            {
+                PackId = pack.PackId,
+                Name = pack.Name,
+                ResumeText = pack.ResumeText,
+                JobDescriptionText = pack.JobDescriptionText,
+                ResumeSummary = string.Empty,
+                JobDescriptionSummary = string.Empty,
+                UpdatedAtUtc = pack.UpdatedAtUtc
+            });
+        }
+
+        private void SaveContextPackButton_Click(object sender, RoutedEventArgs e)
+        {
+            SaveHostedContextPack(showSuccessMessage: true);
+        }
+
+        private DesktopContextPackDto? SaveHostedContextPack(bool showSuccessMessage)
+        {
+            if (!IsPremiumAccount())
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show("Context Packs are available only for Premium accounts.", "Premium Feature");
+                }
+
+                return null;
+            }
+
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show("Sign in again to save Premium context packs.", "Authentication Required");
+                }
+
+                return null;
+            }
+
+            var packName = ContextPackNameTextBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(packName))
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show("Enter a context pack name before saving.", "Context Pack");
+                }
+
+                return null;
+            }
+
+            var selectedPackId = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.PackId ?? string.Empty;
+
+            try
+            {
+                var savedPack = _hostedAccountClient.SaveContextPack(session.AccessToken, new DesktopContextPackUpsertRequestDto
+                {
+                    PackId = selectedPackId,
+                    Name = packName,
+                    ResumeText = ResumeBox.Text,
+                    JobDescriptionText = JobDescriptionBox.Text
+                });
+
+                SavePackToLocalState(savedPack);
+                LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
+                ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account.";
+
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show($"Saved '{savedPack.Name}' to your Premium context packs.", "Context Pack Saved");
+                }
+
+                return savedPack;
+            }
+            catch (HostedServiceException ex)
+            {
+                Log.WriteLine($"Hosted context pack save failed: {ex.Message}");
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show($"Could not save context pack:\n\n{ex.Message}", "Context Pack");
+                }
+
+                ContextPackStatusText.Text = $"Could not save context pack: {ex.Message}";
+                return null;
+            }
+        }
+
+        private void DeleteContextPackButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsPremiumAccount()) return;
+
+            var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            if (selection == null || selection.IsBlank || string.IsNullOrWhiteSpace(selection.PackId))
+            {
+                return;
+            }
+
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                InvisibleMessageBox.Show("Sign in again to delete Premium context packs.", "Authentication Required");
+                return;
+            }
+
+            try
+            {
+                _hostedAccountClient.DeleteContextPack(session.AccessToken, selection.PackId);
+                _contextPackService.ClearSelectedPack(clearResume: true, clearJobDescription: true);
+                ClearContextPackEditors();
+                LoadHostedContextPacks();
+                ContextPackStatusText.Text = "Context pack deleted.";
+            }
+            catch (HostedServiceException ex)
+            {
+                Log.WriteLine($"Hosted context pack delete failed: {ex.Message}");
+                InvisibleMessageBox.Show($"Could not delete context pack:\n\n{ex.Message}", "Context Pack");
+                ContextPackStatusText.Text = $"Could not delete context pack: {ex.Message}";
+            }
+        }
+
+        private void SavePackToLocalState(DesktopContextPackDto savedPack)
+        {
+            var selectedPack = _contextPackService.GetSelectedPack();
+            var oldResume = selectedPack.ResumeText;
+            var oldJobDescription = selectedPack.JobDescriptionText;
+
+            selectedPack.PackId = savedPack.PackId;
+            selectedPack.Name = savedPack.Name;
+            selectedPack.ResumeText = savedPack.ResumeText;
+            selectedPack.JobDescriptionText = savedPack.JobDescriptionText;
+            selectedPack.UpdatedAtUtc = savedPack.UpdatedAtUtc;
+
+            if (!string.Equals(oldResume, savedPack.ResumeText, StringComparison.Ordinal))
+            {
+                selectedPack.ResumeSummary = string.Empty;
+            }
+
+            if (!string.Equals(oldJobDescription, savedPack.JobDescriptionText, StringComparison.Ordinal))
+            {
+                selectedPack.JobDescriptionSummary = string.Empty;
+            }
+
+            _contextPackService.SaveSelectedPack(selectedPack);
+        }
+
+        private void LoadPackIntoEditors(ContextPack selectedPack)
+        {
+            ResumeBox.Text = selectedPack.ResumeText;
+            UpdateResumeWordCount();
+            UpdateResumeSummaryStatus(selectedPack);
+
+            JobDescriptionBox.Text = selectedPack.JobDescriptionText;
+            UpdateJobDescriptionWordCount();
+            UpdateJobDescriptionSummaryStatus(selectedPack);
+        }
+
+        private void ClearContextPackEditors()
+        {
+            LoadPackIntoEditors(new ContextPack());
         }
 
         private void LoadApiKeys()
@@ -866,25 +1145,35 @@ namespace SecureOverlay
                 ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
                 SettingsManager.Save(_settings);
 
-                var selectedPack = _contextPackService.GetSelectedPack();
-                var oldResume = selectedPack.ResumeText;
-                var oldJobDescription = selectedPack.JobDescriptionText;
-                selectedPack.ResumeText = ResumeBox.Text;
-                selectedPack.JobDescriptionText = JobDescriptionBox.Text;
+                var savedHostedPack = IsPremiumAccount()
+                    ? SaveHostedContextPack(showSuccessMessage: false)
+                    : null;
 
-                if (oldResume != selectedPack.ResumeText)
+                if (savedHostedPack == null)
                 {
-                    selectedPack.ResumeSummary = string.Empty;
-                    Log.WriteLine("Resume changed - cached summary cleared");
-                }
+                    var selectedPack = _contextPackService.GetSelectedPack();
+                    var oldResume = selectedPack.ResumeText;
+                    var oldJobDescription = selectedPack.JobDescriptionText;
+                    selectedPack.Name = string.IsNullOrWhiteSpace(ContextPackNameTextBox.Text)
+                        ? selectedPack.Name
+                        : ContextPackNameTextBox.Text.Trim();
+                    selectedPack.ResumeText = ResumeBox.Text;
+                    selectedPack.JobDescriptionText = JobDescriptionBox.Text;
 
-                if (oldJobDescription != selectedPack.JobDescriptionText)
-                {
-                    selectedPack.JobDescriptionSummary = string.Empty;
-                    Log.WriteLine("Job description changed - cached summary cleared");
-                }
+                    if (oldResume != selectedPack.ResumeText)
+                    {
+                        selectedPack.ResumeSummary = string.Empty;
+                        Log.WriteLine("Resume changed - cached summary cleared");
+                    }
 
-                _contextPackService.SaveSelectedPack(selectedPack);
+                    if (oldJobDescription != selectedPack.JobDescriptionText)
+                    {
+                        selectedPack.JobDescriptionSummary = string.Empty;
+                        Log.WriteLine("Job description changed - cached summary cleared");
+                    }
+
+                    _contextPackService.SaveSelectedPack(selectedPack);
+                }
 
                 Log.WriteLine($"✓ Settings saved:");
                 Log.WriteLine($"  ChatGPT keys: {_settings.ChatGPTApiKeys.Count}");
@@ -962,6 +1251,7 @@ namespace SecureOverlay
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             KnowledgeBaseStatusNotice.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
+            ContextPackSection.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
             DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1013,6 +1303,9 @@ namespace SecureOverlay
             }
 
             UpdateKnowledgeBaseStatusNotice();
+            SaveContextPackButton.IsEnabled = IsPremiumAccount();
+            DeleteContextPackButton.IsEnabled = IsPremiumAccount()
+                && (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
 
             UpdatePanelVisibility();
         }
@@ -1182,5 +1475,22 @@ namespace SecureOverlay
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
         
+    }
+
+    public sealed class ContextPackSelectionItem
+    {
+        public string PackId { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public bool IsBlank { get; set; }
+
+        public static ContextPackSelectionItem CreateBlank()
+        {
+            return new ContextPackSelectionItem
+            {
+                PackId = string.Empty,
+                DisplayName = "(No saved context pack selected)",
+                IsBlank = true
+            };
+        }
     }
 }

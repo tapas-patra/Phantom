@@ -250,6 +250,19 @@ CREATE TABLE IF NOT EXISTS hosted_kb_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_kb
     ON hosted_kb_chunks(knowledge_base_id, document_id, chunk_index);
+
+CREATE TABLE IF NOT EXISTS desktop_context_packs (
+    pack_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    resume_text TEXT NOT NULL,
+    job_description_text TEXT NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_desktop_context_packs_user_id
+    ON desktop_context_packs(user_id, updated_at_utc DESC, name ASC);
 ";
         command.ExecuteNonQuery();
     }

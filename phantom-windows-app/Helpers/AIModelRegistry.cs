@@ -159,7 +159,7 @@ namespace SecureOverlay.Helpers
                     MaxContextTokens = 32000,
                     MaxResponseTokens = 2000,
                     SlidingWindowSize = 10,
-                    SupportsVision = false
+                    SupportsVision = true
                 },
                 new ModelInfo
                 {

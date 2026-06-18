@@ -231,6 +231,15 @@ public sealed class ManagedAiService
                     apiKey,
                     cancellationToken);
                 return;
+            case ManagedAiCatalog.Groq:
+                await StreamOpenAiCompatibleAsync(
+                    downstreamResponse,
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    request.Model,
+                    apiKey,
+                    cancellationToken);
+                return;
             case ManagedAiCatalog.Claude:
                 await StreamClaudeAsync(downstreamResponse, request, apiKey, cancellationToken);
                 return;

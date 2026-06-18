@@ -30,7 +30,9 @@ public sealed class ManagedAiAdminService
                 new { providerId = "ChatGPT", label = "ChatGPT", lane = "managed" },
                 new { providerId = "Claude", label = "Claude", lane = "managed" },
                 new { providerId = "Gemini", label = "Gemini", lane = "managed" },
-                new { providerId = "Mistral", label = "Mistral", lane = "managed" }
+                new { providerId = "Mistral", label = "Mistral", lane = "managed" },
+                new { providerId = "Groq", label = "Groq", lane = "managed" },
+                new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" }
             },
             credentials
         };
@@ -40,6 +42,12 @@ public sealed class ManagedAiAdminService
     {
         EnsureConfigured();
         return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/credentials", payload, cancellationToken);
+    }
+
+    public Task<object?> RefreshCatalog(CancellationToken cancellationToken)
+    {
+        EnsureConfigured();
+        return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", null, cancellationToken);
     }
 
     public async Task DeleteCredential(string credentialId, CancellationToken cancellationToken)

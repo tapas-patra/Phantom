@@ -8,6 +8,7 @@ public static class ManagedAiCatalog
     public const string Claude = "Claude";
     public const string Gemini = "Gemini";
     public const string Mistral = "Mistral";
+    public const string Groq = "Groq";
     public const string Nvidia = "NVIDIA";
 
     private static readonly IReadOnlyDictionary<string, string> ProviderLabels =
@@ -17,6 +18,7 @@ public static class ManagedAiCatalog
             [Claude] = "Claude",
             [Gemini] = "Gemini",
             [Mistral] = "Mistral",
+            [Groq] = "Groq",
             [Nvidia] = "NVIDIA"
         };
 

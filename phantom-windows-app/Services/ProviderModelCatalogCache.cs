@@ -16,15 +16,14 @@ namespace SecureOverlay.Services
 
         public static string[] GetModelIds(AppSettings settings, string providerId)
         {
-            var cachedModels = GetProvider(settings, providerId)?.Models?
-                .Select(item => item.ModelId)
-                .Where(item => !string.IsNullOrWhiteSpace(item))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            if (cachedModels != null && cachedModels.Length > 0)
+            var cachedProvider = GetProvider(settings, providerId);
+            if (cachedProvider?.Models != null)
             {
-                return cachedModels;
+                return cachedProvider.Models
+                    .Select(item => item.ModelId)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
             }
 
             return GetLegacyModelList(settings, providerId)
@@ -161,6 +160,7 @@ namespace SecureOverlay.Services
                 || normalized.Contains("omni")
                 || normalized.Contains("claude")
                 || normalized.Contains("gemini")
+                || normalized.Contains("mistral-large")
                 || normalized.Contains("pixtral")
                 || normalized.Contains("vlm")
                 || normalized.Contains("image")

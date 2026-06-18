@@ -13,6 +13,7 @@ import {
   logoutAccount,
   registerAccount,
   resendVerificationEmail,
+  triggerManagedAiCatalogRefresh,
   upsertManagedAiCredential
 } from "./lib/api";
 
@@ -76,7 +77,7 @@ const plans = [
     ribbon: "Hands-Off",
     description: "Hosted model operations, managed keys, and support visibility for users who want zero key management.",
     bullets: [
-      "Managed ChatGPT, Claude, Gemini, and Mistral lanes",
+      "Managed ChatGPT, Claude, Gemini, Mistral, Groq, and NVIDIA lanes",
       "Provider + model choice without API keys",
       "Premium wallet with continuation support",
       "Admin-controlled failover and rotation"
@@ -1302,6 +1303,7 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
   const [priority, setPriority] = useState("0");
   const [isEnabled, setIsEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -1352,6 +1354,21 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
     }
   }
 
+  async function handleCatalogRefresh() {
+    setRefreshingCatalog(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await triggerManagedAiCatalogRefresh(adminApiKey);
+      await onRefresh();
+      setSuccess("Managed model catalog refreshed.");
+    } catch (refreshError) {
+      setLocalError(refreshError.message || "Could not refresh managed model catalog.");
+    } finally {
+      setRefreshingCatalog(false);
+    }
+  }
+
   return (
     <div className="dashboard-grid admin-grid">
       <article className="panel admin-hero-panel">
@@ -1369,9 +1386,19 @@ function ManagedAiAdminPanel({ adminApiKey, inventory, onRefresh }) {
             <p className="story-tag">Create or rotate credential</p>
             <h3>Managed provider control</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>
-            Refresh
-          </button>
+          <div className="admin-panel-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>
+              Refresh
+            </button>
+            <button
+              className="button button-primary button-compact"
+              type="button"
+              onClick={handleCatalogRefresh}
+              disabled={refreshingCatalog}
+            >
+              {refreshingCatalog ? "Updating..." : "Update Models"}
+            </button>
+          </div>
         </div>
 
         {localError && <p className="admin-error">{localError}</p>}

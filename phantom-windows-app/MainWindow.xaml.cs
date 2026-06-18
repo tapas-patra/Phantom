@@ -3283,6 +3283,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             // ✅ FIX #1: Declare handler variable before use
             EventHandler? deactivateHandler = null;
@@ -3359,7 +3366,7 @@ namespace SecureOverlay
             };
             menuStack.Children.Add(removeButton);
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // Position correctly relative to main window
@@ -3770,6 +3777,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             var providers = GetAvailableProvidersForCurrentTier();
             
@@ -3818,7 +3832,7 @@ namespace SecureOverlay
                 menuStack.Children.Add(button);
             }
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // ✅ POSITION RELATIVE TO SCREEN (not window)
@@ -3904,6 +3918,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             // ✅ USE REGISTRY - Get models for current provider
             string[] models = GetAvailableModelsForSelectedProvider();
@@ -3957,7 +3978,7 @@ namespace SecureOverlay
                 menuStack.Children.Add(button);
             }
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // ✅ POSITION RELATIVE TO SCREEN (not window)

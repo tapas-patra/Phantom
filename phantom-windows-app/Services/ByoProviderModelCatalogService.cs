@@ -41,15 +41,11 @@ namespace SecureOverlay.Services
                 try
                 {
                     var models = FetchModels(provider, keys[0]);
-                    if (models.Count == 0)
-                    {
-                        continue;
-                    }
-
                     ProviderModelCatalogCache.UpsertProvider(settings, provider, provider, models, DateTime.UtcNow);
                     settings.ProviderModelCatalogRefreshedAtUtc[provider] = DateTime.UtcNow;
                     var currentModel = AIModelRegistry.GetCurrentModelForProvider(settings, provider);
-                    if (!models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
+                    if (models.Count > 0
+                        && !models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
                     {
                         AIModelRegistry.SetModelForProvider(settings, provider, models[0].ModelId);
                     }

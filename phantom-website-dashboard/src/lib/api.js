@@ -172,6 +172,15 @@ export async function upsertManagedAiCredential(adminApiKey, payload) {
   });
 }
 
+export async function triggerManagedAiCatalogRefresh(adminApiKey) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
+    method: "POST",
+    headers: {
+      "X-Phantom-Admin-Key": adminApiKey
+    }
+  });
+}
+
 export async function deleteManagedAiCredential(adminApiKey, credentialId) {
   return request(
     DASHBOARD_API_BASE,

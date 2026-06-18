@@ -277,6 +277,12 @@ a {
   margin-bottom: 20px;
 }
 
+.admin-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .admin-form {
   display: grid;
   gap: 16px;

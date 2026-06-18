@@ -108,10 +108,6 @@ public sealed class ManagedAiCatalogService
                 {
                     var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
                     var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
-                    if (models.Count == 0)
-                    {
-                        continue;
-                    }
 
                     _catalogRepository.Save(new ManagedProviderCatalogRecord
                     {
@@ -174,6 +170,8 @@ public sealed class ManagedAiCatalogService
                 => await FetchGeminiModelsAsync(apiKey, cancellationToken),
             var p when string.Equals(p, ManagedAiCatalog.Mistral, StringComparison.OrdinalIgnoreCase)
                 => await FetchOpenAiModelsAsync("https://api.mistral.ai/v1/models", apiKey, cancellationToken),
+            var p when string.Equals(p, ManagedAiCatalog.Groq, StringComparison.OrdinalIgnoreCase)
+                => await FetchOpenAiModelsAsync("https://api.groq.com/openai/v1/models", apiKey, cancellationToken),
             var p when string.Equals(p, ManagedAiCatalog.Nvidia, StringComparison.OrdinalIgnoreCase)
                 => await FetchOpenAiModelsAsync("https://integrate.api.nvidia.com/v1/models", apiKey, cancellationToken),
             _ => Array.Empty<ManagedAiModelOptionDto>()
@@ -352,6 +350,7 @@ public sealed class ManagedAiCatalogService
             || normalized.Contains("omni")
             || normalized.Contains("claude")
             || normalized.Contains("gemini")
+            || normalized.Contains("mistral-large")
             || normalized.Contains("pixtral")
             || normalized.Contains("vlm")
             || normalized.Contains("image")

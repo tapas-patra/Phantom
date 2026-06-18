@@ -65,6 +65,12 @@ adminGroup.MapPost("/managed-ai/credentials", async (
 {
     return Results.Ok(await managedAi.UpsertCredential(payload, cancellationToken));
 });
+adminGroup.MapPost("/managed-ai/catalog/refresh", async (
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.RefreshCatalog(cancellationToken));
+});
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
     string credentialId,
     ManagedAiAdminService managedAi,

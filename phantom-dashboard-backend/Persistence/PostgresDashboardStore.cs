@@ -46,7 +46,9 @@ public sealed class PostgresDashboardStore
     {
         if (databaseUrl.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
         {
-            return databaseUrl;
+            var hostBuilder = new NpgsqlConnectionStringBuilder(databaseUrl);
+            ApplyRecommendedDefaults(hostBuilder);
+            return hostBuilder.ConnectionString;
         }
 
         if (databaseUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
@@ -90,7 +92,7 @@ public sealed class PostgresDashboardStore
                 port = parsedPort;
             }
 
-            return new NpgsqlConnectionStringBuilder
+            var builder = new NpgsqlConnectionStringBuilder
             {
                 Host = host,
                 Port = port,
@@ -98,9 +100,32 @@ public sealed class PostgresDashboardStore
                 Username = username,
                 Password = password,
                 SslMode = SslMode.Require
-            }.ConnectionString;
+            };
+
+            ApplyRecommendedDefaults(builder);
+            return builder.ConnectionString;
         }
 
         throw new InvalidOperationException("Dashboard database URL must be a valid PostgreSQL URI.");
+    }
+
+    private static void ApplyRecommendedDefaults(NpgsqlConnectionStringBuilder builder)
+    {
+        if (builder.Timeout <= 0)
+        {
+            builder.Timeout = 15;
+        }
+
+        if (builder.CommandTimeout <= 0)
+        {
+            builder.CommandTimeout = 60;
+        }
+
+        if (builder.KeepAlive <= 0)
+        {
+            builder.KeepAlive = 30;
+        }
+
+        builder.Pooling = true;
     }
 }

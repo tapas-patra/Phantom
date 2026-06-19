@@ -365,7 +365,9 @@ CREATE INDEX IF NOT EXISTS idx_desktop_context_packs_user_id
     {
         if (databaseUrl.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
         {
-            return databaseUrl;
+            var hostBuilder = new NpgsqlConnectionStringBuilder(databaseUrl);
+            ApplyRecommendedDefaults(hostBuilder);
+            return hostBuilder.ConnectionString;
         }
 
         if (databaseUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
@@ -390,6 +392,7 @@ CREATE INDEX IF NOT EXISTS idx_desktop_context_packs_user_id
             SslMode = SslMode.Require
         };
 
+        ApplyRecommendedDefaults(builder);
         return builder.ConnectionString;
     }
 
@@ -450,6 +453,27 @@ CREATE INDEX IF NOT EXISTS idx_desktop_context_packs_user_id
             SslMode = SslMode.Require
         };
 
+        ApplyRecommendedDefaults(builder);
         return builder.ConnectionString;
+    }
+
+    private static void ApplyRecommendedDefaults(NpgsqlConnectionStringBuilder builder)
+    {
+        if (builder.Timeout <= 0)
+        {
+            builder.Timeout = 15;
+        }
+
+        if (builder.CommandTimeout <= 0)
+        {
+            builder.CommandTimeout = 60;
+        }
+
+        if (builder.KeepAlive <= 0)
+        {
+            builder.KeepAlive = 30;
+        }
+
+        builder.Pooling = true;
     }
 }

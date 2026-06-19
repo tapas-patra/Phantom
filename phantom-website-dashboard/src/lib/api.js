@@ -224,6 +224,62 @@ export async function fetchAdminOverview(accessToken) {
   });
 }
 
+export async function fetchAdminUsers(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function fetchAdminUser(accessToken, userId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/accounts/${encodeURIComponent(userId)}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function updateAdminUser(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts/update", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function grantAdminCredits(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/credits/grant", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function waiveAdminPremiumDebt(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/balance/waive-negative-premium", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function clearAdminLock(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/locks/clear", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function fetchManagedAiAdminInventory(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     headers: {
@@ -303,6 +359,16 @@ export async function deleteManagedAiCredential(accessToken, credentialId) {
       }
     }
   );
+}
+
+export async function updateManagedAiModelVision(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/vision", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function fetchHostedKnowledgeBase(accessToken) {

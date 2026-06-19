@@ -154,6 +154,12 @@ public sealed class ManagedAiService
             throw new BackendValidationException("Unsupported managed model.");
         }
 
+        if (!string.IsNullOrWhiteSpace(request.ImageBase64)
+            && !_catalogService.ModelSupportsVision(request.Provider, request.Model))
+        {
+            throw new BackendValidationException("The selected managed model is not marked as vision-capable.");
+        }
+
         if (request.Messages == null || request.Messages.Count == 0)
         {
             throw new BackendValidationException("At least one chat message is required.");

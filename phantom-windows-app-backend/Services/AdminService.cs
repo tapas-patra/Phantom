@@ -37,7 +37,10 @@ public sealed class AdminService
         {
             UserId = account.UserId,
             Email = account.Email,
+            EmailVerified = account.EmailVerified,
             PhoneVerified = account.PhoneVerified,
+            AccessTier = account.AccessTier,
+            PlanLabel = AccessModeResolver.GetPlanLabel(account),
             ProAvailableCredits = account.ProAvailableCredits,
             PremiumAvailableCredits = account.PremiumAvailableCredits,
             PremiumNegativeCredits = account.PremiumNegativeCredits,
@@ -66,7 +69,10 @@ public sealed class AdminService
             {
                 account.UserId,
                 account.Email,
+                account.EmailVerified,
                 account.PhoneVerified,
+                account.AccessTier,
+                planLabel = AccessModeResolver.GetPlanLabel(account),
                 account.ProAvailableCredits,
                 account.PremiumAvailableCredits,
                 account.PremiumNegativeCredits,
@@ -75,6 +81,44 @@ public sealed class AdminService
                 account.LastValidatedAtUtc
             })
             .ToList();
+    }
+
+    public AdminAccountSnapshotDto UpdateAccount(AdminAccountUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.UserId))
+        {
+            throw new BackendValidationException("UserId is required.");
+        }
+
+        var normalizedTier = NormalizeAccessTier(request.AccessTier);
+        if (request.ProAvailableCredits < 0m)
+        {
+            throw new BackendValidationException("Pro credits cannot be negative.");
+        }
+
+        if (request.PremiumAvailableCredits < 0m)
+        {
+            throw new BackendValidationException("Premium credits cannot be negative.");
+        }
+
+        if (request.PremiumNegativeCredits < 0m)
+        {
+            throw new BackendValidationException("Premium negative credits cannot be negative.");
+        }
+
+        var account = _accounts.FindByUserId(request.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+
+        account.AccessTier = normalizedTier;
+        account.ProAvailableCredits = request.ProAvailableCredits;
+        account.PremiumAvailableCredits = request.PremiumAvailableCredits;
+        account.PremiumNegativeCredits = request.PremiumNegativeCredits;
+        account.OfflineModeEnabled = request.OfflineModeEnabled;
+        account.LastValidatedAtUtc = DateTime.UtcNow;
+        account.UpdatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(account);
+
+        return GetAccountSnapshot(account.UserId);
     }
 
     public object GetOverview()
@@ -205,5 +249,25 @@ public sealed class AdminService
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
+    private static string NormalizeAccessTier(string accessTier)
+    {
+        if (string.Equals(accessTier, AccessModeResolver.Free, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.Free;
+        }
+
+        if (string.Equals(accessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.ProByo;
+        }
+
+        if (string.Equals(accessTier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.Premium;
+        }
+
+        throw new BackendValidationException("Unsupported access tier.");
     }
 }

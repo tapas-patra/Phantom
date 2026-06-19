@@ -8,6 +8,8 @@ import {
   resetAdminPassword,
   fetchAdminPaymentOrders,
   fetchAdminPaymentWebhooks,
+  fetchAdminUser,
+  fetchAdminUsers,
   fetchGmailOAuthStatus,
   confirmPaymentCheckout,
   createPaymentCheckout,
@@ -27,11 +29,16 @@ import {
   logoutAccount,
   registerAccount,
   resendVerificationEmail,
+  clearAdminLock,
   sendPhoneOtp,
   startGmailOAuth,
   triggerManagedAiCatalogRefresh,
+  updateAdminUser,
+  updateManagedAiModelVision,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
+  waiveAdminPremiumDebt,
+  grantAdminCredits,
   verifyPhoneOtp
 } from "./lib/api";
 
@@ -56,6 +63,7 @@ const userNav = [
 
 const adminNav = [
   { to: "/admin", label: "Overview" },
+  { to: "/admin/users", label: "Users" },
   { to: "/admin/payments", label: "Payments" },
   { to: "/admin/managed-ai", label: "Managed AI" }
 ];
@@ -1273,6 +1281,11 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     setStatus("");
 
     try {
+      const totalBytes = Array.from(files).reduce((sum, file) => sum + (file.size || 0), 0);
+      if (totalBytes > 8 * 1024 * 1024) {
+        throw new Error("Combined upload exceeds the 8 MB per-request limit.");
+      }
+
       const result = await uploadHostedKnowledgeBaseDocuments(accessToken, files);
       onKnowledgeBaseChanged(result.knowledgeBase);
       setStatus(`Processed ${result.addedDocuments.length} document${result.addedDocuments.length === 1 ? "" : "s"}.`);
@@ -1338,8 +1351,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">2. Upload documents</p>
         <h2>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h2>
         <p>
-          Premium limits: up to 20 docs total, 5 files per upload, 2 MB per file. If Premium credits hit zero,
-          interview-time KB retrieval is blocked in the desktop app until credits return.
+          Premium limits: up to 20 docs total, 5 files per upload, 2 MB per file, 8 MB per upload request,
+          250,000 extracted characters per document, and 250 chunks per document. Files are chunked one document
+          at a time on the backend, then persisted only after the whole request passes validation.
         </p>
         <label className="button button-secondary button-file">
           Upload Documents
@@ -1853,6 +1867,7 @@ function AdminSessionLoadingPage() {
 
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
+  const [users, setUsers] = useState([]);
   const [inventory, setInventory] = useState(null);
   const [paymentOrders, setPaymentOrders] = useState([]);
   const [paymentWebhooks, setPaymentWebhooks] = useState([]);
@@ -1869,8 +1884,9 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
+        const [overviewData, usersData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
           fetchAdminOverview(adminSession.accessToken),
+          fetchAdminUsers(adminSession.accessToken),
           fetchManagedAiAdminInventory(adminSession.accessToken),
           fetchAdminPaymentOrders(adminSession.accessToken),
           fetchAdminPaymentWebhooks(adminSession.accessToken),
@@ -1879,6 +1895,7 @@ function AdminDashboardPage({ adminSession }) {
 
         if (!cancelled) {
           setOverview(overviewData);
+          setUsers(usersData);
           setInventory(inventoryData);
           setPaymentOrders(paymentOrdersData);
           setPaymentWebhooks(paymentWebhooksData);
@@ -1905,6 +1922,12 @@ function AdminDashboardPage({ adminSession }) {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);
     setInventory(nextInventory);
     return nextInventory;
+  }
+
+  async function refreshUsers() {
+    const nextUsers = await fetchAdminUsers(adminSession.accessToken);
+    setUsers(nextUsers);
+    return nextUsers;
   }
 
   async function refreshPayments() {
@@ -1980,6 +2003,16 @@ function AdminDashboardPage({ adminSession }) {
                 accessToken={adminSession.accessToken}
                 gmailOauthSuccess={new URLSearchParams(location.search).get("gmail_oauth") === "success"}
                 onGmailStatusChanged={setGmailStatus}
+              />
+            }
+          />
+          <Route
+            path="users"
+            element={
+              <AdminUsersPanel
+                accessToken={adminSession.accessToken}
+                users={users}
+                onUsersChanged={refreshUsers}
               />
             }
           />
@@ -2219,6 +2252,22 @@ function ManagedAiAdminPanel({
     }
   }
 
+  async function handleVisionToggle(providerId, modelId, supportsVision) {
+    setLocalError("");
+    setSuccess("");
+    try {
+      await updateManagedAiModelVision(accessToken, {
+        providerId,
+        modelId,
+        supportsVision: !supportsVision
+      });
+      await onRefresh();
+      setSuccess("Model vision support updated.");
+    } catch (toggleError) {
+      setLocalError(toggleError.message || "Could not update model vision support.");
+    }
+  }
+
   return (
     <div className="dashboard-grid admin-grid">
       <article className="panel admin-hero-panel">
@@ -2227,6 +2276,10 @@ function ManagedAiAdminPanel({
         <p className="hero-text">
           The website admin console manages the rotation inventory. The Windows backend stores and uses the keys.
           Users only choose provider and model; they never see the credential layer.
+        </p>
+        <p className="download-status">
+          Vision support defaults from provider catalog inference. This flag is the runtime gate for image input:
+          if disabled here, the backend rejects requests with images for that model.
         </p>
       </article>
 
@@ -2435,12 +2488,13 @@ function ManagedAiAdminPanel({
                   <th>Model ID</th>
                   <th>Display name</th>
                   <th>Vision</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {providerModels.length === 0 ? (
                   <tr>
-                    <td colSpan="3">No stored catalog for this provider yet.</td>
+                    <td colSpan="4">No stored catalog for this provider yet.</td>
                   </tr>
                 ) : (
                   providerModels.map((model) => (
@@ -2448,6 +2502,15 @@ function ManagedAiAdminPanel({
                       <td>{model.modelId}</td>
                       <td>{model.displayName}</td>
                       <td>{model.supportsVision ? "Yes" : "No"}</td>
+                      <td>
+                        <button
+                          className="table-action"
+                          type="button"
+                          onClick={() => handleVisionToggle(provider.providerId, model.modelId, model.supportsVision)}
+                        >
+                          Mark {model.supportsVision ? "Non-Vision" : "Vision"}
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -2456,6 +2519,431 @@ function ManagedAiAdminPanel({
           </article>
         );
       })}
+    </div>
+  );
+}
+
+function AdminUsersPanel({ accessToken, users, onUsersChanged }) {
+  const [query, setQuery] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [accountForm, setAccountForm] = useState({
+    accessTier: "free",
+    proAvailableCredits: "0",
+    premiumAvailableCredits: "0",
+    premiumNegativeCredits: "0",
+    offlineModeEnabled: false,
+    reason: ""
+  });
+  const [creditForm, setCreditForm] = useState({
+    proCreditsToAdd: "0",
+    premiumCreditsToAdd: "0",
+    reason: ""
+  });
+  const [lockReason, setLockReason] = useState("Admin manual lock clear");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredUsers = users.filter((item) => {
+    const haystack = [item.email, item.userId, item.accessTier, item.planLabel].join(" ").toLowerCase();
+    return !normalizedQuery || haystack.includes(normalizedQuery);
+  });
+
+  useEffect(() => {
+    if (!selectedUserId && filteredUsers.length > 0) {
+      setSelectedUserId(filteredUsers[0].userId);
+    }
+  }, [filteredUsers, selectedUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUser() {
+      if (!selectedUserId) {
+        setSelectedUser(null);
+        return;
+      }
+
+      try {
+        const detail = await fetchAdminUser(accessToken, selectedUserId);
+        if (!cancelled) {
+          setSelectedUser(detail);
+          setAccountForm({
+            accessTier: detail.accessTier || "free",
+            proAvailableCredits: String(detail.proAvailableCredits ?? 0),
+            premiumAvailableCredits: String(detail.premiumAvailableCredits ?? 0),
+            premiumNegativeCredits: String(detail.premiumNegativeCredits ?? 0),
+            offlineModeEnabled: Boolean(detail.offlineModeEnabled),
+            reason: ""
+          });
+          setCreditForm({
+            proCreditsToAdd: "0",
+            premiumCreditsToAdd: "0",
+            reason: ""
+          });
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError.message || "Could not load the selected user.");
+        }
+      }
+    }
+
+    loadUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, selectedUserId]);
+
+  async function syncSelectedUser(nextUserId = selectedUserId) {
+    const [nextUsers, nextDetail] = await Promise.all([
+      onUsersChanged(),
+      nextUserId ? fetchAdminUser(accessToken, nextUserId) : Promise.resolve(null)
+    ]);
+    setSelectedUser(nextDetail);
+    return { nextUsers, nextDetail };
+  }
+
+  async function handleAccountUpdate(event) {
+    event.preventDefault();
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("account");
+    setStatus("");
+    setError("");
+    try {
+      const updated = await updateAdminUser(accessToken, {
+        userId: selectedUserId,
+        accessTier: accountForm.accessTier,
+        proAvailableCredits: Number(accountForm.proAvailableCredits) || 0,
+        premiumAvailableCredits: Number(accountForm.premiumAvailableCredits) || 0,
+        premiumNegativeCredits: Number(accountForm.premiumNegativeCredits) || 0,
+        offlineModeEnabled: accountForm.offlineModeEnabled,
+        reason: accountForm.reason
+      });
+      await onUsersChanged();
+      setSelectedUser(updated);
+      setStatus("User account settings updated.");
+    } catch (updateError) {
+      setError(updateError.message || "Could not update the user account.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleCreditGrant(event) {
+    event.preventDefault();
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("credits");
+    setStatus("");
+    setError("");
+    try {
+      await grantAdminCredits(accessToken, {
+        userId: selectedUserId,
+        proCreditsToAdd: Number(creditForm.proCreditsToAdd) || 0,
+        premiumCreditsToAdd: Number(creditForm.premiumCreditsToAdd) || 0,
+        reason: creditForm.reason
+      });
+      await syncSelectedUser();
+      setCreditForm({
+        proCreditsToAdd: "0",
+        premiumCreditsToAdd: "0",
+        reason: ""
+      });
+      setStatus("Credits granted.");
+    } catch (grantError) {
+      setError(grantError.message || "Could not grant credits.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleWaiveDebt() {
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("waive");
+    setStatus("");
+    setError("");
+    try {
+      await waiveAdminPremiumDebt(accessToken, {
+        userId: selectedUserId,
+        reason: "Admin waived premium debt"
+      });
+      await syncSelectedUser();
+      setStatus("Premium debt waived.");
+    } catch (waiveError) {
+      setError(waiveError.message || "Could not waive premium debt.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleClearLock() {
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("lock");
+    setStatus("");
+    setError("");
+    try {
+      await clearAdminLock(accessToken, {
+        userId: selectedUserId,
+        reason: lockReason
+      });
+      await syncSelectedUser();
+      setStatus("Active lock cleared.");
+    } catch (lockError) {
+      setError(lockError.message || "Could not clear the active lock.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  return (
+    <div className="dashboard-grid admin-grid">
+      <article className="panel admin-hero-panel">
+        <p className="eyebrow">Users</p>
+        <h1>Inspect user state and apply manual account corrections without touching the desktop runtime.</h1>
+        <p className="hero-text">
+          This tab exposes admin account controls for access tier, credits, debt cleanup, and live lock intervention.
+        </p>
+      </article>
+
+      <article className="panel admin-form-panel">
+        <div className="admin-panel-head">
+          <div>
+            <p className="story-tag">Directory</p>
+            <h3>User roster</h3>
+          </div>
+          <div className="admin-panel-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onUsersChanged}>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <label>
+          Search
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="email, user ID, or tier"
+          />
+        </label>
+      </article>
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Accounts</p>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Tier</th>
+              <th>Pro</th>
+              <th>Premium</th>
+              <th>Debt</th>
+              <th>Phone</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan="7">No users matched the current search.</td>
+              </tr>
+            ) : (
+              filteredUsers.map((item) => (
+                <tr key={item.userId}>
+                  <td>{item.email}</td>
+                  <td>{item.planLabel}</td>
+                  <td>{item.proAvailableCredits}</td>
+                  <td>{item.premiumAvailableCredits}</td>
+                  <td>{item.premiumNegativeCredits}</td>
+                  <td>{item.phoneVerified ? "Verified" : "Pending"}</td>
+                  <td>
+                    <button className="table-action" type="button" onClick={() => setSelectedUserId(item.userId)}>
+                      Inspect
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </article>
+
+      {selectedUser && (
+        <>
+          <article className="panel table-panel table-panel-full">
+            <p className="eyebrow">Selected user</p>
+            <table>
+              <tbody>
+                <tr><th>Email</th><td>{selectedUser.email}</td></tr>
+                <tr><th>User ID</th><td>{selectedUser.userId}</td></tr>
+                <tr><th>Tier</th><td>{selectedUser.planLabel} ({selectedUser.accessTier})</td></tr>
+                <tr><th>Email verified</th><td>{selectedUser.emailVerified ? "Yes" : "No"}</td></tr>
+                <tr><th>Phone verified</th><td>{selectedUser.phoneVerified ? "Yes" : "No"}</td></tr>
+                <tr><th>Pro credits</th><td>{selectedUser.proAvailableCredits}</td></tr>
+                <tr><th>Premium credits</th><td>{selectedUser.premiumAvailableCredits}</td></tr>
+                <tr><th>Premium debt</th><td>{selectedUser.premiumNegativeCredits}</td></tr>
+                <tr><th>Offline mode</th><td>{selectedUser.offlineModeEnabled ? "Enabled" : "Disabled"}</td></tr>
+                <tr><th>Active lock</th><td>{selectedUser.activeLockSessionId || "No active lock"}</td></tr>
+                <tr><th>Last validated</th><td>{formatDate(selectedUser.lastValidatedAtUtc)}</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <form className="panel admin-form-panel" onSubmit={handleAccountUpdate}>
+            <p className="eyebrow">Update account state</p>
+            <div className="admin-form">
+              <label>
+                User type
+                <select
+                  value={accountForm.accessTier}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, accessTier: event.target.value }))}
+                >
+                  <option value="free">Free</option>
+                  <option value="pro_byo">Pro BYO</option>
+                  <option value="premium">Premium</option>
+                </select>
+              </label>
+              <label>
+                Pro credits
+                <input
+                  value={accountForm.proAvailableCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, proAvailableCredits: event.target.value }))}
+                />
+              </label>
+              <label>
+                Premium credits
+                <input
+                  value={accountForm.premiumAvailableCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, premiumAvailableCredits: event.target.value }))}
+                />
+              </label>
+              <label>
+                Premium debt
+                <input
+                  value={accountForm.premiumNegativeCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, premiumNegativeCredits: event.target.value }))}
+                />
+              </label>
+              <label className="admin-toggle">
+                <input
+                  type="checkbox"
+                  checked={accountForm.offlineModeEnabled}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, offlineModeEnabled: event.target.checked }))}
+                />
+                <span>Offline mode enabled</span>
+              </label>
+              <label>
+                Reason
+                <input
+                  value={accountForm.reason}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Why this manual update is needed"
+                />
+              </label>
+            </div>
+            <button className="button button-primary" type="submit" disabled={busyAction === "account"}>
+              {busyAction === "account" ? "Saving..." : "Save Account Changes"}
+            </button>
+          </form>
+
+          <form className="panel admin-form-panel" onSubmit={handleCreditGrant}>
+            <p className="eyebrow">Grant credits</p>
+            <div className="admin-form">
+              <label>
+                Add Pro credits
+                <input
+                  value={creditForm.proCreditsToAdd}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, proCreditsToAdd: event.target.value }))}
+                />
+              </label>
+              <label>
+                Add Premium credits
+                <input
+                  value={creditForm.premiumCreditsToAdd}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, premiumCreditsToAdd: event.target.value }))}
+                />
+              </label>
+              <label>
+                Reason
+                <input
+                  value={creditForm.reason}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Promo credit, support fix, manual correction"
+                />
+              </label>
+            </div>
+            <button className="button button-primary" type="submit" disabled={busyAction === "credits"}>
+              {busyAction === "credits" ? "Applying..." : "Grant Credits"}
+            </button>
+          </form>
+
+          <article className="panel admin-form-panel">
+            <p className="eyebrow">Recovery controls</p>
+            <div className="admin-form">
+              <label>
+                Lock clear reason
+                <input value={lockReason} onChange={(event) => setLockReason(event.target.value)} />
+              </label>
+            </div>
+            <div className="admin-panel-actions">
+              <button className="button button-secondary" type="button" onClick={handleClearLock} disabled={busyAction === "lock"}>
+                {busyAction === "lock" ? "Clearing..." : "Clear Active Lock"}
+              </button>
+              <button className="button button-secondary" type="button" onClick={handleWaiveDebt} disabled={busyAction === "waive"}>
+                {busyAction === "waive" ? "Waiving..." : "Waive Premium Debt"}
+              </button>
+            </div>
+          </article>
+
+          <article className="panel table-panel table-panel-full">
+            <p className="eyebrow">Recent ledger entries</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Ledger entry</th>
+                  <th>Session</th>
+                  <th>Credits</th>
+                  <th>Debt</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selectedUser.recentLedgerEntries || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="5">No recent ledger activity for this user.</td>
+                  </tr>
+                ) : (
+                  selectedUser.recentLedgerEntries.map((item) => (
+                    <tr key={item.ledgerEntryId}>
+                      <td>{item.ledgerEntryId}</td>
+                      <td>{item.sessionId}</td>
+                      <td>{item.chargedCredits}</td>
+                      <td>{item.addedPremiumDebt}</td>
+                      <td>{formatDate(item.createdAtUtc)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </article>
+        </>
+      )}
+
+      {error && <article className="panel table-panel table-panel-full"><p className="admin-error">{error}</p></article>}
+      {status && <article className="panel table-panel table-panel-full"><p className="admin-success">{status}</p></article>}
     </div>
   );
 }

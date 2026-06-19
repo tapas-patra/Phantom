@@ -135,7 +135,10 @@ public sealed class AdminAuthService
 
         var token = _tokenService.GenerateOpaqueToken();
         var expiresAtUtc = DateTime.UtcNow.AddMinutes(_options.AdminPasswordResetTtlMinutes);
-        var resetUrl = $"{publicBackendBaseUrl.TrimEnd('/')}/admin/reset-password?token={Uri.EscapeDataString(token)}";
+        var resetBaseUrl = string.IsNullOrWhiteSpace(_options.PublicWebsiteBaseUrl)
+            ? publicBackendBaseUrl.TrimEnd('/')
+            : _options.PublicWebsiteBaseUrl.TrimEnd('/');
+        var resetUrl = $"{resetBaseUrl}/admin/reset-password?token={Uri.EscapeDataString(token)}";
         var delivery = _emailService.SendAdminPasswordReset(admin.Email, resetUrl, expiresAtUtc);
         _passwordResets.Save(new AdminPasswordResetTokenRecord
         {

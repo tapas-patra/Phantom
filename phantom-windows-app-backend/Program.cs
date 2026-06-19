@@ -739,6 +739,13 @@ adminGroup.MapGet("/accounts", (AdminService admin) =>
     return Results.Ok(admin.ListAccounts());
 });
 
+adminGroup.MapPost("/accounts/update", (
+    AdminAccountUpdateRequestDto request,
+    AdminService admin) =>
+{
+    return Results.Ok(admin.UpdateAccount(request));
+});
+
 adminGroup.MapGet("/overview", (AdminService admin) =>
 {
     return Results.Ok(admin.GetOverview());
@@ -800,6 +807,13 @@ adminGroup.MapGet("/managed-ai/catalog", (ManagedAiCatalogService catalogService
     {
         providers = catalogService.ListCatalogProviders()
     });
+});
+
+adminGroup.MapPost("/managed-ai/catalog/vision", (
+    ManagedAiModelVisionUpdateRequestDto request,
+    ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.UpdateModelVisionSupport(request));
 });
 
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (

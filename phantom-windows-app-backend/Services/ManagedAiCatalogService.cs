@@ -80,6 +80,46 @@ public sealed class ManagedAiCatalogService
             .Any(item => string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase));
     }
 
+    public bool ModelSupportsVision(string provider, string model)
+    {
+        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
+        var record = _catalogRepository.FindByProviderId(provider);
+        if (record == null)
+        {
+            return false;
+        }
+
+        return DeserializeModels(record.ModelsJson)
+            .FirstOrDefault(item => string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase))
+            ?.SupportsVision == true;
+    }
+
+    public ManagedAiProviderOptionDto UpdateModelVisionSupport(ManagedAiModelVisionUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        var record = _catalogRepository.FindByProviderId(request.ProviderId)
+            ?? throw new BackendValidationException("Managed provider catalog not found.");
+        var models = DeserializeModels(record.ModelsJson).ToList();
+        var model = models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new BackendValidationException("Managed model not found.");
+
+        model.SupportsVision = request.SupportsVision;
+        record.ModelsJson = JsonSerializer.Serialize(models);
+        record.RefreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(record);
+
+        return MapProvider(record);
+    }
+
     public async Task<ManagedAiCatalogRefreshResultDto> RefreshConfiguredProvidersAsync(CancellationToken cancellationToken = default)
     {
         var providers = await RefreshCatalogAsync(force: true, cancellationToken);

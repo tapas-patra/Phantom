@@ -2952,10 +2952,31 @@ namespace SecureOverlay
                 return;
             }
 
-            var resumeSummary = resetConversation ? string.Empty : selectedPack.ResumeSummary;
-            var jobDescriptionSummary = resetConversation ? string.Empty : selectedPack.JobDescriptionSummary;
+            if (resetConversation)
+            {
+                _conversationManager.UpdateResume(string.Empty, string.Empty);
+                _conversationManager.ClearJobDescription();
+                _conversationManager.ClearConversation();
 
-            _conversationManager.UpdateResume(selectedPack.ResumeText, resumeSummary);
+                if (!string.IsNullOrWhiteSpace(selectedPack.ResumeText))
+                {
+                    _conversationManager.UpdateResume(selectedPack.ResumeText, string.Empty);
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
+                {
+                    _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, string.Empty);
+                }
+
+                SettingsManager.ClearConversationCache();
+                MarkdownHelper.ClearDocument(ChatDocument);
+                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                UpdateTokenCounter();
+                Log.WriteLine("✓ Active context reapplied and conversation reset");
+                return;
+            }
+
+            _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
 
             if (string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
             {
@@ -2963,21 +2984,10 @@ namespace SecureOverlay
             }
             else
             {
-                _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, jobDescriptionSummary);
+                _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
             }
 
-            if (!resetConversation)
-            {
-                Log.WriteLine("✓ Resume and job description updated in conversation manager");
-                return;
-            }
-
-            _conversationManager.ClearConversation();
-            SettingsManager.ClearConversationCache();
-            MarkdownHelper.ClearDocument(ChatDocument);
-            MarkdownHelper.AddWelcomeMessage(ChatDocument);
-            UpdateTokenCounter();
-            Log.WriteLine("✓ Active context reapplied and conversation reset");
+            Log.WriteLine("✓ Resume and job description updated in conversation manager");
         }
 
 

@@ -10,6 +10,8 @@ namespace SecureOverlay.Infrastructure.Context
 {
     public sealed class LocalContextPackService : IContextPackService
     {
+        private const string LocalDraftPackId = "default";
+        private const string LocalDraftPackName = "Local Context Pack";
         private readonly IContextPackRepository _repository;
 
         public LocalContextPackService(IContextPackRepository repository)
@@ -53,7 +55,7 @@ namespace SecureOverlay.Infrastructure.Context
         public ContextPack GetLocalDraftPack()
         {
             var state = EnsureState();
-            return ClonePack(state.LocalDraftPack);
+            return ClonePack(NormalizeLocalDraftPack(state.LocalDraftPack));
         }
 
         public ContextPack CreatePack(string name)
@@ -110,7 +112,8 @@ namespace SecureOverlay.Infrastructure.Context
         public void SaveLocalDraftPack(ContextPack pack)
         {
             var state = EnsureState();
-            state.LocalDraftPack = PreparePackForSave(pack, state.LocalDraftPack);
+            var normalizedLocalDraft = NormalizeLocalDraftPack(pack);
+            state.LocalDraftPack = PreparePackForSave(normalizedLocalDraft, NormalizeLocalDraftPack(state.LocalDraftPack));
             _repository.Save(state);
         }
 
@@ -170,8 +173,13 @@ namespace SecureOverlay.Infrastructure.Context
             {
                 if (state.LocalDraftPack == null)
                 {
-                    state.LocalDraftPack = ClonePack(state.Packs[0]);
-                    state.LocalDraftPack.Name = "Local Context Pack";
+                    state.LocalDraftPack = NormalizeLocalDraftPack(state.Packs[0]);
+                    _repository.Save(state);
+                }
+                else if (!string.Equals(state.LocalDraftPack.PackId, LocalDraftPackId, StringComparison.Ordinal)
+                    || !string.Equals(state.LocalDraftPack.Name, LocalDraftPackName, StringComparison.Ordinal))
+                {
+                    state.LocalDraftPack = NormalizeLocalDraftPack(state.LocalDraftPack);
                     _repository.Save(state);
                 }
 
@@ -182,10 +190,9 @@ namespace SecureOverlay.Infrastructure.Context
             var newState = new ContextPackState
             {
                 SelectedPackId = migrated.PackId,
-                LocalDraftPack = ClonePack(migrated),
+                LocalDraftPack = NormalizeLocalDraftPack(migrated),
                 Packs = new List<ContextPack> { migrated }
             };
-            newState.LocalDraftPack.Name = "Local Context Pack";
             _repository.Save(newState);
             return newState;
         }
@@ -256,6 +263,15 @@ namespace SecureOverlay.Infrastructure.Context
 
             clone.Documents = BuildDocuments(clone);
             return clone;
+        }
+
+        private static ContextPack NormalizeLocalDraftPack(ContextPack? source)
+        {
+            var normalized = ClonePack(source ?? new ContextPack());
+            normalized.PackId = LocalDraftPackId;
+            normalized.Name = LocalDraftPackName;
+            normalized.Documents = BuildDocuments(normalized);
+            return normalized;
         }
 
         private static System.Collections.Generic.List<ContextDocument> BuildDocuments(ContextPack pack)

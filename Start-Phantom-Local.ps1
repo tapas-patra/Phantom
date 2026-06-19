@@ -72,6 +72,12 @@ $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
 $dashboardWebsiteAdminApiKey = Require-EnvVar "VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
+$razorpayKeyId = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID")
+$razorpayKeySecret = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET")
+$razorpayWebhookSecret = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET")
+$otpProvider = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER")
+$otpApiKey = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_API_KEY")
+$otpTemplateName = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME")
 
 $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
 $dashboardBackendDir = Join-Path $repoRoot "phantom-dashboard-backend"
@@ -104,6 +110,12 @@ $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = '$windowsBackendDbUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
 `$env:PHANTOM_PUBLIC_WEBSITE_BASE_URL = '$websiteBaseUrl'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID = '$razorpayKeyId'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET = '$razorpayKeySecret'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET = '$razorpayWebhookSecret'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER = '$otpProvider'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_API_KEY = '$otpApiKey'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME = '$otpTemplateName'
 dotnet restore
 dotnet run --urls http://localhost:5057
 "@

@@ -316,7 +316,7 @@ public sealed class PaymentService
         var responsePayload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new BackendValidationException("Razorpay order creation failed.");
+            throw new BackendValidationException($"Razorpay order creation failed: {ExtractRazorpayError(responsePayload)}");
         }
 
         using var json = JsonDocument.Parse(responsePayload);
@@ -357,5 +357,36 @@ public sealed class PaymentService
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string ExtractRazorpayError(string responsePayload)
+    {
+        if (string.IsNullOrWhiteSpace(responsePayload))
+        {
+            return "empty response from Razorpay";
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(responsePayload);
+            if (json.RootElement.TryGetProperty("error", out var errorElement))
+            {
+                if (errorElement.TryGetProperty("description", out var descriptionElement))
+                {
+                    return descriptionElement.GetString() ?? responsePayload;
+                }
+
+                if (errorElement.TryGetProperty("reason", out var reasonElement))
+                {
+                    return reasonElement.GetString() ?? responsePayload;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to the raw payload below.
+        }
+
+        return responsePayload;
     }
 }

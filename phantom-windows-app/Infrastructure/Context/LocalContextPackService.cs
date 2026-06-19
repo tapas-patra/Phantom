@@ -89,12 +89,12 @@ namespace SecureOverlay.Infrastructure.Context
             _repository.Save(state);
         }
 
-        public void SaveSelectedPack(ContextPack pack)
+        public void SaveSelectedPack(ContextPack pack, bool preserveCachedSummaries = true)
         {
             var state = EnsureState();
             var existingIndex = state.Packs.FindIndex(existing => existing.PackId == pack.PackId);
             var existingPack = existingIndex >= 0 ? state.Packs[existingIndex] : null;
-            var packToSave = PreparePackForSave(pack, existingPack);
+            var packToSave = PreparePackForSave(pack, preserveCachedSummaries ? existingPack : null);
 
             if (existingIndex >= 0)
             {

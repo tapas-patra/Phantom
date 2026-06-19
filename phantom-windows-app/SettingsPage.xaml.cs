@@ -1273,7 +1273,7 @@ namespace SecureOverlay
                 {
                     var localDraftPack = _contextPackService.GetLocalDraftPack();
                     SaveEditorsToLocalDraft(localDraftPack);
-                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack));
+                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack), preserveCachedSummaries: false);
                 }
                 else
                 {
@@ -1303,7 +1303,7 @@ namespace SecureOverlay
                             ResumeText = selectedHostedContextPack.ResumeText,
                             JobDescriptionText = selectedHostedContextPack.JobDescriptionText,
                             UpdatedAtUtc = selectedHostedContextPack.UpdatedAtUtc
-                        });
+                        }, preserveCachedSummaries: false);
                     }
                 }
 

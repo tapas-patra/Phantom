@@ -70,8 +70,17 @@ $dashboardAdminApiKey = Require-EnvVar "PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteBaseUrl = Require-EnvVar "PHANTOM_WEBSITE_BASE_URL"
 $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
-$dashboardWebsiteAdminApiKey = Require-EnvVar "VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
+$bootstrapAdminEmail = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_EMAIL")
+$bootstrapAdminPassword = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_PASSWORD")
+$bootstrapAdminDisplayName = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME")
+$razorpayKeyId = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID")
+$razorpayKeySecret = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET")
+$razorpayWebhookSecret = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET")
+$otpProvider = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER")
+$otpApiKey = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_API_KEY")
+$otpTemplateName = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME")
+$mockOtpCode = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE")
 
 $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
 $dashboardBackendDir = Join-Path $repoRoot "phantom-dashboard-backend"
@@ -103,7 +112,17 @@ if ($SeedUsers) {
 $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = '$windowsBackendDbUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
+`$env:PHANTOM_BOOTSTRAP_ADMIN_EMAIL = '$bootstrapAdminEmail'
+`$env:PHANTOM_BOOTSTRAP_ADMIN_PASSWORD = '$bootstrapAdminPassword'
+`$env:PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME = '$bootstrapAdminDisplayName'
 `$env:PHANTOM_PUBLIC_WEBSITE_BASE_URL = '$websiteBaseUrl'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID = '$razorpayKeyId'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET = '$razorpayKeySecret'
+`$env:PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET = '$razorpayWebhookSecret'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER = '$otpProvider'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_API_KEY = '$otpApiKey'
+`$env:PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME = '$otpTemplateName'
+`$env:PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE = '$mockOtpCode'
 dotnet restore
 dotnet run --urls http://localhost:5057
 "@
@@ -119,7 +138,6 @@ dotnet run --urls http://localhost:5067
 
 $websiteCommand = @"
 `$env:VITE_PHANTOM_DASHBOARD_API_BASE_URL = '$dashboardApiBaseUrl'
-`$env:VITE_PHANTOM_DASHBOARD_ADMIN_API_KEY = '$dashboardWebsiteAdminApiKey'
 `$env:VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL = '$websiteWindowsBackendApiBaseUrl'
 npm install
 npm run dev

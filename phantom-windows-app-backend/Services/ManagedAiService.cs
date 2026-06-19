@@ -20,25 +20,27 @@ public sealed class ManagedAiService
     private readonly AuthSessionRepository _sessions;
     private readonly AccountRepository _accounts;
     private readonly TokenService _tokens;
+    private readonly ManagedAiCatalogService _catalogService;
 
     public ManagedAiService(
         ManagedProviderCredentialRepository credentials,
         SecretProtector protector,
         AuthSessionRepository sessions,
         AccountRepository accounts,
-        TokenService tokens)
+        TokenService tokens,
+        ManagedAiCatalogService catalogService)
     {
         _credentials = credentials;
         _protector = protector;
         _sessions = sessions;
         _accounts = accounts;
         _tokens = tokens;
+        _catalogService = catalogService;
     }
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
     {
-        EnsureManagedAccess(account, allowPaidSessionExtension: false);
-        return ManagedAiCatalog.CreateCatalog();
+        return _catalogService.GetCatalogForAccount(account);
     }
 
     public IReadOnlyList<ManagedAiProviderKeyDto> ListAdminCredentials()
@@ -147,7 +149,7 @@ public sealed class ManagedAiService
             throw new BackendValidationException("Unsupported managed provider.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Model) || !ManagedAiCatalog.IsAllowedModel(request.Provider, request.Model))
+        if (string.IsNullOrWhiteSpace(request.Model) || !_catalogService.IsAllowedModel(request.Provider, request.Model))
         {
             throw new BackendValidationException("Unsupported managed model.");
         }
@@ -196,10 +198,10 @@ public sealed class ManagedAiService
 
     private static void EnsureManagedAccess(DesktopAccountRecord account, bool allowPaidSessionExtension)
     {
-        var isFreeTier = string.Equals(account.AccessTier, "free", StringComparison.OrdinalIgnoreCase);
-        var hasPremiumManagedLane = account.PremiumAvailableCredits > 0m
-            || string.Equals(account.AccessTier, "premium", StringComparison.OrdinalIgnoreCase);
-        var isByoTier = string.Equals(account.AccessTier, "pro_byo", StringComparison.OrdinalIgnoreCase);
+        var effectiveTier = AccessModeResolver.GetEffectiveAccessTier(account);
+        var isFreeTier = string.Equals(effectiveTier, AccessModeResolver.Free, StringComparison.OrdinalIgnoreCase);
+        var hasPremiumManagedLane = string.Equals(effectiveTier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase);
+        var isByoTier = string.Equals(effectiveTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase);
 
         if (!isFreeTier && !hasPremiumManagedLane && !(isByoTier && allowPaidSessionExtension))
         {
@@ -229,11 +231,29 @@ public sealed class ManagedAiService
                     apiKey,
                     cancellationToken);
                 return;
+            case ManagedAiCatalog.Groq:
+                await StreamOpenAiCompatibleAsync(
+                    downstreamResponse,
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    request.Model,
+                    apiKey,
+                    cancellationToken);
+                return;
             case ManagedAiCatalog.Claude:
                 await StreamClaudeAsync(downstreamResponse, request, apiKey, cancellationToken);
                 return;
             case ManagedAiCatalog.Gemini:
                 await StreamGeminiAsync(downstreamResponse, request, apiKey, cancellationToken);
+                return;
+            case ManagedAiCatalog.Nvidia:
+                await StreamOpenAiCompatibleAsync(
+                    downstreamResponse,
+                    "https://integrate.api.nvidia.com/v1/chat/completions",
+                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    request.Model,
+                    apiKey,
+                    cancellationToken);
                 return;
             default:
                 throw new BackendValidationException("Unsupported managed provider.");

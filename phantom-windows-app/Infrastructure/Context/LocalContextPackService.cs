@@ -10,6 +10,8 @@ namespace SecureOverlay.Infrastructure.Context
 {
     public sealed class LocalContextPackService : IContextPackService
     {
+        private const string LocalDraftPackId = "local-draft";
+        private const string LocalDraftPackName = "Local Context Pack";
         private readonly IContextPackRepository _repository;
 
         public LocalContextPackService(IContextPackRepository repository)
@@ -38,16 +40,32 @@ namespace SecureOverlay.Infrastructure.Context
         {
             var state = EnsureState();
 
+            if (IsLocalDraftSelected(state))
+            {
+                return ClonePack(NormalizeLocalDraftPack(state.LocalDraftPack));
+            }
+
             var selectedPack = state.Packs.FirstOrDefault(pack => pack.PackId == state.SelectedPackId);
             if (selectedPack != null)
             {
-                return selectedPack;
+                return ClonePack(selectedPack);
             }
 
-            var fallbackPack = state.Packs[0];
-            state.SelectedPackId = fallbackPack.PackId;
+            state.SelectedPackId = LocalDraftPackId;
             _repository.Save(state);
-            return fallbackPack;
+            return ClonePack(NormalizeLocalDraftPack(state.LocalDraftPack));
+        }
+
+        public bool IsLocalDraftApplied()
+        {
+            var state = EnsureState();
+            return IsLocalDraftSelected(state);
+        }
+
+        public ContextPack GetLocalDraftPack()
+        {
+            var state = EnsureState();
+            return ClonePack(NormalizeLocalDraftPack(state.LocalDraftPack));
         }
 
         public ContextPack CreatePack(string name)
@@ -71,6 +89,13 @@ namespace SecureOverlay.Infrastructure.Context
         public void SelectPack(string packId)
         {
             var state = EnsureState();
+            if (string.IsNullOrWhiteSpace(packId) || string.Equals(packId, LocalDraftPackId, StringComparison.Ordinal))
+            {
+                state.SelectedPackId = LocalDraftPackId;
+                _repository.Save(state);
+                return;
+            }
+
             var exists = state.Packs.Any(pack => pack.PackId == packId);
             if (!exists)
             {
@@ -81,23 +106,42 @@ namespace SecureOverlay.Infrastructure.Context
             _repository.Save(state);
         }
 
-        public void SaveSelectedPack(ContextPack pack)
+        public void SaveSelectedPack(ContextPack pack, bool preserveCachedSummaries = true)
         {
             var state = EnsureState();
+            if (string.Equals(pack.PackId, LocalDraftPackId, StringComparison.Ordinal))
+            {
+                var normalizedLocalDraft = NormalizeLocalDraftPack(pack);
+                state.LocalDraftPack = PreparePackForSave(
+                    normalizedLocalDraft,
+                    preserveCachedSummaries ? NormalizeLocalDraftPack(state.LocalDraftPack) : null);
+                state.SelectedPackId = LocalDraftPackId;
+                _repository.Save(state);
+                return;
+            }
+
             var existingIndex = state.Packs.FindIndex(existing => existing.PackId == pack.PackId);
-            pack.Documents = BuildDocuments(pack);
-            pack.UpdatedAtUtc = DateTime.UtcNow;
+            var existingPack = existingIndex >= 0 ? state.Packs[existingIndex] : null;
+            var packToSave = PreparePackForSave(pack, preserveCachedSummaries ? existingPack : null);
 
             if (existingIndex >= 0)
             {
-                state.Packs[existingIndex] = pack;
+                state.Packs[existingIndex] = packToSave;
             }
             else
             {
-                state.Packs.Add(pack);
+                state.Packs.Add(packToSave);
             }
 
-            state.SelectedPackId = pack.PackId;
+            state.SelectedPackId = packToSave.PackId;
+            _repository.Save(state);
+        }
+
+        public void SaveLocalDraftPack(ContextPack pack)
+        {
+            var state = EnsureState();
+            var normalizedLocalDraft = NormalizeLocalDraftPack(pack);
+            state.LocalDraftPack = PreparePackForSave(normalizedLocalDraft, NormalizeLocalDraftPack(state.LocalDraftPack));
             _repository.Save(state);
         }
 
@@ -124,9 +168,9 @@ namespace SecureOverlay.Infrastructure.Context
             }
 
             state.Packs.RemoveAll(pack => pack.PackId == packId);
-            if (!state.Packs.Any(pack => pack.PackId == state.SelectedPackId))
+            if (string.Equals(state.SelectedPackId, packId, StringComparison.Ordinal))
             {
-                state.SelectedPackId = state.Packs[0].PackId;
+                state.SelectedPackId = LocalDraftPackId;
             }
 
             _repository.Save(state);
@@ -155,13 +199,38 @@ namespace SecureOverlay.Infrastructure.Context
             var state = _repository.Load();
             if (state != null && state.Packs.Count > 0)
             {
+                if (state.LocalDraftPack == null)
+                {
+                    state.LocalDraftPack = NormalizeLocalDraftPack(state.Packs[0]);
+                    _repository.Save(state);
+                }
+                else if (!string.Equals(state.LocalDraftPack.PackId, LocalDraftPackId, StringComparison.Ordinal)
+                    || !string.Equals(state.LocalDraftPack.Name, LocalDraftPackName, StringComparison.Ordinal))
+                {
+                    state.LocalDraftPack = NormalizeLocalDraftPack(state.LocalDraftPack);
+                    _repository.Save(state);
+                }
+
+                if (string.Equals(state.SelectedPackId, "default", StringComparison.Ordinal))
+                {
+                    var legacySelectedPack = state.Packs.FirstOrDefault(pack => string.Equals(pack.PackId, "default", StringComparison.Ordinal));
+                    if (legacySelectedPack != null
+                        && string.Equals(legacySelectedPack.ResumeText ?? string.Empty, state.LocalDraftPack.ResumeText ?? string.Empty, StringComparison.Ordinal)
+                        && string.Equals(legacySelectedPack.JobDescriptionText ?? string.Empty, state.LocalDraftPack.JobDescriptionText ?? string.Empty, StringComparison.Ordinal))
+                    {
+                        state.SelectedPackId = LocalDraftPackId;
+                        _repository.Save(state);
+                    }
+                }
+
                 return state;
             }
 
             var migrated = CreateLegacyMigratedPack();
             var newState = new ContextPackState
             {
-                SelectedPackId = migrated.PackId,
+                SelectedPackId = LocalDraftPackId,
+                LocalDraftPack = NormalizeLocalDraftPack(migrated),
                 Packs = new List<ContextPack> { migrated }
             };
             _repository.Save(newState);
@@ -183,6 +252,72 @@ namespace SecureOverlay.Infrastructure.Context
             };
             pack.Documents = BuildDocuments(pack);
             return pack;
+        }
+
+        private static ContextPack PreparePackForSave(ContextPack pack, ContextPack? existingPack)
+        {
+            var clone = ClonePack(pack);
+
+            if (existingPack != null)
+            {
+                if (string.Equals(existingPack.ResumeText, clone.ResumeText, StringComparison.Ordinal))
+                {
+                    clone.ResumeSummary = string.IsNullOrWhiteSpace(clone.ResumeSummary)
+                        ? existingPack.ResumeSummary
+                        : clone.ResumeSummary;
+                }
+                else if (string.IsNullOrWhiteSpace(clone.ResumeSummary))
+                {
+                    clone.ResumeSummary = string.Empty;
+                }
+
+                if (string.Equals(existingPack.JobDescriptionText, clone.JobDescriptionText, StringComparison.Ordinal))
+                {
+                    clone.JobDescriptionSummary = string.IsNullOrWhiteSpace(clone.JobDescriptionSummary)
+                        ? existingPack.JobDescriptionSummary
+                        : clone.JobDescriptionSummary;
+                }
+                else if (string.IsNullOrWhiteSpace(clone.JobDescriptionSummary))
+                {
+                    clone.JobDescriptionSummary = string.Empty;
+                }
+            }
+
+            clone.Documents = BuildDocuments(clone);
+            clone.UpdatedAtUtc = DateTime.UtcNow;
+            return clone;
+        }
+
+        private static ContextPack ClonePack(ContextPack pack)
+        {
+            var clone = new ContextPack
+            {
+                PackId = pack.PackId,
+                Name = pack.Name,
+                ResumeText = pack.ResumeText ?? string.Empty,
+                ResumeSummary = pack.ResumeSummary ?? string.Empty,
+                JobDescriptionText = pack.JobDescriptionText ?? string.Empty,
+                JobDescriptionSummary = pack.JobDescriptionSummary ?? string.Empty,
+                UpdatedAtUtc = pack.UpdatedAtUtc
+            };
+
+            clone.Documents = BuildDocuments(clone);
+            return clone;
+        }
+
+        private static ContextPack NormalizeLocalDraftPack(ContextPack? source)
+        {
+            var normalized = ClonePack(source ?? new ContextPack());
+            normalized.PackId = LocalDraftPackId;
+            normalized.Name = LocalDraftPackName;
+            normalized.Documents = BuildDocuments(normalized);
+            return normalized;
+        }
+
+        private static bool IsLocalDraftSelected(ContextPackState state)
+        {
+            return string.IsNullOrWhiteSpace(state.SelectedPackId)
+                || string.Equals(state.SelectedPackId, LocalDraftPackId, StringComparison.Ordinal);
         }
 
         private static System.Collections.Generic.List<ContextDocument> BuildDocuments(ContextPack pack)

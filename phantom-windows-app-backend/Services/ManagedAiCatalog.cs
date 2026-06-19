@@ -8,52 +8,32 @@ public static class ManagedAiCatalog
     public const string Claude = "Claude";
     public const string Gemini = "Gemini";
     public const string Mistral = "Mistral";
+    public const string Groq = "Groq";
+    public const string Nvidia = "NVIDIA";
 
-    private static readonly IReadOnlyDictionary<string, ManagedAiProviderOptionDto> Providers =
-        new Dictionary<string, ManagedAiProviderOptionDto>(StringComparer.OrdinalIgnoreCase)
+    private static readonly IReadOnlyDictionary<string, string> ProviderLabels =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [ChatGpt] = new()
-            {
-                ProviderId = ChatGpt,
-                Label = "ChatGPT",
-                Models = new[] { "gpt-4o", "gpt-4o-mini" }
-            },
-            [Claude] = new()
-            {
-                ProviderId = Claude,
-                Label = "Claude",
-                Models = new[] { "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620" }
-            },
-            [Gemini] = new()
-            {
-                ProviderId = Gemini,
-                Label = "Gemini",
-                Models = new[] { "gemini-2.5-flash", "gemini-2.5-pro" }
-            },
-            [Mistral] = new()
-            {
-                ProviderId = Mistral,
-                Label = "Mistral",
-                Models = new[] { "mistral-large-latest" }
-            }
+            [ChatGpt] = "ChatGPT",
+            [Claude] = "Claude",
+            [Gemini] = "Gemini",
+            [Mistral] = "Mistral",
+            [Groq] = "Groq",
+            [Nvidia] = "NVIDIA"
         };
-
-    public static ManagedAiCatalogDto CreateCatalog()
-    {
-        return new ManagedAiCatalogDto
-        {
-            Providers = Providers.Values.ToArray()
-        };
-    }
 
     public static bool IsAllowedProvider(string provider)
     {
-        return Providers.ContainsKey(provider);
+        return ProviderLabels.ContainsKey(provider);
     }
 
-    public static bool IsAllowedModel(string provider, string model)
+    public static string GetProviderLabel(string provider)
     {
-        return Providers.TryGetValue(provider, out var option)
-            && option.Models.Contains(model, StringComparer.OrdinalIgnoreCase);
+        return ProviderLabels.TryGetValue(provider, out var label) ? label : provider;
+    }
+
+    public static IReadOnlyList<string> GetAllProviders()
+    {
+        return ProviderLabels.Keys.ToArray();
     }
 }

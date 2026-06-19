@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "dgSpecHash": "WcYG9PxwUgU=",
+  "success": false,
+  "projectFilePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://api.nuget.org/v3/index.json.",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
+      "targetGraphs": []
+    }
+  ]
+}

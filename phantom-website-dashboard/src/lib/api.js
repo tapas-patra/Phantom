@@ -9,10 +9,11 @@ const WINDOWS_BACKEND_API_BASE =
 const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
 async function request(baseUrl, path, init) {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(init?.headers || {})
     }
   });
@@ -77,8 +78,60 @@ export async function logoutAccount(refreshToken) {
   });
 }
 
+export async function loginAdmin(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function refreshAdminSession(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/refresh", {
+    method: "POST",
+    body: JSON.stringify({ refreshToken })
+  });
+}
+
+export async function logoutAdmin(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/logout", {
+    method: "POST",
+    body: JSON.stringify({ refreshToken })
+  });
+}
+
+export async function requestAdminPasswordReset(email) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function resetAdminPassword(token, newPassword) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, newPassword })
+  });
+}
+
 export async function registerAccount(payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function sendPhoneOtp(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/phone/send-otp", {
+    method: "POST",
+    body: JSON.stringify({
+      ...getBrowserDeviceProfile(),
+      ...payload
+    })
+  });
+}
+
+export async function verifyPhoneOtp(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/phone/verify-otp", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -110,6 +163,17 @@ export async function fetchWalletHistory(userId) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
+  );
+}
+
+export async function fetchWalletPurchases(userId) {
+  if (!userId) {
+    return [];
+  }
+
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/wallet-purchases?userId=${encodeURIComponent(userId)}`
   );
 }
 
@@ -146,41 +210,160 @@ export async function fetchSupportOverview(userId) {
   );
 }
 
-export async function fetchAdminOverview(adminApiKey) {
+export async function fetchAdminOverview(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function fetchManagedAiAdminInventory(adminApiKey) {
+export async function fetchManagedAiAdminInventory(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function upsertManagedAiCredential(adminApiKey, payload) {
+export async function fetchAdminPaymentOrders(accessToken, limit = 100) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/admin/payments/orders?limit=${encodeURIComponent(limit)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  );
+}
+
+export async function fetchAdminPaymentWebhooks(accessToken, limit = 100) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/admin/payments/webhooks?limit=${encodeURIComponent(limit)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  );
+}
+
+export async function fetchGmailOAuthStatus(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/status", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function startGmailOAuth(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/start", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function upsertManagedAiCredential(accessToken, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     },
     body: JSON.stringify(payload)
   });
 }
 
-export async function deleteManagedAiCredential(adminApiKey, credentialId) {
+export async function triggerManagedAiCatalogRefresh(accessToken) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function deleteManagedAiCredential(accessToken, credentialId) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`,
     {
       method: "DELETE",
       headers: {
-        "X-Phantom-Admin-Key": adminApiKey
+        Authorization: `Bearer ${accessToken}`
       }
     }
   );
+}
+
+export async function fetchHostedKnowledgeBase(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function createHostedKnowledgeBase(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
+  const formData = new FormData();
+  Array.from(files || []).forEach((file) => {
+    formData.append("files", file);
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/documents", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: formData
+  });
+}
+
+export async function fetchPaymentCatalog(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/catalog", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function fetchPaymentOrders(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/orders", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
+export async function createPaymentCheckout(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/checkout", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function confirmPaymentCheckout(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/client-confirm", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(payload)
+  });
 }

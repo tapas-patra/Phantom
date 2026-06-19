@@ -14,6 +14,7 @@ namespace SecureOverlay
     {
         public static void ProtectComboBox(ComboBox comboBox)
         {
+            comboBox.MaxDropDownHeight = Math.Min(comboBox.MaxDropDownHeight > 0 ? comboBox.MaxDropDownHeight : 320, 320);
             comboBox.DropDownOpened += (s, e) =>
             {
                 try

@@ -14,5 +14,6 @@ public sealed class StartupAccountCheckResultDto
     public string LastLockedSessionId { get; set; } = string.Empty;
     public bool OfflineModeEnabled { get; set; }
     public DateTime LastValidatedAtUtc { get; set; }
+    public HostedKnowledgeBaseSummaryDto HostedKnowledgeBase { get; set; } = new();
     public string Source { get; set; } = string.Empty;
 }

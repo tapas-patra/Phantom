@@ -8,7 +8,10 @@ public sealed class DesktopAccountRecord
     public DateTime? EmailVerifiedAtUtc { get; set; }
     public string AccessTier { get; set; } = "free";
     public string PasswordHash { get; set; } = string.Empty;
+    public string PhoneNumberE164 { get; set; } = string.Empty;
     public bool PhoneVerified { get; set; }
+    public DateTime? PhoneVerifiedAtUtc { get; set; }
+    public string RegistrationDeviceFingerprintHash { get; set; } = string.Empty;
     public decimal ProAvailableCredits { get; set; }
     public decimal PremiumAvailableCredits { get; set; }
     public decimal PremiumNegativeCredits { get; set; }

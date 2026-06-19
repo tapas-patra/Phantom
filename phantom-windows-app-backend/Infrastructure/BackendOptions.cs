@@ -15,7 +15,12 @@ public sealed class BackendOptions
     public int LoginAttemptWindowMinutes { get; init; } = 15;
     public int MaxFailedLoginAttempts { get; init; } = 5;
     public int EmailVerificationTtlHours { get; init; } = 24;
+    public int AdminSessionTtlHours { get; init; } = 8;
+    public int AdminPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
+    public string BootstrapAdminEmail { get; init; } = string.Empty;
+    public string BootstrapAdminPassword { get; init; } = string.Empty;
+    public string BootstrapAdminDisplayName { get; init; } = string.Empty;
     public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
     public string SmtpHost { get; init; } = string.Empty;
     public int SmtpPort { get; init; } = 587;
@@ -28,6 +33,16 @@ public sealed class BackendOptions
     public string GoogleOAuthClientSecretsJson { get; init; } = string.Empty;
     public string GoogleOAuthRedirectUri { get; init; } = string.Empty;
     public string SecretEncryptionKey { get; init; } = string.Empty;
+    public string RazorpayKeyId { get; init; } = string.Empty;
+    public string RazorpayKeySecret { get; init; } = string.Empty;
+    public string RazorpayWebhookSecret { get; init; } = string.Empty;
+    public string OtpProviderName { get; init; } = "2factor";
+    public string OtpApiKey { get; init; } = string.Empty;
+    public string OtpSenderId { get; init; } = string.Empty;
+    public string OtpTemplateName { get; init; } = string.Empty;
+    public string OtpSendUrlTemplate { get; init; } = string.Empty;
+    public string OtpVerifyUrlTemplate { get; init; } = string.Empty;
+    public string MockOtpCode { get; init; } = "111111";
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
     public bool IsSmtpConfigured =>
@@ -37,6 +52,11 @@ public sealed class BackendOptions
         !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsPath)
         || !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsJson);
     public bool HasSecretEncryptionKey => !string.IsNullOrWhiteSpace(SecretEncryptionKey);
+    public bool HasRazorpayCredentials =>
+        !string.IsNullOrWhiteSpace(RazorpayKeyId)
+        && !string.IsNullOrWhiteSpace(RazorpayKeySecret);
+    public bool HasRazorpayWebhookSecret => !string.IsNullOrWhiteSpace(RazorpayWebhookSecret);
+    public bool HasOtpApiKey => !string.IsNullOrWhiteSpace(OtpApiKey);
 
     public static BackendOptions FromConfiguration(IConfiguration configuration)
     {
@@ -87,9 +107,29 @@ public sealed class BackendOptions
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_EMAIL_VERIFICATION_TTL_HOURS"),
                 section["EmailVerificationTtlHours"],
                 24),
+            AdminSessionTtlHours = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_SESSION_TTL_HOURS"),
+                section["AdminSessionTtlHours"],
+                8),
+            AdminPasswordResetTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_PASSWORD_RESET_TTL_MINUTES"),
+                section["AdminPasswordResetTtlMinutes"],
+                30),
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",
                 section["AdminApiKey"],
+                string.Empty),
+            BootstrapAdminEmail = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_EMAIL",
+                section["BootstrapAdminEmail"],
+                string.Empty),
+            BootstrapAdminPassword = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_PASSWORD",
+                section["BootstrapAdminPassword"],
+                string.Empty),
+            BootstrapAdminDisplayName = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME",
+                section["BootstrapAdminDisplayName"],
                 string.Empty),
             PublicWebsiteBaseUrl = ReadString(
                 "PHANTOM_PUBLIC_WEBSITE_BASE_URL",
@@ -138,7 +178,47 @@ public sealed class BackendOptions
             SecretEncryptionKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY",
                 section["SecretEncryptionKey"],
-                string.Empty)
+                string.Empty),
+            RazorpayKeyId = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID",
+                section["RazorpayKeyId"],
+                string.Empty),
+            RazorpayKeySecret = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET",
+                section["RazorpayKeySecret"],
+                string.Empty),
+            RazorpayWebhookSecret = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET",
+                section["RazorpayWebhookSecret"],
+                string.Empty),
+            OtpProviderName = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER",
+                section["OtpProviderName"],
+                "2factor"),
+            OtpApiKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_API_KEY",
+                section["OtpApiKey"],
+                string.Empty),
+            OtpSenderId = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_SENDER_ID",
+                section["OtpSenderId"],
+                string.Empty),
+            OtpTemplateName = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME",
+                section["OtpTemplateName"],
+                string.Empty),
+            OtpSendUrlTemplate = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_SEND_URL_TEMPLATE",
+                section["OtpSendUrlTemplate"],
+                "https://2factor.in/API/V1/{apiKey}/SMS/{phone}/AUTOGEN/{template}"),
+            OtpVerifyUrlTemplate = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_OTP_VERIFY_URL_TEMPLATE",
+                section["OtpVerifyUrlTemplate"],
+                "https://2factor.in/API/V1/{apiKey}/SMS/VERIFY3/{sessionId}/{otp}"),
+            MockOtpCode = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE",
+                section["MockOtpCode"],
+                "111111")
         };
     }
 

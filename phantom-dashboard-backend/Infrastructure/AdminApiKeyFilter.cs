@@ -1,30 +1,34 @@
+using Phantom.Dashboard.Backend.Services;
+
 namespace Phantom.Dashboard.Backend.Infrastructure;
 
 public sealed class AdminApiKeyFilter : IEndpointFilter
 {
     private readonly DashboardOptions _options;
+    private readonly AdminSessionValidator _validator;
 
-    public AdminApiKeyFilter(DashboardOptions options)
+    public AdminApiKeyFilter(DashboardOptions options, AdminSessionValidator validator)
     {
         _options = options;
+        _validator = validator;
     }
 
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        if (!_options.HasAdminApiKey)
+        var request = context.HttpContext.Request;
+        var providedKey = request.Headers["X-Phantom-Admin-Key"].ToString();
+        if (_options.HasAdminApiKey
+            && string.Equals(providedKey, _options.AdminApiKey, StringComparison.Ordinal))
         {
-            return Results.Problem(
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                title: "Admin dashboard disabled",
-                detail: "Configure PHANTOM_DASHBOARD_ADMIN_API_KEY to enable admin endpoints.");
+            return await next(context);
         }
 
-        var providedKey = context.HttpContext.Request.Headers["X-Phantom-Admin-Key"].ToString();
-        if (!string.Equals(providedKey, _options.AdminApiKey, StringComparison.Ordinal))
+        var authorizationHeader = request.Headers.Authorization.ToString();
+        if (_validator.IsValid(authorizationHeader))
         {
-            return Results.Unauthorized();
+            return await next(context);
         }
 
-        return await next(context);
+        return Results.Unauthorized();
     }
 }

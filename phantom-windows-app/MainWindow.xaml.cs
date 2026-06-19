@@ -26,6 +26,7 @@ using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Context;
 using SecureOverlay.Infrastructure.Billing;
 using SecureOverlay.Infrastructure.Hosted;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Interviews;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Sync;
@@ -97,6 +98,7 @@ namespace SecureOverlay
         private Window? _currentDropdownMenu = null;
         private readonly AppLaunchContext _launchContext;
         private readonly IAuthSessionRepository _authSessionRepository;
+        private readonly IHostedAccountClient _hostedAccountClient;
         private readonly ICreditMeteringService _creditMeteringService;
         private readonly IContextPackService _contextPackService;
         private readonly IInterviewLockService _interviewLockService;
@@ -107,10 +109,12 @@ namespace SecureOverlay
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
+        private System.Windows.Threading.DispatcherTimer? _sessionInactivityTimer;
         private AccountCacheSnapshot? _accountSnapshot;
         private bool _sessionExtensionOptInRequired;
         private bool _isBoundaryFinalizationInProgress;
         private string? _forcedManagedExtensionProviderId;
+        private DateTime? _lastInterviewActivityUtc;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -155,12 +159,17 @@ namespace SecureOverlay
             IUsageReconciliationRepository usageReconciliationRepository = new SqliteUsageReconciliationRepository(store);
             ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
             _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
+            _hostedAccountClient = HostedClientFactory.CreateAccountClient(_hostedRuntimeOptions);
             _creditMeteringService = new LocalCreditMeteringService(
                 _authSessionRepository,
                 _accountCacheRepository,
                 interviewSessionRepository);
             _contextPackService = new LocalContextPackService(contextPackRepository);
-            _knowledgeRetrievalService = new LocalKnowledgeRetrievalService();
+            _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
+                new LocalKnowledgeRetrievalService(),
+                _authSessionRepository,
+                _accountCacheRepository,
+                _hostedAccountClient);
             _interviewLockService = new LocalInterviewLockService(
                 interviewSessionRepository,
                 _accountCacheRepository);
@@ -172,11 +181,13 @@ namespace SecureOverlay
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
+            RefreshManagedCatalogCache();
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
             {
                 ActivateInterviewLock(activeInterviewSession);
+                _lastInterviewActivityUtc = DateTime.UtcNow;
             }
 
             var reconciliationFlush = _usageReconciliationService.FlushPending();
@@ -493,11 +504,23 @@ namespace SecureOverlay
             _sessionStatusTimer.Start();
         }
 
+        private void StartSessionInactivityTimer()
+        {
+            _sessionInactivityTimer?.Stop();
+            _sessionInactivityTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(30)
+            };
+            _sessionInactivityTimer.Tick += (s, e) => CheckInterviewInactivity();
+            _sessionInactivityTimer.Start();
+        }
+
         private void UpdateSessionStatus()
         {
             var activeSession = _creditMeteringService.GetActiveSession();
             if (activeSession == null)
             {
+                _lastInterviewActivityUtc = null;
                 SessionTimerBorder.Visibility = Visibility.Collapsed;
                 SessionStatusText.Text = string.Empty;
                 return;
@@ -528,6 +551,39 @@ namespace SecureOverlay
             SessionTimerBorder.Visibility = Visibility.Visible;
             SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
             SessionStatusText.Text = $"Live | {billedMinutes} min | {projectedCharge:0.##} cr";
+        }
+
+        private void CheckInterviewInactivity()
+        {
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null || activeSession.State != SecureOverlay.Domain.Enums.InterviewSessionState.Active)
+            {
+                return;
+            }
+
+            if (!_settings.AutoPauseOnInactivityEnabled || _isProcessingRequest)
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc ??= DateTime.UtcNow;
+            var inactivityThreshold = TimeSpan.FromMinutes(Math.Max(10, _settings.AutoPauseOnInactivityMinutes));
+            if (DateTime.UtcNow - _lastInterviewActivityUtc.Value < inactivityThreshold)
+            {
+                return;
+            }
+
+            PauseInterviewSessionForInactivity(inactivityThreshold);
+        }
+
+        private void RecordInterviewActivity(string reason)
+        {
+            if (_creditMeteringService.GetActiveSession() == null)
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc = DateTime.UtcNow;
         }
 
         private bool IsSessionExtensionEnabledForCurrentTier()
@@ -565,7 +621,7 @@ namespace SecureOverlay
 
             if (IsSessionExtensionEnabledForCurrentTier())
             {
-                return GetProjectedPremiumExtensionCharge(session) > 1.0m;
+                return GetProjectedTotalPremiumDebt(session) >= 1.0m;
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
@@ -588,6 +644,29 @@ namespace SecureOverlay
             });
         }
 
+        private void PauseInterviewSessionForInactivity(TimeSpan inactivityThreshold)
+        {
+            if (!_creditMeteringService.PauseActiveSession())
+            {
+                return;
+            }
+
+            _lastInterviewActivityUtc = null;
+            Log.WriteLine($"Interview paused after inactivity: threshold={inactivityThreshold.TotalMinutes:0} minutes");
+            UpdateSessionStatus();
+            StatusText.Text = "⏸️ Interview auto-paused";
+            StatusIndicator.Fill = Brushes.Orange;
+            AddToChat(
+                $"⏸️ **Interview auto-paused**\n\nNo active question/answer activity was detected for {inactivityThreshold.TotalMinutes:0} minutes. Send another message to resume the session.",
+                false);
+            _telemetryService.Track("billing", "interview_session_auto_paused", new Dictionary<string, string>
+            {
+                ["reason"] = "inactivity",
+                ["threshold_minutes"] = inactivityThreshold.TotalMinutes.ToString("0"),
+                ["tier"] = _accountSnapshot?.AccessTier ?? "unknown"
+            });
+        }
+
         private void ResumeInterviewSessionAfterSuccess()
         {
             if (!_creditMeteringService.ResumePausedSession())
@@ -595,6 +674,7 @@ namespace SecureOverlay
                 return;
             }
 
+            _lastInterviewActivityUtc = DateTime.UtcNow;
             Log.WriteLine("Interview resumed after successful response");
             UpdateSessionStatus();
             _telemetryService.Track("billing", "interview_session_resumed", new Dictionary<string, string>
@@ -639,6 +719,7 @@ namespace SecureOverlay
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
+                _lastInterviewActivityUtc = null;
                 _sessionExtensionOptInRequired = IsFreeTrialAccount() || HasPaidCreditExhaustionGate();
 
                 RefreshAccountSnapshot();
@@ -730,6 +811,75 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
+        private void RefreshManagedCatalogCache()
+        {
+            try
+            {
+                var session = _authSessionRepository.Load();
+                if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+                {
+                    return;
+                }
+
+                var catalog = _hostedAccountClient.GetManagedCatalog(session.AccessToken);
+                if (catalog != null)
+                {
+                    _settings.PremiumConfiguredProviders = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
+                        .Select(item => item.ProviderId)
+                        .Where(item => !string.IsNullOrWhiteSpace(item))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    ProviderModelCatalogCache.MergeCatalog(_settings, catalog);
+                    SettingsManager.Save(_settings);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Managed catalog refresh skipped: {ex.Message}");
+            }
+        }
+
+        private ManagedAiProviderOptionDto? GetManagedProviderCatalog(string provider)
+        {
+            return ProviderModelCatalogCache.GetProvider(_settings, provider);
+        }
+
+        private string[] GetConfiguredModelsForProvider(string provider)
+        {
+            return ProviderModelCatalogCache.GetModelIds(_settings, provider);
+        }
+
+        private ModelConfig GetModelConfigForCurrentSelection(string provider, string modelId)
+        {
+            var registryConfig = AIModelRegistry.GetModelConfig(modelId);
+            if (!string.Equals(registryConfig.Name, "Unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                return registryConfig;
+            }
+
+            var managedModel = ProviderModelCatalogCache.GetModel(_settings, provider, modelId);
+            return new ModelConfig
+            {
+                Name = managedModel?.DisplayName ?? modelId,
+                MaxContextTokens = 128000,
+                MaxResponseTokens = 4000,
+                SlidingWindowSize = 15
+            };
+        }
+
+        private string GetModelDisplayName(string provider, string modelId)
+        {
+            var registryName = AIModelRegistry.GetDisplayName(modelId);
+            if (!string.Equals(registryName, modelId, StringComparison.Ordinal)
+                && !string.Equals(registryName, "Unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                return registryName;
+            }
+
+            return ProviderModelCatalogCache.GetModel(_settings, provider, modelId)?.DisplayName
+                ?? modelId;
+        }
+
         private SecureOverlay.Domain.Enums.InterviewUsageSource DetermineUsageSourceForCurrentRuntime(string provider)
         {
             if (IsFreeTrialAccount())
@@ -777,12 +927,21 @@ namespace SecureOverlay
             return Math.Round(requestedCharge * debtSeconds / totalMeteredSeconds, 2, MidpointRounding.AwayFromZero);
         }
 
+        private decimal GetProjectedTotalPremiumDebt(InterviewSessionRecord session)
+        {
+            var existingDebt = _accountSnapshot?.PremiumNegativeCredits ?? 0m;
+            var projectedExtensionDebt = GetProjectedPremiumExtensionCharge(session);
+            return Math.Round(existingDebt + projectedExtensionDebt, 2, MidpointRounding.AwayFromZero);
+        }
+
         private static bool IsManagedProvider(string provider)
         {
             return provider == AIModelRegistry.Providers.ChatGPT
                 || provider == AIModelRegistry.Providers.Claude
                 || provider == AIModelRegistry.Providers.Gemini
-                || provider == AIModelRegistry.Providers.Mistral;
+                || provider == AIModelRegistry.Providers.Mistral
+                || provider == AIModelRegistry.Providers.Groq
+                || provider == AIModelRegistry.Providers.Nvidia;
         }
 
         private bool HasConfiguredByoKeysForProvider(string provider)
@@ -864,30 +1023,27 @@ namespace SecureOverlay
                 return AIModelRegistry.GetAllProviders();
             }
 
-            return new[]
+            var providers = _settings.PremiumConfiguredProviders?
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (providers == null || providers.Length == 0)
             {
-                AIModelRegistry.Providers.ChatGPT,
-                AIModelRegistry.Providers.Claude,
-                AIModelRegistry.Providers.Gemini,
-                AIModelRegistry.Providers.Mistral
-            };
+                providers = (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            return providers != null && providers.Length > 0
+                ? providers
+                : new[] { _settings.SelectedAI };
         }
 
         private string[] GetAvailableModelsForSelectedProvider()
         {
-            if (!IsManagedProvider(_settings.SelectedAI) || ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
-            {
-                return AIModelRegistry.GetModelsForProvider(_settings.SelectedAI);
-            }
-
-            return _settings.SelectedAI switch
-            {
-                "ChatGPT" => new[] { "gpt-4o", "gpt-4o-mini" },
-                "Claude" => new[] { "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620" },
-                "Gemini" => new[] { "gemini-2.5-flash", "gemini-2.5-pro" },
-                "Mistral" => new[] { "mistral-large-latest" },
-                _ => Array.Empty<string>()
-            };
+            return GetConfiguredModelsForProvider(_settings.SelectedAI);
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -987,6 +1143,7 @@ namespace SecureOverlay
             UpdateCreditIndicator();
             UpdateSessionStatus();
             StartSessionStatusTimer();
+            StartSessionInactivityTimer();
 
             FocusInput();
             ApplyLaunchRestrictions();
@@ -1049,7 +1206,9 @@ namespace SecureOverlay
             var allowedProviders = GetAvailableProvidersForCurrentTier();
             if (!allowedProviders.Contains(_settings.SelectedAI))
             {
-                _settings.SelectedAI = allowedProviders.FirstOrDefault() ?? AIModelRegistry.Providers.ChatGPT;
+                _settings.SelectedAI = allowedProviders.FirstOrDefault()
+                    ?? _settings.ManagedAiCatalogCache?.Providers?.FirstOrDefault()?.ProviderId
+                    ?? AIModelRegistry.Providers.ChatGPT;
             }
             
             // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
@@ -1081,7 +1240,7 @@ namespace SecureOverlay
             
             AIProviderText.Text = newAI.GetProviderName();
 
-            var modelConfig = AIModelRegistry.GetModelConfig(currentModel);  // ✅ Use registry
+            var modelConfig = GetModelConfigForCurrentSelection(_settings.SelectedAI, currentModel);
             
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
@@ -1472,6 +1631,7 @@ namespace SecureOverlay
             if (meteringActivation.Session != null)
             {
                 ActivateInterviewLock(meteringActivation.Session);
+                RecordInterviewActivity("session_active");
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
@@ -1492,6 +1652,8 @@ namespace SecureOverlay
                     Log.WriteLine("✗ Failed to encode screenshot - sending without image");
                 }
             }
+
+            RecordInterviewActivity("request_started");
 
             if (_isProcessingRequest && _currentRequestCancellation != null)
             {
@@ -1560,6 +1722,7 @@ namespace SecureOverlay
                 {
                     if (_currentRequestCancellation != null && !_currentRequestCancellation.Token.IsCancellationRequested)
                     {
+                        Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                         lock (_streamBuffer)
                         {
                             _streamBuffer.Append(chunk);
@@ -1763,6 +1926,7 @@ namespace SecureOverlay
                         timer.Stop();
                     };
                     timer.Start();
+                    RecordInterviewActivity("response_completed");
                     
                 }
                 // ✅ NEW: Clear screenshot after successful send
@@ -2671,11 +2835,11 @@ namespace SecureOverlay
         }
 
 
-        private void OnSettingsClosed(object? sender, bool saved)
+        private void OnSettingsClosed(object? sender, SettingsCloseResult result)
         {
-            Log.WriteLine($"Settings closed - saved: {saved}");
+            Log.WriteLine($"Settings closed - saved: {result.Saved}, context reset required: {result.ContextResetRequired}");
 
-            if (saved)
+            if (result.Saved)
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
@@ -2683,6 +2847,7 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
+                RefreshManagedCatalogCache();
                 RefreshAccountSnapshot();
                 ApplyAccountTierChrome();
                 UpdateCreditIndicator();
@@ -2695,10 +2860,7 @@ namespace SecureOverlay
                 if (_conversationManager != null)
                 {
                     var selectedPack = _contextPackService.GetSelectedPack();
-                    _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
-                    Log.WriteLine("✓ Resume updated in conversation manager");
-                    _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
-                    Log.WriteLine("✓ Job description updated in conversation manager");
+                    ApplySelectedContextPackToConversation(selectedPack, result.ContextResetRequired);
                 }
 
                 _cursorManager?.Dispose();
@@ -2735,13 +2897,23 @@ namespace SecureOverlay
                 // ✅ Show notification for changes
                 if (providerChanged || modelChanged)
                 {
+                    var historyNotice = result.ContextResetRequired
+                        ? "The active context changed, so the current conversation was reset."
+                        : "Your conversation history has been preserved!";
+
                     InvisibleMessageBox.Show(
                         $"✓ Settings Applied\n\n" +
                         $"Provider: {newProvider}\n" +
-                        $"Model: {AIModelRegistry.GetDisplayName(newModel)}\n\n" +
-                        "Your conversation history has been preserved!",
+                        $"Model: {GetModelDisplayName(_settings.SelectedAI, newModel)}\n\n" +
+                        historyNotice,
                         "Settings Saved"
                     );
+                }
+                else if (result.ContextResetRequired)
+                {
+                    InvisibleMessageBox.Show(
+                        "Settings saved. The active context pack changed, so the current conversation was reset.",
+                        "Settings Saved");
                 }
                 else
                 {
@@ -2752,6 +2924,7 @@ namespace SecureOverlay
                 UpdateAPIKeyIndicator();
                 UpdateScreenshotButtonVisibility();
                 UpdateProviderAndModelDisplay();  // ✅ Critical for sync!
+                StartSessionInactivityTimer();
                 
                 Log.WriteLine("✓ Settings reloaded successfully");
                 Log.WriteLine($"  Final model: {newModel}");
@@ -2770,6 +2943,51 @@ namespace SecureOverlay
 
             this.Activate();
             FocusInput();
+        }
+
+        private void ApplySelectedContextPackToConversation(ContextPack selectedPack, bool resetConversation)
+        {
+            if (_conversationManager == null)
+            {
+                return;
+            }
+
+            if (resetConversation)
+            {
+                _conversationManager.UpdateResume(string.Empty, string.Empty);
+                _conversationManager.ClearJobDescription();
+                _conversationManager.ClearConversation();
+
+                if (!string.IsNullOrWhiteSpace(selectedPack.ResumeText))
+                {
+                    _conversationManager.UpdateResume(selectedPack.ResumeText, string.Empty);
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
+                {
+                    _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, string.Empty);
+                }
+
+                SettingsManager.ClearConversationCache();
+                MarkdownHelper.ClearDocument(ChatDocument);
+                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                UpdateTokenCounter();
+                Log.WriteLine("✓ Active context reapplied and conversation reset");
+                return;
+            }
+
+            _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
+
+            if (string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
+            {
+                _conversationManager.ClearJobDescription();
+            }
+            else
+            {
+                _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
+            }
+
+            Log.WriteLine("✓ Resume and job description updated in conversation manager");
         }
 
 
@@ -3131,6 +3349,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             // ✅ FIX #1: Declare handler variable before use
             EventHandler? deactivateHandler = null;
@@ -3207,7 +3432,7 @@ namespace SecureOverlay
             };
             menuStack.Children.Add(removeButton);
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // Position correctly relative to main window
@@ -3482,7 +3707,6 @@ namespace SecureOverlay
         // CHECK IF CURRENT MODEL SUPPORTS VISION
         // ═══════════════════════════════════════════════════════════════
 
-        // ✅ SIMPLIFIED - Uses registry
         private bool CurrentModelSupportsVision()
         {
             if (_settings == null || _rotationManager == null) 
@@ -3496,8 +3720,8 @@ namespace SecureOverlay
             
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
-            // ✅ USE REGISTRY
-            bool supportsVision = AIModelRegistry.SupportsVision(currentModel);
+            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel);
+            bool supportsVision = model?.SupportsVision ?? AIModelRegistry.SupportsVision(currentModel);
             
             Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");
             
@@ -3619,6 +3843,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             var providers = GetAvailableProvidersForCurrentTier();
             
@@ -3667,7 +3898,7 @@ namespace SecureOverlay
                 menuStack.Children.Add(button);
             }
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // ✅ POSITION RELATIVE TO SCREEN (not window)
@@ -3753,6 +3984,13 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
+            var menuScrollViewer = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                CanContentScroll = true
+            };
 
             // ✅ USE REGISTRY - Get models for current provider
             string[] models = GetAvailableModelsForSelectedProvider();
@@ -3761,7 +3999,7 @@ namespace SecureOverlay
             foreach (var model in models)
             {
                 // ✅ USE REGISTRY - Get display name
-                var displayName = AIModelRegistry.GetDisplayName(model);
+            var displayName = GetModelDisplayName(_settings.SelectedAI, model);
                 
                 var button = new Button
                 {
@@ -3806,7 +4044,7 @@ namespace SecureOverlay
                 menuStack.Children.Add(button);
             }
 
-            menuBorder.Child = menuStack;
+            menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
             // ✅ POSITION RELATIVE TO SCREEN (not window)
@@ -3940,7 +4178,7 @@ namespace SecureOverlay
                 _settingsPage.RefreshSettings();
             }
             
-            StatusText.Text = $"✓ Switched to {AIModelRegistry.GetDisplayName(newModel)}";
+            StatusText.Text = $"✓ Switched to {GetModelDisplayName(_settings.SelectedAI, newModel)}";
             StatusIndicator.Fill = Brushes.LightGreen;
             
             var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -3994,7 +4232,7 @@ namespace SecureOverlay
             Log.WriteLine($"  Current model ID: {currentModel}");
             
             // ✅ USE REGISTRY - Get display name
-            var displayModel = AIModelRegistry.GetDisplayName(currentModel);
+            var displayModel = GetModelDisplayName(_settings.SelectedAI, currentModel);
             Log.WriteLine($"  Display name: {displayModel}");
             
             ModelText.Text = displayModel;

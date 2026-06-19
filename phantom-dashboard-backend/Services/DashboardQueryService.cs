@@ -54,14 +54,16 @@ LIMIT 1;";
         var proCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits"));
         var premiumCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits"));
         var accessTier = reader.GetString(reader.GetOrdinal("access_tier"));
+        var effectiveTier = ResolveEffectiveTier(accessTier, proCredits, premiumCredits);
 
         return new
         {
             userId = resolvedUserId,
             email = resolvedEmail,
-            planLabel = accessTier.Equals("premium", StringComparison.OrdinalIgnoreCase)
+            effectiveAccessTier = effectiveTier,
+            planLabel = effectiveTier.Equals("premium", StringComparison.OrdinalIgnoreCase)
                 ? "Premium"
-                : accessTier.Equals("pro_byo", StringComparison.OrdinalIgnoreCase)
+                : effectiveTier.Equals("pro_byo", StringComparison.OrdinalIgnoreCase)
                     ? "Pro BYO"
                     : "Free",
             phoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
@@ -84,6 +86,7 @@ LIMIT 1;";
 SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, added_premium_debt, created_at_utc
 FROM usage_ledger
 WHERE user_id = @userId
+  AND session_id NOT LIKE 'payment:%'
 ORDER BY created_at_utc DESC
 LIMIT 50;";
         command.Parameters.AddWithValue("userId", userId);
@@ -98,6 +101,45 @@ LIMIT 50;";
                 chargedCredits = reader.GetDecimal(reader.GetOrdinal("charged_credits")),
                 chargedBlocks = reader.GetInt32(reader.GetOrdinal("charged_blocks")),
                 addedPremiumDebt = reader.GetDecimal(reader.GetOrdinal("added_premium_debt")),
+                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
+            });
+        }
+
+        return items;
+    }
+
+    public IReadOnlyList<object> GetWalletPurchases(string userId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT checkout_id, target, pack_code, display_label, amount_minor, credits, premium_debt_credits_covered, status, client_confirmed, credited_at_utc, created_at_utc
+FROM payment_orders
+WHERE user_id = @userId
+ORDER BY created_at_utc DESC
+LIMIT 50;";
+        command.Parameters.AddWithValue("userId", userId);
+        using var reader = command.ExecuteReader();
+        var items = new List<object>();
+        while (reader.Read())
+        {
+            items.Add(new
+            {
+                checkoutId = reader.GetString(reader.GetOrdinal("checkout_id")),
+                target = reader.GetString(reader.GetOrdinal("target")),
+                packCode = reader.GetString(reader.GetOrdinal("pack_code")),
+                displayLabel = reader.GetString(reader.GetOrdinal("display_label")),
+                amountMinor = reader.GetInt32(reader.GetOrdinal("amount_minor")),
+                amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
+                credits = reader.GetDecimal(reader.GetOrdinal("credits")),
+                premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
+                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? reader.GetString(reader.GetOrdinal("status"))
+                    : "credited",
+                clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
+                creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? (DateTime?)null
+                    : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
                 createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
             });
         }
@@ -191,6 +233,7 @@ LIMIT 1;";
 SELECT charged_credits
 FROM usage_ledger
 WHERE user_id = @userId
+  AND session_id NOT LIKE 'payment:%'
 ORDER BY created_at_utc DESC
 LIMIT 1;";
             command.Parameters.AddWithValue("userId", userId);
@@ -235,8 +278,88 @@ LIMIT 1;";
             activeSessionCount = ExecuteCount(connection, "SELECT COUNT(*) FROM auth_sessions WHERE is_authenticated = TRUE AND revoked_at_utc IS NULL;"),
             activeLockCount = ExecuteCount(connection, "SELECT COUNT(*) FROM interview_locks WHERE expires_at_utc > NOW();"),
             ledgerEntryCount = ExecuteCount(connection, "SELECT COUNT(*) FROM usage_ledger;"),
-            managedCredentialCount = ExecuteCount(connection, "SELECT COUNT(*) FROM managed_provider_credentials;")
+            managedCredentialCount = ExecuteCount(connection, "SELECT COUNT(*) FROM managed_provider_credentials;"),
+            paymentOrderCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders;"),
+            creditedPaymentCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders WHERE credited_at_utc IS NOT NULL;"),
+            paymentWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events;"),
+            processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;")
         };
+    }
+
+    public IReadOnlyList<object> GetAdminPaymentOrders(int maxCount = 100)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT checkout_id, user_id, email, target, pack_code, display_label, currency, amount_minor, credits,
+       premium_debt_credits_covered, razorpay_order_id, razorpay_payment_id, status, client_confirmed,
+       credited_at_utc, created_at_utc, updated_at_utc
+FROM payment_orders
+ORDER BY created_at_utc DESC
+LIMIT @maxCount;";
+        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
+        using var reader = command.ExecuteReader();
+        var items = new List<object>();
+        while (reader.Read())
+        {
+            items.Add(new
+            {
+                checkoutId = reader.GetString(reader.GetOrdinal("checkout_id")),
+                userId = reader.GetString(reader.GetOrdinal("user_id")),
+                email = reader.GetString(reader.GetOrdinal("email")),
+                target = reader.GetString(reader.GetOrdinal("target")),
+                packCode = reader.GetString(reader.GetOrdinal("pack_code")),
+                displayLabel = reader.GetString(reader.GetOrdinal("display_label")),
+                currency = reader.GetString(reader.GetOrdinal("currency")),
+                amountMinor = reader.GetInt32(reader.GetOrdinal("amount_minor")),
+                amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
+                credits = reader.GetDecimal(reader.GetOrdinal("credits")),
+                premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
+                razorpayOrderId = reader.GetString(reader.GetOrdinal("razorpay_order_id")),
+                razorpayPaymentId = reader.GetString(reader.GetOrdinal("razorpay_payment_id")),
+                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? reader.GetString(reader.GetOrdinal("status"))
+                    : "credited",
+                clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
+                creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? (DateTime?)null
+                    : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
+                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+                updatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
+            });
+        }
+
+        return items;
+    }
+
+    public IReadOnlyList<object> GetAdminPaymentWebhookEvents(int maxCount = 100)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT event_record_id, external_event_id, event_type, payload_json::text, created_at_utc, processed_at_utc
+FROM payment_webhook_events
+ORDER BY created_at_utc DESC
+LIMIT @maxCount;";
+        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
+        using var reader = command.ExecuteReader();
+        var items = new List<object>();
+        while (reader.Read())
+        {
+            items.Add(new
+            {
+                eventRecordId = reader.GetString(reader.GetOrdinal("event_record_id")),
+                externalEventId = reader.GetString(reader.GetOrdinal("external_event_id")),
+                eventType = reader.GetString(reader.GetOrdinal("event_type")),
+                payloadJson = reader.GetString(reader.GetOrdinal("payload_json")),
+                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+                processedAtUtc = reader.IsDBNull(reader.GetOrdinal("processed_at_utc"))
+                    ? (DateTime?)null
+                    : reader.GetDateTime(reader.GetOrdinal("processed_at_utc"))
+            });
+        }
+
+        return items;
     }
 
     private int CountDistinctDevices(string userId)
@@ -260,7 +383,8 @@ SELECT COUNT(*) FROM (
         command.CommandText = @"
 SELECT MAX(created_at_utc)
 FROM usage_ledger
-WHERE user_id = @userId;";
+WHERE user_id = @userId
+  AND session_id NOT LIKE 'payment:%';";
         command.Parameters.AddWithValue("userId", userId);
         var result = command.ExecuteScalar();
         return result == DBNull.Value || result == null ? null : Convert.ToDateTime(result);
@@ -271,5 +395,27 @@ WHERE user_id = @userId;";
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
+    private static string ResolveEffectiveTier(string accessTier, decimal proCredits, decimal premiumCredits)
+    {
+        if (accessTier.Equals("free", StringComparison.OrdinalIgnoreCase)
+            && proCredits <= 0m
+            && premiumCredits <= 0.5m)
+        {
+            return "free";
+        }
+
+        if (premiumCredits > 0m)
+        {
+            return "premium";
+        }
+
+        if (proCredits > 0m)
+        {
+            return "pro_byo";
+        }
+
+        return "free";
     }
 }

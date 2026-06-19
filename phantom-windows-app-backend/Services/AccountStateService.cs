@@ -10,15 +10,18 @@ public sealed class AccountStateService
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
     private readonly PasswordHasher _passwordHasher;
+    private readonly HostedKnowledgeBaseService _knowledgeBases;
 
     public AccountStateService(
         AccountRepository accounts,
         LockRepository locks,
-        PasswordHasher passwordHasher)
+        PasswordHasher passwordHasher,
+        HostedKnowledgeBaseService knowledgeBases)
     {
         _accounts = accounts;
         _locks = locks;
         _passwordHasher = passwordHasher;
+        _knowledgeBases = knowledgeBases;
     }
 
     public DesktopAccountRecord GetForLogin(AuthLoginRequestDto request)
@@ -66,7 +69,7 @@ public sealed class AccountStateService
             UserId = account.UserId,
             Email = account.Email,
             EmailVerified = account.EmailVerified,
-            AccessTier = account.AccessTier,
+            AccessTier = AccessModeResolver.GetEffectiveAccessTier(account),
             PhoneVerified = account.PhoneVerified,
             Wallet = new WalletSnapshotDto
             {
@@ -80,6 +83,7 @@ public sealed class AccountStateService
             LastLockedSessionId = hasResumableLock ? activeLock!.SessionId : string.Empty,
             OfflineModeEnabled = account.OfflineModeEnabled,
             LastValidatedAtUtc = account.LastValidatedAtUtc,
+            HostedKnowledgeBase = _knowledgeBases.GetSummaryForAccount(account),
             Source = source
         };
     }
@@ -117,6 +121,7 @@ public sealed class AccountStateService
 
     public void Save(DesktopAccountRecord account)
     {
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.UpdatedAtUtc = DateTime.UtcNow;
         account.LastValidatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);

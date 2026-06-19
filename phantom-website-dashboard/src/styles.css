@@ -277,6 +277,12 @@ a {
   margin-bottom: 20px;
 }
 
+.admin-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .admin-form {
   display: grid;
   gap: 16px;
@@ -812,6 +818,19 @@ a {
   background: rgba(0, 0, 0, 0.16);
   color: var(--text);
   font: inherit;
+}
+
+.button-file {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+}
+
+.button-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .toggle-row {

@@ -23,7 +23,7 @@ dotnet run --urls http://localhost:5067
 Environment:
 - `PHANTOM_DASHBOARD_BACKEND_DATABASE_URL`
 - falls back to `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
-- `PHANTOM_DASHBOARD_ADMIN_API_KEY`
+- `PHANTOM_DASHBOARD_ADMIN_API_KEY` for optional backend-to-backend fallback
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL`
 - `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 
@@ -39,7 +39,7 @@ Endpoints:
 - `GET /api/dashboard/devices?userId=...`
 - `GET /api/dashboard/download-entitlement?userId=...`
 - `GET /api/dashboard/support/preview?userId=...`
-- `GET /api/dashboard/admin/overview` with `X-Phantom-Admin-Key`
-- `GET /api/dashboard/admin/managed-ai/credentials` with `X-Phantom-Admin-Key`
-- `POST /api/dashboard/admin/managed-ai/credentials` with `X-Phantom-Admin-Key`
-- `DELETE /api/dashboard/admin/managed-ai/credentials/{credentialId}` with `X-Phantom-Admin-Key`
+- `GET /api/dashboard/admin/overview` with `Authorization: Bearer <admin access token>`
+- `GET /api/dashboard/admin/managed-ai/credentials` with `Authorization: Bearer <admin access token>`
+- `POST /api/dashboard/admin/managed-ai/credentials` with `Authorization: Bearer <admin access token>`
+- `DELETE /api/dashboard/admin/managed-ai/credentials/{credentialId}` with `Authorization: Bearer <admin access token>`

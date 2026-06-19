@@ -1,4 +1,5 @@
 using System;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Domain.Entities
 {
@@ -17,5 +18,6 @@ namespace SecureOverlay.Domain.Entities
         public string LastLockedSessionId { get; set; } = string.Empty;
         public bool OfflineModeEnabled { get; set; }
         public DateTime LastValidatedAtUtc { get; set; }
+        public HostedKnowledgeBaseSummaryDto HostedKnowledgeBase { get; set; } = new HostedKnowledgeBaseSummaryDto();
     }
 }

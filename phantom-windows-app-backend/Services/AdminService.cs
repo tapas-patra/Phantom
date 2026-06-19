@@ -96,6 +96,7 @@ public sealed class AdminService
             ?? throw new BackendValidationException("Account not found.");
         var before = account.PremiumNegativeCredits;
         account.PremiumNegativeCredits = 0m;
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.LastValidatedAtUtc = DateTime.UtcNow;
         account.UpdatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);
@@ -115,6 +116,7 @@ public sealed class AdminService
 
         account.ProAvailableCredits += request.ProCreditsToAdd;
         account.PremiumAvailableCredits += request.PremiumCreditsToAdd;
+        account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.LastValidatedAtUtc = DateTime.UtcNow;
         account.UpdatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);

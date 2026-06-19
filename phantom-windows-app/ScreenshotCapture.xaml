@@ -9,6 +9,7 @@
         Background="#80000000"
         WindowState="Maximized"
         Cursor="None"
+        PreviewKeyDown="Window_KeyDown"
         KeyDown="Window_KeyDown">
     
     <Grid>

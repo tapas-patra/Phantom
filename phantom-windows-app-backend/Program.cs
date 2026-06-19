@@ -15,27 +15,44 @@ var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(backendOptions);
 builder.Services.AddSingleton<PostgresBackendStore>();
 builder.Services.AddSingleton<AccountRepository>();
+builder.Services.AddSingleton<AdminAccountRepository>();
+builder.Services.AddSingleton<AdminPasswordResetRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
+builder.Services.AddSingleton<PhoneVerificationRepository>();
 builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
+builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
+builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
+builder.Services.AddSingleton<PaymentOrderRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<LoginAttemptService>();
+builder.Services.AddSingleton<AdminBootstrapService>();
+builder.Services.AddSingleton<TwoFactorOtpClient>();
 builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
+builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<PaymentCatalog>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
+builder.Services.AddSingleton<PhoneVerificationService>();
 builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
+builder.Services.AddSingleton<HostedKnowledgeBaseService>();
+builder.Services.AddSingleton<DesktopContextPackService>();
+builder.Services.AddSingleton<PaymentService>();
+builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryIngestService>();
@@ -74,6 +91,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<AdminBootstrapService>().EnsureBootstrapAdmin();
+}
 
 if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
 {
@@ -145,6 +167,22 @@ app.MapPost("/api/desktop/auth/register", (
     {
         return Results.BadRequest(new { error = validationException.Message });
     }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/phone/send-otp", async (
+    PhoneVerificationStartRequestDto request,
+    PhoneVerificationService phoneVerification,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await phoneVerification.StartAsync(request, cancellationToken));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/phone/verify-otp", async (
+    PhoneVerificationConfirmRequestDto request,
+    PhoneVerificationService phoneVerification,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await phoneVerification.ConfirmAsync(request, cancellationToken));
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/verify-email/request", (
@@ -256,6 +294,72 @@ app.MapPost("/api/desktop/auth/logout", (
     return Results.Ok(new { revoked = true });
 }).RequireRateLimiting("auth");
 
+app.MapPost("/api/admin/auth/login", (
+    HttpContext httpContext,
+    AdminAuthLoginRequestDto request,
+    LoginAttemptService attempts,
+    AdminAuthService adminAuth) =>
+{
+    var email = request.Email.Trim().ToLowerInvariant();
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    attempts.EnsureNotBlocked(email, ipAddress);
+
+    try
+    {
+        var session = adminAuth.Login(request);
+        attempts.Record(email, ipAddress, succeeded: true);
+        return Results.Ok(session);
+    }
+    catch (BackendValidationException validationException)
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        return Results.BadRequest(new { error = validationException.Message });
+    }
+    catch
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        throw;
+    }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/refresh", (
+    AdminAuthRefreshRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.Refresh(request));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/logout", (
+    AuthLogoutRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    adminAuth.Logout(request.RefreshToken);
+    return Results.Ok(new { revoked = true });
+}).RequireRateLimiting("auth");
+
+app.MapGet("/api/admin/auth/me", (
+    HttpContext httpContext,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.GetSession(httpContext.Request.Headers.Authorization.ToString()));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/forgot-password", (
+    HttpContext httpContext,
+    AdminPasswordResetStartRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(adminAuth.StartPasswordReset(request.Email, publicBaseUrl));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/reset-password", (
+    AdminPasswordResetCompleteRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.CompletePasswordReset(request));
+}).RequireRateLimiting("auth");
+
 app.MapPost("/api/desktop/account/startup-check/session", (
     AuthSessionDto request,
     AccountStateService accounts) =>
@@ -314,6 +418,126 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
+});
+
+app.MapGet("/api/desktop/kb", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
+});
+
+app.MapPost("/api/desktop/kb", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseCreateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.CreateOrUpdateKnowledgeBase(account, request));
+});
+
+app.MapPost("/api/desktop/kb/documents", async (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    if (!httpContext.Request.HasFormContentType)
+    {
+        throw new BackendValidationException("Knowledge-base uploads must use multipart/form-data.");
+    }
+
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    var form = await httpContext.Request.ReadFormAsync(cancellationToken);
+    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
+});
+
+app.MapGet("/api/desktop/kb/search", (
+    HttpContext httpContext,
+    string query,
+    int? maxSnippets,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
+});
+
+app.MapGet("/api/desktop/context-packs", (
+    HttpContext httpContext,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(contextPacks.List(account));
+});
+
+app.MapPost("/api/desktop/context-packs", (
+    HttpContext httpContext,
+    DesktopContextPackUpsertRequestDto request,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(contextPacks.Upsert(account, request));
+});
+
+app.MapPost("/api/desktop/context-packs/delete", (
+    HttpContext httpContext,
+    DesktopContextPackDeleteRequestDto request,
+    DesktopContextPackService contextPacks) =>
+{
+    var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    contextPacks.Delete(account, request.PackId);
+    return Results.Ok(new { deleted = true });
+});
+
+app.MapGet("/api/desktop/payments/catalog", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.GetCatalog(account));
+});
+
+app.MapGet("/api/desktop/payments/orders", (
+    HttpContext httpContext,
+    int? limit,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.ListOrdersForUser(account.UserId, limit ?? 20));
+});
+
+app.MapPost("/api/desktop/payments/checkout", async (
+    HttpContext httpContext,
+    PaymentCheckoutCreateRequestDto request,
+    HostedKnowledgeBaseService access,
+    PaymentService payments,
+    CancellationToken cancellationToken) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(await payments.CreateCheckoutAsync(account, request, cancellationToken));
+});
+
+app.MapPost("/api/desktop/payments/client-confirm", (
+    HttpContext httpContext,
+    PaymentClientConfirmationRequestDto request,
+    HostedKnowledgeBaseService access,
+    PaymentService payments) =>
+{
+    var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
+    return Results.Ok(payments.ConfirmClientPayment(account, request));
+});
+
+app.MapPost("/api/payments/razorpay/webhook", async (
+    HttpContext httpContext,
+    PaymentService payments,
+    CancellationToken cancellationToken) =>
+{
+    using var reader = new StreamReader(httpContext.Request.Body);
+    var payload = await reader.ReadToEndAsync(cancellationToken);
+    var signature = httpContext.Request.Headers["X-Razorpay-Signature"].ToString();
+    return Results.Ok(await payments.ProcessWebhookAsync(payload, signature, cancellationToken));
 });
 
 app.MapPost("/api/desktop/locks/acquire", (
@@ -385,6 +609,21 @@ adminGroup.MapPost("/managed-ai/credentials", (
     return Results.Ok(managedAi.UpsertCredential(request));
 });
 
+adminGroup.MapPost("/managed-ai/catalog/refresh", async (
+    ManagedAiCatalogService catalogService,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await catalogService.RefreshConfiguredProvidersAsync(cancellationToken));
+});
+
+adminGroup.MapGet("/managed-ai/catalog", (ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(new
+    {
+        providers = catalogService.ListCatalogProviders()
+    });
+});
+
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (
     string credentialId,
     ManagedAiService managedAi) =>
@@ -419,7 +658,7 @@ app.MapGet("/api/admin/integrations/gmail/oauth/callback", async (
     var redirectBase = string.IsNullOrWhiteSpace(options.PublicWebsiteBaseUrl)
         ? publicBaseUrl
         : options.PublicWebsiteBaseUrl.TrimEnd('/');
-    return Results.Redirect($"{redirectBase}/desktop-return?gmail_oauth=success");
+    return Results.Redirect($"{redirectBase}/admin?gmail_oauth=success");
 });
 
 app.Run();

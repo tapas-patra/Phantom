@@ -12,7 +12,7 @@ Implemented:
 - usage reconciliation API
 - active-session lock acquire/heartbeat/release APIs
 - telemetry ingestion API
-- admin inspection and support APIs protected by API key
+- admin inspection and support APIs protected by admin session or backend API key
 - background cleanup for expired sessions, locks, magic links, and stale login-attempt rows
 - explicit database seeding path for test users
 
@@ -52,6 +52,12 @@ Default endpoints:
 - `GET /magic-link/consume?token=...`
 - `GET /email/verify?token=...`
 - `GET /api/admin/accounts/{userId}`
+- `POST /api/admin/auth/login`
+- `POST /api/admin/auth/refresh`
+- `POST /api/admin/auth/logout`
+- `GET /api/admin/auth/me`
+- `POST /api/admin/auth/forgot-password`
+- `POST /api/admin/auth/reset-password`
 - `POST /api/admin/locks/clear`
 - `POST /api/admin/balance/waive-negative-premium`
 - `POST /api/admin/credits/grant`
@@ -88,8 +94,25 @@ Recommended env vars:
 - `PHANTOM_WINDOWS_BACKEND_SMTP_FROM_EMAIL`
 - `PHANTOM_WINDOWS_BACKEND_SMTP_FROM_NAME`
 - `PHANTOM_WINDOWS_BACKEND_SMTP_ENABLE_SSL`
+- `PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER`
+- `PHANTOM_WINDOWS_BACKEND_OTP_API_KEY`
+- `PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME`
+- `PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE`
+- `PHANTOM_BOOTSTRAP_ADMIN_EMAIL`
+- `PHANTOM_BOOTSTRAP_ADMIN_PASSWORD`
+- `PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME`
 
-Admin endpoints require the `X-Phantom-Admin-Key` header.
+Development-only mock OTP:
+```bash
+ASPNETCORE_ENVIRONMENT=Development
+PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER=mock
+PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE=111111
+```
+
+`mock` OTP is intentionally blocked outside `Development`.
+
+Browser admin auth uses the `/api/admin/auth/*` session endpoints.
+Backend-to-backend calls may still use the `X-Phantom-Admin-Key` header.
 
 Gmail OAuth bootstrap endpoints:
 - `GET /api/admin/integrations/gmail/oauth/status`

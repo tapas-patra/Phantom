@@ -89,12 +89,30 @@
                             </StackPanel>
                         </Border>
 
+                        <Border x:Name="KnowledgeBaseStatusNotice" Background="#30304B2A" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#90D7C46B" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock x:Name="KnowledgeBaseStatusTitle" Text="Premium Knowledge Base"
+                                          FontSize="14" FontWeight="Bold" Foreground="White"
+                                          Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="KnowledgeBaseStatusBody"
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#F7EFCF"
+                                          Margin="0,8,0,0" Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
                         <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
-                                 FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"/>
+                                 FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
+                                 Foreground="Black"/>
+                        <StackPanel x:Name="PremiumManagedModelRow" Visibility="Collapsed" Margin="0,0,0,20">
+                            <TextBlock Text="Managed Model" FontSize="12" Foreground="White" Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
+                            <ComboBox x:Name="ManagedModelComboBox" Height="35" FontSize="13" Foreground="Black"/>
+                        </StackPanel>
 
                         <!-- ChatGPT Settings -->
                         <Border x:Name="ChatGPTPanel" Background="#30FFFFFF" CornerRadius="8" 
@@ -355,6 +373,60 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- NVIDIA Settings -->
+                        <Border x:Name="NvidiaPanel" Background="#30FFFFFF" CornerRadius="8" 
+                            Padding="15" Margin="0,0,0,15">
+                            <StackPanel>
+                                <TextBlock Text="NVIDIA Configuration" FontSize="13" FontWeight="Bold" 
+                                        Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                                <TextBlock FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}">
+                                    <Run Text="Get your API key from: "/>
+                                    <Hyperlink NavigateUri="https://build.nvidia.com/" RequestNavigate="Hyperlink_RequestNavigate">
+                                        <Run Text="NVIDIA Build"/>
+                                    </Hyperlink>
+                                </TextBlock>
+                                
+                                <TextBlock Text="API Keys:" Foreground="White" Margin="0,0,0,5" Effect="{StaticResource Shadow}"/>
+                                <ItemsControl x:Name="NvidiaKeysList" Margin="0,0,0,10">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="35"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="35"/>
+                                                </Grid.ColumnDefinitions>
+                                                
+                                                <TextBlock Grid.Column="0" Text="{Binding Index}" 
+                                                          Foreground="#FFD700" FontWeight="Bold" FontSize="12"
+                                                          VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                                
+                                                <TextBox Grid.Column="1" Text="{Binding Key, UpdateSourceTrigger=PropertyChanged}" 
+                                                        Height="30" Background="#40FFFFFF" 
+                                                        Foreground="White" BorderBrush="#70FFFFFF"
+                                                        BorderThickness="1" Padding="5"/>
+                                                
+                                                <Button Grid.Column="2" Content="✕" Width="30" Height="30"
+                                                       Click="RemoveNvidiaKey_Click" Tag="{Binding}"
+                                                       Background="#50FF0000" BorderBrush="#90FF0000" 
+                                                       BorderThickness="1" Foreground="White" Margin="5,0,0,0"
+                                                       Style="{StaticResource ButtonStyle}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                
+                                <Button Content="+ Add API Key" Click="AddNvidiaKey_Click"
+                                       Height="30" Background="#5000AA00" BorderBrush="#9000AA00"
+                                       BorderThickness="1" Foreground="White" FontSize="12"
+                                       HorizontalAlignment="Left" Margin="0,0,0,15"
+                                       Style="{StaticResource ButtonStyle}"/>
+                                
+                                <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
+                                <ComboBox x:Name="NvidiaModelBox" Height="30" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- API Rotation Settings -->
                         <TextBlock Text="🔄 API Rotation Settings" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
@@ -384,21 +456,135 @@
                         </Border>
                         </StackPanel>
 
-                        <!-- System Prompt -->
-                        <TextBlock Text="System Prompt (AI Instructions)" FontSize="14" FontWeight="Bold" 
+                        <!-- Interview Type -->
+                        <TextBlock Text="Interview Type" FontSize="14" FontWeight="Bold" 
                                   Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
-                        <TextBlock Text="This defines how the AI should behave and respond" 
-                                  FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                        <TextBlock Text="Phantom now keeps the system prompt internal and applies a tuned prompt preset based on the interview type." 
+                                  FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}"/>
                         <Border Background="#30FFFFFF" CornerRadius="8" Padding="10" Margin="0,0,0,15">
-                            <TextBox x:Name="SystemPromptBox" 
-                                     TextWrapping="Wrap" 
-                                     AcceptsReturn="True"
-                                     Height="100" 
-                                     VerticalScrollBarVisibility="Auto"
-                                     Background="Transparent"
-                                     Foreground="White"
-                                     BorderThickness="0"
-                                     FontSize="12"/>
+                            <ComboBox x:Name="InterviewTypeComboBox"
+                                      Background="White"
+                                      Foreground="Black"
+                                      BorderThickness="0"
+                                      FontSize="12">
+                                <ComboBox.Resources>
+                                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="Black"/>
+                                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="Black"/>
+                                </ComboBox.Resources>
+                                <ComboBox.ItemContainerStyle>
+                                    <Style TargetType="ComboBoxItem">
+                                        <Setter Property="Foreground" Value="Black"/>
+                                        <Setter Property="Background" Value="White"/>
+                                    </Style>
+                                </ComboBox.ItemContainerStyle>
+                            </ComboBox>
+                        </Border>
+
+                        <!-- Auto Pause -->
+                        <TextBlock Text="Session Auto Pause" FontSize="14" FontWeight="Bold"
+                                  Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15">
+                            <StackPanel>
+                                <CheckBox x:Name="AutoPauseInactivityCheckBox"
+                                         Content="Pause the interview after inactivity"
+                                         Foreground="White"
+                                         FontSize="13"
+                                         Margin="0,0,0,10"/>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Idle minutes:"
+                                              Foreground="White"
+                                              FontSize="12"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,10,0"/>
+                                    <TextBox x:Name="AutoPauseMinutesTextBox"
+                                             Width="60"
+                                             Text="10"
+                                             Background="#40FFFFFF"
+                                             Foreground="White"
+                                             BorderThickness="0"
+                                             Padding="6,4"/>
+                                    <TextBlock Text="(minimum 10)"
+                                              Foreground="#CCCCCC"
+                                              FontSize="11"
+                                              VerticalAlignment="Center"
+                                              Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="ContextPackSection" Background="#303A245D" CornerRadius="8"
+                               Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
+                               BorderBrush="#9071D9D7" BorderThickness="1.5">
+                            <StackPanel>
+                                <TextBlock Text="Premium Context Packs" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" Effect="{StaticResource Shadow}"/>
+                                <TextBlock x:Name="ContextPackSectionDescription"
+                                          Text="Save full resume and job-description pairs to your Premium account, then reload them later by name."
+                                          TextWrapping="Wrap" FontSize="12" Foreground="#D8EEF0"
+                                          Margin="0,8,0,12" Effect="{StaticResource Shadow}"/>
+
+                                <TextBlock Text="Saved Pack" FontSize="12" Foreground="White"
+                                          Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
+                                <ComboBox x:Name="SavedContextPackComboBox"
+                                         Height="35"
+                                         Margin="0,0,0,10"
+                                         Foreground="Black"
+                                         DisplayMemberPath="DisplayName"
+                                         SelectionChanged="SavedContextPackComboBox_SelectionChanged"/>
+
+                                <TextBlock Text="Pack Name" FontSize="12" Foreground="White"
+                                          Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
+                                <TextBox x:Name="ContextPackNameTextBox"
+                                        Height="35"
+                                        Margin="0,0,0,10"
+                                        Background="#40FFFFFF"
+                                        Foreground="White"
+                                        BorderBrush="#70FFFFFF"
+                                        BorderThickness="1"
+                                        Padding="8,4"/>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="SaveContextPackButton"
+                                           Content="Save Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Click="SaveContextPackButton_Click"
+                                           Background="#505A9B2D"
+                                           BorderBrush="#90A7D76B"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                    <Button x:Name="EditContextPackButton"
+                                           Content="Edit Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Margin="10,0,0,0"
+                                           Click="EditContextPackButton_Click"
+                                           Background="#50406D9C"
+                                           BorderBrush="#908BBBE8"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                    <Button x:Name="DeleteContextPackButton"
+                                           Content="Delete Pack"
+                                           Width="110"
+                                           Height="32"
+                                           Margin="10,0,0,0"
+                                           Click="DeleteContextPackButton_Click"
+                                           Background="#505D2C2C"
+                                           BorderBrush="#90E28A8A"
+                                           BorderThickness="1"
+                                           Foreground="White"
+                                           Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+
+                                <TextBlock x:Name="ContextPackStatusText"
+                                          Text=""
+                                          TextWrapping="Wrap"
+                                          FontSize="11"
+                                          Foreground="#F7EFCF"
+                                          Effect="{StaticResource Shadow}"/>
+                            </StackPanel>
                         </Border>
 
                         <!-- Resume -->

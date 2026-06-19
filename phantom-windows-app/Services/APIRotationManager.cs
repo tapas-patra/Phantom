@@ -242,6 +242,9 @@ namespace SecureOverlay.Services
                 case "Groq":
                     _settings.GroqModel = model;
                     break;
+                case "NVIDIA":
+                    _settings.NvidiaModel = model;
+                    break;
             }
             
             Log.WriteLine($"✓ Settings updated: {provider} model set to {model}");
@@ -388,6 +391,7 @@ namespace SecureOverlay.Services
                 "Mistral" => _settings.MistralModel,
                 "Gemini" => _settings.GeminiModel,
                 "Groq" => _settings.GroqModel,
+                "NVIDIA" => _settings.NvidiaModel,
                 _ => ""
             };
         }
@@ -409,6 +413,7 @@ namespace SecureOverlay.Services
                 "Mistral" => _settings.MistralApiKeys,
                 "Gemini" => _settings.GeminiApiKeys,
                 "Groq" => _settings.GroqApiKeys,
+                "NVIDIA" => _settings.NvidiaApiKeys,
                 _ => new List<string>()
             };
         }
@@ -422,6 +427,7 @@ namespace SecureOverlay.Services
                 "Mistral" => _settings.MistralModels,
                 "Gemini" => _settings.GeminiModels,
                 "Groq" => _settings.GroqModels,
+                "NVIDIA" => _settings.NvidiaModels,
                 _ => new List<string>()
             };
         }

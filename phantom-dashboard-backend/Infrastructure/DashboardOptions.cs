@@ -10,9 +10,7 @@ public sealed class DashboardOptions
     public string WindowsBackendAdminApiKey { get; init; } = string.Empty;
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
-    public bool HasWindowsBackendAdminAccess =>
-        !string.IsNullOrWhiteSpace(WindowsBackendBaseUrl)
-        && !string.IsNullOrWhiteSpace(WindowsBackendAdminApiKey);
+    public bool HasWindowsBackendAdminAccess => !string.IsNullOrWhiteSpace(WindowsBackendBaseUrl);
 
     public static DashboardOptions FromConfiguration(IConfiguration configuration)
     {

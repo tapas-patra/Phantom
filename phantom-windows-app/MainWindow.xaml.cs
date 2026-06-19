@@ -1906,6 +1906,7 @@ namespace SecureOverlay
                     {
                         selectedPack.ResumeSummary = _conversationManager.GetResumeSummary();
                         _contextPackService.SaveSelectedPack(selectedPack);
+                        SyncCachedSummariesToLocalDraftIfUsingLocalContext(selectedPack);
                         Log.WriteLine("✓ Resume summary cached to context pack");
                     }
 
@@ -1913,6 +1914,7 @@ namespace SecureOverlay
                     {
                         selectedPack.JobDescriptionSummary = _conversationManager.GetJobDescriptionSummary();
                         _contextPackService.SaveSelectedPack(selectedPack);
+                        SyncCachedSummariesToLocalDraftIfUsingLocalContext(selectedPack);
                         Log.WriteLine("✓ Job description summary cached to context pack");
                     }
                     
@@ -2936,6 +2938,37 @@ namespace SecureOverlay
 
             this.Activate();
             FocusInput();
+        }
+
+        private void SyncCachedSummariesToLocalDraftIfUsingLocalContext(ContextPack selectedPack)
+        {
+            if (!string.Equals(selectedPack.PackId, "default", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var localDraftPack = _contextPackService.GetLocalDraftPack();
+            var updated = false;
+
+            if (string.Equals(localDraftPack.ResumeText, selectedPack.ResumeText, StringComparison.Ordinal)
+                && !string.Equals(localDraftPack.ResumeSummary, selectedPack.ResumeSummary, StringComparison.Ordinal))
+            {
+                localDraftPack.ResumeSummary = selectedPack.ResumeSummary;
+                updated = true;
+            }
+
+            if (string.Equals(localDraftPack.JobDescriptionText, selectedPack.JobDescriptionText, StringComparison.Ordinal)
+                && !string.Equals(localDraftPack.JobDescriptionSummary, selectedPack.JobDescriptionSummary, StringComparison.Ordinal))
+            {
+                localDraftPack.JobDescriptionSummary = selectedPack.JobDescriptionSummary;
+                updated = true;
+            }
+
+            if (updated)
+            {
+                _contextPackService.SaveLocalDraftPack(localDraftPack);
+                Log.WriteLine("✓ Cached summaries synced to local draft context");
+            }
         }
 
 

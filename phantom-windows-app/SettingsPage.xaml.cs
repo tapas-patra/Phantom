@@ -1273,7 +1273,7 @@ namespace SecureOverlay
                 {
                     var localDraftPack = _contextPackService.GetLocalDraftPack();
                     SaveEditorsToLocalDraft(localDraftPack);
-                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack), preserveCachedSummaries: false);
+                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack), preserveCachedSummaries: true);
                 }
                 else
                 {

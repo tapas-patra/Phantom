@@ -119,6 +119,40 @@ public sealed class AccountStateService
             ?? throw new BackendValidationException("Account not found.");
     }
 
+    public DesktopAccountRecord RequireAccountForCallback(AuthCallbackResultDto callbackResult)
+    {
+        if (string.IsNullOrWhiteSpace(callbackResult.Email))
+        {
+            throw new BackendValidationException("Email is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(callbackResult.DeviceFingerprintHash))
+        {
+            throw new BackendValidationException("Device fingerprint is required.");
+        }
+
+        var account = RequireAccountByEmail(callbackResult.Email);
+        if (!account.EmailVerified)
+        {
+            throw new BackendValidationException("Email verification is incomplete.");
+        }
+
+        if (!account.PhoneVerified)
+        {
+            throw new BackendValidationException("Phone verification is incomplete.");
+        }
+
+        if (!string.Equals(
+                account.RegistrationDeviceFingerprintHash,
+                callbackResult.DeviceFingerprintHash.Trim(),
+                StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Callback device fingerprint does not match the registered device.");
+        }
+
+        return account;
+    }
+
     public void Save(DesktopAccountRecord account)
     {
         account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);

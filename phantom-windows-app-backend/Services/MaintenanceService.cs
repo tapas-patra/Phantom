@@ -6,11 +6,16 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class MaintenanceService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly OperationalMetricsService _metrics;
     private readonly ILogger<MaintenanceService> _logger;
 
-    public MaintenanceService(IServiceProvider serviceProvider, ILogger<MaintenanceService> logger)
+    public MaintenanceService(
+        IServiceProvider serviceProvider,
+        OperationalMetricsService metrics,
+        ILogger<MaintenanceService> logger)
     {
         _serviceProvider = serviceProvider;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -26,9 +31,11 @@ public sealed class MaintenanceService : BackgroundService
                 scope.ServiceProvider.GetRequiredService<LockRepository>().DeleteExpired();
                 scope.ServiceProvider.GetRequiredService<LoginAttemptRepository>()
                     .DeleteExpired(DateTime.UtcNow.AddDays(-2));
+                _metrics.RecordMaintenanceSucceeded();
             }
             catch (Exception ex)
             {
+                _metrics.RecordMaintenanceFailed();
                 _logger.LogError(ex, "Background maintenance cycle failed.");
             }
 

@@ -10,7 +10,7 @@
     ]
   },
   "packageFolders": {
-    "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet-home/.nuget/packages/": {}
+    "/private/tmp/phantom-dotnet-home/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
@@ -18,11 +18,11 @@
       "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
       "projectName": "Phantom.Dashboard.Backend",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
-      "packagesPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet-home/.nuget/packages/",
+      "packagesPath": "/private/tmp/phantom-dotnet-home/.nuget/packages/",
       "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet-home/.nuget/NuGet/NuGet.Config"
+        "/private/tmp/phantom-dotnet-home/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -98,64 +98,9 @@
   },
   "logs": [
     {
-      "code": "NU1801",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json."
-    },
-    {
-      "code": "NU1801",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json."
-    },
-    {
-      "code": "NU1801",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json."
-    },
-    {
-      "code": "NU1801",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json."
-    },
-    {
-      "code": "NU1101",
+      "code": "NU1301",
       "level": "Error",
-      "message": "Unable to find package Npgsql. No packages exist with this id in source(s): nuget.org",
-      "libraryId": "Npgsql",
-      "targetGraphs": [
-        "net8.0"
-      ]
-    },
-    {
-      "code": "NU1101",
-      "level": "Error",
-      "message": "Unable to find package Microsoft.NETCore.App.Ref. No packages exist with this id in source(s): nuget.org",
-      "libraryId": "Microsoft.NETCore.App.Ref",
-      "targetGraphs": [
-        "net8.0"
-      ]
-    },
-    {
-      "code": "NU1101",
-      "level": "Error",
-      "message": "Unable to find package Microsoft.AspNetCore.App.Ref. No packages exist with this id in source(s): nuget.org",
-      "libraryId": "Microsoft.AspNetCore.App.Ref",
-      "targetGraphs": [
-        "net8.0"
-      ]
-    },
-    {
-      "code": "NU1101",
-      "level": "Error",
-      "message": "Unable to find package Microsoft.NETCore.App.Host.osx-x64. No packages exist with this id in source(s): nuget.org",
-      "libraryId": "Microsoft.NETCore.App.Host.osx-x64",
-      "targetGraphs": [
-        "net8.0"
-      ]
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known"
     },
     {
       "code": "NU1900",

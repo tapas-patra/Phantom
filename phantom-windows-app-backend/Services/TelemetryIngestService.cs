@@ -8,21 +8,21 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class TelemetryIngestService
 {
-    private readonly TelemetryRepository _repository;
+    private readonly TelemetryBufferService _buffer;
 
-    public TelemetryIngestService(TelemetryRepository repository)
+    public TelemetryIngestService(TelemetryBufferService buffer)
     {
-        _repository = repository;
+        _buffer = buffer;
     }
 
-    public void Ingest(TelemetryIngestRequestDto request)
+    public bool Ingest(TelemetryIngestRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Category) || string.IsNullOrWhiteSpace(request.EventName))
         {
             throw new BackendValidationException("Category and EventName are required.");
         }
 
-        _repository.Save(new TelemetryEventRecord
+        return _buffer.TryEnqueue(new TelemetryEventRecord
         {
             EventId = $"telemetry-{Guid.NewGuid():N}",
             Category = request.Category,

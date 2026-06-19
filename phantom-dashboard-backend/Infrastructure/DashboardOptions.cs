@@ -8,6 +8,7 @@ public sealed class DashboardOptions
     public string AdminApiKey { get; init; } = string.Empty;
     public string WindowsBackendBaseUrl { get; init; } = string.Empty;
     public string WindowsBackendAdminApiKey { get; init; } = string.Empty;
+    public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
     public bool HasWindowsBackendAdminAccess => !string.IsNullOrWhiteSpace(WindowsBackendBaseUrl);
@@ -33,6 +34,11 @@ public sealed class DashboardOptions
             WindowsBackendAdminApiKey =
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY")?.Trim()
                 ?? section["WindowsBackendAdminApiKey"]?.Trim()
+                ?? string.Empty,
+            PublicWebsiteBaseUrl =
+                Environment.GetEnvironmentVariable("PHANTOM_PUBLIC_WEBSITE_BASE_URL")?.Trim().TrimEnd('/')
+                ?? Environment.GetEnvironmentVariable("PHANTOM_WEBSITE_BASE_URL")?.Trim().TrimEnd('/')
+                ?? section["PublicWebsiteBaseUrl"]?.Trim().TrimEnd('/')
                 ?? string.Empty
         };
     }

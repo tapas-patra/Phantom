@@ -144,70 +144,76 @@ export async function resendVerificationEmail(email) {
   });
 }
 
-export async function fetchAccountSummary(email) {
-  if (!email) {
+export async function fetchAccountSummary(accessToken) {
+  if (!accessToken) {
     return null;
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/account-summary?email=${encodeURIComponent(email)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/account-summary", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
-export async function fetchWalletHistory(userId) {
-  if (!userId) {
+export async function fetchWalletHistory(accessToken) {
+  if (!accessToken) {
     return [];
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/wallet-history?userId=${encodeURIComponent(userId)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-history", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
-export async function fetchWalletPurchases(userId) {
-  if (!userId) {
+export async function fetchWalletPurchases(accessToken) {
+  if (!accessToken) {
     return [];
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/wallet-purchases?userId=${encodeURIComponent(userId)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-purchases", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
-export async function fetchDevices(userId) {
-  if (!userId) {
+export async function fetchDevices(accessToken) {
+  if (!accessToken) {
     return [];
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/devices?userId=${encodeURIComponent(userId)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/devices", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
-export async function fetchDownloadEntitlement(userId) {
-  if (!userId) {
+export async function fetchDownloadEntitlement(accessToken) {
+  if (!accessToken) {
     return null;
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/download-entitlement?userId=${encodeURIComponent(userId)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/download-entitlement", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
-export async function fetchSupportOverview(userId) {
-  if (!userId) {
+export async function fetchSupportOverview(accessToken) {
+  if (!accessToken) {
     return null;
   }
 
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/support/preview?userId=${encodeURIComponent(userId)}`
-  );
+  return request(DASHBOARD_API_BASE, "/api/dashboard/support/preview", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
 export async function fetchAdminOverview(accessToken) {

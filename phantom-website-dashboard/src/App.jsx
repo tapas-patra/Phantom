@@ -1006,7 +1006,7 @@ function UserDashboardPage({ session }) {
       setLoading(true);
       setError("");
       try {
-        const account = await fetchAccountSummary(session.email);
+        const account = await fetchAccountSummary(session.accessToken);
         if (!account || cancelled) {
           return;
         }
@@ -1020,11 +1020,11 @@ function UserDashboardPage({ session }) {
           knowledgeBaseStatus,
           catalog
         ] = await Promise.all([
-          fetchWalletHistory(account.userId),
-          fetchWalletPurchases(account.userId),
-          fetchDevices(account.userId),
-          fetchDownloadEntitlement(account.userId),
-          fetchSupportOverview(account.userId),
+          fetchWalletHistory(session.accessToken),
+          fetchWalletPurchases(session.accessToken),
+          fetchDevices(session.accessToken),
+          fetchDownloadEntitlement(session.accessToken),
+          fetchSupportOverview(session.accessToken),
           fetchHostedKnowledgeBase(session.accessToken),
           fetchPaymentCatalog(session.accessToken).catch(() => null)
         ]);
@@ -1054,17 +1054,17 @@ function UserDashboardPage({ session }) {
     return () => {
       cancelled = true;
     };
-  }, [session.accessToken, session.email]);
+  }, [session.accessToken]);
 
   async function refreshWalletState() {
-    const account = await fetchAccountSummary(session.email);
+    const account = await fetchAccountSummary(session.accessToken);
     if (!account) {
       throw new Error("Account summary could not be resolved.");
     }
 
     const [history, purchases, catalog] = await Promise.all([
-      fetchWalletHistory(account.userId),
-      fetchWalletPurchases(account.userId),
+      fetchWalletHistory(session.accessToken),
+      fetchWalletPurchases(session.accessToken),
       fetchPaymentCatalog(session.accessToken).catch(() => null)
     ]);
 

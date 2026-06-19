@@ -31,7 +31,8 @@ public sealed class AdminBootstrapService
         if (string.IsNullOrWhiteSpace(bootstrapEmail)
             || string.IsNullOrWhiteSpace(bootstrapPassword))
         {
-            if (string.IsNullOrWhiteSpace(_options.AdminApiKey))
+            if (!_options.AllowImplicitLocalAdminBootstrap
+                || string.IsNullOrWhiteSpace(_options.AdminApiKey))
             {
                 return;
             }

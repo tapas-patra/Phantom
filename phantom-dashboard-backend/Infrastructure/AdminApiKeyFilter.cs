@@ -24,7 +24,7 @@ public sealed class AdminApiKeyFilter : IEndpointFilter
         }
 
         var authorizationHeader = request.Headers.Authorization.ToString();
-        if (_validator.IsValid(authorizationHeader))
+        if (await _validator.IsValidAsync(authorizationHeader, context.HttpContext.RequestAborted))
         {
             return await next(context);
         }

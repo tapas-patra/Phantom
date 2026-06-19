@@ -16,8 +16,17 @@ public sealed class PaymentOrderRepository
     public PaymentOrderRecord? FindByCheckoutId(string checkoutId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM payment_orders WHERE checkout_id = @checkoutId LIMIT 1;";
+        return FindByCheckoutId(checkoutId, connection, transaction: null, forUpdate: false);
+    }
+
+    public PaymentOrderRecord? FindByCheckoutId(
+        string checkoutId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM payment_orders WHERE checkout_id = @checkoutId LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("checkoutId", checkoutId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -26,8 +35,17 @@ public sealed class PaymentOrderRepository
     public PaymentOrderRecord? FindByRazorpayOrderId(string razorpayOrderId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM payment_orders WHERE razorpay_order_id = @razorpayOrderId LIMIT 1;";
+        return FindByRazorpayOrderId(razorpayOrderId, connection, transaction: null, forUpdate: false);
+    }
+
+    public PaymentOrderRecord? FindByRazorpayOrderId(
+        string razorpayOrderId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM payment_orders WHERE razorpay_order_id = @razorpayOrderId LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("razorpayOrderId", razorpayOrderId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -54,10 +72,34 @@ LIMIT @maxCount;";
         return items;
     }
 
-    public void Save(PaymentOrderRecord record)
+    public IReadOnlyList<PaymentOrderRecord> ListRecentOrders(int maxCount)
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM payment_orders
+ORDER BY created_at_utc DESC
+LIMIT @maxCount;";
+        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
+        using var reader = command.ExecuteReader();
+        var items = new List<PaymentOrderRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public void Save(PaymentOrderRecord record)
+    {
+        using var connection = _store.OpenConnection();
+        Save(record, connection, transaction: null);
+    }
+
+    public void Save(PaymentOrderRecord record, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO payment_orders (
     checkout_id, user_id, email, target, pack_code, display_label, currency, amount_minor, credits,
@@ -82,8 +124,17 @@ ON CONFLICT(checkout_id) DO UPDATE SET
     public PaymentWebhookEventRecord? FindWebhookEvent(string externalEventId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM payment_webhook_events WHERE external_event_id = @externalEventId LIMIT 1;";
+        return FindWebhookEvent(externalEventId, connection, transaction: null, forUpdate: false);
+    }
+
+    public PaymentWebhookEventRecord? FindWebhookEvent(
+        string externalEventId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM payment_webhook_events WHERE external_event_id = @externalEventId LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("externalEventId", externalEventId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? MapEvent(reader) : null;
@@ -92,7 +143,12 @@ ON CONFLICT(checkout_id) DO UPDATE SET
     public void SaveWebhookEvent(PaymentWebhookEventRecord record)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        SaveWebhookEvent(record, connection, transaction: null);
+    }
+
+    public void SaveWebhookEvent(PaymentWebhookEventRecord record, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO payment_webhook_events (
     event_record_id, external_event_id, event_type, payload_json, created_at_utc, processed_at_utc
@@ -108,6 +164,32 @@ ON CONFLICT(external_event_id) DO UPDATE SET
         command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
         command.Parameters.AddWithValue("processedAtUtc", (object?)record.ProcessedAtUtc ?? DBNull.Value);
         command.ExecuteNonQuery();
+    }
+
+    public IReadOnlyList<PaymentWebhookEventRecord> ListRecentWebhookEvents(int maxCount)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM payment_webhook_events
+ORDER BY created_at_utc DESC
+LIMIT @maxCount;";
+        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
+        using var reader = command.ExecuteReader();
+        var items = new List<PaymentWebhookEventRecord>();
+        while (reader.Read())
+        {
+            items.Add(MapEvent(reader));
+        }
+
+        return items;
+    }
+
+    private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
     }
 
     private static void Bind(NpgsqlCommand command, PaymentOrderRecord record)

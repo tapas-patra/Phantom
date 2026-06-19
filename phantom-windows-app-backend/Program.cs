@@ -14,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(backendOptions);
 builder.Services.AddSingleton<PostgresBackendStore>();
+builder.Services.AddSingleton<DashboardProjectionReplicaStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AdminAccountRepository>();
 builder.Services.AddSingleton<AdminPasswordResetRepository>();
@@ -34,8 +35,10 @@ builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
+builder.Services.AddSingleton<DesktopSessionService>();
 builder.Services.AddSingleton<LoginAttemptService>();
 builder.Services.AddSingleton<AdminBootstrapService>();
+builder.Services.AddSingleton<OperationalMetricsService>();
 builder.Services.AddSingleton<TwoFactorOtpClient>();
 builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
@@ -55,10 +58,13 @@ builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
+builder.Services.AddSingleton<TelemetryBufferService>();
 builder.Services.AddSingleton<TelemetryIngestService>();
 builder.Services.AddSingleton<AdminService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddHostedService<MaintenanceService>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<TelemetryBufferService>());
+builder.Services.AddHostedService<DashboardProjectionReplicatorService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("website", cors =>
@@ -81,13 +87,66 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter("auth", limiterOptions =>
-    {
-        limiterOptions.PermitLimit = 15;
-        limiterOptions.Window = TimeSpan.FromMinutes(1);
-        limiterOptions.QueueLimit = 0;
-        limiterOptions.AutoReplenishment = true;
-    });
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 15,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("desktop-api", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("payments", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("telemetry", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 240,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("admin", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.AddPolicy("internal", _ =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            "internal",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 var app = builder.Build();
@@ -99,6 +158,13 @@ using (var scope = app.Services.CreateScope())
 
 if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
 {
+    if (!backendOptions.AllowSeedTestUsers)
+    {
+        Console.Error.WriteLine(
+            "Test-user seeding is disabled. Set PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING=true to enable it.");
+        return;
+    }
+
     using var scope = app.Services.CreateScope();
     var seeded = scope.ServiceProvider.GetRequiredService<BootstrapAccountSeeder>()
         .SeedDefaultTestUsers();
@@ -147,10 +213,40 @@ app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
     utc = DateTime.UtcNow
 }));
 
-app.MapGet("/health/ready", (PostgresBackendStore store) =>
-    store.CanConnect()
-        ? Results.Ok(new { status = "ready", utc = DateTime.UtcNow })
-        : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Database unavailable"))
+app.MapGet("/health/details", (
+    PostgresBackendStore store,
+    BackendOptions options,
+    OperationalMetricsService metrics) => Results.Ok(new
+{
+    status = store.CanConnect() ? "ok" : "degraded",
+    service = "phantom-windows-app-backend",
+    database = store.CanConnect() ? "reachable" : "unreachable",
+    projectionReplicaEnabled = options.HasDashboardProjectionReplica,
+    workers = metrics.CreateSnapshot(),
+    utc = DateTime.UtcNow
+})).RequireRateLimiting("internal");
+
+app.MapGet("/health/ready", (
+    PostgresBackendStore store,
+    BackendOptions options,
+    OperationalMetricsService metrics) =>
+{
+    if (!store.CanConnect())
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "Database unavailable");
+    }
+
+    if (!metrics.IsReady(options.HasDashboardProjectionReplica))
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "Background workers are degraded");
+    }
+
+    return Results.Ok(new { status = "ready", utc = DateTime.UtcNow });
+})
     .RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/register", (
@@ -213,7 +309,7 @@ app.MapGet("/email/verify", (
         : options.PublicWebsiteBaseUrl.TrimEnd('/');
     return Results.Redirect(
         $"{redirectBase}/desktop-return?verification=success&email={Uri.EscapeDataString(result.Email)}");
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/login", (
     HttpContext httpContext,
@@ -361,46 +457,56 @@ app.MapPost("/api/admin/auth/reset-password", (
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/account/startup-check/session", (
+    HttpContext httpContext,
     AuthSessionDto request,
+    DesktopSessionService desktopSessions,
     AccountStateService accounts) =>
 {
-    var account = accounts.RequireAccount(request.UserId, request.Email);
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    if (!string.Equals(request.UserId, session.UserId, StringComparison.Ordinal)
+        || !string.Equals(request.Email, session.Email, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(request.DeviceInstallId, session.DeviceInstallId, StringComparison.Ordinal)
+        || !string.Equals(request.DeviceFingerprintHash, session.DeviceFingerprintHash, StringComparison.Ordinal))
+    {
+        throw new BackendValidationException("Startup session payload does not match the authenticated desktop session.");
+    }
+
+    var account = accounts.RequireAccount(session.UserId, session.Email);
     return Results.Ok(accounts.BuildStartupSnapshot("session_check", account));
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/account/startup-check/callback", (
     AuthCallbackResultDto request,
     AccountStateService accounts) =>
 {
-    var account = accounts.RequireAccountByEmail(request.Email);
+    var account = accounts.RequireAccountForCallback(request);
     return Results.Ok(accounts.BuildStartupSnapshot("callback_check", account));
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/usage/reconcile", (
+    HttpContext httpContext,
     UsageReconciliationRequestDto request,
+    DesktopSessionService desktopSessions,
     UsageReconciliationService usage) =>
 {
-    return Results.Ok(usage.Reconcile(request));
-});
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(usage.Reconcile(request, session.UserId));
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/telemetry/ingest", (
     TelemetryIngestRequestDto request,
     TelemetryIngestService telemetry) =>
 {
-    try
+    var accepted = telemetry.Ingest(request);
+    if (!accepted)
     {
-        telemetry.Ingest(request);
-        return Results.Ok(new { accepted = true });
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "Telemetry buffer is full.");
     }
-    catch (NpgsqlException)
-    {
-        return Results.Ok(new { accepted = false, deferred = true, reason = "database_unavailable" });
-    }
-    catch (SocketException)
-    {
-        return Results.Ok(new { accepted = false, deferred = true, reason = "database_unavailable" });
-    }
-});
+
+    return Results.Ok(new { accepted = true, queued = true });
+}).RequireRateLimiting("telemetry");
 
 app.MapGet("/api/desktop/ai/catalog", (
     HttpContext httpContext,
@@ -408,7 +514,7 @@ app.MapGet("/api/desktop/ai/catalog", (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(managedAi.GetCatalogForAccount(account));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/ai/chat", async (
     HttpContext httpContext,
@@ -418,7 +524,7 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb", (
     HttpContext httpContext,
@@ -426,7 +532,7 @@ app.MapGet("/api/desktop/kb", (
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/kb", (
     HttpContext httpContext,
@@ -435,7 +541,7 @@ app.MapPost("/api/desktop/kb", (
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(knowledgeBases.CreateOrUpdateKnowledgeBase(account, request));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/kb/documents", async (
     HttpContext httpContext,
@@ -450,7 +556,7 @@ app.MapPost("/api/desktop/kb/documents", async (
     var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     var form = await httpContext.Request.ReadFormAsync(cancellationToken);
     return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb/search", (
     HttpContext httpContext,
@@ -460,7 +566,7 @@ app.MapGet("/api/desktop/kb/search", (
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/context-packs", (
     HttpContext httpContext,
@@ -468,7 +574,7 @@ app.MapGet("/api/desktop/context-packs", (
 {
     var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(contextPacks.List(account));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs", (
     HttpContext httpContext,
@@ -477,7 +583,7 @@ app.MapPost("/api/desktop/context-packs", (
 {
     var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(contextPacks.Upsert(account, request));
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs/delete", (
     HttpContext httpContext,
@@ -487,7 +593,7 @@ app.MapPost("/api/desktop/context-packs/delete", (
     var account = contextPacks.RequirePremiumAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     contextPacks.Delete(account, request.PackId);
     return Results.Ok(new { deleted = true });
-});
+}).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/payments/catalog", (
     HttpContext httpContext,
@@ -496,7 +602,7 @@ app.MapGet("/api/desktop/payments/catalog", (
 {
     var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(payments.GetCatalog(account));
-});
+}).RequireRateLimiting("payments");
 
 app.MapGet("/api/desktop/payments/orders", (
     HttpContext httpContext,
@@ -506,7 +612,7 @@ app.MapGet("/api/desktop/payments/orders", (
 {
     var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(payments.ListOrdersForUser(account.UserId, limit ?? 20));
-});
+}).RequireRateLimiting("payments");
 
 app.MapPost("/api/desktop/payments/checkout", async (
     HttpContext httpContext,
@@ -517,7 +623,7 @@ app.MapPost("/api/desktop/payments/checkout", async (
 {
     var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(await payments.CreateCheckoutAsync(account, request, cancellationToken));
-});
+}).RequireRateLimiting("payments");
 
 app.MapPost("/api/desktop/payments/client-confirm", (
     HttpContext httpContext,
@@ -527,7 +633,7 @@ app.MapPost("/api/desktop/payments/client-confirm", (
 {
     var account = access.RequireAccountFromAccessToken(httpContext.Request.Headers.Authorization);
     return Results.Ok(payments.ConfirmClientPayment(account, request));
-});
+}).RequireRateLimiting("payments");
 
 app.MapPost("/api/payments/razorpay/webhook", async (
     HttpContext httpContext,
@@ -538,31 +644,88 @@ app.MapPost("/api/payments/razorpay/webhook", async (
     var payload = await reader.ReadToEndAsync(cancellationToken);
     var signature = httpContext.Request.Headers["X-Razorpay-Signature"].ToString();
     return Results.Ok(await payments.ProcessWebhookAsync(payload, signature, cancellationToken));
-});
+}).RequireRateLimiting("payments");
 
 app.MapPost("/api/desktop/locks/acquire", (
+    HttpContext httpContext,
     DeviceLockAcquireRequestDto request,
+    DesktopSessionService desktopSessions,
     LockService locks) =>
 {
-    return Results.Ok(locks.Acquire(request));
-});
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(locks.Acquire(request, session));
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/locks/heartbeat", (
+    HttpContext httpContext,
     DeviceLockHeartbeatRequestDto request,
+    DesktopSessionService desktopSessions,
     LockService locks) =>
 {
-    return Results.Ok(locks.Heartbeat(request));
-});
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(locks.Heartbeat(request, session));
+}).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/locks/release", (
+    HttpContext httpContext,
     DeviceLockReleaseRequestDto request,
+    DesktopSessionService desktopSessions,
     LockService locks) =>
 {
-    return Results.Ok(locks.Release(request));
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(locks.Release(request, session));
+}).RequireRateLimiting("desktop-api");
+
+var internalGroup = app.MapGroup("/api/internal")
+    .AddEndpointFilter<AdminApiKeyFilter>()
+    .RequireRateLimiting("internal");
+
+internalGroup.MapGet("/session/user", (
+    HttpContext httpContext,
+    DesktopSessionService desktopSessions) =>
+{
+    try
+    {
+        var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+        return Results.Ok(new
+        {
+            session.UserId,
+            session.Email,
+            session.DeviceInstallId,
+            session.DeviceFingerprintHash
+        });
+    }
+    catch (BackendValidationException)
+    {
+        return Results.Unauthorized();
+    }
+});
+
+internalGroup.MapGet("/session/admin", (
+    HttpContext httpContext,
+    AdminAuthService adminAuth) =>
+{
+    try
+    {
+        var admin = adminAuth.RequireAdminFromAuthorization(httpContext.Request.Headers.Authorization.ToString());
+        return Results.Ok(new
+        {
+            isValid = true,
+            admin.AdminId,
+            admin.Email,
+            admin.DisplayName,
+            admin.Role
+        });
+    }
+    catch (BackendValidationException)
+    {
+        return Results.Unauthorized();
+    }
 });
 
 var adminGroup = app.MapGroup("/api/admin")
-    .AddEndpointFilter<AdminApiKeyFilter>();
+    .AddEndpointFilter<AdminApiKeyFilter>()
+    .RequireRateLimiting("admin");
 
 adminGroup.MapGet("/accounts/{userId}", (
     string userId,
@@ -574,6 +737,21 @@ adminGroup.MapGet("/accounts/{userId}", (
 adminGroup.MapGet("/accounts", (AdminService admin) =>
 {
     return Results.Ok(admin.ListAccounts());
+});
+
+adminGroup.MapGet("/overview", (AdminService admin) =>
+{
+    return Results.Ok(admin.GetOverview());
+});
+
+adminGroup.MapGet("/payments/orders", (int? limit, AdminService admin) =>
+{
+    return Results.Ok(admin.GetPaymentOrders(limit ?? 100));
+});
+
+adminGroup.MapGet("/payments/webhooks", (int? limit, AdminService admin) =>
+{
+    return Results.Ok(admin.GetPaymentWebhookEvents(limit ?? 100));
 });
 
 adminGroup.MapPost("/locks/clear", (

@@ -1,47 +1,40 @@
 using Npgsql;
 using NpgsqlTypes;
-using Phantom.Dashboard.Backend.Infrastructure;
+using Phantom.WindowsApp.Backend.Infrastructure;
 
-namespace Phantom.Dashboard.Backend.Persistence;
+namespace Phantom.WindowsApp.Backend.Persistence;
 
-public sealed class PostgresDashboardStore
+public sealed class DashboardProjectionReplicaStore
 {
     private readonly string _connectionString;
+    private readonly bool _enabled;
 
-    public PostgresDashboardStore(DashboardOptions options)
+    public DashboardProjectionReplicaStore(BackendOptions options)
     {
-        if (string.IsNullOrWhiteSpace(options.DatabaseUrl))
-        {
-            throw new InvalidOperationException(
-                "Dashboard database URL is not configured. Set PHANTOM_DASHBOARD_BACKEND_DATABASE_URL.");
-        }
+        _enabled = options.HasDashboardProjectionReplica;
+        _connectionString = _enabled
+            ? BuildConnectionString(options.DashboardProjectionDatabaseUrl)
+            : string.Empty;
 
-        _connectionString = BuildConnectionString(options.DatabaseUrl);
-        using var connection = OpenConnection();
-        SchemaMigrator.ApplyMigrations(connection, DashboardSchemaMigrations.All);
+        if (_enabled)
+        {
+            using var connection = OpenConnection();
+            SchemaMigrator.ApplyMigrations(connection, BackendSchemaMigrations.DashboardProjectionOnly);
+        }
     }
+
+    public bool IsEnabled => _enabled;
 
     public NpgsqlConnection OpenConnection()
     {
+        if (!_enabled)
+        {
+            throw new InvalidOperationException("Dashboard projection replica is not configured.");
+        }
+
         var connection = new NpgsqlConnection(_connectionString);
         connection.Open();
         return connection;
-    }
-
-    public bool CanConnect()
-    {
-        try
-        {
-            using var connection = OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1;";
-            command.ExecuteScalar();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static string BuildConnectionString(string databaseUrl)
@@ -63,7 +56,7 @@ public sealed class PostgresDashboardStore
             var atIndex = withoutScheme.LastIndexOf('@');
             if (atIndex <= 0 || atIndex >= withoutScheme.Length - 1)
             {
-                throw new InvalidOperationException("Dashboard database URL must include credentials and host.");
+                throw new InvalidOperationException("Dashboard projection database URL must include credentials and host.");
             }
 
             var userInfo = withoutScheme[..atIndex];
@@ -71,7 +64,7 @@ public sealed class PostgresDashboardStore
             var colonIndex = userInfo.IndexOf(':');
             if (colonIndex <= 0 || colonIndex >= userInfo.Length - 1)
             {
-                throw new InvalidOperationException("Dashboard database URL must include username and password.");
+                throw new InvalidOperationException("Dashboard projection database URL must include username and password.");
             }
 
             var username = Uri.UnescapeDataString(userInfo[..colonIndex]);
@@ -79,7 +72,7 @@ public sealed class PostgresDashboardStore
             var slashIndex = hostAndDatabase.IndexOf('/');
             if (slashIndex <= 0 || slashIndex >= hostAndDatabase.Length - 1)
             {
-                throw new InvalidOperationException("Dashboard database URL must include database name.");
+                throw new InvalidOperationException("Dashboard projection database URL must include database name.");
             }
 
             var hostPort = hostAndDatabase[..slashIndex];
@@ -108,7 +101,7 @@ public sealed class PostgresDashboardStore
             return builder.ConnectionString;
         }
 
-        throw new InvalidOperationException("Dashboard database URL must be a valid PostgreSQL URI.");
+        throw new InvalidOperationException("Dashboard projection database URL must be a valid PostgreSQL URI.");
     }
 
     private static void ApplyRecommendedDefaults(NpgsqlConnectionStringBuilder builder)

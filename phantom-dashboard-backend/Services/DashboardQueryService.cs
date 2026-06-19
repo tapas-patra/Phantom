@@ -133,7 +133,9 @@ LIMIT 50;";
                 amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
                 credits = reader.GetDecimal(reader.GetOrdinal("credits")),
                 premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
-                status = reader.GetString(reader.GetOrdinal("status")),
+                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? reader.GetString(reader.GetOrdinal("status"))
+                    : "credited",
                 clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
                 creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
                     ? (DateTime?)null
@@ -315,7 +317,9 @@ LIMIT @maxCount;";
                 premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
                 razorpayOrderId = reader.GetString(reader.GetOrdinal("razorpay_order_id")),
                 razorpayPaymentId = reader.GetString(reader.GetOrdinal("razorpay_payment_id")),
-                status = reader.GetString(reader.GetOrdinal("status")),
+                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                    ? reader.GetString(reader.GetOrdinal("status"))
+                    : "credited",
                 clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
                 creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
                     ? (DateTime?)null

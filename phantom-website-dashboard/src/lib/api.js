@@ -11,6 +11,7 @@ const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 async function request(baseUrl, path, init) {
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const response = await fetch(`${baseUrl}${path}`, {
+    credentials: "include",
     ...init,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
@@ -61,6 +62,14 @@ function getBrowserDeviceProfile() {
   return deviceProfile;
 }
 
+function authHeaders(accessToken) {
+  return accessToken
+    ? {
+        Authorization: `Bearer ${accessToken}`
+      }
+    : {};
+}
+
 export async function loginAccount(payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/login", {
     method: "POST",
@@ -69,6 +78,20 @@ export async function loginAccount(payload) {
       ...payload
     })
   });
+}
+
+export async function refreshAccountSession(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/refresh", {
+    method: "POST",
+    body: JSON.stringify({
+      refreshToken,
+      ...getBrowserDeviceProfile()
+    })
+  });
+}
+
+export async function fetchCurrentUserSession() {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/me");
 }
 
 export async function logoutAccount(refreshToken) {
@@ -90,6 +113,10 @@ export async function refreshAdminSession(refreshToken) {
     method: "POST",
     body: JSON.stringify({ refreshToken })
   });
+}
+
+export async function fetchCurrentAdminSession() {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/me");
 }
 
 export async function logoutAdmin(refreshToken) {
@@ -145,107 +172,63 @@ export async function resendVerificationEmail(email) {
 }
 
 export async function fetchAccountSummary(accessToken) {
-  if (!accessToken) {
-    return null;
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/account-summary", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchWalletHistory(accessToken) {
-  if (!accessToken) {
-    return [];
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-history", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchWalletPurchases(accessToken) {
-  if (!accessToken) {
-    return [];
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-purchases", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchDevices(accessToken) {
-  if (!accessToken) {
-    return [];
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/devices", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchDownloadEntitlement(accessToken) {
-  if (!accessToken) {
-    return null;
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/download-entitlement", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchSupportOverview(accessToken) {
-  if (!accessToken) {
-    return null;
-  }
-
   return request(DASHBOARD_API_BASE, "/api/dashboard/support/preview", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchAdminOverview(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchAdminUsers(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchAdminUser(accessToken, userId) {
   return request(WINDOWS_BACKEND_API_BASE, `/api/admin/accounts/${encodeURIComponent(userId)}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function updateAdminUser(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts/update", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -253,9 +236,7 @@ export async function updateAdminUser(accessToken, payload) {
 export async function grantAdminCredits(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/credits/grant", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -263,9 +244,7 @@ export async function grantAdminCredits(accessToken, payload) {
 export async function waiveAdminPremiumDebt(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/balance/waive-negative-premium", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -273,18 +252,14 @@ export async function waiveAdminPremiumDebt(accessToken, payload) {
 export async function clearAdminLock(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/locks/clear", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
 
 export async function fetchManagedAiAdminInventory(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
@@ -293,9 +268,7 @@ export async function fetchAdminPaymentOrders(accessToken, limit = 100) {
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/payments/orders?limit=${encodeURIComponent(limit)}`,
     {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+      headers: authHeaders(accessToken)
     }
   );
 }
@@ -305,36 +278,28 @@ export async function fetchAdminPaymentWebhooks(accessToken, limit = 100) {
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/payments/webhooks?limit=${encodeURIComponent(limit)}`,
     {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+      headers: authHeaders(accessToken)
     }
   );
 }
 
 export async function fetchGmailOAuthStatus(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/status", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function startGmailOAuth(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/start", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function upsertManagedAiCredential(accessToken, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -342,9 +307,7 @@ export async function upsertManagedAiCredential(accessToken, payload) {
 export async function triggerManagedAiCatalogRefresh(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
@@ -354,9 +317,7 @@ export async function deleteManagedAiCredential(accessToken, credentialId) {
     `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`,
     {
       method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+      headers: authHeaders(accessToken)
     }
   );
 }
@@ -364,27 +325,21 @@ export async function deleteManagedAiCredential(accessToken, credentialId) {
 export async function updateManagedAiModelVision(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/vision", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
 
 export async function fetchHostedKnowledgeBase(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function createHostedKnowledgeBase(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -397,35 +352,27 @@ export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
 
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/documents", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: formData
   });
 }
 
 export async function fetchPaymentCatalog(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/catalog", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function fetchPaymentOrders(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/orders", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers: authHeaders(accessToken)
   });
 }
 
 export async function createPaymentCheckout(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/checkout", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }
@@ -433,9 +380,7 @@ export async function createPaymentCheckout(accessToken, payload) {
 export async function confirmPaymentCheckout(accessToken, payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/client-confirm", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
 }

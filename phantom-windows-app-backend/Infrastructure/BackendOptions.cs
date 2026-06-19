@@ -19,6 +19,8 @@ public sealed class BackendOptions
     public int AdminSessionTtlHours { get; init; } = 8;
     public int AdminPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
+    public string InternalApiKey { get; init; } = string.Empty;
+    public string SharedCookieDomain { get; init; } = string.Empty;
     public string BootstrapAdminEmail { get; init; } = string.Empty;
     public string BootstrapAdminPassword { get; init; } = string.Empty;
     public string BootstrapAdminDisplayName { get; init; } = string.Empty;
@@ -48,6 +50,7 @@ public sealed class BackendOptions
     public bool AllowSeedTestUsers { get; init; }
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
+    public bool HasInternalApiKey => !string.IsNullOrWhiteSpace(InternalApiKey);
     public bool IsSmtpConfigured =>
         !string.IsNullOrWhiteSpace(SmtpHost)
         && !string.IsNullOrWhiteSpace(SmtpFromEmail);
@@ -131,6 +134,14 @@ public sealed class BackendOptions
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",
                 section["AdminApiKey"],
+                string.Empty),
+            InternalApiKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY",
+                section["InternalApiKey"],
+                string.Empty),
+            SharedCookieDomain = ReadString(
+                "PHANTOM_SHARED_COOKIE_DOMAIN",
+                section["SharedCookieDomain"],
                 string.Empty),
             BootstrapAdminEmail = ReadString(
                 "PHANTOM_BOOTSTRAP_ADMIN_EMAIL",

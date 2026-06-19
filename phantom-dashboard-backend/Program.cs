@@ -17,6 +17,7 @@ builder.Services.AddSingleton<DashboardQueryService>();
 builder.Services.AddSingleton<ManagedAiAdminService>();
 builder.Services.AddSingleton<AdminSessionValidator>();
 builder.Services.AddSingleton<UserSessionValidator>();
+builder.Services.AddSingleton<BrowserSessionCookieService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddCors(cors =>
 {
@@ -33,7 +34,8 @@ builder.Services.AddCors(cors =>
 
         policy.WithOrigins(origins.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 builder.Services.AddRateLimiter(rateLimiterOptions =>
@@ -72,6 +74,11 @@ builder.Services.AddRateLimiter(rateLimiterOptions =>
 });
 
 var app = builder.Build();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
@@ -111,11 +118,19 @@ app.UseExceptionHandler(exceptionApp =>
 });
 app.UseCors("dashboard");
 app.UseRateLimiter();
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    await next();
+});
 
 app.MapGet("/health", (PostgresDashboardStore store) => Results.Ok(new
 {
     status = "ok",
-    database = store.CanConnect() ? "reachable" : "unreachable",
     service = "phantom-dashboard-backend",
     utc = DateTime.UtcNow
 }));
@@ -126,8 +141,6 @@ app.MapGet("/health/details", (
 {
     status = store.CanConnect() ? "ok" : "degraded",
     service = "phantom-dashboard-backend",
-    database = store.CanConnect() ? "reachable" : "unreachable",
-    authority = authority.GetHealthSnapshot(),
     utc = DateTime.UtcNow
 })).RequireRateLimiting("dashboard-internal");
 
@@ -155,11 +168,12 @@ app.MapGet("/health/ready", (
 app.MapGet("/api/dashboard/account-summary", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
 {
     var session = await sessions.RequireUserSessionAsync(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetUserAuthorizationHeader(httpContext.Request),
         cancellationToken);
     var summary = queries.GetAccountSummary(session.UserId, session.Email);
     return summary == null ? Results.NotFound() : Results.Ok(summary);
@@ -168,55 +182,60 @@ app.MapGet("/api/dashboard/account-summary", async (
 app.MapGet("/api/dashboard/wallet-history", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
     Results.Ok(queries.GetWalletHistory(
         (await sessions.RequireUserSessionAsync(
-            httpContext.Request.Headers.Authorization.ToString(),
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/wallet-purchases", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
     Results.Ok(queries.GetWalletPurchases(
         (await sessions.RequireUserSessionAsync(
-            httpContext.Request.Headers.Authorization.ToString(),
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/devices", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
     Results.Ok(queries.GetDevices(
         (await sessions.RequireUserSessionAsync(
-            httpContext.Request.Headers.Authorization.ToString(),
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/download-entitlement", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
     Results.Ok(queries.GetDownloadEntitlement(
         (await sessions.RequireUserSessionAsync(
-            httpContext.Request.Headers.Authorization.ToString(),
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/support/preview", async (
     HttpContext httpContext,
     UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
     DashboardQueryService queries,
     CancellationToken cancellationToken) =>
     Results.Ok(queries.GetSupportPreview(
         (await sessions.RequireUserSessionAsync(
-            httpContext.Request.Headers.Authorization.ToString(),
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
@@ -226,72 +245,79 @@ var adminGroup = app.MapGroup("/api/dashboard/admin")
 
 adminGroup.MapGet("/overview", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.GetOverview(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         cancellationToken));
 });
 adminGroup.MapGet("/payments/orders", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     int? limit,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.GetPaymentOrders(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         limit ?? 100,
         cancellationToken));
 });
 adminGroup.MapGet("/payments/webhooks", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     int? limit,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.GetPaymentWebhookEvents(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         limit ?? 100,
         cancellationToken));
 });
 adminGroup.MapGet("/managed-ai/credentials", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.GetCredentialInventory(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         cancellationToken));
 });
 adminGroup.MapPost("/managed-ai/credentials", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     JsonElement payload,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.UpsertCredential(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         payload,
         cancellationToken));
 });
 adminGroup.MapPost("/managed-ai/catalog/refresh", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.RefreshCatalog(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         cancellationToken));
 });
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     string credentialId,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
     await managedAi.DeleteCredential(
-        httpContext.Request.Headers.Authorization.ToString(),
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
         credentialId,
         cancellationToken);
     return Results.Ok(new { deleted = true, credentialId });

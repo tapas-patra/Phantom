@@ -54,7 +54,7 @@ public sealed class AdminAuthService
             if (!_admins.ExistsAny())
             {
                 throw new BackendValidationException(
-                    "No admin account is configured. Set PHANTOM_BOOTSTRAP_ADMIN_EMAIL and PHANTOM_BOOTSTRAP_ADMIN_PASSWORD, or use the local fallback admin@phantom.local with PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY, then restart the backend.");
+                    "Admin sign-in is not available until an administrator account is configured.");
             }
 
             throw new BackendValidationException("Invalid admin email or password.");
@@ -106,8 +106,8 @@ public sealed class AdminAuthService
 
     public AdminAuthSessionDto GetSession(string authorizationHeader)
     {
-        var (admin, session, accessToken) = RequireAdminSession(authorizationHeader);
-        return ToDto(admin, session, accessToken, string.Empty);
+        var (admin, session, _) = RequireAdminSession(authorizationHeader);
+        return ToDto(admin, session, string.Empty, string.Empty);
     }
 
     public AdminPasswordResetResultDto StartPasswordReset(string email, string publicBackendBaseUrl)

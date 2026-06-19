@@ -46,9 +46,9 @@ public sealed class AuthorityBackendClient
                     request.Headers.TryAddWithoutValidation("Authorization", authorizationHeader);
                 }
 
-                if (!string.IsNullOrWhiteSpace(_options.WindowsBackendAdminApiKey))
+                if (!string.IsNullOrWhiteSpace(_options.WindowsBackendInternalApiKey))
                 {
-                    request.Headers.Add("X-Phantom-Admin-Key", _options.WindowsBackendAdminApiKey);
+                    request.Headers.Add("X-Phantom-Internal-Key", _options.WindowsBackendInternalApiKey);
                 }
 
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -136,7 +136,7 @@ public sealed class AuthorityBackendClient
         {
             return new
             {
-                configured = _options.HasWindowsBackendAdminAccess && !string.IsNullOrWhiteSpace(_options.WindowsBackendAdminApiKey),
+                configured = _options.HasWindowsBackendInternalAccess,
                 consecutiveFailures = _consecutiveFailures,
                 lastSuccessAtUtc = _lastSuccessAtUtc,
                 lastFailureAtUtc = _lastFailureAtUtc,
@@ -149,7 +149,7 @@ public sealed class AuthorityBackendClient
     {
         lock (_sync)
         {
-            if (!_options.HasWindowsBackendAdminAccess || string.IsNullOrWhiteSpace(_options.WindowsBackendAdminApiKey))
+            if (!_options.HasWindowsBackendInternalAccess)
             {
                 return false;
             }
@@ -160,10 +160,10 @@ public sealed class AuthorityBackendClient
 
     private void EnsureConfigured()
     {
-        if (!_options.HasWindowsBackendAdminAccess || string.IsNullOrWhiteSpace(_options.WindowsBackendAdminApiKey))
+        if (!_options.HasWindowsBackendInternalAccess)
         {
             throw new InvalidOperationException(
-                "Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY.");
+                "Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY.");
         }
     }
 

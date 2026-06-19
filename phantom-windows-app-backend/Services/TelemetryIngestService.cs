@@ -8,6 +8,9 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class TelemetryIngestService
 {
+    private const int MaxAttributes = 32;
+    private const int MaxKeyLength = 64;
+    private const int MaxValueLength = 512;
     private readonly TelemetryBufferService _buffer;
 
     public TelemetryIngestService(TelemetryBufferService buffer)
@@ -20,6 +23,24 @@ public sealed class TelemetryIngestService
         if (string.IsNullOrWhiteSpace(request.Category) || string.IsNullOrWhiteSpace(request.EventName))
         {
             throw new BackendValidationException("Category and EventName are required.");
+        }
+
+        if (request.Attributes.Count > MaxAttributes)
+        {
+            throw new BackendValidationException("Telemetry payload exceeds the maximum attribute count.");
+        }
+
+        foreach (var (key, value) in request.Attributes)
+        {
+            if (string.IsNullOrWhiteSpace(key) || key.Length > MaxKeyLength)
+            {
+                throw new BackendValidationException("Telemetry attribute keys must be non-empty and within the allowed length.");
+            }
+
+            if ((value?.Length ?? 0) > MaxValueLength)
+            {
+                throw new BackendValidationException("Telemetry attribute values exceed the maximum allowed length.");
+            }
         }
 
         return _buffer.TryEnqueue(new TelemetryEventRecord

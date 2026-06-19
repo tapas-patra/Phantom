@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  fetchCurrentAdminSession,
+  fetchCurrentUserSession,
   loginAdmin,
   logoutAdmin,
+  refreshAccountSession,
   refreshAdminSession,
   requestAdminPasswordReset,
   resetAdminPassword,
@@ -41,9 +44,6 @@ import {
   grantAdminCredits,
   verifyPhoneOtp
 } from "./lib/api";
-
-const USER_SESSION_KEY = "phantom.website.user-session";
-const ADMIN_SESSION_KEY = "phantom.website.admin-session";
 
 const marketingNav = [
   { to: "/", label: "Product" },
@@ -133,45 +133,36 @@ const marketingHighlights = [
 ];
 
 export default function App() {
-  const [userSession, setUserSession] = useState(() => readStoredJson(USER_SESSION_KEY));
-  const [adminSession, setAdminSession] = useState(() => readStoredJson(ADMIN_SESSION_KEY));
-  const [adminSessionReady, setAdminSessionReady] = useState(() => !readStoredJson(ADMIN_SESSION_KEY)?.refreshToken);
+  const [userSession, setUserSession] = useState(null);
+  const [userSessionReady, setUserSessionReady] = useState(false);
+  const [adminSession, setAdminSession] = useState(null);
+  const [adminSessionReady, setAdminSessionReady] = useState(false);
 
   function handleUserAuthenticated(session) {
-    writeStoredJson(USER_SESSION_KEY, session);
     setUserSession(session);
   }
 
   function handleAdminAuthenticated(session) {
-    writeStoredJson(ADMIN_SESSION_KEY, session);
     setAdminSession(session);
   }
 
   async function handleUserLogout() {
-    const refreshToken = userSession?.refreshToken;
-    clearStoredJson(USER_SESSION_KEY);
     setUserSession(null);
 
-    if (refreshToken) {
-      try {
-        await logoutAccount(refreshToken);
-      } catch {
-        // Best effort logout.
-      }
+    try {
+      await logoutAccount();
+    } catch {
+      // Best effort logout.
     }
   }
 
   async function handleAdminLogout() {
-    const refreshToken = adminSession?.refreshToken;
-    clearStoredJson(ADMIN_SESSION_KEY);
     setAdminSession(null);
 
-    if (refreshToken) {
-      try {
-        await logoutAdmin(refreshToken);
-      } catch {
-        // Best effort logout.
-      }
+    try {
+      await logoutAdmin();
+    } catch {
+      // Best effort logout.
     }
   }
 
@@ -179,9 +170,92 @@ export default function App() {
     let cancelled = false;
     let refreshTimer = 0;
 
+    async function hydrateUserSession() {
+      if (!userSession?.isAuthenticated) {
+        try {
+          const refreshed = await refreshAccountSession();
+          if (!cancelled) {
+            handleUserAuthenticated(refreshed);
+          }
+        } catch {
+          try {
+            const current = await fetchCurrentUserSession();
+            if (!cancelled) {
+              handleUserAuthenticated(current);
+            }
+          } catch {
+            if (!cancelled) {
+              setUserSession(null);
+            }
+          } finally {
+            if (!cancelled) {
+              setUserSessionReady(true);
+            }
+          }
+        }
+        return;
+      }
+
+      const expiresAt = parseUtcMillis(userSession.expiresAtUtc);
+      const shouldRefresh = !expiresAt || expiresAt <= Date.now() + 5 * 60 * 1000;
+      if (!shouldRefresh) {
+        setUserSessionReady(true);
+        refreshTimer = window.setTimeout(() => {
+          hydrateUserSession();
+        }, Math.max(expiresAt - Date.now() - 5 * 60 * 1000, 1000));
+        return;
+      }
+
+      try {
+        const refreshed = await refreshAccountSession();
+        if (!cancelled) {
+          handleUserAuthenticated(refreshed);
+        }
+      } catch {
+        if (!cancelled) {
+          setUserSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+      }
+    }
+
+    hydrateUserSession();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(refreshTimer);
+    };
+  }, [userSession?.expiresAtUtc, userSession?.isAuthenticated]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshTimer = 0;
+
     async function hydrateAdminSession() {
-      if (!adminSession?.refreshToken) {
-        setAdminSessionReady(true);
+      if (!adminSession?.isAuthenticated) {
+        try {
+          const refreshed = await refreshAdminSession();
+          if (!cancelled) {
+            handleAdminAuthenticated(refreshed);
+          }
+        } catch {
+          try {
+            const current = await fetchCurrentAdminSession();
+            if (!cancelled) {
+              handleAdminAuthenticated(current);
+            }
+          } catch {
+            if (!cancelled) {
+              setAdminSession(null);
+            }
+          } finally {
+            if (!cancelled) {
+              setAdminSessionReady(true);
+            }
+          }
+        }
         return;
       }
 
@@ -196,13 +270,12 @@ export default function App() {
       }
 
       try {
-        const refreshed = await refreshAdminSession(adminSession.refreshToken);
+        const refreshed = await refreshAdminSession();
         if (!cancelled) {
           handleAdminAuthenticated(refreshed);
         }
       } catch {
         if (!cancelled) {
-          clearStoredJson(ADMIN_SESSION_KEY);
           setAdminSession(null);
         }
       } finally {
@@ -217,7 +290,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [adminSession?.expiresAtUtc, adminSession?.refreshToken]);
+  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated]);
 
   return (
     <div className="app-shell">
@@ -240,10 +313,12 @@ export default function App() {
         <Route
           path="/dashboard/*"
           element={
-            userSession ? (
+            userSessionReady && userSession ? (
               <UserDashboardPage session={userSession} />
-            ) : (
+            ) : userSessionReady ? (
               <Navigate to="/login" replace />
+            ) : (
+              <AdminSessionLoadingPage />
             )
           }
         />
@@ -256,7 +331,7 @@ export default function App() {
         <Route
           path="/admin/*"
           element={
-            adminSessionReady && adminSession ? (
+            adminSessionReady && adminSession?.isAuthenticated ? (
               <AdminDashboardPage adminSession={adminSession} />
             ) : adminSessionReady ? (
               <Navigate to="/admin/login" replace />
@@ -274,7 +349,7 @@ function SiteChrome({ userSession, adminSession, onUserLogout, onAdminLogout }) 
   const location = useLocation();
   const isUserArea = location.pathname.startsWith("/dashboard");
   const isAdminArea = location.pathname.startsWith("/admin");
-  const hasAdminSession = Boolean(adminSession?.accessToken);
+  const hasAdminSession = Boolean(adminSession?.isAuthenticated);
   const showAdminChrome = isAdminArea && hasAdminSession;
   const navigation = showAdminChrome ? adminNav : isUserArea ? userNav : marketingNav;
 
@@ -508,7 +583,7 @@ function DownloadPage({ userSession }) {
       }
 
       try {
-        const result = await fetchDownloadEntitlement(userSession.userId);
+        const result = await fetchDownloadEntitlement();
         if (!cancelled) {
           setEntitlement(result);
           setError("");
@@ -794,16 +869,21 @@ function RegisterPage() {
       });
 
       const deliveryFailed = result.deliveryStatus !== "sent";
-      navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(result.email)}`, {
+      navigate("/desktop-return?verification=pending", {
         replace: true,
         state: deliveryFailed
           ? {
               title: "Account created, but verification email failed",
+              email: result.email || form.email,
               message: result.deliveryError
-                ? `${result.email} was registered, but email delivery failed: ${result.deliveryError}. Reconnect Gmail delivery in admin, then resend verification.`
-                : `${result.email} was registered, but the verification email could not be delivered yet.`
+                ? `The account was registered, but email delivery failed: ${result.deliveryError}. Reconnect Gmail delivery in admin, then resend verification.`
+                : "The account was registered, but the verification email could not be delivered yet."
             }
-          : undefined
+          : {
+              title: "Verification email sent",
+              email: result.email || form.email,
+              message: "Check your inbox and complete email verification before signing in."
+            }
       });
     } catch (error) {
       setStatus(error.message || "Registration failed.");
@@ -894,7 +974,7 @@ function DesktopReturnPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const query = new URLSearchParams(location.search);
-  const email = query.get("email") || "";
+  const email = location.state?.email || "";
   const verificationState = query.get("verification");
   const gmailOauthState = query.get("gmail_oauth");
 
@@ -902,12 +982,12 @@ function DesktopReturnPage() {
     verificationState === "pending"
       ? {
           title: "Verification email sent",
-          message: `We sent a verification email to ${email || "your inbox"}. Verify it, then sign in from Phantom.`
+          message: "We sent a verification email. Verify it, then sign in from Phantom."
         }
       : verificationState === "success"
         ? {
             title: "Email verified",
-            message: `${email || "Your account"} is now verified. You can sign in from the desktop app or the user dashboard.`
+            message: "Your account is now verified. You can sign in from the desktop app or the user dashboard."
           }
         : gmailOauthState === "success"
           ? {
@@ -930,15 +1010,17 @@ function DesktopReturnPage() {
       const resendSucceeded = result?.message?.toLowerCase().includes("sent")
         && !result?.message?.toLowerCase().includes("could not");
 
-      navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(email)}`, {
+      navigate("/desktop-return?verification=pending", {
         replace: true,
         state: resendSucceeded
           ? {
               title: "Verification email sent",
-              message: result?.message || `We sent a verification email to ${email}. Verify it, then sign in from Phantom.`
+              email,
+              message: result?.message || "We sent a verification email. Verify it, then sign in from Phantom."
             }
           : {
               title: "Verification resend failed",
+              email,
               message: result?.message || "Could not resend verification email."
             }
       });
@@ -961,7 +1043,7 @@ function DesktopReturnPage() {
         <p className="hero-text">{state.message}</p>
         {verificationState === "pending" ? (
           <div className="hero-actions">
-            <button className="button button-primary" onClick={handleResendVerification}>
+            <button className="button button-primary" onClick={handleResendVerification} disabled={!email}>
               Resend Verification Email
             </button>
             <Link className="button button-secondary" to="/login">
@@ -1062,7 +1144,7 @@ function UserDashboardPage({ session }) {
     return () => {
       cancelled = true;
     };
-  }, [session.accessToken]);
+  }, [session.email, session.expiresAtUtc]);
 
   async function refreshWalletState() {
     const account = await fetchAccountSummary(session.accessToken);
@@ -1658,7 +1740,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (adminSession?.accessToken) {
+    if (adminSession?.isAuthenticated) {
       navigate("/admin", { replace: true });
     }
   }, [adminSession, navigate]);
@@ -1687,10 +1769,6 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
           The admin dashboard is isolated from the user dashboard and requires a dedicated admin account.
           Browser access is session-based and password reset is handled through email.
         </p>
-        <p className="download-status">
-          Local fallback: if no bootstrap admin env vars are set, use <strong>admin@phantom.local</strong> and the current
-          <strong> PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY</strong> after restarting the backend.
-        </p>
       </section>
 
       <form className="panel auth-form" onSubmit={handleSubmit}>
@@ -1700,7 +1778,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="admin@phantom.local"
+            placeholder="admin@example.com"
           />
         </label>
         <label>
@@ -1763,7 +1841,7 @@ function AdminForgotPasswordPage() {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="admin@phantom.local"
+            placeholder="admin@example.com"
           />
         </label>
         <button className="button button-primary" type="submit" disabled={submitting}>
@@ -1916,7 +1994,7 @@ function AdminDashboardPage({ adminSession }) {
     return () => {
       cancelled = true;
     };
-  }, [adminSession.accessToken]);
+  }, [adminSession.email, adminSession.expiresAtUtc]);
 
   async function refreshManagedInventory() {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);

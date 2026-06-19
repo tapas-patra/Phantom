@@ -60,17 +60,17 @@ Require-Command "dotnet"
 Require-Command "npm"
 
 $windowsBackendDbUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_DATABASE_URL"
-$windowsBackendAdminApiKey = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY"
+$windowsBackendInternalApiKey = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY"
 $dashboardBackendDbUrl = [Environment]::GetEnvironmentVariable("PHANTOM_DASHBOARD_BACKEND_DATABASE_URL")
 if ([string]::IsNullOrWhiteSpace($dashboardBackendDbUrl)) {
     $dashboardBackendDbUrl = $windowsBackendDbUrl
 }
 
-$dashboardAdminApiKey = Require-EnvVar "PHANTOM_DASHBOARD_ADMIN_API_KEY"
 $websiteBaseUrl = Require-EnvVar "PHANTOM_WEBSITE_BASE_URL"
 $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
 $websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
+$sharedCookieDomain = [Environment]::GetEnvironmentVariable("PHANTOM_SHARED_COOKIE_DOMAIN")
 $bootstrapAdminEmail = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_EMAIL")
 $bootstrapAdminPassword = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_PASSWORD")
 $bootstrapAdminDisplayName = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME")
@@ -101,7 +101,7 @@ if ($SeedUsers) {
     Push-Location $windowsBackendDir
     try {
         $env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = $windowsBackendDbUrl
-        $env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = $windowsBackendAdminApiKey
+        $env:PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY = $windowsBackendInternalApiKey
         dotnet run -- --seed-test-users
     }
     finally {
@@ -111,7 +111,8 @@ if ($SeedUsers) {
 
 $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = '$windowsBackendDbUrl'
-`$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
+`$env:PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY = '$windowsBackendInternalApiKey'
+`$env:PHANTOM_SHARED_COOKIE_DOMAIN = '$sharedCookieDomain'
 `$env:PHANTOM_BOOTSTRAP_ADMIN_EMAIL = '$bootstrapAdminEmail'
 `$env:PHANTOM_BOOTSTRAP_ADMIN_PASSWORD = '$bootstrapAdminPassword'
 `$env:PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME = '$bootstrapAdminDisplayName'
@@ -129,9 +130,9 @@ dotnet run --urls http://localhost:5057
 
 $dashboardBackendCommand = @"
 `$env:PHANTOM_DASHBOARD_BACKEND_DATABASE_URL = '$dashboardBackendDbUrl'
-`$env:PHANTOM_DASHBOARD_ADMIN_API_KEY = '$dashboardAdminApiKey'
 `$env:PHANTOM_WINDOWS_BACKEND_BASE_URL = '$windowsBackendBaseUrl'
-`$env:PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY = '$windowsBackendAdminApiKey'
+`$env:PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY = '$windowsBackendInternalApiKey'
+`$env:PHANTOM_SHARED_COOKIE_DOMAIN = '$sharedCookieDomain'
 dotnet restore
 dotnet run --urls http://localhost:5067
 "@

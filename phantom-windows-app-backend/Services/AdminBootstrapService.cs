@@ -31,14 +31,7 @@ public sealed class AdminBootstrapService
         if (string.IsNullOrWhiteSpace(bootstrapEmail)
             || string.IsNullOrWhiteSpace(bootstrapPassword))
         {
-            if (!_options.AllowImplicitLocalAdminBootstrap
-                || string.IsNullOrWhiteSpace(_options.AdminApiKey))
-            {
-                return;
-            }
-
-            bootstrapEmail = "admin@phantom.local";
-            bootstrapPassword = _options.AdminApiKey;
+            return;
         }
 
         var normalizedEmail = bootstrapEmail.Trim().ToLowerInvariant();

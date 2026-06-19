@@ -136,7 +136,7 @@ LIMIT 50;";
                 status = reader.GetString(reader.GetOrdinal("status")),
                 clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
                 creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
-                    ? null
+                    ? (DateTime?)null
                     : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
                 createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
             });

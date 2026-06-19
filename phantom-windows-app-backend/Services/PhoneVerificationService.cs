@@ -3,6 +3,7 @@ using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
 using Phantom.WindowsApp.Backend.Persistence;
+using Microsoft.Extensions.Hosting;
 
 namespace Phantom.WindowsApp.Backend.Services;
 
@@ -15,24 +16,28 @@ public sealed class PhoneVerificationService
     private readonly AccountRepository _accounts;
     private readonly TokenService _tokens;
     private readonly TwoFactorOtpClient _otpClient;
+    private readonly IHostEnvironment _environment;
 
     public PhoneVerificationService(
         BackendOptions options,
         PhoneVerificationRepository phoneVerifications,
         AccountRepository accounts,
         TokenService tokens,
-        TwoFactorOtpClient otpClient)
+        TwoFactorOtpClient otpClient,
+        IHostEnvironment environment)
     {
         _options = options;
         _phoneVerifications = phoneVerifications;
         _accounts = accounts;
         _tokens = tokens;
         _otpClient = otpClient;
+        _environment = environment;
     }
 
     public async Task<PhoneVerificationStartResultDto> StartAsync(PhoneVerificationStartRequestDto request, CancellationToken cancellationToken)
     {
-        if (!_options.HasOtpApiKey)
+        var useMockProvider = IsMockProviderEnabled();
+        if (!useMockProvider && !_options.HasOtpApiKey)
         {
             throw new BackendValidationException("Phone OTP is not configured on the backend.");
         }
@@ -61,7 +66,9 @@ public sealed class PhoneVerificationService
             throw new BackendValidationException("Too many OTP requests. Please wait 30 minutes before trying again.");
         }
 
-        var providerResult = await _otpClient.SendAsync(phoneNumberE164, cancellationToken);
+        var providerResult = useMockProvider
+            ? (SessionId: $"mock-{Guid.NewGuid():N}", ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10))
+            : await _otpClient.SendAsync(phoneNumberE164, cancellationToken);
         var challenge = new PhoneVerificationChallengeRecord
         {
             ChallengeId = $"phone-verify-{Guid.NewGuid():N}",
@@ -119,7 +126,22 @@ public sealed class PhoneVerificationService
 
         try
         {
-            await _otpClient.VerifyAsync(challenge.ProviderSessionId, request.OtpCode.Trim(), cancellationToken);
+            if (string.Equals(challenge.ProviderName, "mock", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_environment.IsDevelopment())
+                {
+                    throw new BackendValidationException("Mock OTP provider is blocked outside Development.");
+                }
+
+                if (!string.Equals(request.OtpCode.Trim(), _options.MockOtpCode, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Invalid OTP.");
+                }
+            }
+            else
+            {
+                await _otpClient.VerifyAsync(challenge.ProviderSessionId, request.OtpCode.Trim(), cancellationToken);
+            }
         }
         catch (Exception ex)
         {
@@ -183,6 +205,21 @@ public sealed class PhoneVerificationService
         challenge.Status = "consumed";
         _phoneVerifications.Save(challenge);
         return challenge;
+    }
+
+    private bool IsMockProviderEnabled()
+    {
+        if (!string.Equals(_options.OtpProviderName, "mock", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!_environment.IsDevelopment())
+        {
+            throw new BackendValidationException("Mock OTP provider is allowed only in Development.");
+        }
+
+        return true;
     }
 
     public static string NormalizePhone(string phoneNumber)

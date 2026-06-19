@@ -78,6 +78,7 @@ $razorpayWebhookSecret = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_
 $otpProvider = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER")
 $otpApiKey = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_API_KEY")
 $otpTemplateName = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME")
+$mockOtpCode = [Environment]::GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE")
 
 $windowsBackendDir = Join-Path $repoRoot "phantom-windows-app-backend"
 $dashboardBackendDir = Join-Path $repoRoot "phantom-dashboard-backend"
@@ -116,6 +117,7 @@ $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER = '$otpProvider'
 `$env:PHANTOM_WINDOWS_BACKEND_OTP_API_KEY = '$otpApiKey'
 `$env:PHANTOM_WINDOWS_BACKEND_OTP_TEMPLATE_NAME = '$otpTemplateName'
+`$env:PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE = '$mockOtpCode'
 dotnet restore
 dotnet run --urls http://localhost:5057
 "@

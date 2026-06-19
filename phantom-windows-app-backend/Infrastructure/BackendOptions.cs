@@ -37,6 +37,7 @@ public sealed class BackendOptions
     public string OtpTemplateName { get; init; } = string.Empty;
     public string OtpSendUrlTemplate { get; init; } = string.Empty;
     public string OtpVerifyUrlTemplate { get; init; } = string.Empty;
+    public string MockOtpCode { get; init; } = "111111";
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
     public bool IsSmtpConfigured =>
@@ -188,7 +189,11 @@ public sealed class BackendOptions
             OtpVerifyUrlTemplate = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_OTP_VERIFY_URL_TEMPLATE",
                 section["OtpVerifyUrlTemplate"],
-                "https://2factor.in/API/V1/{apiKey}/SMS/VERIFY3/{sessionId}/{otp}")
+                "https://2factor.in/API/V1/{apiKey}/SMS/VERIFY3/{sessionId}/{otp}"),
+            MockOtpCode = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE",
+                section["MockOtpCode"],
+                "111111")
         };
     }
 

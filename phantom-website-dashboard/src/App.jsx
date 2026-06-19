@@ -2235,6 +2235,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
               <th>Purchase</th>
               <th>Amount</th>
               <th>Status</th>
+              <th>Ops state</th>
               <th>Checkout</th>
               <th>Created</th>
               <th>Detail</th>
@@ -2243,7 +2244,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
           <tbody>
             {filteredOrders.length === 0 ? (
               <tr>
-                <td colSpan="7">No payment orders matched the current filters.</td>
+                <td colSpan="8">No payment orders matched the current filters.</td>
               </tr>
             ) : (
               filteredOrders.map((item) => (
@@ -2252,6 +2253,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
                   <td>{item.displayLabel}</td>
                   <td>{formatInr(item.amountInr)}</td>
                   <td>{item.status}</td>
+                  <td>{renderPaymentOpsState(item)}</td>
                   <td>{item.checkoutId}</td>
                   <td>{formatDate(item.createdAtUtc)}</td>
                   <td>
@@ -2279,6 +2281,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
               <tr><th>Credits</th><td>{selectedOrder.credits}</td></tr>
               <tr><th>Debt covered</th><td>{selectedOrder.premiumDebtCreditsCovered}</td></tr>
               <tr><th>Status</th><td>{selectedOrder.status}</td></tr>
+              <tr><th>Ops state</th><td>{describePaymentOpsState(selectedOrder)}</td></tr>
               <tr><th>Client confirmed</th><td>{selectedOrder.clientConfirmed ? "Yes" : "No"}</td></tr>
               <tr><th>Razorpay order</th><td>{selectedOrder.razorpayOrderId || "n/a"}</td></tr>
               <tr><th>Razorpay payment</th><td>{selectedOrder.razorpayPaymentId || "n/a"}</td></tr>
@@ -2395,6 +2398,47 @@ function prettyJson(value) {
   } catch {
     return String(value);
   }
+}
+
+function getPaymentOpsState(order) {
+  if (order.creditedAtUtc || order.status === "credited") {
+    return "credited";
+  }
+
+  if (order.clientConfirmed || order.status === "client_confirmed") {
+    const createdAt = order.createdAtUtc ? new Date(order.createdAtUtc).getTime() : 0;
+    const minutesOpen = createdAt ? (Date.now() - createdAt) / 60000 : 0;
+    return minutesOpen >= 2 ? "stuck_waiting_webhook" : "waiting_webhook";
+  }
+
+  return "created";
+}
+
+function describePaymentOpsState(order) {
+  const state = getPaymentOpsState(order);
+  switch (state) {
+    case "credited":
+      return "Wallet mutation applied after trusted backend confirmation.";
+    case "waiting_webhook":
+      return "Checkout succeeded in the browser. Backend is waiting for the Razorpay webhook to credit the wallet.";
+    case "stuck_waiting_webhook":
+      return "Client confirmed but still not credited after 2+ minutes. Check ngrok delivery, webhook URL, webhook secret, and backend logs.";
+    default:
+      return "Order created, but browser confirmation has not been recorded yet.";
+  }
+}
+
+function renderPaymentOpsState(order) {
+  const state = getPaymentOpsState(order);
+  const label = state === "credited"
+    ? "Credited"
+    : state === "waiting_webhook"
+      ? "Waiting webhook"
+      : state === "stuck_waiting_webhook"
+        ? "Stuck"
+        : "Created";
+
+  return <span className={`header-badge ${state === "stuck_waiting_webhook" ? "header-badge-brass" : ""}`}>{label}</span>;
 }
 
 async function loadRazorpayScript() {

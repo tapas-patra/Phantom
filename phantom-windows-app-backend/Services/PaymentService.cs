@@ -87,7 +87,7 @@ public sealed class PaymentService
             orderLabel = pack.Label;
         }
 
-        var razorpayOrderId = await CreateRazorpayOrderAsync(checkoutId, amountMinor, cancellationToken);
+        var razorpayOrderId = await CreateRazorpayOrderAsync(BuildRazorpayReceipt(checkoutId), amountMinor, cancellationToken);
         var record = new PaymentOrderRecord
         {
             CheckoutId = checkoutId,
@@ -297,13 +297,13 @@ public sealed class PaymentService
         _usageLedger.Save(ledger);
     }
 
-    private async Task<string> CreateRazorpayOrderAsync(string checkoutId, int amountMinor, CancellationToken cancellationToken)
+    private async Task<string> CreateRazorpayOrderAsync(string receipt, int amountMinor, CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Serialize(new
         {
             amount = amountMinor,
             currency = "INR",
-            receipt = checkoutId
+            receipt
         });
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.razorpay.com/v1/orders");
@@ -357,6 +357,12 @@ public sealed class PaymentService
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string BuildRazorpayReceipt(string checkoutId)
+    {
+        var compact = checkoutId.Replace("checkout-", "chk_", StringComparison.Ordinal);
+        return compact.Length <= 40 ? compact : compact[..40];
     }
 
     private static string ExtractRazorpayError(string responsePayload)

@@ -36,10 +36,30 @@ public sealed class GoogleMailOAuthService
 
     public GoogleMailOAuthStatusDto GetStatus()
     {
+        var hasRefreshToken = HasRefreshTokenConfigured();
+        var hasValidRefreshToken = false;
+        var statusMessage = string.Empty;
+        if (hasRefreshToken)
+        {
+            hasValidRefreshToken = TryValidateRefreshToken(out statusMessage);
+        }
+
         return new GoogleMailOAuthStatusDto
         {
             IsConfigured = _options.HasGoogleOAuthClientSecrets,
-            HasRefreshToken = HasRefreshTokenConfigured(),
+            HasRefreshToken = hasRefreshToken,
+            HasValidRefreshToken = hasValidRefreshToken,
+            NeedsReconnect = hasRefreshToken && !hasValidRefreshToken,
+            StatusLabel = !hasRefreshToken
+                ? "Not connected"
+                : hasValidRefreshToken
+                    ? "Connected"
+                    : "Reconnect required",
+            StatusMessage = !hasRefreshToken
+                ? "Gmail OAuth has not been connected yet."
+                : hasValidRefreshToken
+                    ? "Stored Gmail refresh token is valid."
+                    : statusMessage,
             FromEmail = "official.phantomai@gmail.com"
         };
     }
@@ -134,6 +154,33 @@ public sealed class GoogleMailOAuthService
             ClientSecrets = clientSecrets,
             Scopes = new[] { GmailSendScope }
         });
+    }
+
+    public bool TryValidateRefreshToken(out string message)
+    {
+        try
+        {
+            var flow = BuildFlow();
+            var refreshToken = GetRefreshToken();
+            var token = flow.RefreshTokenAsync(
+                userId: Provider,
+                refreshToken: refreshToken,
+                taskCancellationToken: CancellationToken.None).GetAwaiter().GetResult();
+
+            if (string.IsNullOrWhiteSpace(token.AccessToken))
+            {
+                message = "Gmail OAuth refresh completed without an access token.";
+                return false;
+            }
+
+            message = "Stored Gmail refresh token is valid.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Gmail OAuth token refresh failed: {ex.Message}";
+            return false;
+        }
     }
 
     private string ResolveRedirectUri(string publicBackendBaseUrl)

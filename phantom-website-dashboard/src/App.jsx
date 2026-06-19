@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from
 import {
   fetchAdminPaymentOrders,
   fetchAdminPaymentWebhooks,
+  fetchGmailOAuthStatus,
   confirmPaymentCheckout,
   createPaymentCheckout,
   createHostedKnowledgeBase,
@@ -22,6 +23,7 @@ import {
   registerAccount,
   resendVerificationEmail,
   sendPhoneOtp,
+  startGmailOAuth,
   triggerManagedAiCatalogRefresh,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
@@ -851,9 +853,21 @@ function DesktopReturnPage() {
     }
 
     try {
-      await resendVerificationEmail(email);
+      const result = await resendVerificationEmail(email);
+      const resendSucceeded = result?.message?.toLowerCase().includes("sent")
+        && !result?.message?.toLowerCase().includes("could not");
+
       navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(email)}`, {
-        replace: true
+        replace: true,
+        state: resendSucceeded
+          ? {
+              title: "Verification email sent",
+              message: result?.message || `We sent a verification email to ${email}. Verify it, then sign in from Phantom.`
+            }
+          : {
+              title: "Verification resend failed",
+              message: result?.message || "Could not resend verification email."
+            }
       });
     } catch (error) {
       navigate("/desktop-return", {
@@ -1619,9 +1633,11 @@ function AdminDashboardPage({ adminSession }) {
   const [inventory, setInventory] = useState(null);
   const [paymentOrders, setPaymentOrders] = useState([]);
   const [paymentWebhooks, setPaymentWebhooks] = useState([]);
+  const [gmailStatus, setGmailStatus] = useState(null);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const location = useLocation();
 
   useEffect(() => {
     let cancelled = false;
@@ -1630,11 +1646,12 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData] = await Promise.all([
+        const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
           fetchAdminOverview(adminSession.apiKey),
           fetchManagedAiAdminInventory(adminSession.apiKey),
           fetchAdminPaymentOrders(adminSession.apiKey),
-          fetchAdminPaymentWebhooks(adminSession.apiKey)
+          fetchAdminPaymentWebhooks(adminSession.apiKey),
+          fetchGmailOAuthStatus(adminSession.apiKey)
         ]);
 
         if (!cancelled) {
@@ -1642,6 +1659,7 @@ function AdminDashboardPage({ adminSession }) {
           setInventory(inventoryData);
           setPaymentOrders(paymentOrdersData);
           setPaymentWebhooks(paymentWebhooksData);
+          setGmailStatus(gmailStatusData);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -1667,14 +1685,16 @@ function AdminDashboardPage({ adminSession }) {
   }
 
   async function refreshPayments() {
-    const [nextOverview, nextOrders, nextWebhooks] = await Promise.all([
+    const [nextOverview, nextOrders, nextWebhooks, nextGmailStatus] = await Promise.all([
       fetchAdminOverview(adminSession.apiKey),
       fetchAdminPaymentOrders(adminSession.apiKey),
-      fetchAdminPaymentWebhooks(adminSession.apiKey)
+      fetchAdminPaymentWebhooks(adminSession.apiKey),
+      fetchGmailOAuthStatus(adminSession.apiKey)
     ]);
     setOverview(nextOverview);
     setPaymentOrders(nextOrders);
     setPaymentWebhooks(nextWebhooks);
+    setGmailStatus(nextGmailStatus);
   }
 
   if (loading) {
@@ -1727,7 +1747,19 @@ function AdminDashboardPage({ adminSession }) {
 
       <section className="dashboard-main">
         <Routes>
-          <Route index element={<AdminOverviewPanel overview={overview} inventory={inventory} />} />
+          <Route
+            index
+            element={
+              <AdminOverviewPanel
+                overview={overview}
+                inventory={inventory}
+                gmailStatus={gmailStatus}
+                adminApiKey={adminSession.apiKey}
+                gmailOauthSuccess={new URLSearchParams(location.search).get("gmail_oauth") === "success"}
+                onGmailStatusChanged={setGmailStatus}
+              />
+            }
+          />
           <Route
             path="payments"
             element={
@@ -1757,10 +1789,38 @@ function AdminDashboardPage({ adminSession }) {
   );
 }
 
-function AdminOverviewPanel({ overview, inventory }) {
+function AdminOverviewPanel({ overview, inventory, gmailStatus, adminApiKey, gmailOauthSuccess, onGmailStatusChanged }) {
   const credentials = inventory?.credentials || [];
   const providers = inventory?.managedProviders || [];
   const catalogProviders = inventory?.catalogs?.providers || [];
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailMessage, setGmailMessage] = useState("");
+
+  useEffect(() => {
+    if (gmailOauthSuccess) {
+      setGmailMessage("Gmail OAuth completed. Refreshing sender health.");
+      fetchGmailOAuthStatus(adminApiKey)
+        .then((status) => {
+          onGmailStatusChanged(status);
+          setGmailMessage(status?.StatusMessage || "Gmail OAuth status refreshed.");
+        })
+        .catch((error) => {
+          setGmailMessage(error.message || "Could not refresh Gmail OAuth status.");
+        });
+    }
+  }, [adminApiKey, gmailOauthSuccess, onGmailStatusChanged]);
+
+  async function handleReconnectGmail() {
+    setGmailLoading(true);
+    setGmailMessage("");
+    try {
+      const result = await startGmailOAuth(adminApiKey);
+      window.location.href = result.authorizationUrl;
+    } catch (error) {
+      setGmailMessage(error.message || "Could not start Gmail OAuth.");
+      setGmailLoading(false);
+    }
+  }
 
   return (
     <div className="dashboard-grid admin-grid">
@@ -1788,6 +1848,44 @@ function AdminOverviewPanel({ overview, inventory }) {
       <article className="panel metric-panel">
         <span>Catalog models</span>
         <strong>{catalogProviders.reduce((total, provider) => total + (provider.models?.length || 0), 0)}</strong>
+      </article>
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Gmail sender health</p>
+        <div className="admin-panel-head">
+          <div>
+            <h3>{gmailStatus?.StatusLabel || "Unknown"}</h3>
+            <p>{gmailStatus?.StatusMessage || "Gmail OAuth status has not loaded yet."}</p>
+          </div>
+          <div className="admin-panel-actions">
+            <button
+              className="button button-primary button-compact"
+              type="button"
+              onClick={handleReconnectGmail}
+              disabled={gmailLoading}
+            >
+              {gmailLoading ? "Redirecting..." : gmailStatus?.HasRefreshToken ? "Reconnect Gmail" : "Connect Gmail"}
+            </button>
+          </div>
+        </div>
+        <div className="support-metrics">
+          <div>
+            <span>Configured</span>
+            <strong>{gmailStatus?.IsConfigured ? "Yes" : "No"}</strong>
+          </div>
+          <div>
+            <span>Refresh token</span>
+            <strong>{gmailStatus?.HasRefreshToken ? "Stored" : "Missing"}</strong>
+          </div>
+          <div>
+            <span>Token valid</span>
+            <strong>{gmailStatus?.HasValidRefreshToken ? "Yes" : "No"}</strong>
+          </div>
+          <div>
+            <span>Sender</span>
+            <strong>{gmailStatus?.FromEmail || "n/a"}</strong>
+          </div>
+        </div>
+        {gmailMessage && <p className={`status-message ${gmailMessage.toLowerCase().includes("could not") ? "status-error" : ""}`}>{gmailMessage}</p>}
       </article>
       <article className="panel table-panel table-panel-full">
         <p className="eyebrow">Managed provider readiness</p>

@@ -215,6 +215,23 @@ export async function fetchAdminPaymentWebhooks(adminApiKey, limit = 100) {
   );
 }
 
+export async function fetchGmailOAuthStatus(adminApiKey) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/status", {
+    headers: {
+      "X-Phantom-Admin-Key": adminApiKey
+    }
+  });
+}
+
+export async function startGmailOAuth(adminApiKey) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/start", {
+    method: "POST",
+    headers: {
+      "X-Phantom-Admin-Key": adminApiKey
+    }
+  });
+}
+
 export async function upsertManagedAiCredential(adminApiKey, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",

@@ -583,7 +583,7 @@ app.MapGet("/api/admin/integrations/gmail/oauth/callback", async (
     var redirectBase = string.IsNullOrWhiteSpace(options.PublicWebsiteBaseUrl)
         ? publicBaseUrl
         : options.PublicWebsiteBaseUrl.TrimEnd('/');
-    return Results.Redirect($"{redirectBase}/desktop-return?gmail_oauth=success");
+    return Results.Redirect($"{redirectBase}/admin?gmail_oauth=success");
 });
 
 app.Run();

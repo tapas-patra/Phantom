@@ -25,13 +25,22 @@ public sealed class AdminBootstrapService
 
     public void EnsureBootstrapAdmin()
     {
-        if (string.IsNullOrWhiteSpace(_options.BootstrapAdminEmail)
-            || string.IsNullOrWhiteSpace(_options.BootstrapAdminPassword))
+        var bootstrapEmail = _options.BootstrapAdminEmail;
+        var bootstrapPassword = _options.BootstrapAdminPassword;
+
+        if (string.IsNullOrWhiteSpace(bootstrapEmail)
+            || string.IsNullOrWhiteSpace(bootstrapPassword))
         {
-            return;
+            if (string.IsNullOrWhiteSpace(_options.AdminApiKey))
+            {
+                return;
+            }
+
+            bootstrapEmail = "admin@phantom.local";
+            bootstrapPassword = _options.AdminApiKey;
         }
 
-        var normalizedEmail = _options.BootstrapAdminEmail.Trim().ToLowerInvariant();
+        var normalizedEmail = bootstrapEmail.Trim().ToLowerInvariant();
         var existing = _admins.FindByEmail(normalizedEmail);
         if (existing != null)
         {
@@ -44,10 +53,10 @@ public sealed class AdminBootstrapService
             AdminId = $"admin-{Guid.NewGuid():N}",
             Email = normalizedEmail,
             DisplayName = string.IsNullOrWhiteSpace(_options.BootstrapAdminDisplayName)
-                ? "Bootstrap Admin"
+                ? "Local Admin"
                 : _options.BootstrapAdminDisplayName.Trim(),
             Role = "super_admin",
-            PasswordHash = _passwordHasher.Hash(_options.BootstrapAdminPassword),
+            PasswordHash = _passwordHasher.Hash(bootstrapPassword),
             IsActive = true,
             CreatedAtUtc = now,
             UpdatedAtUtc = now

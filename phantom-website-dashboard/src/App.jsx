@@ -1673,6 +1673,10 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
           The admin dashboard is isolated from the user dashboard and requires a dedicated admin account.
           Browser access is session-based and password reset is handled through email.
         </p>
+        <p className="download-status">
+          Local fallback: if no bootstrap admin env vars are set, use <strong>admin@phantom.local</strong> and the current
+          <strong> PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY</strong> after restarting the backend.
+        </p>
       </section>
 
       <form className="panel auth-form" onSubmit={handleSubmit}>

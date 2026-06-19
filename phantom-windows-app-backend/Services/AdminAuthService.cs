@@ -49,7 +49,18 @@ public sealed class AdminAuthService
         }
 
         var admin = _admins.FindByEmail(request.Email.Trim().ToLowerInvariant());
-        if (admin == null || !admin.IsActive || !_passwordHasher.Verify(request.Password, admin.PasswordHash))
+        if (admin == null)
+        {
+            if (!_admins.ExistsAny())
+            {
+                throw new BackendValidationException(
+                    "No admin account is configured. Set PHANTOM_BOOTSTRAP_ADMIN_EMAIL and PHANTOM_BOOTSTRAP_ADMIN_PASSWORD, or use the local fallback admin@phantom.local with PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY, then restart the backend.");
+            }
+
+            throw new BackendValidationException("Invalid admin email or password.");
+        }
+
+        if (!admin.IsActive || !_passwordHasher.Verify(request.Password, admin.PasswordHash))
         {
             throw new BackendValidationException("Invalid admin email or password.");
         }

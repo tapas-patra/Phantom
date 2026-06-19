@@ -32,6 +32,14 @@ public sealed class AdminAccountRepository
         return reader.Read() ? Map(reader) : null;
     }
 
+    public bool ExistsAny()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM admin_accounts LIMIT 1;";
+        return command.ExecuteScalar() != null;
+    }
+
     public void Save(AdminAccountRecord account)
     {
         using var connection = _store.OpenConnection();

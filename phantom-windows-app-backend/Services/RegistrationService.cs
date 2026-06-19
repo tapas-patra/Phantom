@@ -52,20 +52,31 @@ public sealed class RegistrationService
         }
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var normalizedPhone = PhoneVerificationService.NormalizePhone(request.PhoneNumber);
         var deviceFingerprintHash = request.DeviceFingerprintHash?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(deviceFingerprintHash))
         {
             throw new BackendValidationException("Device fingerprint is required for registration.");
         }
-
-        var verifiedPhone = _phoneVerification.ConsumeVerifiedToken(
-            request.PhoneVerificationToken,
-            request.PhoneNumber,
-            deviceFingerprintHash);
         var existing = _accounts.FindByEmail(normalizedEmail);
         if (existing != null && existing.EmailVerified)
         {
             throw new BackendValidationException("An account with this email already exists.");
+        }
+
+        PhoneVerificationChallengeRecord? verifiedPhone = null;
+        var canReuseExistingPhoneVerification = existing != null
+            && !existing.EmailVerified
+            && existing.PhoneVerified
+            && string.Equals(existing.PhoneNumberE164, normalizedPhone, StringComparison.Ordinal)
+            && string.Equals(existing.RegistrationDeviceFingerprintHash, deviceFingerprintHash, StringComparison.Ordinal);
+
+        if (!canReuseExistingPhoneVerification)
+        {
+            verifiedPhone = _phoneVerification.ConsumeVerifiedToken(
+                request.PhoneVerificationToken,
+                request.PhoneNumber,
+                deviceFingerprintHash);
         }
 
         var now = DateTime.UtcNow;
@@ -74,9 +85,9 @@ public sealed class RegistrationService
             UserId = $"user-{Guid.NewGuid():N}",
             Email = normalizedEmail,
             AccessTier = "free",
-            PhoneNumberE164 = verifiedPhone.PhoneNumberE164,
+            PhoneNumberE164 = verifiedPhone?.PhoneNumberE164 ?? normalizedPhone,
             PhoneVerified = true,
-            PhoneVerifiedAtUtc = verifiedPhone.VerifiedAtUtc,
+            PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? now,
             RegistrationDeviceFingerprintHash = deviceFingerprintHash,
             ProAvailableCredits = 0m,
             PremiumAvailableCredits = 0.5m,
@@ -87,9 +98,9 @@ public sealed class RegistrationService
         };
 
         account.Email = normalizedEmail;
-        account.PhoneNumberE164 = verifiedPhone.PhoneNumberE164;
+        account.PhoneNumberE164 = verifiedPhone?.PhoneNumberE164 ?? account.PhoneNumberE164;
         account.PhoneVerified = true;
-        account.PhoneVerifiedAtUtc = verifiedPhone.VerifiedAtUtc;
+        account.PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? account.PhoneVerifiedAtUtc ?? now;
         account.RegistrationDeviceFingerprintHash = deviceFingerprintHash;
         if (AccessModeResolver.IsFree(account))
         {

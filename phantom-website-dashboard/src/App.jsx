@@ -718,12 +718,17 @@ function RegisterPage() {
         secretFingerprintHint: registerParams.get("deviceHint") || ""
       });
 
-      if (result.deliveryStatus !== "sent") {
-        throw new Error(result.deliveryError || "Verification email could not be delivered.");
-      }
-
+      const deliveryFailed = result.deliveryStatus !== "sent";
       navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(result.email)}`, {
-        replace: true
+        replace: true,
+        state: deliveryFailed
+          ? {
+              title: "Account created, but verification email failed",
+              message: result.deliveryError
+                ? `${result.email} was registered, but email delivery failed: ${result.deliveryError}. Reconnect Gmail delivery in admin, then resend verification.`
+                : `${result.email} was registered, but the verification email could not be delivered yet.`
+            }
+          : undefined
       });
     } catch (error) {
       setStatus(error.message || "Registration failed.");

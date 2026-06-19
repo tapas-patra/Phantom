@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   fetchCurrentAdminSession,
@@ -137,32 +137,48 @@ export default function App() {
   const [userSessionReady, setUserSessionReady] = useState(false);
   const [adminSession, setAdminSession] = useState(null);
   const [adminSessionReady, setAdminSessionReady] = useState(false);
+  const [userSessionHydrationEnabled, setUserSessionHydrationEnabled] = useState(true);
+  const [adminSessionHydrationEnabled, setAdminSessionHydrationEnabled] = useState(true);
+  const userLogoutInFlightRef = useRef(false);
+  const adminLogoutInFlightRef = useRef(false);
 
   function handleUserAuthenticated(session) {
+    setUserSessionHydrationEnabled(true);
     setUserSession(session);
   }
 
   function handleAdminAuthenticated(session) {
+    setAdminSessionHydrationEnabled(true);
     setAdminSession(session);
   }
 
   async function handleUserLogout() {
-    setUserSession(null);
+    userLogoutInFlightRef.current = true;
+    setUserSessionHydrationEnabled(false);
 
     try {
       await logoutAccount();
     } catch {
       // Best effort logout.
+    } finally {
+      setUserSession(null);
+      setUserSessionReady(true);
+      userLogoutInFlightRef.current = false;
     }
   }
 
   async function handleAdminLogout() {
-    setAdminSession(null);
+    adminLogoutInFlightRef.current = true;
+    setAdminSessionHydrationEnabled(false);
 
     try {
       await logoutAdmin();
     } catch {
       // Best effort logout.
+    } finally {
+      setAdminSession(null);
+      setAdminSessionReady(true);
+      adminLogoutInFlightRef.current = false;
     }
   }
 
@@ -171,6 +187,20 @@ export default function App() {
     let refreshTimer = 0;
 
     async function hydrateUserSession() {
+      if (userLogoutInFlightRef.current) {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+        return;
+      }
+
+      if (!userSession?.isAuthenticated && !userSessionHydrationEnabled) {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+        return;
+      }
+
       if (!userSession?.isAuthenticated) {
         try {
           const refreshed = await refreshAccountSession();
@@ -227,13 +257,27 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [userSession?.expiresAtUtc, userSession?.isAuthenticated]);
+  }, [userSession?.expiresAtUtc, userSession?.isAuthenticated, userSessionHydrationEnabled]);
 
   useEffect(() => {
     let cancelled = false;
     let refreshTimer = 0;
 
     async function hydrateAdminSession() {
+      if (adminLogoutInFlightRef.current) {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+        return;
+      }
+
+      if (!adminSession?.isAuthenticated && !adminSessionHydrationEnabled) {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+        return;
+      }
+
       if (!adminSession?.isAuthenticated) {
         try {
           const refreshed = await refreshAdminSession();
@@ -290,7 +334,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated]);
+  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated, adminSessionHydrationEnabled]);
 
   return (
     <div className="app-shell">

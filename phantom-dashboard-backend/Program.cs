@@ -79,6 +79,17 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+app.UseCors("dashboard");
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    await next();
+});
+
 app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
@@ -116,17 +127,7 @@ app.UseExceptionHandler(exceptionApp =>
         await context.Response.WriteAsJsonAsync(new { error = "An unexpected server error occurred." });
     });
 });
-app.UseCors("dashboard");
 app.UseRateLimiter();
-app.Use(async (context, next) =>
-{
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-    await next();
-});
 
 app.MapGet("/health", (PostgresDashboardStore store) => Results.Ok(new
 {

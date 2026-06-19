@@ -13,15 +13,18 @@ namespace SecureOverlay.Infrastructure.Telemetry
         private const int MaxStoredEvents = 500;
 
         private readonly ITelemetryRepository _repository;
+        private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedTelemetryClient _hostedTelemetryClient;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
 
         public HostedTelemetryService(
             ITelemetryRepository repository,
+            IAuthSessionRepository authSessionRepository,
             IHostedTelemetryClient hostedTelemetryClient,
             HostedRuntimeOptions hostedRuntimeOptions)
         {
             _repository = repository;
+            _authSessionRepository = authSessionRepository;
             _hostedTelemetryClient = hostedTelemetryClient;
             _hostedRuntimeOptions = hostedRuntimeOptions;
         }
@@ -57,12 +60,20 @@ namespace SecureOverlay.Infrastructure.Telemetry
 
         private void FlushPending(List<TelemetryEvent> events)
         {
+            var session = _authSessionRepository.Load();
+            if (session == null
+                || !session.IsAuthenticated
+                || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                return;
+            }
+
             var remaining = new List<TelemetryEvent>();
             foreach (var telemetryEvent in events.OrderBy(item => item.OccurredAtUtc))
             {
                 try
                 {
-                    _hostedTelemetryClient.Ingest(telemetryEvent);
+                    _hostedTelemetryClient.Ingest(telemetryEvent, session.AccessToken);
                 }
                 catch (Exception ex)
                 {

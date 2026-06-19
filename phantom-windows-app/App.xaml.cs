@@ -34,10 +34,12 @@ namespace SecureOverlay
             try
             {
                 var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
+                IAuthSessionRepository authSessionRepository = new SqliteAuthSessionRepository(store);
                 ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
                 var hostedRuntimeOptions = HostedClientFactory.LoadOptions();
                 _telemetryService = new HostedTelemetryService(
                     telemetryRepository,
+                    authSessionRepository,
                     HostedClientFactory.CreateTelemetryClient(hostedRuntimeOptions),
                     hostedRuntimeOptions);
                 _telemetryService.Track("app", "startup", new Dictionary<string, string>

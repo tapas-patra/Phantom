@@ -179,6 +179,16 @@ if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+app.UseCors("website");
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    await next();
+});
 app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
@@ -210,16 +220,6 @@ app.UseExceptionHandler(exceptionApp =>
 });
 
 app.UseRateLimiter();
-app.UseCors("website");
-app.Use(async (context, next) =>
-{
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-    await next();
-});
 
 app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
 {
@@ -397,19 +397,28 @@ app.MapPost("/api/desktop/auth/refresh", (
 
     if (string.IsNullOrWhiteSpace(request.RefreshToken))
     {
-        throw new BackendValidationException("RefreshToken is required.");
+        cookies.ClearUserCookies(httpContext.Response);
+        return Results.Unauthorized();
     }
 
-    var session = auth.RefreshSession(
-        request.RefreshToken,
-        request.InstallId,
-        request.DeviceFingerprintHash);
-    if (IsBrowserRequest(httpContext))
+    try
     {
-        cookies.IssueUserCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
-    }
+        var session = auth.RefreshSession(
+            request.RefreshToken,
+            request.InstallId,
+            request.DeviceFingerprintHash);
+        if (IsBrowserRequest(httpContext))
+        {
+            cookies.IssueUserCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
+        }
 
-    return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeUserSession(session) : session);
+        return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeUserSession(session) : session);
+    }
+    catch (BackendValidationException)
+    {
+        cookies.ClearUserCookies(httpContext.Response);
+        return Results.Unauthorized();
+    }
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/logout", (
@@ -422,30 +431,46 @@ app.MapPost("/api/desktop/auth/logout", (
 
     if (string.IsNullOrWhiteSpace(request.RefreshToken))
     {
-        throw new BackendValidationException("RefreshToken is required.");
+        cookies.ClearUserCookies(httpContext.Response);
+        return Results.Ok(new { revoked = true });
     }
 
-    auth.RevokeSession(request.RefreshToken);
+    try
+    {
+        auth.RevokeSession(request.RefreshToken);
+    }
+    catch (BackendValidationException)
+    {
+        // Treat already-missing or already-revoked sessions as logged out.
+    }
+
     cookies.ClearUserCookies(httpContext.Response);
     return Results.Ok(new { revoked = true });
 }).RequireRateLimiting("auth");
 
 app.MapGet("/api/desktop/auth/me", (
     HttpContext httpContext,
+    BrowserSessionCookieService cookies,
     DesktopSessionService desktopSessions) =>
 {
-    var session = desktopSessions.RequireSession(RequestTokenResolver.GetAuthorizationHeader(
-        httpContext.Request,
-        httpContext.Request.Cookies.TryGetValue(BrowserSessionCookieService.UserAccessCookie, out var cookieToken) ? cookieToken : null));
-    return Results.Ok(new
+    try
     {
-        session.UserId,
-        session.Email,
-        session.AuthMethod,
-        session.AuthenticatedAtUtc,
-        session.ExpiresAtUtc,
-        session.IsAuthenticated
-    });
+        var session = desktopSessions.RequireSession(cookies.GetUserAuthorizationHeader(httpContext.Request));
+        return Results.Ok(new
+        {
+            session.UserId,
+            session.Email,
+            session.AuthMethod,
+            session.AuthenticatedAtUtc,
+            session.ExpiresAtUtc,
+            session.IsAuthenticated
+        });
+    }
+    catch (BackendValidationException)
+    {
+        cookies.ClearUserCookies(httpContext.Response);
+        return Results.Unauthorized();
+    }
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/admin/auth/login", (
@@ -489,13 +514,28 @@ app.MapPost("/api/admin/auth/refresh", (
     BrowserSessionCookieService cookies) =>
 {
     request.RefreshToken = ResolveRefreshToken(request.RefreshToken, cookies.ReadAdminRefreshToken(httpContext.Request));
-    var session = adminAuth.Refresh(request);
-    if (IsBrowserRequest(httpContext))
+
+    if (string.IsNullOrWhiteSpace(request.RefreshToken))
     {
-        cookies.IssueAdminCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
+        cookies.ClearAdminCookies(httpContext.Response);
+        return Results.Unauthorized();
     }
 
-    return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeAdminSession(session) : session);
+    try
+    {
+        var session = adminAuth.Refresh(request);
+        if (IsBrowserRequest(httpContext))
+        {
+            cookies.IssueAdminCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
+        }
+
+        return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeAdminSession(session) : session);
+    }
+    catch (BackendValidationException)
+    {
+        cookies.ClearAdminCookies(httpContext.Response);
+        return Results.Unauthorized();
+    }
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/admin/auth/logout", (
@@ -505,7 +545,19 @@ app.MapPost("/api/admin/auth/logout", (
     BrowserSessionCookieService cookies) =>
 {
     request.RefreshToken = ResolveRefreshToken(request.RefreshToken, cookies.ReadAdminRefreshToken(httpContext.Request));
-    adminAuth.Logout(request.RefreshToken);
+
+    if (!string.IsNullOrWhiteSpace(request.RefreshToken))
+    {
+        try
+        {
+            adminAuth.Logout(request.RefreshToken);
+        }
+        catch (BackendValidationException)
+        {
+            // Treat already-missing or already-revoked sessions as logged out.
+        }
+    }
+
     cookies.ClearAdminCookies(httpContext.Response);
     return Results.Ok(new { revoked = true });
 }).RequireRateLimiting("auth");
@@ -515,7 +567,15 @@ app.MapGet("/api/admin/auth/me", (
     AdminAuthService adminAuth,
     BrowserSessionCookieService cookies) =>
 {
-    return Results.Ok(adminAuth.GetSession(cookies.GetAdminAuthorizationHeader(httpContext.Request)));
+    try
+    {
+        return Results.Ok(adminAuth.GetSession(cookies.GetAdminAuthorizationHeader(httpContext.Request)));
+    }
+    catch (BackendValidationException)
+    {
+        cookies.ClearAdminCookies(httpContext.Response);
+        return Results.Unauthorized();
+    }
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/admin/auth/forgot-password", (

@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Http;
 
 namespace Phantom.WindowsApp.Backend.Infrastructure;
@@ -68,7 +69,7 @@ public sealed class BrowserSessionCookieService
             SameSite = SameSiteMode.Strict,
             Secure = request.IsHttps || !string.Equals(request.Host.Host, "localhost", StringComparison.OrdinalIgnoreCase),
             Expires = expiresAtUtc,
-            Domain = string.IsNullOrWhiteSpace(_options.SharedCookieDomain) ? null : _options.SharedCookieDomain,
+            Domain = ResolveCookieDomain(),
             Path = "/"
         });
     }
@@ -82,8 +83,25 @@ public sealed class BrowserSessionCookieService
             IsEssential = true,
             SameSite = SameSiteMode.Strict,
             Secure = request.IsHttps || !string.Equals(request.Host.Host, "localhost", StringComparison.OrdinalIgnoreCase),
-            Domain = string.IsNullOrWhiteSpace(_options.SharedCookieDomain) ? null : _options.SharedCookieDomain,
+            Domain = ResolveCookieDomain(),
             Path = "/"
         });
+    }
+
+    private string? ResolveCookieDomain()
+    {
+        var domain = _options.SharedCookieDomain?.Trim();
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            return null;
+        }
+
+        if (string.Equals(domain, "localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(domain, out _))
+        {
+            return null;
+        }
+
+        return domain;
     }
 }

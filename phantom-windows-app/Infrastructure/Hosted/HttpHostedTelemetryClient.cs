@@ -9,7 +9,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
         }
 
-        public void Ingest(TelemetryEvent telemetryEvent)
+        public void Ingest(TelemetryEvent telemetryEvent, string accessToken)
         {
             PostJson<object, object>(
                 "/api/desktop/telemetry/ingest",
@@ -19,7 +19,8 @@ namespace SecureOverlay.Infrastructure.Hosted
                     eventName = telemetryEvent.EventName,
                     attributes = telemetryEvent.Attributes,
                     occurredAtUtc = telemetryEvent.OccurredAtUtc
-                });
+                },
+                accessToken);
         }
     }
 }

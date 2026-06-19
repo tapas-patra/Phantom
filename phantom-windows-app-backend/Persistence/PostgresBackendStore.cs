@@ -1,5 +1,6 @@
 using Npgsql;
 using Phantom.WindowsApp.Backend.Infrastructure;
+using System.Net.Sockets;
 
 namespace Phantom.WindowsApp.Backend.Persistence;
 
@@ -21,9 +22,26 @@ public sealed class PostgresBackendStore
 
     public NpgsqlConnection OpenConnection()
     {
-        var connection = new NpgsqlConnection(_connectionString);
-        connection.Open();
-        return connection;
+        try
+        {
+            var connection = new NpgsqlConnection(_connectionString);
+            connection.Open();
+            return connection;
+        }
+        catch (SocketException ex)
+        {
+            throw new InvalidOperationException(
+                "Could not resolve the PostgreSQL host from PHANTOM_WINDOWS_BACKEND_DATABASE_URL. " +
+                "Check the Host value in local-dev.env.ps1 or your shell environment.",
+                ex);
+        }
+        catch (NpgsqlException ex) when (ex.InnerException is SocketException)
+        {
+            throw new InvalidOperationException(
+                "Could not connect to PostgreSQL using PHANTOM_WINDOWS_BACKEND_DATABASE_URL. " +
+                "Check the hostname, port, and network reachability for the configured database.",
+                ex);
+        }
     }
 
     public bool CanConnect()

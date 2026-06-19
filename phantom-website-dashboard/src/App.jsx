@@ -2025,7 +2025,7 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
       fetchGmailOAuthStatus(accessToken)
         .then((status) => {
           onGmailStatusChanged(status);
-          setGmailMessage(status?.StatusMessage || "Gmail OAuth status refreshed.");
+          setGmailMessage(status?.statusMessage || "Gmail OAuth status refreshed.");
         })
         .catch((error) => {
           setGmailMessage(error.message || "Could not refresh Gmail OAuth status.");
@@ -2076,8 +2076,8 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
         <p className="eyebrow">Gmail sender health</p>
         <div className="admin-panel-head">
           <div>
-            <h3>{gmailStatus?.StatusLabel || "Unknown"}</h3>
-            <p>{gmailStatus?.StatusMessage || "Gmail OAuth status has not loaded yet."}</p>
+            <h3>{gmailStatus?.statusLabel || "Unknown"}</h3>
+            <p>{gmailStatus?.statusMessage || "Gmail OAuth status has not loaded yet."}</p>
           </div>
           <div className="admin-panel-actions">
             <button
@@ -2086,26 +2086,26 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
               onClick={handleReconnectGmail}
               disabled={gmailLoading}
             >
-              {gmailLoading ? "Redirecting..." : gmailStatus?.HasRefreshToken ? "Reconnect Gmail" : "Connect Gmail"}
+              {gmailLoading ? "Redirecting..." : gmailStatus?.hasRefreshToken ? "Reconnect Gmail" : "Connect Gmail"}
             </button>
           </div>
         </div>
         <div className="support-metrics">
           <div>
             <span>Configured</span>
-            <strong>{gmailStatus?.IsConfigured ? "Yes" : "No"}</strong>
+            <strong>{gmailStatus?.isConfigured ? "Yes" : "No"}</strong>
           </div>
           <div>
             <span>Refresh token</span>
-            <strong>{gmailStatus?.HasRefreshToken ? "Stored" : "Missing"}</strong>
+            <strong>{gmailStatus?.hasRefreshToken ? "Stored" : "Missing"}</strong>
           </div>
           <div>
             <span>Token valid</span>
-            <strong>{gmailStatus?.HasValidRefreshToken ? "Yes" : "No"}</strong>
+            <strong>{gmailStatus?.hasValidRefreshToken ? "Yes" : "No"}</strong>
           </div>
           <div>
             <span>Sender</span>
-            <strong>{gmailStatus?.FromEmail || "n/a"}</strong>
+            <strong>{gmailStatus?.fromEmail || "n/a"}</strong>
           </div>
         </div>
         {gmailMessage && <p className={`status-message ${gmailMessage.toLowerCase().includes("could not") ? "status-error" : ""}`}>{gmailMessage}</p>}

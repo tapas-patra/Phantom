@@ -35,6 +35,7 @@ namespace SecureOverlay
         private bool _isUpdatingContextPackSelection;
         private bool _isEditingSelectedHostedPack;
         private bool _lastAppliedSelectionWasLocalDraft = true;
+        private bool _localDraftCacheInvalidated;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
@@ -343,6 +344,7 @@ namespace SecureOverlay
             {
                 _isEditingSelectedHostedPack = false;
                 _lastAppliedSelectionWasLocalDraft = true;
+                _localDraftCacheInvalidated = false;
                 ContextPackNameTextBox.Text = string.Empty;
                 DeleteContextPackButton.IsEnabled = false;
                 EditContextPackButton.IsEnabled = false;
@@ -362,6 +364,7 @@ namespace SecureOverlay
             ContextPackNameTextBox.Text = pack.Name;
             _isEditingSelectedHostedPack = false;
             _lastAppliedSelectionWasLocalDraft = false;
+            _localDraftCacheInvalidated = false;
             DeleteContextPackButton.IsEnabled = true;
             EditContextPackButton.IsEnabled = true;
             SetContextEditorsEditable(false);
@@ -808,6 +811,7 @@ namespace SecureOverlay
         {
             if (_isInitializing) return;
             UpdateJobDescriptionWordCount();
+            InvalidateDefaultDraftCacheIfNeeded();
         }
 
         private void UpdateJobDescriptionWordCount()
@@ -1075,6 +1079,7 @@ namespace SecureOverlay
         {
             if (_isInitializing) return;
             UpdateResumeWordCount();
+            InvalidateDefaultDraftCacheIfNeeded();
         }
 
         private void UpdateResumeWordCount()
@@ -1323,7 +1328,8 @@ namespace SecureOverlay
 
                 var appliedPack = _contextPackService.GetSelectedPack();
                 var contextResetRequired = previousLocalDraftApplied != _contextPackService.IsLocalDraftApplied()
-                    || ShouldResetConversationForAppliedContextChange(previousAppliedPack, appliedPack);
+                    || ShouldResetConversationForAppliedContextChange(previousAppliedPack, appliedPack)
+                    || _localDraftCacheInvalidated;
 
                 SettingsClosed?.Invoke(this, new SettingsCloseResult
                 {
@@ -1403,6 +1409,38 @@ namespace SecureOverlay
         {
             return string.Equals(left.ResumeText ?? string.Empty, right.ResumeText ?? string.Empty, StringComparison.Ordinal)
                 && string.Equals(left.JobDescriptionText ?? string.Empty, right.JobDescriptionText ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        private void InvalidateDefaultDraftCacheIfNeeded()
+        {
+            if (_isInitializing || !IsEditingLocalDraftSelection())
+            {
+                return;
+            }
+
+            var localDraftPack = _contextPackService.GetLocalDraftPack();
+            var resumeChanged = !string.Equals(localDraftPack.ResumeText ?? string.Empty, ResumeBox.Text ?? string.Empty, StringComparison.Ordinal);
+            var jobDescriptionChanged = !string.Equals(localDraftPack.JobDescriptionText ?? string.Empty, JobDescriptionBox.Text ?? string.Empty, StringComparison.Ordinal);
+
+            if (!resumeChanged && !jobDescriptionChanged)
+            {
+                return;
+            }
+
+            SettingsManager.ClearConversationCache();
+            _localDraftCacheInvalidated = true;
+            ContextPackStatusText.Text = "Local draft changed. Cached conversation cleared. Click Save Settings to rebuild the summary with your latest resume and job description.";
+        }
+
+        private bool IsEditingLocalDraftSelection()
+        {
+            if (!IsPremiumAccount())
+            {
+                return true;
+            }
+
+            var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            return selection == null || selection.IsBlank;
         }
         private void ChatGPTModelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {

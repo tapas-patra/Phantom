@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  fetchAdminPaymentOrders,
+  fetchAdminPaymentWebhooks,
   confirmPaymentCheckout,
   createPaymentCheckout,
   createHostedKnowledgeBase,
@@ -47,6 +49,7 @@ const userNav = [
 
 const adminNav = [
   { to: "/admin", label: "Overview" },
+  { to: "/admin/payments", label: "Payments" },
   { to: "/admin/managed-ai", label: "Managed AI" }
 ];
 
@@ -1609,6 +1612,8 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
   const [inventory, setInventory] = useState(null);
+  const [paymentOrders, setPaymentOrders] = useState([]);
+  const [paymentWebhooks, setPaymentWebhooks] = useState([]);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1620,14 +1625,18 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, inventoryData] = await Promise.all([
+        const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData] = await Promise.all([
           fetchAdminOverview(adminSession.apiKey),
-          fetchManagedAiAdminInventory(adminSession.apiKey)
+          fetchManagedAiAdminInventory(adminSession.apiKey),
+          fetchAdminPaymentOrders(adminSession.apiKey),
+          fetchAdminPaymentWebhooks(adminSession.apiKey)
         ]);
 
         if (!cancelled) {
           setOverview(overviewData);
           setInventory(inventoryData);
+          setPaymentOrders(paymentOrdersData);
+          setPaymentWebhooks(paymentWebhooksData);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -1650,6 +1659,17 @@ function AdminDashboardPage({ adminSession }) {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.apiKey);
     setInventory(nextInventory);
     return nextInventory;
+  }
+
+  async function refreshPayments() {
+    const [nextOverview, nextOrders, nextWebhooks] = await Promise.all([
+      fetchAdminOverview(adminSession.apiKey),
+      fetchAdminPaymentOrders(adminSession.apiKey),
+      fetchAdminPaymentWebhooks(adminSession.apiKey)
+    ]);
+    setOverview(nextOverview);
+    setPaymentOrders(nextOrders);
+    setPaymentWebhooks(nextWebhooks);
   }
 
   if (loading) {
@@ -1703,6 +1723,17 @@ function AdminDashboardPage({ adminSession }) {
       <section className="dashboard-main">
         <Routes>
           <Route index element={<AdminOverviewPanel overview={overview} inventory={inventory} />} />
+          <Route
+            path="payments"
+            element={
+              <AdminPaymentsPanel
+                overview={overview}
+                paymentOrders={paymentOrders}
+                paymentWebhooks={paymentWebhooks}
+                onRefresh={refreshPayments}
+              />
+            }
+          />
           <Route
             path="managed-ai"
             element={
@@ -2103,6 +2134,210 @@ function ManagedAiAdminPanel({
   );
 }
 
+function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefresh }) {
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedWebhook, setSelectedWebhook] = useState(null);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOrders = paymentOrders.filter((item) => {
+    const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+    const haystack = [
+      item.checkoutId,
+      item.email,
+      item.userId,
+      item.razorpayOrderId,
+      item.razorpayPaymentId,
+      item.displayLabel,
+      item.target
+    ].join(" ").toLowerCase();
+    const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
+    return matchesStatus && matchesQuery;
+  });
+
+  const filteredWebhooks = paymentWebhooks.filter((item) => {
+    const haystack = [
+      item.externalEventId,
+      item.eventType,
+      item.payloadJson
+    ].join(" ").toLowerCase();
+    return !normalizedQuery || haystack.includes(normalizedQuery);
+  });
+
+  return (
+    <div className="dashboard-grid admin-grid">
+      <article className="panel admin-hero-panel">
+        <p className="eyebrow">Payments operations</p>
+        <h1>Monitor checkout state, credit application, and Razorpay webhook processing from one admin surface.</h1>
+        <p className="hero-text">
+          Orders should progress from `created` to `client_confirmed` to `credited`. Webhook visibility here helps
+          diagnose when a payment succeeded at checkout but wallet credit did not arrive.
+        </p>
+      </article>
+
+      <article className="panel metric-panel">
+        <span>Payment orders</span>
+        <strong>{overview?.paymentOrderCount ?? 0}</strong>
+      </article>
+      <article className="panel metric-panel">
+        <span>Credited orders</span>
+        <strong>{overview?.creditedPaymentCount ?? 0}</strong>
+      </article>
+      <article className="panel metric-panel">
+        <span>Webhook events</span>
+        <strong>{overview?.paymentWebhookCount ?? 0}</strong>
+      </article>
+      <article className="panel metric-panel">
+        <span>Processed webhooks</span>
+        <strong>{overview?.processedWebhookCount ?? 0}</strong>
+      </article>
+
+      <article className="panel admin-form-panel">
+        <div className="admin-panel-head">
+          <div>
+            <p className="story-tag">Filters</p>
+            <h3>Transactions and callbacks</h3>
+          </div>
+          <div className="admin-panel-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div className="admin-form">
+          <label>
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="created">created</option>
+              <option value="client_confirmed">client_confirmed</option>
+              <option value="credited">credited</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="email, checkout ID, Razorpay order ID, payment ID"
+            />
+          </label>
+        </div>
+      </article>
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Recent payment orders</p>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Purchase</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Checkout</th>
+              <th>Created</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredOrders.length === 0 ? (
+              <tr>
+                <td colSpan="7">No payment orders matched the current filters.</td>
+              </tr>
+            ) : (
+              filteredOrders.map((item) => (
+                <tr key={item.checkoutId}>
+                  <td>{item.email}</td>
+                  <td>{item.displayLabel}</td>
+                  <td>{formatInr(item.amountInr)}</td>
+                  <td>{item.status}</td>
+                  <td>{item.checkoutId}</td>
+                  <td>{formatDate(item.createdAtUtc)}</td>
+                  <td>
+                    <button className="table-action" type="button" onClick={() => setSelectedOrder(item)}>
+                      Inspect
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </article>
+
+      {selectedOrder && (
+        <article className="panel table-panel table-panel-full">
+          <p className="eyebrow">Selected order detail</p>
+          <table>
+            <tbody>
+              <tr><th>Checkout ID</th><td>{selectedOrder.checkoutId}</td></tr>
+              <tr><th>User</th><td>{selectedOrder.email} · {selectedOrder.userId}</td></tr>
+              <tr><th>Target</th><td>{selectedOrder.target}</td></tr>
+              <tr><th>Pack</th><td>{selectedOrder.packCode}</td></tr>
+              <tr><th>Amount</th><td>{formatInr(selectedOrder.amountInr)}</td></tr>
+              <tr><th>Credits</th><td>{selectedOrder.credits}</td></tr>
+              <tr><th>Debt covered</th><td>{selectedOrder.premiumDebtCreditsCovered}</td></tr>
+              <tr><th>Status</th><td>{selectedOrder.status}</td></tr>
+              <tr><th>Client confirmed</th><td>{selectedOrder.clientConfirmed ? "Yes" : "No"}</td></tr>
+              <tr><th>Razorpay order</th><td>{selectedOrder.razorpayOrderId || "n/a"}</td></tr>
+              <tr><th>Razorpay payment</th><td>{selectedOrder.razorpayPaymentId || "n/a"}</td></tr>
+              <tr><th>Credited at</th><td>{formatDate(selectedOrder.creditedAtUtc)}</td></tr>
+              <tr><th>Updated</th><td>{formatDate(selectedOrder.updatedAtUtc)}</td></tr>
+            </tbody>
+          </table>
+        </article>
+      )}
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Recent webhook callbacks</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Event ID</th>
+              <th>Type</th>
+              <th>Created</th>
+              <th>Processed</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredWebhooks.length === 0 ? (
+              <tr>
+                <td colSpan="5">No webhook events matched the current filters.</td>
+              </tr>
+            ) : (
+              filteredWebhooks.map((item) => (
+                <tr key={item.eventRecordId}>
+                  <td>{item.externalEventId}</td>
+                  <td>{item.eventType}</td>
+                  <td>{formatDate(item.createdAtUtc)}</td>
+                  <td>{formatDate(item.processedAtUtc)}</td>
+                  <td>
+                    <button className="table-action" type="button" onClick={() => setSelectedWebhook(item)}>
+                      Inspect
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </article>
+
+      {selectedWebhook && (
+        <article className="panel table-panel table-panel-full">
+          <p className="eyebrow">Selected webhook payload</p>
+          <p className="hero-text">
+            {selectedWebhook.eventType} · {selectedWebhook.externalEventId}
+          </p>
+          <pre className="payload-preview">{prettyJson(selectedWebhook.payloadJson)}</pre>
+        </article>
+      )}
+    </div>
+  );
+}
+
 function readStoredJson(key) {
   const value = window.localStorage.getItem(key);
   if (!value) {
@@ -2148,6 +2383,18 @@ function formatInr(value) {
     currency: "INR",
     maximumFractionDigits: 0
   }).format(value || 0);
+}
+
+function prettyJson(value) {
+  if (!value) {
+    return "n/a";
+  }
+
+  try {
+    return JSON.stringify(typeof value === "string" ? JSON.parse(value) : value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 async function loadRazorpayScript() {

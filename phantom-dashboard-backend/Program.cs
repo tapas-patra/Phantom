@@ -55,6 +55,10 @@ var adminGroup = app.MapGroup("/api/dashboard/admin")
     .AddEndpointFilter<AdminApiKeyFilter>();
 
 adminGroup.MapGet("/overview", (DashboardQueryService queries) => Results.Ok(queries.GetAdminOverview()));
+adminGroup.MapGet("/payments/orders", (int? limit, DashboardQueryService queries) =>
+    Results.Ok(queries.GetAdminPaymentOrders(limit ?? 100)));
+adminGroup.MapGet("/payments/webhooks", (int? limit, DashboardQueryService queries) =>
+    Results.Ok(queries.GetAdminPaymentWebhookEvents(limit ?? 100)));
 adminGroup.MapGet("/managed-ai/credentials", async (
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>

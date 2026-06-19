@@ -191,6 +191,30 @@ export async function fetchManagedAiAdminInventory(adminApiKey) {
   });
 }
 
+export async function fetchAdminPaymentOrders(adminApiKey, limit = 100) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/admin/payments/orders?limit=${encodeURIComponent(limit)}`,
+    {
+      headers: {
+        "X-Phantom-Admin-Key": adminApiKey
+      }
+    }
+  );
+}
+
+export async function fetchAdminPaymentWebhooks(adminApiKey, limit = 100) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/admin/payments/webhooks?limit=${encodeURIComponent(limit)}`,
+    {
+      headers: {
+        "X-Phantom-Admin-Key": adminApiKey
+      }
+    }
+  );
+}
+
 export async function upsertManagedAiCredential(adminApiKey, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",

@@ -41,13 +41,19 @@ namespace SecureOverlay.Infrastructure.Context
             var selectedPack = state.Packs.FirstOrDefault(pack => pack.PackId == state.SelectedPackId);
             if (selectedPack != null)
             {
-                return selectedPack;
+                return ClonePack(selectedPack);
             }
 
             var fallbackPack = state.Packs[0];
             state.SelectedPackId = fallbackPack.PackId;
             _repository.Save(state);
-            return fallbackPack;
+            return ClonePack(fallbackPack);
+        }
+
+        public ContextPack GetLocalDraftPack()
+        {
+            var state = EnsureState();
+            return ClonePack(state.LocalDraftPack);
         }
 
         public ContextPack CreatePack(string name)
@@ -85,19 +91,26 @@ namespace SecureOverlay.Infrastructure.Context
         {
             var state = EnsureState();
             var existingIndex = state.Packs.FindIndex(existing => existing.PackId == pack.PackId);
-            pack.Documents = BuildDocuments(pack);
-            pack.UpdatedAtUtc = DateTime.UtcNow;
+            var existingPack = existingIndex >= 0 ? state.Packs[existingIndex] : null;
+            var packToSave = PreparePackForSave(pack, existingPack);
 
             if (existingIndex >= 0)
             {
-                state.Packs[existingIndex] = pack;
+                state.Packs[existingIndex] = packToSave;
             }
             else
             {
-                state.Packs.Add(pack);
+                state.Packs.Add(packToSave);
             }
 
-            state.SelectedPackId = pack.PackId;
+            state.SelectedPackId = packToSave.PackId;
+            _repository.Save(state);
+        }
+
+        public void SaveLocalDraftPack(ContextPack pack)
+        {
+            var state = EnsureState();
+            state.LocalDraftPack = PreparePackForSave(pack, state.LocalDraftPack);
             _repository.Save(state);
         }
 
@@ -155,6 +168,13 @@ namespace SecureOverlay.Infrastructure.Context
             var state = _repository.Load();
             if (state != null && state.Packs.Count > 0)
             {
+                if (state.LocalDraftPack == null)
+                {
+                    state.LocalDraftPack = ClonePack(state.Packs[0]);
+                    state.LocalDraftPack.Name = "Local Context Pack";
+                    _repository.Save(state);
+                }
+
                 return state;
             }
 
@@ -162,8 +182,10 @@ namespace SecureOverlay.Infrastructure.Context
             var newState = new ContextPackState
             {
                 SelectedPackId = migrated.PackId,
+                LocalDraftPack = ClonePack(migrated),
                 Packs = new List<ContextPack> { migrated }
             };
+            newState.LocalDraftPack.Name = "Local Context Pack";
             _repository.Save(newState);
             return newState;
         }
@@ -183,6 +205,57 @@ namespace SecureOverlay.Infrastructure.Context
             };
             pack.Documents = BuildDocuments(pack);
             return pack;
+        }
+
+        private static ContextPack PreparePackForSave(ContextPack pack, ContextPack? existingPack)
+        {
+            var clone = ClonePack(pack);
+
+            if (existingPack != null)
+            {
+                if (string.Equals(existingPack.ResumeText, clone.ResumeText, StringComparison.Ordinal))
+                {
+                    clone.ResumeSummary = string.IsNullOrWhiteSpace(clone.ResumeSummary)
+                        ? existingPack.ResumeSummary
+                        : clone.ResumeSummary;
+                }
+                else if (string.IsNullOrWhiteSpace(clone.ResumeSummary))
+                {
+                    clone.ResumeSummary = string.Empty;
+                }
+
+                if (string.Equals(existingPack.JobDescriptionText, clone.JobDescriptionText, StringComparison.Ordinal))
+                {
+                    clone.JobDescriptionSummary = string.IsNullOrWhiteSpace(clone.JobDescriptionSummary)
+                        ? existingPack.JobDescriptionSummary
+                        : clone.JobDescriptionSummary;
+                }
+                else if (string.IsNullOrWhiteSpace(clone.JobDescriptionSummary))
+                {
+                    clone.JobDescriptionSummary = string.Empty;
+                }
+            }
+
+            clone.Documents = BuildDocuments(clone);
+            clone.UpdatedAtUtc = DateTime.UtcNow;
+            return clone;
+        }
+
+        private static ContextPack ClonePack(ContextPack pack)
+        {
+            var clone = new ContextPack
+            {
+                PackId = pack.PackId,
+                Name = pack.Name,
+                ResumeText = pack.ResumeText ?? string.Empty,
+                ResumeSummary = pack.ResumeSummary ?? string.Empty,
+                JobDescriptionText = pack.JobDescriptionText ?? string.Empty,
+                JobDescriptionSummary = pack.JobDescriptionSummary ?? string.Empty,
+                UpdatedAtUtc = pack.UpdatedAtUtc
+            };
+
+            clone.Documents = BuildDocuments(clone);
+            return clone;
         }
 
         private static System.Collections.Generic.List<ContextDocument> BuildDocuments(ContextPack pack)

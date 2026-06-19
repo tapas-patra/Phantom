@@ -34,6 +34,7 @@ namespace SecureOverlay
         private bool _isInitializing = true;
         private bool _isUpdatingContextPackSelection;
         private bool _isEditingSelectedHostedPack;
+        private bool _lastAppliedSelectionWasLocalDraft = true;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
@@ -241,14 +242,14 @@ namespace SecureOverlay
             }
 
             ContextPackSection.Visibility = Visibility.Collapsed;
-            LoadPackIntoEditors(_contextPackService.GetSelectedPack());
+            LoadPackIntoEditors(_contextPackService.GetLocalDraftPack());
         }
 
         private void LoadHostedContextPacks(string? preferredPackId = null, string? forceSelectedPackId = null)
         {
             ContextPackSection.Visibility = Visibility.Visible;
             ContextPackStatusText.Text = string.Empty;
-            var localDraftPack = _contextPackService.GetSelectedPack();
+            var localDraftPack = _contextPackService.GetLocalDraftPack();
 
             var session = _authSessionRepository.Load();
             if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
@@ -335,15 +336,18 @@ namespace SecureOverlay
                 return;
             }
 
+            PersistCurrentLocalDraftIfNeeded();
+
             var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
             if (selection == null || selection.IsBlank)
             {
                 _isEditingSelectedHostedPack = false;
+                _lastAppliedSelectionWasLocalDraft = true;
                 ContextPackNameTextBox.Text = string.Empty;
                 DeleteContextPackButton.IsEnabled = false;
                 EditContextPackButton.IsEnabled = false;
                 SetContextEditorsEditable(true);
-                LoadPackIntoEditors(_contextPackService.GetSelectedPack());
+                LoadPackIntoEditors(_contextPackService.GetLocalDraftPack());
 
                 return;
             }
@@ -356,6 +360,7 @@ namespace SecureOverlay
 
             ContextPackNameTextBox.Text = pack.Name;
             _isEditingSelectedHostedPack = false;
+            _lastAppliedSelectionWasLocalDraft = false;
             DeleteContextPackButton.IsEnabled = true;
             EditContextPackButton.IsEnabled = true;
             SetContextEditorsEditable(false);
@@ -556,31 +561,31 @@ namespace SecureOverlay
 
         private void SaveEditorsToLocalDraft()
         {
-            var selectedPack = _contextPackService.GetSelectedPack();
-            SaveEditorsToLocalDraft(selectedPack);
+            SaveEditorsToLocalDraft(_contextPackService.GetLocalDraftPack());
         }
 
-        private void SaveEditorsToLocalDraft(ContextPack selectedPack)
+        private void SaveEditorsToLocalDraft(ContextPack localDraftPack)
         {
-            var oldResume = selectedPack.ResumeText;
-            var oldJobDescription = selectedPack.JobDescriptionText;
+            var oldResume = localDraftPack.ResumeText;
+            var oldJobDescription = localDraftPack.JobDescriptionText;
 
-            selectedPack.ResumeText = ResumeBox.Text;
-            selectedPack.JobDescriptionText = JobDescriptionBox.Text;
+            localDraftPack.Name = "Local Context Pack";
+            localDraftPack.ResumeText = ResumeBox.Text;
+            localDraftPack.JobDescriptionText = JobDescriptionBox.Text;
 
-            if (!string.Equals(oldResume, selectedPack.ResumeText, StringComparison.Ordinal))
+            if (!string.Equals(oldResume, localDraftPack.ResumeText, StringComparison.Ordinal))
             {
-                selectedPack.ResumeSummary = string.Empty;
+                localDraftPack.ResumeSummary = string.Empty;
                 Log.WriteLine("Resume changed - cached summary cleared");
             }
 
-            if (!string.Equals(oldJobDescription, selectedPack.JobDescriptionText, StringComparison.Ordinal))
+            if (!string.Equals(oldJobDescription, localDraftPack.JobDescriptionText, StringComparison.Ordinal))
             {
-                selectedPack.JobDescriptionSummary = string.Empty;
+                localDraftPack.JobDescriptionSummary = string.Empty;
                 Log.WriteLine("Job description changed - cached summary cleared");
             }
 
-            _contextPackService.SaveSelectedPack(selectedPack);
+            _contextPackService.SaveLocalDraftPack(localDraftPack);
         }
 
         private void LoadPackIntoEditors(ContextPack selectedPack)
@@ -1266,11 +1271,40 @@ namespace SecureOverlay
                 var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
                 if (!IsPremiumAccount() || !selectedHostedPack)
                 {
-                    var selectedPack = _contextPackService.GetSelectedPack();
-                    selectedPack.Name = string.IsNullOrWhiteSpace(ContextPackNameTextBox.Text)
-                        ? selectedPack.Name
-                        : ContextPackNameTextBox.Text.Trim();
-                    SaveEditorsToLocalDraft(selectedPack);
+                    var localDraftPack = _contextPackService.GetLocalDraftPack();
+                    SaveEditorsToLocalDraft(localDraftPack);
+                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack));
+                }
+                else
+                {
+                    DesktopContextPackDto? selectedHostedContextPack;
+                    if (_isEditingSelectedHostedPack)
+                    {
+                        selectedHostedContextPack = SaveHostedContextPack(showSuccessMessage: false);
+                        if (selectedHostedContextPack == null)
+                        {
+                            InvisibleMessageBox.Show("Could not save the selected Premium context pack.", "Context Pack");
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+                        selectedHostedContextPack = _hostedContextPacks.FirstOrDefault(
+                            item => string.Equals(item.PackId, selection?.PackId, StringComparison.Ordinal));
+                    }
+
+                    if (selectedHostedContextPack != null)
+                    {
+                        _contextPackService.SaveSelectedPack(new ContextPack
+                        {
+                            PackId = selectedHostedContextPack.PackId,
+                            Name = selectedHostedContextPack.Name,
+                            ResumeText = selectedHostedContextPack.ResumeText,
+                            JobDescriptionText = selectedHostedContextPack.JobDescriptionText,
+                            UpdatedAtUtc = selectedHostedContextPack.UpdatedAtUtc
+                        });
+                    }
                 }
 
                 Log.WriteLine($"✓ Settings saved:");
@@ -1295,6 +1329,30 @@ namespace SecureOverlay
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             SettingsClosed?.Invoke(this, false);
+        }
+
+        private void PersistCurrentLocalDraftIfNeeded()
+        {
+            if (_isInitializing || !_lastAppliedSelectionWasLocalDraft)
+            {
+                return;
+            }
+
+            SaveEditorsToLocalDraft();
+        }
+
+        private static ContextPack CloneForApply(ContextPack source)
+        {
+            return new ContextPack
+            {
+                PackId = source.PackId,
+                Name = source.Name,
+                ResumeText = source.ResumeText,
+                ResumeSummary = source.ResumeSummary,
+                JobDescriptionText = source.JobDescriptionText,
+                JobDescriptionSummary = source.JobDescriptionSummary,
+                UpdatedAtUtc = source.UpdatedAtUtc
+            };
         }
         private void ChatGPTModelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {

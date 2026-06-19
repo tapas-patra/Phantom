@@ -93,6 +93,11 @@ public sealed class DesktopContextPackService
         var trimmedResumeText = request.ResumeText?.Trim() ?? string.Empty;
         var trimmedJobDescriptionText = request.JobDescriptionText?.Trim() ?? string.Empty;
 
+        if (string.IsNullOrWhiteSpace(trimmedResumeText) && string.IsNullOrWhiteSpace(trimmedJobDescriptionText))
+        {
+            throw new BackendValidationException("Add a resume, a job description, or both before saving a context pack.");
+        }
+
         if (existing != null
             && string.Equals(existing.Name, trimmedName, StringComparison.Ordinal)
             && string.Equals(existing.ResumeText, trimmedResumeText, StringComparison.Ordinal)

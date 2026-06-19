@@ -1273,7 +1273,10 @@ namespace SecureOverlay
                 {
                     var localDraftPack = _contextPackService.GetLocalDraftPack();
                     SaveEditorsToLocalDraft(localDraftPack);
-                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack), preserveCachedSummaries: true);
+                    localDraftPack.ResumeSummary = string.Empty;
+                    localDraftPack.JobDescriptionSummary = string.Empty;
+                    _contextPackService.SaveLocalDraftPack(localDraftPack);
+                    _contextPackService.SaveSelectedPack(CloneForApply(localDraftPack), preserveCachedSummaries: false);
                 }
                 else
                 {

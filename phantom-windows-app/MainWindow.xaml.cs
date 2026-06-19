@@ -2845,6 +2845,7 @@ namespace SecureOverlay
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
+                var oldSelectedHostedContextPackId = _settings.SelectedHostedContextPackId ?? string.Empty;
                 _forcedManagedExtensionProviderId = null;
                 
                 // Reload settings
@@ -2862,10 +2863,33 @@ namespace SecureOverlay
                 if (_conversationManager != null)
                 {
                     var selectedPack = _contextPackService.GetSelectedPack();
-                    _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
-                    Log.WriteLine("✓ Resume updated in conversation manager");
-                    _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
-                    Log.WriteLine("✓ Job description updated in conversation manager");
+                    var newSelectedHostedContextPackId = _settings.SelectedHostedContextPackId ?? string.Empty;
+                    var shouldForceContextReset =
+                        !string.Equals(oldSelectedHostedContextPackId, newSelectedHostedContextPackId, StringComparison.Ordinal)
+                        || string.IsNullOrWhiteSpace(newSelectedHostedContextPackId);
+
+                    if (shouldForceContextReset)
+                    {
+                        _conversationManager.ClearConversation();
+                        SettingsManager.ClearConversationCache();
+                        _conversationManager.UpdateResume(selectedPack.ResumeText, string.Empty);
+                        if (string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
+                        {
+                            _conversationManager.ClearJobDescription();
+                        }
+                        else
+                        {
+                            _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, string.Empty);
+                        }
+
+                        Log.WriteLine("✓ Context pack save triggered a fresh resume/JD reload without cached summaries");
+                    }
+                    else
+                    {
+                        _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
+                        _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
+                        Log.WriteLine("✓ Resume and job description updated in conversation manager");
+                    }
                 }
 
                 _cursorManager?.Dispose();

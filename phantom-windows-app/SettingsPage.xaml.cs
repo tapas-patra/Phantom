@@ -45,7 +45,7 @@ namespace SecureOverlay
         private ObservableCollection<ApiKeyItem> _groqKeys = new ObservableCollection<ApiKeyItem>();
         private ObservableCollection<ApiKeyItem> _nvidiaKeys = new ObservableCollection<ApiKeyItem>();
 
-        public event EventHandler<bool>? SettingsClosed;
+        public event EventHandler<SettingsCloseResult>? SettingsClosed;
 
         public SettingsPage(AccountCacheSnapshot? accountSnapshot = null)
         {
@@ -348,6 +348,7 @@ namespace SecureOverlay
                 EditContextPackButton.IsEnabled = false;
                 SetContextEditorsEditable(true);
                 LoadPackIntoEditors(_contextPackService.GetLocalDraftPack());
+                ContextPackStatusText.Text = "Editing the local draft. Click Save Settings to apply this resume and job description.";
 
                 return;
             }
@@ -374,6 +375,7 @@ namespace SecureOverlay
                 JobDescriptionSummary = string.Empty,
                 UpdatedAtUtc = pack.UpdatedAtUtc
             });
+            ContextPackStatusText.Text = $"Loaded '{pack.Name}' into the editor. Click Save Settings to apply it, or Edit Pack to modify it.";
         }
 
         private void EditContextPackButton_Click(object sender, RoutedEventArgs e)
@@ -456,10 +458,7 @@ namespace SecureOverlay
                 ? null
                 : _hostedContextPacks.FirstOrDefault(item => string.Equals(item.PackId, selectedItem.PackId, StringComparison.Ordinal));
 
-            var selectedPackId = selectedPack != null
-                && string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
-                ? selectedPack.PackId
-                : string.Empty;
+            var selectedPackId = selectedPack?.PackId ?? string.Empty;
 
             var hasChanges = selectedPack == null
                 || !string.Equals(selectedPack.Name, packName, StringComparison.Ordinal)
@@ -502,7 +501,7 @@ namespace SecureOverlay
                 _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(false);
                 LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
-                ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account.";
+                ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account. Click Save Settings to apply it to the interview.";
 
                 if (showSuccessMessage)
                 {
@@ -1153,6 +1152,8 @@ namespace SecureOverlay
         {
             try
             {
+                var previousAppliedPack = _contextPackService.GetSelectedPack();
+                var previousLocalDraftApplied = _contextPackService.IsLocalDraftApplied();
                 _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
                 
                 if (IsPremiumOnlyAccount())
@@ -1281,7 +1282,7 @@ namespace SecureOverlay
                 else
                 {
                     DesktopContextPackDto? selectedHostedContextPack;
-                    if (_isEditingSelectedHostedPack)
+                    if (HasPendingSelectedHostedPackChanges())
                     {
                         selectedHostedContextPack = SaveHostedContextPack(showSuccessMessage: false);
                         if (selectedHostedContextPack == null)
@@ -1320,7 +1321,15 @@ namespace SecureOverlay
                 Log.WriteLine($"  Auto-switch keys: {_settings.AutoSwitchKeysOnError}");
                 Log.WriteLine($"  Auto-switch models: {_settings.AutoSwitchModelsOnError}");
 
-                SettingsClosed?.Invoke(this, true);
+                var appliedPack = _contextPackService.GetSelectedPack();
+                var contextResetRequired = previousLocalDraftApplied != _contextPackService.IsLocalDraftApplied()
+                    || ShouldResetConversationForAppliedContextChange(previousAppliedPack, appliedPack);
+
+                SettingsClosed?.Invoke(this, new SettingsCloseResult
+                {
+                    Saved = true,
+                    ContextResetRequired = contextResetRequired
+                });
             }
             catch (Exception ex)
             {
@@ -1331,7 +1340,7 @@ namespace SecureOverlay
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
-            SettingsClosed?.Invoke(this, false);
+            SettingsClosed?.Invoke(this, new SettingsCloseResult { Saved = false });
         }
 
         private void PersistCurrentLocalDraftIfNeeded()
@@ -1356,6 +1365,44 @@ namespace SecureOverlay
                 JobDescriptionSummary = source.JobDescriptionSummary,
                 UpdatedAtUtc = source.UpdatedAtUtc
             };
+        }
+
+        private DesktopContextPackDto? GetSelectedHostedPack()
+        {
+            var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
+            if (selection == null || selection.IsBlank)
+            {
+                return null;
+            }
+
+            return _hostedContextPacks.FirstOrDefault(
+                item => string.Equals(item.PackId, selection.PackId, StringComparison.Ordinal));
+        }
+
+        private bool HasPendingSelectedHostedPackChanges()
+        {
+            var selectedPack = GetSelectedHostedPack();
+            if (selectedPack == null)
+            {
+                return false;
+            }
+
+            return !string.Equals(selectedPack.Name, ContextPackNameTextBox.Text?.Trim() ?? string.Empty, StringComparison.Ordinal)
+                || !string.Equals(selectedPack.ResumeText, ResumeBox.Text?.Trim() ?? string.Empty, StringComparison.Ordinal)
+                || !string.Equals(selectedPack.JobDescriptionText, JobDescriptionBox.Text?.Trim() ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        private static bool ShouldResetConversationForAppliedContextChange(
+            ContextPack previousAppliedPack,
+            ContextPack appliedPack)
+        {
+            return !HasSameAppliedContent(previousAppliedPack, appliedPack);
+        }
+
+        private static bool HasSameAppliedContent(ContextPack left, ContextPack right)
+        {
+            return string.Equals(left.ResumeText ?? string.Empty, right.ResumeText ?? string.Empty, StringComparison.Ordinal)
+                && string.Equals(left.JobDescriptionText ?? string.Empty, right.JobDescriptionText ?? string.Empty, StringComparison.Ordinal);
         }
         private void ChatGPTModelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -1636,6 +1683,12 @@ namespace SecureOverlay
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
         
+    }
+
+    public sealed class SettingsCloseResult : EventArgs
+    {
+        public bool Saved { get; init; }
+        public bool ContextResetRequired { get; init; }
     }
 
     public sealed class ContextPackSelectionItem

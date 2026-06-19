@@ -1906,7 +1906,6 @@ namespace SecureOverlay
                     {
                         selectedPack.ResumeSummary = _conversationManager.GetResumeSummary();
                         _contextPackService.SaveSelectedPack(selectedPack);
-                        SyncCachedSummariesToLocalDraftIfUsingLocalContext(selectedPack);
                         Log.WriteLine("✓ Resume summary cached to context pack");
                     }
 
@@ -1914,7 +1913,6 @@ namespace SecureOverlay
                     {
                         selectedPack.JobDescriptionSummary = _conversationManager.GetJobDescriptionSummary();
                         _contextPackService.SaveSelectedPack(selectedPack);
-                        SyncCachedSummariesToLocalDraftIfUsingLocalContext(selectedPack);
                         Log.WriteLine("✓ Job description summary cached to context pack");
                     }
                     
@@ -2837,15 +2835,14 @@ namespace SecureOverlay
         }
 
 
-        private void OnSettingsClosed(object? sender, bool saved)
+        private void OnSettingsClosed(object? sender, SettingsCloseResult result)
         {
-            Log.WriteLine($"Settings closed - saved: {saved}");
+            Log.WriteLine($"Settings closed - saved: {result.Saved}, context reset required: {result.ContextResetRequired}");
 
-            if (saved)
+            if (result.Saved)
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
-                var oldSelectedHostedContextPackId = _settings.SelectedHostedContextPackId ?? string.Empty;
                 _forcedManagedExtensionProviderId = null;
                 
                 // Reload settings
@@ -2863,33 +2860,7 @@ namespace SecureOverlay
                 if (_conversationManager != null)
                 {
                     var selectedPack = _contextPackService.GetSelectedPack();
-                    var newSelectedHostedContextPackId = _settings.SelectedHostedContextPackId ?? string.Empty;
-                    var shouldForceContextReset =
-                        !string.Equals(oldSelectedHostedContextPackId, newSelectedHostedContextPackId, StringComparison.Ordinal)
-                        || string.IsNullOrWhiteSpace(newSelectedHostedContextPackId);
-
-                    if (shouldForceContextReset)
-                    {
-                        _conversationManager.ClearConversation();
-                        SettingsManager.ClearConversationCache();
-                        _conversationManager.UpdateResume(selectedPack.ResumeText, string.Empty);
-                        if (string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
-                        {
-                            _conversationManager.ClearJobDescription();
-                        }
-                        else
-                        {
-                            _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, string.Empty);
-                        }
-
-                        Log.WriteLine("✓ Context pack save triggered a fresh resume/JD reload without cached summaries");
-                    }
-                    else
-                    {
-                        _conversationManager.UpdateResume(selectedPack.ResumeText, selectedPack.ResumeSummary);
-                        _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, selectedPack.JobDescriptionSummary);
-                        Log.WriteLine("✓ Resume and job description updated in conversation manager");
-                    }
+                    ApplySelectedContextPackToConversation(selectedPack, result.ContextResetRequired);
                 }
 
                 _cursorManager?.Dispose();
@@ -2926,13 +2897,23 @@ namespace SecureOverlay
                 // ✅ Show notification for changes
                 if (providerChanged || modelChanged)
                 {
+                    var historyNotice = result.ContextResetRequired
+                        ? "The active context changed, so the current conversation was reset."
+                        : "Your conversation history has been preserved!";
+
                     InvisibleMessageBox.Show(
                         $"✓ Settings Applied\n\n" +
                         $"Provider: {newProvider}\n" +
                         $"Model: {GetModelDisplayName(_settings.SelectedAI, newModel)}\n\n" +
-                        "Your conversation history has been preserved!",
+                        historyNotice,
                         "Settings Saved"
                     );
+                }
+                else if (result.ContextResetRequired)
+                {
+                    InvisibleMessageBox.Show(
+                        "Settings saved. The active context pack changed, so the current conversation was reset.",
+                        "Settings Saved");
                 }
                 else
                 {
@@ -2964,35 +2945,39 @@ namespace SecureOverlay
             FocusInput();
         }
 
-        private void SyncCachedSummariesToLocalDraftIfUsingLocalContext(ContextPack selectedPack)
+        private void ApplySelectedContextPackToConversation(ContextPack selectedPack, bool resetConversation)
         {
-            if (!string.Equals(selectedPack.PackId, "default", StringComparison.Ordinal))
+            if (_conversationManager == null)
             {
                 return;
             }
 
-            var localDraftPack = _contextPackService.GetLocalDraftPack();
-            var updated = false;
+            var resumeSummary = resetConversation ? string.Empty : selectedPack.ResumeSummary;
+            var jobDescriptionSummary = resetConversation ? string.Empty : selectedPack.JobDescriptionSummary;
 
-            if (string.Equals(localDraftPack.ResumeText, selectedPack.ResumeText, StringComparison.Ordinal)
-                && !string.Equals(localDraftPack.ResumeSummary, selectedPack.ResumeSummary, StringComparison.Ordinal))
+            _conversationManager.UpdateResume(selectedPack.ResumeText, resumeSummary);
+
+            if (string.IsNullOrWhiteSpace(selectedPack.JobDescriptionText))
             {
-                localDraftPack.ResumeSummary = selectedPack.ResumeSummary;
-                updated = true;
+                _conversationManager.ClearJobDescription();
+            }
+            else
+            {
+                _conversationManager.UpdateJobDescription(selectedPack.JobDescriptionText, jobDescriptionSummary);
             }
 
-            if (string.Equals(localDraftPack.JobDescriptionText, selectedPack.JobDescriptionText, StringComparison.Ordinal)
-                && !string.Equals(localDraftPack.JobDescriptionSummary, selectedPack.JobDescriptionSummary, StringComparison.Ordinal))
+            if (!resetConversation)
             {
-                localDraftPack.JobDescriptionSummary = selectedPack.JobDescriptionSummary;
-                updated = true;
+                Log.WriteLine("✓ Resume and job description updated in conversation manager");
+                return;
             }
 
-            if (updated)
-            {
-                _contextPackService.SaveLocalDraftPack(localDraftPack);
-                Log.WriteLine("✓ Cached summaries synced to local draft context");
-            }
+            _conversationManager.ClearConversation();
+            SettingsManager.ClearConversationCache();
+            MarkdownHelper.ClearDocument(ChatDocument);
+            MarkdownHelper.AddWelcomeMessage(ChatDocument);
+            UpdateTokenCounter();
+            Log.WriteLine("✓ Active context reapplied and conversation reset");
         }
 
 

@@ -6,6 +6,7 @@ namespace SecureOverlay.Application.Context
     {
         System.Collections.Generic.IReadOnlyList<ContextPackSummary> GetAllPacks();
         ContextPack GetSelectedPack();
+        bool IsLocalDraftApplied();
         ContextPack GetLocalDraftPack();
         ContextPack CreatePack(string name);
         void SelectPack(string packId);

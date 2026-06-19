@@ -10,11 +10,11 @@
         "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
         "projectName": "Phantom.WindowsApp.Backend",
         "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
-        "packagesPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet/.nuget/packages/",
+        "packagesPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet-home/.nuget/packages/",
         "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet/.nuget/NuGet/NuGet.Config"
+          "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/.dotnet-home/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"

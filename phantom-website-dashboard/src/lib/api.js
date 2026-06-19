@@ -78,6 +78,41 @@ export async function logoutAccount(refreshToken) {
   });
 }
 
+export async function loginAdmin(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function refreshAdminSession(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/refresh", {
+    method: "POST",
+    body: JSON.stringify({ refreshToken })
+  });
+}
+
+export async function logoutAdmin(refreshToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/logout", {
+    method: "POST",
+    body: JSON.stringify({ refreshToken })
+  });
+}
+
+export async function requestAdminPasswordReset(email) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function resetAdminPassword(token, newPassword) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, newPassword })
+  });
+}
+
 export async function registerAccount(payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/register", {
     method: "POST",
@@ -175,90 +210,90 @@ export async function fetchSupportOverview(userId) {
   );
 }
 
-export async function fetchAdminOverview(adminApiKey) {
+export async function fetchAdminOverview(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function fetchManagedAiAdminInventory(adminApiKey) {
+export async function fetchManagedAiAdminInventory(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function fetchAdminPaymentOrders(adminApiKey, limit = 100) {
+export async function fetchAdminPaymentOrders(accessToken, limit = 100) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/payments/orders?limit=${encodeURIComponent(limit)}`,
     {
       headers: {
-        "X-Phantom-Admin-Key": adminApiKey
+        Authorization: `Bearer ${accessToken}`
       }
     }
   );
 }
 
-export async function fetchAdminPaymentWebhooks(adminApiKey, limit = 100) {
+export async function fetchAdminPaymentWebhooks(accessToken, limit = 100) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/payments/webhooks?limit=${encodeURIComponent(limit)}`,
     {
       headers: {
-        "X-Phantom-Admin-Key": adminApiKey
+        Authorization: `Bearer ${accessToken}`
       }
     }
   );
 }
 
-export async function fetchGmailOAuthStatus(adminApiKey) {
+export async function fetchGmailOAuthStatus(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/status", {
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function startGmailOAuth(adminApiKey) {
+export async function startGmailOAuth(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/integrations/gmail/oauth/start", {
     method: "POST",
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function upsertManagedAiCredential(adminApiKey, payload) {
+export async function upsertManagedAiCredential(accessToken, payload) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     method: "POST",
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     },
     body: JSON.stringify(payload)
   });
 }
 
-export async function triggerManagedAiCatalogRefresh(adminApiKey) {
+export async function triggerManagedAiCatalogRefresh(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
     method: "POST",
     headers: {
-      "X-Phantom-Admin-Key": adminApiKey
+      Authorization: `Bearer ${accessToken}`
     }
   });
 }
 
-export async function deleteManagedAiCredential(adminApiKey, credentialId) {
+export async function deleteManagedAiCredential(accessToken, credentialId) {
   return request(
     DASHBOARD_API_BASE,
     `/api/dashboard/admin/managed-ai/credentials/${encodeURIComponent(credentialId)}`,
     {
       method: "DELETE",
       headers: {
-        "X-Phantom-Admin-Key": adminApiKey
+        Authorization: `Bearer ${accessToken}`
       }
     }
   );

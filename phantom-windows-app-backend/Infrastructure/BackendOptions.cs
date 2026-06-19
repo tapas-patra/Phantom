@@ -15,7 +15,12 @@ public sealed class BackendOptions
     public int LoginAttemptWindowMinutes { get; init; } = 15;
     public int MaxFailedLoginAttempts { get; init; } = 5;
     public int EmailVerificationTtlHours { get; init; } = 24;
+    public int AdminSessionTtlHours { get; init; } = 8;
+    public int AdminPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
+    public string BootstrapAdminEmail { get; init; } = string.Empty;
+    public string BootstrapAdminPassword { get; init; } = string.Empty;
+    public string BootstrapAdminDisplayName { get; init; } = string.Empty;
     public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
     public string SmtpHost { get; init; } = string.Empty;
     public int SmtpPort { get; init; } = 587;
@@ -102,9 +107,29 @@ public sealed class BackendOptions
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_EMAIL_VERIFICATION_TTL_HOURS"),
                 section["EmailVerificationTtlHours"],
                 24),
+            AdminSessionTtlHours = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_SESSION_TTL_HOURS"),
+                section["AdminSessionTtlHours"],
+                8),
+            AdminPasswordResetTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_PASSWORD_RESET_TTL_MINUTES"),
+                section["AdminPasswordResetTtlMinutes"],
+                30),
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",
                 section["AdminApiKey"],
+                string.Empty),
+            BootstrapAdminEmail = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_EMAIL",
+                section["BootstrapAdminEmail"],
+                string.Empty),
+            BootstrapAdminPassword = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_PASSWORD",
+                section["BootstrapAdminPassword"],
+                string.Empty),
+            BootstrapAdminDisplayName = ReadString(
+                "PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME",
+                section["BootstrapAdminDisplayName"],
                 string.Empty),
             PublicWebsiteBaseUrl = ReadString(
                 "PHANTOM_PUBLIC_WEBSITE_BASE_URL",

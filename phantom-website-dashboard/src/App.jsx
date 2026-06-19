@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  loginAdmin,
+  logoutAdmin,
+  refreshAdminSession,
+  requestAdminPasswordReset,
+  resetAdminPassword,
   fetchAdminPaymentOrders,
   fetchAdminPaymentWebhooks,
   fetchGmailOAuthStatus,
@@ -122,6 +127,7 @@ const marketingHighlights = [
 export default function App() {
   const [userSession, setUserSession] = useState(() => readStoredJson(USER_SESSION_KEY));
   const [adminSession, setAdminSession] = useState(() => readStoredJson(ADMIN_SESSION_KEY));
+  const [adminSessionReady, setAdminSessionReady] = useState(() => !readStoredJson(ADMIN_SESSION_KEY)?.refreshToken);
 
   function handleUserAuthenticated(session) {
     writeStoredJson(USER_SESSION_KEY, session);
@@ -147,10 +153,63 @@ export default function App() {
     }
   }
 
-  function handleAdminLogout() {
+  async function handleAdminLogout() {
+    const refreshToken = adminSession?.refreshToken;
     clearStoredJson(ADMIN_SESSION_KEY);
     setAdminSession(null);
+
+    if (refreshToken) {
+      try {
+        await logoutAdmin(refreshToken);
+      } catch {
+        // Best effort logout.
+      }
+    }
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshTimer = 0;
+
+    async function hydrateAdminSession() {
+      if (!adminSession?.refreshToken) {
+        setAdminSessionReady(true);
+        return;
+      }
+
+      const expiresAt = parseUtcMillis(adminSession.expiresAtUtc);
+      const shouldRefresh = !expiresAt || expiresAt <= Date.now() + 5 * 60 * 1000;
+      if (!shouldRefresh) {
+        setAdminSessionReady(true);
+        refreshTimer = window.setTimeout(() => {
+          hydrateAdminSession();
+        }, Math.max(expiresAt - Date.now() - 5 * 60 * 1000, 1000));
+        return;
+      }
+
+      try {
+        const refreshed = await refreshAdminSession(adminSession.refreshToken);
+        if (!cancelled) {
+          handleAdminAuthenticated(refreshed);
+        }
+      } catch {
+        if (!cancelled) {
+          clearStoredJson(ADMIN_SESSION_KEY);
+          setAdminSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+      }
+    }
+
+    hydrateAdminSession();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(refreshTimer);
+    };
+  }, [adminSession?.expiresAtUtc, adminSession?.refreshToken]);
 
   return (
     <div className="app-shell">
@@ -184,13 +243,17 @@ export default function App() {
           path="/admin/login"
           element={<AdminLoginPage onAuthenticated={handleAdminAuthenticated} adminSession={adminSession} />}
         />
+        <Route path="/admin/forgot-password" element={<AdminForgotPasswordPage />} />
+        <Route path="/admin/reset-password" element={<AdminResetPasswordPage />} />
         <Route
           path="/admin/*"
           element={
-            adminSession ? (
+            adminSessionReady && adminSession ? (
               <AdminDashboardPage adminSession={adminSession} />
-            ) : (
+            ) : adminSessionReady ? (
               <Navigate to="/admin/login" replace />
+            ) : (
+              <AdminSessionLoadingPage />
             )
           }
         />
@@ -203,9 +266,11 @@ function SiteChrome({ userSession, adminSession, onUserLogout, onAdminLogout }) 
   const location = useLocation();
   const isUserArea = location.pathname.startsWith("/dashboard");
   const isAdminArea = location.pathname.startsWith("/admin");
-  const navigation = isAdminArea ? adminNav : isUserArea ? userNav : marketingNav;
+  const hasAdminSession = Boolean(adminSession?.accessToken);
+  const showAdminChrome = isAdminArea && hasAdminSession;
+  const navigation = showAdminChrome ? adminNav : isUserArea ? userNav : marketingNav;
 
-  const brandTarget = isAdminArea
+  const brandTarget = showAdminChrome
     ? "/admin"
     : userSession
       ? "/dashboard"
@@ -217,7 +282,7 @@ function SiteChrome({ userSession, adminSession, onUserLogout, onAdminLogout }) 
         <span className="brandmark-glyph">P</span>
         <span>
           <strong>Phantom</strong>
-          <small>{isAdminArea ? "Admin Control Plane" : "Protected Interview Runtime"}</small>
+          <small>{showAdminChrome ? "Admin Control Plane" : "Protected Interview Runtime"}</small>
         </span>
       </Link>
 
@@ -235,9 +300,9 @@ function SiteChrome({ userSession, adminSession, onUserLogout, onAdminLogout }) 
       </nav>
 
       <div className="header-actions">
-        {isAdminArea ? (
+        {showAdminChrome ? (
           <>
-            <span className="header-badge header-badge-brass">Admin Session</span>
+            <span className="header-badge header-badge-brass">{adminSession.displayName || adminSession.email}</span>
             <button className="button button-secondary button-compact" onClick={onAdminLogout}>
               Log Out
             </button>
@@ -1573,12 +1638,13 @@ function SupportPanel({ support }) {
 
 function AdminLoginPage({ onAuthenticated, adminSession }) {
   const navigate = useNavigate();
-  const [apiKey, setApiKey] = useState(adminSession?.apiKey || "");
+  const [email, setEmail] = useState(adminSession?.email || "");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (adminSession?.apiKey) {
+    if (adminSession?.accessToken) {
       navigate("/admin", { replace: true });
     }
   }, [adminSession, navigate]);
@@ -1588,8 +1654,8 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
     setSubmitting(true);
     setError("");
     try {
-      await fetchAdminOverview(apiKey);
-      onAuthenticated({ apiKey });
+      const session = await loginAdmin({ email, password });
+      onAuthenticated(session);
       navigate("/admin", { replace: true });
     } catch (loginError) {
       setError(loginError.message || "Admin sign-in failed.");
@@ -1604,26 +1670,179 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
         <p className="eyebrow">Admin console</p>
         <h1>Separate control plane for managed providers and hosted runtime operations.</h1>
         <p className="hero-text">
-          The admin dashboard is not part of the user dashboard. It uses the dashboard admin API key,
-          then proxies operational actions to the Windows backend where needed.
+          The admin dashboard is isolated from the user dashboard and requires a dedicated admin account.
+          Browser access is session-based and password reset is handled through email.
         </p>
       </section>
 
       <form className="panel auth-form" onSubmit={handleSubmit}>
         <label>
-          <span>Admin API key</span>
+          <span>Admin email</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="admin@phantom.local"
+          />
+        </label>
+        <label>
+          <span>Password</span>
           <input
             type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Enter PHANTOM_DASHBOARD_ADMIN_API_KEY"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Enter your admin password"
           />
         </label>
         <button className="button button-primary" type="submit" disabled={submitting}>
           {submitting ? "Authenticating..." : "Open Admin Dashboard"}
         </button>
         {error && <p className="status-message status-error">{error}</p>}
+        <div className="auth-links-row">
+          <Link className="subtle-link" to="/admin/forgot-password">
+            Forgot password?
+          </Link>
+        </div>
       </form>
+    </main>
+  );
+}
+
+function AdminForgotPasswordPage() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+
+    try {
+      const result = await requestAdminPasswordReset(email);
+      setStatus(result.message || "If that admin account exists, a password reset link has been sent.");
+    } catch (error) {
+      setStatus(error.message || "Could not request a password reset.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="page auth-layout auth-layout-wide">
+      <section className="panel auth-panel">
+        <p className="eyebrow">Admin recovery</p>
+        <h1>Reset the admin password through email.</h1>
+        <p className="hero-text">
+          Enter the admin email address and Phantom will send a time-limited password reset link.
+        </p>
+      </section>
+
+      <form className="panel auth-form" onSubmit={handleSubmit}>
+        <label>
+          <span>Admin email</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="admin@phantom.local"
+          />
+        </label>
+        <button className="button button-primary" type="submit" disabled={submitting}>
+          {submitting ? "Sending..." : "Send Reset Link"}
+        </button>
+        {status && <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p>}
+        <div className="auth-links-row">
+          <Link className="subtle-link" to="/admin/login">
+            Back to admin login
+          </Link>
+        </div>
+      </form>
+    </main>
+  );
+}
+
+function AdminResetPasswordPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const token = query.get("token") || "";
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+
+    try {
+      if (!token) {
+        throw new Error("Reset token missing from the URL.");
+      }
+
+      if (password !== confirmPassword) {
+        throw new Error("Passwords do not match.");
+      }
+
+      const result = await resetAdminPassword(token, password);
+      setStatus(result.message || "Admin password reset complete.");
+      setTimeout(() => {
+        navigate("/admin/login", { replace: true });
+      }, 1000);
+    } catch (error) {
+      setStatus(error.message || "Could not reset the password.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="page auth-layout auth-layout-wide">
+      <section className="panel auth-panel">
+        <p className="eyebrow">Admin reset</p>
+        <h1>Choose a new admin password.</h1>
+        <p className="hero-text">
+          Reset links are single-use and time-limited. Set a strong password before returning to the admin console.
+        </p>
+      </section>
+
+      <form className="panel auth-form" onSubmit={handleSubmit}>
+        <label>
+          <span>New password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="At least 12 characters"
+          />
+        </label>
+        <label>
+          <span>Confirm password</span>
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            placeholder="Re-enter the new password"
+          />
+        </label>
+        <button className="button button-primary" type="submit" disabled={submitting}>
+          {submitting ? "Resetting..." : "Reset Password"}
+        </button>
+        {status && <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p>}
+      </form>
+    </main>
+  );
+}
+
+function AdminSessionLoadingPage() {
+  return (
+    <main className="page">
+      <section className="panel auth-panel auth-panel-wide">
+        <p className="eyebrow">Admin session</p>
+        <h1>Restoring admin session…</h1>
+      </section>
     </main>
   );
 }
@@ -1647,11 +1866,11 @@ function AdminDashboardPage({ adminSession }) {
       setError("");
       try {
         const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
-          fetchAdminOverview(adminSession.apiKey),
-          fetchManagedAiAdminInventory(adminSession.apiKey),
-          fetchAdminPaymentOrders(adminSession.apiKey),
-          fetchAdminPaymentWebhooks(adminSession.apiKey),
-          fetchGmailOAuthStatus(adminSession.apiKey)
+          fetchAdminOverview(adminSession.accessToken),
+          fetchManagedAiAdminInventory(adminSession.accessToken),
+          fetchAdminPaymentOrders(adminSession.accessToken),
+          fetchAdminPaymentWebhooks(adminSession.accessToken),
+          fetchGmailOAuthStatus(adminSession.accessToken)
         ]);
 
         if (!cancelled) {
@@ -1676,20 +1895,20 @@ function AdminDashboardPage({ adminSession }) {
     return () => {
       cancelled = true;
     };
-  }, [adminSession.apiKey]);
+  }, [adminSession.accessToken]);
 
   async function refreshManagedInventory() {
-    const nextInventory = await fetchManagedAiAdminInventory(adminSession.apiKey);
+    const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);
     setInventory(nextInventory);
     return nextInventory;
   }
 
   async function refreshPayments() {
     const [nextOverview, nextOrders, nextWebhooks, nextGmailStatus] = await Promise.all([
-      fetchAdminOverview(adminSession.apiKey),
-      fetchAdminPaymentOrders(adminSession.apiKey),
-      fetchAdminPaymentWebhooks(adminSession.apiKey),
-      fetchGmailOAuthStatus(adminSession.apiKey)
+      fetchAdminOverview(adminSession.accessToken),
+      fetchAdminPaymentOrders(adminSession.accessToken),
+      fetchAdminPaymentWebhooks(adminSession.accessToken),
+      fetchGmailOAuthStatus(adminSession.accessToken)
     ]);
     setOverview(nextOverview);
     setPaymentOrders(nextOrders);
@@ -1754,7 +1973,7 @@ function AdminDashboardPage({ adminSession }) {
                 overview={overview}
                 inventory={inventory}
                 gmailStatus={gmailStatus}
-                adminApiKey={adminSession.apiKey}
+                accessToken={adminSession.accessToken}
                 gmailOauthSuccess={new URLSearchParams(location.search).get("gmail_oauth") === "success"}
                 onGmailStatusChanged={setGmailStatus}
               />
@@ -1775,7 +1994,7 @@ function AdminDashboardPage({ adminSession }) {
             path="managed-ai"
             element={
               <ManagedAiAdminPanel
-                adminApiKey={adminSession.apiKey}
+                accessToken={adminSession.accessToken}
                 inventory={inventory}
                 onRefresh={refreshManagedInventory}
                 catalogRefreshResult={catalogRefreshResult}
@@ -1789,7 +2008,7 @@ function AdminDashboardPage({ adminSession }) {
   );
 }
 
-function AdminOverviewPanel({ overview, inventory, gmailStatus, adminApiKey, gmailOauthSuccess, onGmailStatusChanged }) {
+function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gmailOauthSuccess, onGmailStatusChanged }) {
   const credentials = inventory?.credentials || [];
   const providers = inventory?.managedProviders || [];
   const catalogProviders = inventory?.catalogs?.providers || [];
@@ -1799,7 +2018,7 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, adminApiKey, gma
   useEffect(() => {
     if (gmailOauthSuccess) {
       setGmailMessage("Gmail OAuth completed. Refreshing sender health.");
-      fetchGmailOAuthStatus(adminApiKey)
+      fetchGmailOAuthStatus(accessToken)
         .then((status) => {
           onGmailStatusChanged(status);
           setGmailMessage(status?.StatusMessage || "Gmail OAuth status refreshed.");
@@ -1808,13 +2027,13 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, adminApiKey, gma
           setGmailMessage(error.message || "Could not refresh Gmail OAuth status.");
         });
     }
-  }, [adminApiKey, gmailOauthSuccess, onGmailStatusChanged]);
+  }, [accessToken, gmailOauthSuccess, onGmailStatusChanged]);
 
   async function handleReconnectGmail() {
     setGmailLoading(true);
     setGmailMessage("");
     try {
-      const result = await startGmailOAuth(adminApiKey);
+      const result = await startGmailOAuth(accessToken);
       window.location.href = result.authorizationUrl;
     } catch (error) {
       setGmailMessage(error.message || "Could not start Gmail OAuth.");
@@ -1915,7 +2134,7 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, adminApiKey, gma
 }
 
 function ManagedAiAdminPanel({
-  adminApiKey,
+  accessToken,
   inventory,
   onRefresh,
   catalogRefreshResult,
@@ -1949,7 +2168,7 @@ function ManagedAiAdminPanel({
     setSuccess("");
 
     try {
-      await upsertManagedAiCredential(adminApiKey, {
+      await upsertManagedAiCredential(accessToken, {
         providerId,
         label,
         apiKey,
@@ -1972,7 +2191,7 @@ function ManagedAiAdminPanel({
     setLocalError("");
     setSuccess("");
     try {
-      await deleteManagedAiCredential(adminApiKey, credentialId);
+      await deleteManagedAiCredential(accessToken, credentialId);
       setSuccess("Managed credential removed.");
       await onRefresh();
     } catch (deleteError) {
@@ -1985,7 +2204,7 @@ function ManagedAiAdminPanel({
     setLocalError("");
     setSuccess("");
     try {
-      const refreshResult = await triggerManagedAiCatalogRefresh(adminApiKey);
+      const refreshResult = await triggerManagedAiCatalogRefresh(accessToken);
       onCatalogRefreshResult(refreshResult);
       await onRefresh();
       setSuccess("Managed model catalog refreshed.");
@@ -2463,6 +2682,15 @@ function writeStoredJson(key, value) {
 
 function clearStoredJson(key) {
   window.localStorage.removeItem(key);
+}
+
+function parseUtcMillis(value) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function getBrowserRegistrationFingerprint() {

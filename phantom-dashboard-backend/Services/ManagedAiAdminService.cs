@@ -19,11 +19,11 @@ public sealed class ManagedAiAdminService
         _options = options;
     }
 
-    public async Task<object?> GetCredentialInventory(CancellationToken cancellationToken)
+    public async Task<object?> GetCredentialInventory(string authorizationHeader, CancellationToken cancellationToken)
     {
         EnsureConfigured();
-        var credentials = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", null, cancellationToken);
-        var catalogs = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", null, cancellationToken);
+        var credentials = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", authorizationHeader, null, cancellationToken);
+        var catalogs = await SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", authorizationHeader, null, cancellationToken);
         return new
         {
             managedProviders = new[]
@@ -40,28 +40,35 @@ public sealed class ManagedAiAdminService
         };
     }
 
-    public Task<object?> UpsertCredential(object payload, CancellationToken cancellationToken)
+    public Task<object?> UpsertCredential(string authorizationHeader, object payload, CancellationToken cancellationToken)
     {
         EnsureConfigured();
-        return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/credentials", payload, cancellationToken);
+        return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/credentials", authorizationHeader, payload, cancellationToken);
     }
 
-    public Task<object?> RefreshCatalog(CancellationToken cancellationToken)
+    public Task<object?> RefreshCatalog(string authorizationHeader, CancellationToken cancellationToken)
     {
         EnsureConfigured();
-        return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", null, cancellationToken);
+        return SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", authorizationHeader, null, cancellationToken);
     }
 
-    public async Task DeleteCredential(string credentialId, CancellationToken cancellationToken)
+    public async Task DeleteCredential(string authorizationHeader, string credentialId, CancellationToken cancellationToken)
     {
         EnsureConfigured();
-        await SendAsync<object>(HttpMethod.Delete, $"/api/admin/managed-ai/credentials/{Uri.EscapeDataString(credentialId)}", null, cancellationToken);
+        await SendAsync<object>(HttpMethod.Delete, $"/api/admin/managed-ai/credentials/{Uri.EscapeDataString(credentialId)}", authorizationHeader, null, cancellationToken);
     }
 
-    private async Task<T?> SendAsync<T>(HttpMethod method, string path, object? payload, CancellationToken cancellationToken)
+    private async Task<T?> SendAsync<T>(HttpMethod method, string path, string authorizationHeader, object? payload, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, $"{_options.WindowsBackendBaseUrl}{path}");
-        request.Headers.Add("X-Phantom-Admin-Key", _options.WindowsBackendAdminApiKey);
+        if (!string.IsNullOrWhiteSpace(authorizationHeader))
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", authorizationHeader);
+        }
+        else if (!string.IsNullOrWhiteSpace(_options.WindowsBackendAdminApiKey))
+        {
+            request.Headers.Add("X-Phantom-Admin-Key", _options.WindowsBackendAdminApiKey);
+        }
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         if (payload != null)
@@ -94,7 +101,7 @@ public sealed class ManagedAiAdminService
         if (!_options.HasWindowsBackendAdminAccess)
         {
             throw new InvalidOperationException(
-                "Configure PHANTOM_WINDOWS_BACKEND_BASE_URL and PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY for managed AI admin controls.");
+                "Configure PHANTOM_WINDOWS_BACKEND_BASE_URL for managed AI admin controls.");
         }
     }
 

@@ -10,6 +10,7 @@ builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<DashboardQueryService>();
 builder.Services.AddSingleton<ManagedAiAdminService>();
+builder.Services.AddSingleton<AdminSessionValidator>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddCors(cors =>
 {
@@ -60,30 +61,44 @@ adminGroup.MapGet("/payments/orders", (int? limit, DashboardQueryService queries
 adminGroup.MapGet("/payments/webhooks", (int? limit, DashboardQueryService queries) =>
     Results.Ok(queries.GetAdminPaymentWebhookEvents(limit ?? 100)));
 adminGroup.MapGet("/managed-ai/credentials", async (
+    HttpContext httpContext,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
-    return Results.Ok(await managedAi.GetCredentialInventory(cancellationToken));
+    return Results.Ok(await managedAi.GetCredentialInventory(
+        httpContext.Request.Headers.Authorization.ToString(),
+        cancellationToken));
 });
 adminGroup.MapPost("/managed-ai/credentials", async (
+    HttpContext httpContext,
     JsonElement payload,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
-    return Results.Ok(await managedAi.UpsertCredential(payload, cancellationToken));
+    return Results.Ok(await managedAi.UpsertCredential(
+        httpContext.Request.Headers.Authorization.ToString(),
+        payload,
+        cancellationToken));
 });
 adminGroup.MapPost("/managed-ai/catalog/refresh", async (
+    HttpContext httpContext,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
-    return Results.Ok(await managedAi.RefreshCatalog(cancellationToken));
+    return Results.Ok(await managedAi.RefreshCatalog(
+        httpContext.Request.Headers.Authorization.ToString(),
+        cancellationToken));
 });
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
+    HttpContext httpContext,
     string credentialId,
     ManagedAiAdminService managedAi,
     CancellationToken cancellationToken) =>
 {
-    await managedAi.DeleteCredential(credentialId, cancellationToken);
+    await managedAi.DeleteCredential(
+        httpContext.Request.Headers.Authorization.ToString(),
+        credentialId,
+        cancellationToken);
     return Results.Ok(new { deleted = true, credentialId });
 });
 

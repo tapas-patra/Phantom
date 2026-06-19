@@ -122,6 +122,45 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_refresh_token_hash ON auth_sessions(refresh_token_hash);
 
+CREATE TABLE IF NOT EXISTS admin_accounts (
+    admin_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at_utc TIMESTAMPTZ NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+ALTER TABLE admin_accounts
+    ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT 'Admin';
+ALTER TABLE admin_accounts
+    ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'super_admin';
+ALTER TABLE admin_accounts
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE admin_accounts
+    ADD COLUMN IF NOT EXISTS last_login_at_utc TIMESTAMPTZ NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_accounts_email
+    ON admin_accounts(lower(email));
+
+CREATE TABLE IF NOT EXISTS admin_password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    admin_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_password_reset_tokens_email_time
+    ON admin_password_reset_tokens(email, created_at_utc DESC);
+
 CREATE TABLE IF NOT EXISTS magic_links (
     token_hash TEXT PRIMARY KEY,
     email TEXT NOT NULL,

@@ -15,6 +15,8 @@ var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(backendOptions);
 builder.Services.AddSingleton<PostgresBackendStore>();
 builder.Services.AddSingleton<AccountRepository>();
+builder.Services.AddSingleton<AdminAccountRepository>();
+builder.Services.AddSingleton<AdminPasswordResetRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
@@ -33,6 +35,7 @@ builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<LoginAttemptService>();
+builder.Services.AddSingleton<AdminBootstrapService>();
 builder.Services.AddSingleton<TwoFactorOtpClient>();
 builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
@@ -44,6 +47,7 @@ builder.Services.AddSingleton<BootstrapAccountSeeder>();
 builder.Services.AddSingleton<PhoneVerificationService>();
 builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
@@ -87,6 +91,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<AdminBootstrapService>().EnsureBootstrapAdmin();
+}
 
 if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
 {
@@ -283,6 +292,72 @@ app.MapPost("/api/desktop/auth/logout", (
 
     auth.RevokeSession(request.RefreshToken);
     return Results.Ok(new { revoked = true });
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/login", (
+    HttpContext httpContext,
+    AdminAuthLoginRequestDto request,
+    LoginAttemptService attempts,
+    AdminAuthService adminAuth) =>
+{
+    var email = request.Email.Trim().ToLowerInvariant();
+    var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    attempts.EnsureNotBlocked(email, ipAddress);
+
+    try
+    {
+        var session = adminAuth.Login(request);
+        attempts.Record(email, ipAddress, succeeded: true);
+        return Results.Ok(session);
+    }
+    catch (BackendValidationException validationException)
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        return Results.BadRequest(new { error = validationException.Message });
+    }
+    catch
+    {
+        attempts.Record(email, ipAddress, succeeded: false);
+        throw;
+    }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/refresh", (
+    AdminAuthRefreshRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.Refresh(request));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/logout", (
+    AuthLogoutRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    adminAuth.Logout(request.RefreshToken);
+    return Results.Ok(new { revoked = true });
+}).RequireRateLimiting("auth");
+
+app.MapGet("/api/admin/auth/me", (
+    HttpContext httpContext,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.GetSession(httpContext.Request.Headers.Authorization.ToString()));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/forgot-password", (
+    HttpContext httpContext,
+    AdminPasswordResetStartRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(adminAuth.StartPasswordReset(request.Email, publicBaseUrl));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/reset-password", (
+    AdminPasswordResetCompleteRequestDto request,
+    AdminAuthService adminAuth) =>
+{
+    return Results.Ok(adminAuth.CompletePasswordReset(request));
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/account/startup-check/session", (

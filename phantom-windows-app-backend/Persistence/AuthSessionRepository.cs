@@ -87,6 +87,20 @@ WHERE session_id = @sessionId;";
         command.ExecuteNonQuery();
     }
 
+    public void RevokeAllByUserId(string userId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+UPDATE auth_sessions
+SET is_authenticated = FALSE, revoked_at_utc = @revokedAt
+WHERE user_id = @userId
+  AND is_authenticated = TRUE;";
+        command.Parameters.AddWithValue("revokedAt", DateTime.UtcNow);
+        command.Parameters.AddWithValue("userId", userId);
+        command.ExecuteNonQuery();
+    }
+
     public void DeleteExpired()
     {
         using var connection = _store.OpenConnection();

@@ -9,11 +9,12 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
         }
 
-        public UsageReconciliationResultDto Reconcile(UsageReconciliationRequestDto request)
+        public UsageReconciliationResultDto Reconcile(UsageReconciliationRequestDto request, string accessToken)
         {
             return PostJson<UsageReconciliationRequestDto, UsageReconciliationResultDto>(
                 "/api/desktop/usage/reconcile",
-                request);
+                request,
+                accessToken);
         }
     }
 }

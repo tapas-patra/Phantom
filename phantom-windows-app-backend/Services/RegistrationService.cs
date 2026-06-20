@@ -61,7 +61,7 @@ public sealed class RegistrationService
         var existing = _accounts.FindByEmail(normalizedEmail);
         if (existing != null && existing.EmailVerified)
         {
-            throw new BackendValidationException("An account with this email already exists.");
+            throw new BackendValidationException("Unable to create an account with the provided details.");
         }
 
         PhoneVerificationChallengeRecord? verifiedPhone = null;
@@ -134,14 +134,14 @@ public sealed class RegistrationService
         }
 
         var account = _accounts.FindByEmail(request.Email.Trim().ToLowerInvariant())
-            ?? throw new BackendValidationException("Account not found.");
+            ?? throw new BackendValidationException("If the account exists, a verification email will be sent.");
         if (account.EmailVerified)
         {
             return new AuthEmailVerificationResultDto
             {
-                Email = account.Email,
+                Email = string.Empty,
                 Verified = true,
-                Message = "Email is already verified."
+                Message = "If the account exists, a verification email will be sent."
             };
         }
 
@@ -154,11 +154,9 @@ public sealed class RegistrationService
         var verification = IssueVerification(account, publicBackendBaseUrl);
         return new AuthEmailVerificationResultDto
         {
-            Email = account.Email,
+            Email = string.Empty,
             Verified = false,
-            Message = verification.DeliveryStatus == "sent"
-                ? "Verification email sent."
-                : $"Verification email could not be delivered: {verification.DeliveryError}"
+            Message = "If the account exists, a verification email will be sent."
         };
     }
 

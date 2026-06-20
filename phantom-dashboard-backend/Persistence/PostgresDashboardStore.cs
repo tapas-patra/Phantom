@@ -17,6 +17,8 @@ public sealed class PostgresDashboardStore
         }
 
         _connectionString = BuildConnectionString(options.DatabaseUrl);
+        using var connection = OpenConnection();
+        SchemaMigrator.ApplyMigrations(connection, DashboardSchemaMigrations.All);
     }
 
     public NpgsqlConnection OpenConnection()

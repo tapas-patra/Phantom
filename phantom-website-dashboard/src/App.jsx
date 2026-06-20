@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  fetchCurrentAdminSession,
+  fetchCurrentUserSession,
   loginAdmin,
   logoutAdmin,
+  refreshAccountSession,
   refreshAdminSession,
   requestAdminPasswordReset,
   resetAdminPassword,
   fetchAdminPaymentOrders,
   fetchAdminPaymentWebhooks,
+  fetchAdminUser,
+  fetchAdminUsers,
   fetchGmailOAuthStatus,
   confirmPaymentCheckout,
   createPaymentCheckout,
@@ -27,16 +32,18 @@ import {
   logoutAccount,
   registerAccount,
   resendVerificationEmail,
+  clearAdminLock,
   sendPhoneOtp,
   startGmailOAuth,
   triggerManagedAiCatalogRefresh,
+  updateAdminUser,
+  updateManagedAiModelVision,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
+  waiveAdminPremiumDebt,
+  grantAdminCredits,
   verifyPhoneOtp
 } from "./lib/api";
-
-const USER_SESSION_KEY = "phantom.website.user-session";
-const ADMIN_SESSION_KEY = "phantom.website.admin-session";
 
 const marketingNav = [
   { to: "/", label: "Product" },
@@ -56,6 +63,7 @@ const userNav = [
 
 const adminNav = [
   { to: "/admin", label: "Overview" },
+  { to: "/admin/users", label: "Users" },
   { to: "/admin/payments", label: "Payments" },
   { to: "/admin/managed-ai", label: "Managed AI" }
 ];
@@ -125,45 +133,52 @@ const marketingHighlights = [
 ];
 
 export default function App() {
-  const [userSession, setUserSession] = useState(() => readStoredJson(USER_SESSION_KEY));
-  const [adminSession, setAdminSession] = useState(() => readStoredJson(ADMIN_SESSION_KEY));
-  const [adminSessionReady, setAdminSessionReady] = useState(() => !readStoredJson(ADMIN_SESSION_KEY)?.refreshToken);
+  const [userSession, setUserSession] = useState(null);
+  const [userSessionReady, setUserSessionReady] = useState(false);
+  const [adminSession, setAdminSession] = useState(null);
+  const [adminSessionReady, setAdminSessionReady] = useState(false);
+  const [userSessionHydrationEnabled, setUserSessionHydrationEnabled] = useState(true);
+  const [adminSessionHydrationEnabled, setAdminSessionHydrationEnabled] = useState(true);
+  const userLogoutInFlightRef = useRef(false);
+  const adminLogoutInFlightRef = useRef(false);
 
   function handleUserAuthenticated(session) {
-    writeStoredJson(USER_SESSION_KEY, session);
+    setUserSessionHydrationEnabled(true);
     setUserSession(session);
   }
 
   function handleAdminAuthenticated(session) {
-    writeStoredJson(ADMIN_SESSION_KEY, session);
+    setAdminSessionHydrationEnabled(true);
     setAdminSession(session);
   }
 
   async function handleUserLogout() {
-    const refreshToken = userSession?.refreshToken;
-    clearStoredJson(USER_SESSION_KEY);
-    setUserSession(null);
+    userLogoutInFlightRef.current = true;
+    setUserSessionHydrationEnabled(false);
 
-    if (refreshToken) {
-      try {
-        await logoutAccount(refreshToken);
-      } catch {
-        // Best effort logout.
-      }
+    try {
+      await logoutAccount();
+    } catch {
+      // Best effort logout.
+    } finally {
+      setUserSession(null);
+      setUserSessionReady(true);
+      userLogoutInFlightRef.current = false;
     }
   }
 
   async function handleAdminLogout() {
-    const refreshToken = adminSession?.refreshToken;
-    clearStoredJson(ADMIN_SESSION_KEY);
-    setAdminSession(null);
+    adminLogoutInFlightRef.current = true;
+    setAdminSessionHydrationEnabled(false);
 
-    if (refreshToken) {
-      try {
-        await logoutAdmin(refreshToken);
-      } catch {
-        // Best effort logout.
-      }
+    try {
+      await logoutAdmin();
+    } catch {
+      // Best effort logout.
+    } finally {
+      setAdminSession(null);
+      setAdminSessionReady(true);
+      adminLogoutInFlightRef.current = false;
     }
   }
 
@@ -171,9 +186,120 @@ export default function App() {
     let cancelled = false;
     let refreshTimer = 0;
 
+    async function hydrateUserSession() {
+      if (userLogoutInFlightRef.current) {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+        return;
+      }
+
+      if (!userSession?.isAuthenticated && !userSessionHydrationEnabled) {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+        return;
+      }
+
+      if (!userSession?.isAuthenticated) {
+        try {
+          const refreshed = await refreshAccountSession();
+          if (!cancelled) {
+            handleUserAuthenticated(refreshed);
+          }
+        } catch {
+          try {
+            const current = await fetchCurrentUserSession();
+            if (!cancelled) {
+              handleUserAuthenticated(current);
+            }
+          } catch {
+            if (!cancelled) {
+              setUserSession(null);
+            }
+          } finally {
+            if (!cancelled) {
+              setUserSessionReady(true);
+            }
+          }
+        }
+        return;
+      }
+
+      const expiresAt = parseUtcMillis(userSession.expiresAtUtc);
+      const shouldRefresh = !expiresAt || expiresAt <= Date.now() + 5 * 60 * 1000;
+      if (!shouldRefresh) {
+        setUserSessionReady(true);
+        refreshTimer = window.setTimeout(() => {
+          hydrateUserSession();
+        }, Math.max(expiresAt - Date.now() - 5 * 60 * 1000, 1000));
+        return;
+      }
+
+      try {
+        const refreshed = await refreshAccountSession();
+        if (!cancelled) {
+          handleUserAuthenticated(refreshed);
+        }
+      } catch {
+        if (!cancelled) {
+          setUserSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setUserSessionReady(true);
+        }
+      }
+    }
+
+    hydrateUserSession();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(refreshTimer);
+    };
+  }, [userSession?.expiresAtUtc, userSession?.isAuthenticated, userSessionHydrationEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshTimer = 0;
+
     async function hydrateAdminSession() {
-      if (!adminSession?.refreshToken) {
-        setAdminSessionReady(true);
+      if (adminLogoutInFlightRef.current) {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+        return;
+      }
+
+      if (!adminSession?.isAuthenticated && !adminSessionHydrationEnabled) {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+        return;
+      }
+
+      if (!adminSession?.isAuthenticated) {
+        try {
+          const refreshed = await refreshAdminSession();
+          if (!cancelled) {
+            handleAdminAuthenticated(refreshed);
+          }
+        } catch {
+          try {
+            const current = await fetchCurrentAdminSession();
+            if (!cancelled) {
+              handleAdminAuthenticated(current);
+            }
+          } catch {
+            if (!cancelled) {
+              setAdminSession(null);
+            }
+          } finally {
+            if (!cancelled) {
+              setAdminSessionReady(true);
+            }
+          }
+        }
         return;
       }
 
@@ -188,13 +314,12 @@ export default function App() {
       }
 
       try {
-        const refreshed = await refreshAdminSession(adminSession.refreshToken);
+        const refreshed = await refreshAdminSession();
         if (!cancelled) {
           handleAdminAuthenticated(refreshed);
         }
       } catch {
         if (!cancelled) {
-          clearStoredJson(ADMIN_SESSION_KEY);
           setAdminSession(null);
         }
       } finally {
@@ -209,7 +334,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [adminSession?.expiresAtUtc, adminSession?.refreshToken]);
+  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated, adminSessionHydrationEnabled]);
 
   return (
     <div className="app-shell">
@@ -232,10 +357,12 @@ export default function App() {
         <Route
           path="/dashboard/*"
           element={
-            userSession ? (
+            userSessionReady && userSession ? (
               <UserDashboardPage session={userSession} />
-            ) : (
+            ) : userSessionReady ? (
               <Navigate to="/login" replace />
+            ) : (
+              <AdminSessionLoadingPage />
             )
           }
         />
@@ -248,7 +375,7 @@ export default function App() {
         <Route
           path="/admin/*"
           element={
-            adminSessionReady && adminSession ? (
+            adminSessionReady && adminSession?.isAuthenticated ? (
               <AdminDashboardPage adminSession={adminSession} />
             ) : adminSessionReady ? (
               <Navigate to="/admin/login" replace />
@@ -266,7 +393,7 @@ function SiteChrome({ userSession, adminSession, onUserLogout, onAdminLogout }) 
   const location = useLocation();
   const isUserArea = location.pathname.startsWith("/dashboard");
   const isAdminArea = location.pathname.startsWith("/admin");
-  const hasAdminSession = Boolean(adminSession?.accessToken);
+  const hasAdminSession = Boolean(adminSession?.isAuthenticated);
   const showAdminChrome = isAdminArea && hasAdminSession;
   const navigation = showAdminChrome ? adminNav : isUserArea ? userNav : marketingNav;
 
@@ -500,7 +627,7 @@ function DownloadPage({ userSession }) {
       }
 
       try {
-        const result = await fetchDownloadEntitlement(userSession.userId);
+        const result = await fetchDownloadEntitlement();
         if (!cancelled) {
           setEntitlement(result);
           setError("");
@@ -786,16 +913,21 @@ function RegisterPage() {
       });
 
       const deliveryFailed = result.deliveryStatus !== "sent";
-      navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(result.email)}`, {
+      navigate("/desktop-return?verification=pending", {
         replace: true,
         state: deliveryFailed
           ? {
               title: "Account created, but verification email failed",
+              email: result.email || form.email,
               message: result.deliveryError
-                ? `${result.email} was registered, but email delivery failed: ${result.deliveryError}. Reconnect Gmail delivery in admin, then resend verification.`
-                : `${result.email} was registered, but the verification email could not be delivered yet.`
+                ? `The account was registered, but email delivery failed: ${result.deliveryError}. Reconnect Gmail delivery in admin, then resend verification.`
+                : "The account was registered, but the verification email could not be delivered yet."
             }
-          : undefined
+          : {
+              title: "Verification email sent",
+              email: result.email || form.email,
+              message: "Check your inbox and complete email verification before signing in."
+            }
       });
     } catch (error) {
       setStatus(error.message || "Registration failed.");
@@ -886,7 +1018,7 @@ function DesktopReturnPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const query = new URLSearchParams(location.search);
-  const email = query.get("email") || "";
+  const email = location.state?.email || "";
   const verificationState = query.get("verification");
   const gmailOauthState = query.get("gmail_oauth");
 
@@ -894,12 +1026,12 @@ function DesktopReturnPage() {
     verificationState === "pending"
       ? {
           title: "Verification email sent",
-          message: `We sent a verification email to ${email || "your inbox"}. Verify it, then sign in from Phantom.`
+          message: "We sent a verification email. Verify it, then sign in from Phantom."
         }
       : verificationState === "success"
         ? {
             title: "Email verified",
-            message: `${email || "Your account"} is now verified. You can sign in from the desktop app or the user dashboard.`
+            message: "Your account is now verified. You can sign in from the desktop app or the user dashboard."
           }
         : gmailOauthState === "success"
           ? {
@@ -922,15 +1054,17 @@ function DesktopReturnPage() {
       const resendSucceeded = result?.message?.toLowerCase().includes("sent")
         && !result?.message?.toLowerCase().includes("could not");
 
-      navigate(`/desktop-return?verification=pending&email=${encodeURIComponent(email)}`, {
+      navigate("/desktop-return?verification=pending", {
         replace: true,
         state: resendSucceeded
           ? {
               title: "Verification email sent",
-              message: result?.message || `We sent a verification email to ${email}. Verify it, then sign in from Phantom.`
+              email,
+              message: result?.message || "We sent a verification email. Verify it, then sign in from Phantom."
             }
           : {
               title: "Verification resend failed",
+              email,
               message: result?.message || "Could not resend verification email."
             }
       });
@@ -953,7 +1087,7 @@ function DesktopReturnPage() {
         <p className="hero-text">{state.message}</p>
         {verificationState === "pending" ? (
           <div className="hero-actions">
-            <button className="button button-primary" onClick={handleResendVerification}>
+            <button className="button button-primary" onClick={handleResendVerification} disabled={!email}>
               Resend Verification Email
             </button>
             <Link className="button button-secondary" to="/login">
@@ -1006,7 +1140,7 @@ function UserDashboardPage({ session }) {
       setLoading(true);
       setError("");
       try {
-        const account = await fetchAccountSummary(session.email);
+        const account = await fetchAccountSummary(session.accessToken);
         if (!account || cancelled) {
           return;
         }
@@ -1020,11 +1154,11 @@ function UserDashboardPage({ session }) {
           knowledgeBaseStatus,
           catalog
         ] = await Promise.all([
-          fetchWalletHistory(account.userId),
-          fetchWalletPurchases(account.userId),
-          fetchDevices(account.userId),
-          fetchDownloadEntitlement(account.userId),
-          fetchSupportOverview(account.userId),
+          fetchWalletHistory(session.accessToken),
+          fetchWalletPurchases(session.accessToken),
+          fetchDevices(session.accessToken),
+          fetchDownloadEntitlement(session.accessToken),
+          fetchSupportOverview(session.accessToken),
           fetchHostedKnowledgeBase(session.accessToken),
           fetchPaymentCatalog(session.accessToken).catch(() => null)
         ]);
@@ -1054,17 +1188,17 @@ function UserDashboardPage({ session }) {
     return () => {
       cancelled = true;
     };
-  }, [session.accessToken, session.email]);
+  }, [session.email, session.expiresAtUtc]);
 
   async function refreshWalletState() {
-    const account = await fetchAccountSummary(session.email);
+    const account = await fetchAccountSummary(session.accessToken);
     if (!account) {
       throw new Error("Account summary could not be resolved.");
     }
 
     const [history, purchases, catalog] = await Promise.all([
-      fetchWalletHistory(account.userId),
-      fetchWalletPurchases(account.userId),
+      fetchWalletHistory(session.accessToken),
+      fetchWalletPurchases(session.accessToken),
       fetchPaymentCatalog(session.accessToken).catch(() => null)
     ]);
 
@@ -1273,6 +1407,11 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     setStatus("");
 
     try {
+      const totalBytes = Array.from(files).reduce((sum, file) => sum + (file.size || 0), 0);
+      if (totalBytes > 8 * 1024 * 1024) {
+        throw new Error("Combined upload exceeds the 8 MB per-request limit.");
+      }
+
       const result = await uploadHostedKnowledgeBaseDocuments(accessToken, files);
       onKnowledgeBaseChanged(result.knowledgeBase);
       setStatus(`Processed ${result.addedDocuments.length} document${result.addedDocuments.length === 1 ? "" : "s"}.`);
@@ -1338,8 +1477,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">2. Upload documents</p>
         <h2>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h2>
         <p>
-          Premium limits: up to 20 docs total, 5 files per upload, 2 MB per file. If Premium credits hit zero,
-          interview-time KB retrieval is blocked in the desktop app until credits return.
+          Premium limits: up to 20 docs total, 5 files per upload, 2 MB per file, 8 MB per upload request,
+          250,000 extracted characters per document, and 250 chunks per document. Files are chunked one document
+          at a time on the backend, then persisted only after the whole request passes validation.
         </p>
         <label className="button button-secondary button-file">
           Upload Documents
@@ -1644,7 +1784,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (adminSession?.accessToken) {
+    if (adminSession?.isAuthenticated) {
       navigate("/admin", { replace: true });
     }
   }, [adminSession, navigate]);
@@ -1673,10 +1813,6 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
           The admin dashboard is isolated from the user dashboard and requires a dedicated admin account.
           Browser access is session-based and password reset is handled through email.
         </p>
-        <p className="download-status">
-          Local fallback: if no bootstrap admin env vars are set, use <strong>admin@phantom.local</strong> and the current
-          <strong> PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY</strong> after restarting the backend.
-        </p>
       </section>
 
       <form className="panel auth-form" onSubmit={handleSubmit}>
@@ -1686,7 +1822,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="admin@phantom.local"
+            placeholder="admin@example.com"
           />
         </label>
         <label>
@@ -1749,7 +1885,7 @@ function AdminForgotPasswordPage() {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="admin@phantom.local"
+            placeholder="admin@example.com"
           />
         </label>
         <button className="button button-primary" type="submit" disabled={submitting}>
@@ -1853,6 +1989,7 @@ function AdminSessionLoadingPage() {
 
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
+  const [users, setUsers] = useState([]);
   const [inventory, setInventory] = useState(null);
   const [paymentOrders, setPaymentOrders] = useState([]);
   const [paymentWebhooks, setPaymentWebhooks] = useState([]);
@@ -1869,8 +2006,9 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
+        const [overviewData, usersData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
           fetchAdminOverview(adminSession.accessToken),
+          fetchAdminUsers(adminSession.accessToken),
           fetchManagedAiAdminInventory(adminSession.accessToken),
           fetchAdminPaymentOrders(adminSession.accessToken),
           fetchAdminPaymentWebhooks(adminSession.accessToken),
@@ -1879,6 +2017,7 @@ function AdminDashboardPage({ adminSession }) {
 
         if (!cancelled) {
           setOverview(overviewData);
+          setUsers(usersData);
           setInventory(inventoryData);
           setPaymentOrders(paymentOrdersData);
           setPaymentWebhooks(paymentWebhooksData);
@@ -1899,12 +2038,18 @@ function AdminDashboardPage({ adminSession }) {
     return () => {
       cancelled = true;
     };
-  }, [adminSession.accessToken]);
+  }, [adminSession.email, adminSession.expiresAtUtc]);
 
   async function refreshManagedInventory() {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);
     setInventory(nextInventory);
     return nextInventory;
+  }
+
+  async function refreshUsers() {
+    const nextUsers = await fetchAdminUsers(adminSession.accessToken);
+    setUsers(nextUsers);
+    return nextUsers;
   }
 
   async function refreshPayments() {
@@ -1980,6 +2125,16 @@ function AdminDashboardPage({ adminSession }) {
                 accessToken={adminSession.accessToken}
                 gmailOauthSuccess={new URLSearchParams(location.search).get("gmail_oauth") === "success"}
                 onGmailStatusChanged={setGmailStatus}
+              />
+            }
+          />
+          <Route
+            path="users"
+            element={
+              <AdminUsersPanel
+                accessToken={adminSession.accessToken}
+                users={users}
+                onUsersChanged={refreshUsers}
               />
             }
           />
@@ -2219,6 +2374,22 @@ function ManagedAiAdminPanel({
     }
   }
 
+  async function handleVisionToggle(providerId, modelId, supportsVision) {
+    setLocalError("");
+    setSuccess("");
+    try {
+      await updateManagedAiModelVision(accessToken, {
+        providerId,
+        modelId,
+        supportsVision: !supportsVision
+      });
+      await onRefresh();
+      setSuccess("Model vision support updated.");
+    } catch (toggleError) {
+      setLocalError(toggleError.message || "Could not update model vision support.");
+    }
+  }
+
   return (
     <div className="dashboard-grid admin-grid">
       <article className="panel admin-hero-panel">
@@ -2227,6 +2398,10 @@ function ManagedAiAdminPanel({
         <p className="hero-text">
           The website admin console manages the rotation inventory. The Windows backend stores and uses the keys.
           Users only choose provider and model; they never see the credential layer.
+        </p>
+        <p className="download-status">
+          Vision support defaults from provider catalog inference. This flag is the runtime gate for image input:
+          if disabled here, the backend rejects requests with images for that model.
         </p>
       </article>
 
@@ -2435,12 +2610,13 @@ function ManagedAiAdminPanel({
                   <th>Model ID</th>
                   <th>Display name</th>
                   <th>Vision</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {providerModels.length === 0 ? (
                   <tr>
-                    <td colSpan="3">No stored catalog for this provider yet.</td>
+                    <td colSpan="4">No stored catalog for this provider yet.</td>
                   </tr>
                 ) : (
                   providerModels.map((model) => (
@@ -2448,6 +2624,15 @@ function ManagedAiAdminPanel({
                       <td>{model.modelId}</td>
                       <td>{model.displayName}</td>
                       <td>{model.supportsVision ? "Yes" : "No"}</td>
+                      <td>
+                        <button
+                          className="table-action"
+                          type="button"
+                          onClick={() => handleVisionToggle(provider.providerId, model.modelId, model.supportsVision)}
+                        >
+                          Mark {model.supportsVision ? "Non-Vision" : "Vision"}
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -2456,6 +2641,431 @@ function ManagedAiAdminPanel({
           </article>
         );
       })}
+    </div>
+  );
+}
+
+function AdminUsersPanel({ accessToken, users, onUsersChanged }) {
+  const [query, setQuery] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [accountForm, setAccountForm] = useState({
+    accessTier: "free",
+    proAvailableCredits: "0",
+    premiumAvailableCredits: "0",
+    premiumNegativeCredits: "0",
+    offlineModeEnabled: false,
+    reason: ""
+  });
+  const [creditForm, setCreditForm] = useState({
+    proCreditsToAdd: "0",
+    premiumCreditsToAdd: "0",
+    reason: ""
+  });
+  const [lockReason, setLockReason] = useState("Admin manual lock clear");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredUsers = users.filter((item) => {
+    const haystack = [item.email, item.userId, item.accessTier, item.planLabel].join(" ").toLowerCase();
+    return !normalizedQuery || haystack.includes(normalizedQuery);
+  });
+
+  useEffect(() => {
+    if (!selectedUserId && filteredUsers.length > 0) {
+      setSelectedUserId(filteredUsers[0].userId);
+    }
+  }, [filteredUsers, selectedUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUser() {
+      if (!selectedUserId) {
+        setSelectedUser(null);
+        return;
+      }
+
+      try {
+        const detail = await fetchAdminUser(accessToken, selectedUserId);
+        if (!cancelled) {
+          setSelectedUser(detail);
+          setAccountForm({
+            accessTier: detail.accessTier || "free",
+            proAvailableCredits: String(detail.proAvailableCredits ?? 0),
+            premiumAvailableCredits: String(detail.premiumAvailableCredits ?? 0),
+            premiumNegativeCredits: String(detail.premiumNegativeCredits ?? 0),
+            offlineModeEnabled: Boolean(detail.offlineModeEnabled),
+            reason: ""
+          });
+          setCreditForm({
+            proCreditsToAdd: "0",
+            premiumCreditsToAdd: "0",
+            reason: ""
+          });
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError.message || "Could not load the selected user.");
+        }
+      }
+    }
+
+    loadUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, selectedUserId]);
+
+  async function syncSelectedUser(nextUserId = selectedUserId) {
+    const [nextUsers, nextDetail] = await Promise.all([
+      onUsersChanged(),
+      nextUserId ? fetchAdminUser(accessToken, nextUserId) : Promise.resolve(null)
+    ]);
+    setSelectedUser(nextDetail);
+    return { nextUsers, nextDetail };
+  }
+
+  async function handleAccountUpdate(event) {
+    event.preventDefault();
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("account");
+    setStatus("");
+    setError("");
+    try {
+      const updated = await updateAdminUser(accessToken, {
+        userId: selectedUserId,
+        accessTier: accountForm.accessTier,
+        proAvailableCredits: Number(accountForm.proAvailableCredits) || 0,
+        premiumAvailableCredits: Number(accountForm.premiumAvailableCredits) || 0,
+        premiumNegativeCredits: Number(accountForm.premiumNegativeCredits) || 0,
+        offlineModeEnabled: accountForm.offlineModeEnabled,
+        reason: accountForm.reason
+      });
+      await onUsersChanged();
+      setSelectedUser(updated);
+      setStatus("User account settings updated.");
+    } catch (updateError) {
+      setError(updateError.message || "Could not update the user account.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleCreditGrant(event) {
+    event.preventDefault();
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("credits");
+    setStatus("");
+    setError("");
+    try {
+      await grantAdminCredits(accessToken, {
+        userId: selectedUserId,
+        proCreditsToAdd: Number(creditForm.proCreditsToAdd) || 0,
+        premiumCreditsToAdd: Number(creditForm.premiumCreditsToAdd) || 0,
+        reason: creditForm.reason
+      });
+      await syncSelectedUser();
+      setCreditForm({
+        proCreditsToAdd: "0",
+        premiumCreditsToAdd: "0",
+        reason: ""
+      });
+      setStatus("Credits granted.");
+    } catch (grantError) {
+      setError(grantError.message || "Could not grant credits.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleWaiveDebt() {
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("waive");
+    setStatus("");
+    setError("");
+    try {
+      await waiveAdminPremiumDebt(accessToken, {
+        userId: selectedUserId,
+        reason: "Admin waived premium debt"
+      });
+      await syncSelectedUser();
+      setStatus("Premium debt waived.");
+    } catch (waiveError) {
+      setError(waiveError.message || "Could not waive premium debt.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleClearLock() {
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("lock");
+    setStatus("");
+    setError("");
+    try {
+      await clearAdminLock(accessToken, {
+        userId: selectedUserId,
+        reason: lockReason
+      });
+      await syncSelectedUser();
+      setStatus("Active lock cleared.");
+    } catch (lockError) {
+      setError(lockError.message || "Could not clear the active lock.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  return (
+    <div className="dashboard-grid admin-grid">
+      <article className="panel admin-hero-panel">
+        <p className="eyebrow">Users</p>
+        <h1>Inspect user state and apply manual account corrections without touching the desktop runtime.</h1>
+        <p className="hero-text">
+          This tab exposes admin account controls for access tier, credits, debt cleanup, and live lock intervention.
+        </p>
+      </article>
+
+      <article className="panel admin-form-panel">
+        <div className="admin-panel-head">
+          <div>
+            <p className="story-tag">Directory</p>
+            <h3>User roster</h3>
+          </div>
+          <div className="admin-panel-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onUsersChanged}>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <label>
+          Search
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="email, user ID, or tier"
+          />
+        </label>
+      </article>
+
+      <article className="panel table-panel table-panel-full">
+        <p className="eyebrow">Accounts</p>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Tier</th>
+              <th>Pro</th>
+              <th>Premium</th>
+              <th>Debt</th>
+              <th>Phone</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan="7">No users matched the current search.</td>
+              </tr>
+            ) : (
+              filteredUsers.map((item) => (
+                <tr key={item.userId}>
+                  <td>{item.email}</td>
+                  <td>{item.planLabel}</td>
+                  <td>{item.proAvailableCredits}</td>
+                  <td>{item.premiumAvailableCredits}</td>
+                  <td>{item.premiumNegativeCredits}</td>
+                  <td>{item.phoneVerified ? "Verified" : "Pending"}</td>
+                  <td>
+                    <button className="table-action" type="button" onClick={() => setSelectedUserId(item.userId)}>
+                      Inspect
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </article>
+
+      {selectedUser && (
+        <>
+          <article className="panel table-panel table-panel-full">
+            <p className="eyebrow">Selected user</p>
+            <table>
+              <tbody>
+                <tr><th>Email</th><td>{selectedUser.email}</td></tr>
+                <tr><th>User ID</th><td>{selectedUser.userId}</td></tr>
+                <tr><th>Tier</th><td>{selectedUser.planLabel} ({selectedUser.accessTier})</td></tr>
+                <tr><th>Email verified</th><td>{selectedUser.emailVerified ? "Yes" : "No"}</td></tr>
+                <tr><th>Phone verified</th><td>{selectedUser.phoneVerified ? "Yes" : "No"}</td></tr>
+                <tr><th>Pro credits</th><td>{selectedUser.proAvailableCredits}</td></tr>
+                <tr><th>Premium credits</th><td>{selectedUser.premiumAvailableCredits}</td></tr>
+                <tr><th>Premium debt</th><td>{selectedUser.premiumNegativeCredits}</td></tr>
+                <tr><th>Offline mode</th><td>{selectedUser.offlineModeEnabled ? "Enabled" : "Disabled"}</td></tr>
+                <tr><th>Active lock</th><td>{selectedUser.activeLockSessionId || "No active lock"}</td></tr>
+                <tr><th>Last validated</th><td>{formatDate(selectedUser.lastValidatedAtUtc)}</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <form className="panel admin-form-panel" onSubmit={handleAccountUpdate}>
+            <p className="eyebrow">Update account state</p>
+            <div className="admin-form">
+              <label>
+                User type
+                <select
+                  value={accountForm.accessTier}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, accessTier: event.target.value }))}
+                >
+                  <option value="free">Free</option>
+                  <option value="pro_byo">Pro BYO</option>
+                  <option value="premium">Premium</option>
+                </select>
+              </label>
+              <label>
+                Pro credits
+                <input
+                  value={accountForm.proAvailableCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, proAvailableCredits: event.target.value }))}
+                />
+              </label>
+              <label>
+                Premium credits
+                <input
+                  value={accountForm.premiumAvailableCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, premiumAvailableCredits: event.target.value }))}
+                />
+              </label>
+              <label>
+                Premium debt
+                <input
+                  value={accountForm.premiumNegativeCredits}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, premiumNegativeCredits: event.target.value }))}
+                />
+              </label>
+              <label className="admin-toggle">
+                <input
+                  type="checkbox"
+                  checked={accountForm.offlineModeEnabled}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, offlineModeEnabled: event.target.checked }))}
+                />
+                <span>Offline mode enabled</span>
+              </label>
+              <label>
+                Reason
+                <input
+                  value={accountForm.reason}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Why this manual update is needed"
+                />
+              </label>
+            </div>
+            <button className="button button-primary" type="submit" disabled={busyAction === "account"}>
+              {busyAction === "account" ? "Saving..." : "Save Account Changes"}
+            </button>
+          </form>
+
+          <form className="panel admin-form-panel" onSubmit={handleCreditGrant}>
+            <p className="eyebrow">Grant credits</p>
+            <div className="admin-form">
+              <label>
+                Add Pro credits
+                <input
+                  value={creditForm.proCreditsToAdd}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, proCreditsToAdd: event.target.value }))}
+                />
+              </label>
+              <label>
+                Add Premium credits
+                <input
+                  value={creditForm.premiumCreditsToAdd}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, premiumCreditsToAdd: event.target.value }))}
+                />
+              </label>
+              <label>
+                Reason
+                <input
+                  value={creditForm.reason}
+                  onChange={(event) => setCreditForm((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Promo credit, support fix, manual correction"
+                />
+              </label>
+            </div>
+            <button className="button button-primary" type="submit" disabled={busyAction === "credits"}>
+              {busyAction === "credits" ? "Applying..." : "Grant Credits"}
+            </button>
+          </form>
+
+          <article className="panel admin-form-panel">
+            <p className="eyebrow">Recovery controls</p>
+            <div className="admin-form">
+              <label>
+                Lock clear reason
+                <input value={lockReason} onChange={(event) => setLockReason(event.target.value)} />
+              </label>
+            </div>
+            <div className="admin-panel-actions">
+              <button className="button button-secondary" type="button" onClick={handleClearLock} disabled={busyAction === "lock"}>
+                {busyAction === "lock" ? "Clearing..." : "Clear Active Lock"}
+              </button>
+              <button className="button button-secondary" type="button" onClick={handleWaiveDebt} disabled={busyAction === "waive"}>
+                {busyAction === "waive" ? "Waiving..." : "Waive Premium Debt"}
+              </button>
+            </div>
+          </article>
+
+          <article className="panel table-panel table-panel-full">
+            <p className="eyebrow">Recent ledger entries</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Ledger entry</th>
+                  <th>Session</th>
+                  <th>Credits</th>
+                  <th>Debt</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selectedUser.recentLedgerEntries || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="5">No recent ledger activity for this user.</td>
+                  </tr>
+                ) : (
+                  selectedUser.recentLedgerEntries.map((item) => (
+                    <tr key={item.ledgerEntryId}>
+                      <td>{item.ledgerEntryId}</td>
+                      <td>{item.sessionId}</td>
+                      <td>{item.chargedCredits}</td>
+                      <td>{item.addedPremiumDebt}</td>
+                      <td>{formatDate(item.createdAtUtc)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </article>
+        </>
+      )}
+
+      {error && <article className="panel table-panel table-panel-full"><p className="admin-error">{error}</p></article>}
+      {status && <article className="panel table-panel table-panel-full"><p className="admin-success">{status}</p></article>}
     </div>
   );
 }

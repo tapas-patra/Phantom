@@ -175,9 +175,11 @@ namespace SecureOverlay
                 _accountCacheRepository);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
+                _authSessionRepository,
                 HostedClientFactory.CreateUsageClient(_hostedRuntimeOptions));
             _telemetryService = new HostedTelemetryService(
                 telemetryRepository,
+                _authSessionRepository,
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();

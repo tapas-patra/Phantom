@@ -56,7 +56,7 @@ public sealed class PhoneVerificationService
                 || !string.Equals(existingPhoneAccount.Email, normalizedEmailHint, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(existingPhoneAccount.RegistrationDeviceFingerprintHash, normalizedFingerprint, StringComparison.Ordinal)))
         {
-            throw new BackendValidationException("This phone number has already been used for registration.");
+            throw new BackendValidationException("Phone verification could not be started with the provided details.");
         }
 
         var existingFingerprintAccount = _accounts.FindByRegistrationFingerprint(normalizedFingerprint);
@@ -65,7 +65,7 @@ public sealed class PhoneVerificationService
                 || !string.Equals(existingFingerprintAccount.PhoneNumberE164, phoneNumberE164, StringComparison.Ordinal)
                 || !string.Equals(existingFingerprintAccount.Email, normalizedEmailHint, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new BackendValidationException("This device has already claimed the launch trial.");
+            throw new BackendValidationException("Phone verification could not be started with the provided details.");
         }
 
         if (_phoneVerifications.CountRecentByPhone(phoneNumberE164, TimeSpan.FromHours(1)) >= 5

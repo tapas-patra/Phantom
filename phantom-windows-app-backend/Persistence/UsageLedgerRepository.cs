@@ -15,7 +15,12 @@ public sealed class UsageLedgerRepository
     public UsageLedgerRecord? FindBySessionId(string sessionId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        return FindBySessionId(sessionId, connection, transaction: null);
+    }
+
+    public UsageLedgerRecord? FindBySessionId(string sessionId, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = "SELECT * FROM usage_ledger WHERE session_id = @sessionId LIMIT 1;";
         command.Parameters.AddWithValue("sessionId", sessionId);
         using var reader = command.ExecuteReader();
@@ -25,7 +30,12 @@ public sealed class UsageLedgerRepository
     public void Save(UsageLedgerRecord record)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        Save(record, connection, transaction: null);
+    }
+
+    public void Save(UsageLedgerRecord record, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO usage_ledger (
     ledger_entry_id, user_id, session_id, started_at_utc, ended_at_utc,
@@ -44,6 +54,74 @@ INSERT INTO usage_ledger (
         command.Parameters.AddWithValue("addedDebt", record.AddedPremiumDebt);
         command.Parameters.AddWithValue("createdAt", record.CreatedAtUtc);
         command.ExecuteNonQuery();
+    }
+
+    public void SaveReconciliation(DesktopAccountRecord account, UsageLedgerRecord ledger)
+    {
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        var existing = FindBySessionId(ledger.SessionId, connection, transaction);
+        if (existing != null)
+        {
+            transaction.Commit();
+            return;
+        }
+
+        using (var accountCommand = CreateCommand(connection, transaction))
+        {
+            accountCommand.CommandText = @"
+UPDATE desktop_accounts
+SET email = @email,
+    email_verified = @emailVerified,
+    email_verified_at_utc = @emailVerifiedAtUtc,
+    access_tier = @accessTier,
+    password_hash = @passwordHash,
+    phone_number_e164 = @phoneNumberE164,
+    phone_verified = @phoneVerified,
+    phone_verified_at_utc = @phoneVerifiedAtUtc,
+    registration_device_fingerprint_hash = @registrationDeviceFingerprintHash,
+    pro_available_credits = @proCredits,
+    premium_available_credits = @premiumCredits,
+    premium_negative_credits = @premiumNegative,
+    lease_expires_at_utc = @leaseExpiresAt,
+    offline_mode_enabled = @offlineModeEnabled,
+    last_validated_at_utc = @lastValidatedAt,
+    updated_at_utc = @updatedAt
+WHERE user_id = @userId;";
+            accountCommand.Parameters.AddWithValue("userId", account.UserId);
+            accountCommand.Parameters.AddWithValue("email", account.Email);
+            accountCommand.Parameters.AddWithValue("emailVerified", account.EmailVerified);
+            accountCommand.Parameters.AddWithValue("emailVerifiedAtUtc", (object?)account.EmailVerifiedAtUtc ?? DBNull.Value);
+            accountCommand.Parameters.AddWithValue("accessTier", account.AccessTier);
+            accountCommand.Parameters.AddWithValue("passwordHash", account.PasswordHash);
+            accountCommand.Parameters.AddWithValue("phoneNumberE164", account.PhoneNumberE164);
+            accountCommand.Parameters.AddWithValue("phoneVerified", account.PhoneVerified);
+            accountCommand.Parameters.AddWithValue("phoneVerifiedAtUtc", (object?)account.PhoneVerifiedAtUtc ?? DBNull.Value);
+            accountCommand.Parameters.AddWithValue("registrationDeviceFingerprintHash", account.RegistrationDeviceFingerprintHash);
+            accountCommand.Parameters.AddWithValue("proCredits", account.ProAvailableCredits);
+            accountCommand.Parameters.AddWithValue("premiumCredits", account.PremiumAvailableCredits);
+            accountCommand.Parameters.AddWithValue("premiumNegative", account.PremiumNegativeCredits);
+            accountCommand.Parameters.AddWithValue("leaseExpiresAt", account.LeaseExpiresAtUtc);
+            accountCommand.Parameters.AddWithValue("offlineModeEnabled", account.OfflineModeEnabled);
+            accountCommand.Parameters.AddWithValue("lastValidatedAt", account.LastValidatedAtUtc);
+            accountCommand.Parameters.AddWithValue("updatedAt", account.UpdatedAtUtc);
+            var updated = accountCommand.ExecuteNonQuery();
+            if (updated != 1)
+            {
+                throw new InvalidOperationException("Usage reconciliation account update failed.");
+            }
+        }
+
+        Save(ledger, connection, transaction);
+        transaction.Commit();
+    }
+
+    private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
     }
 
     public List<UsageLedgerRecord> ListRecentForUser(string userId, int maxCount)

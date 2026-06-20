@@ -14,7 +14,8 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             return PostJson<AuthSessionDto, StartupAccountCheckResultDto>(
                 "/api/desktop/account/startup-check/session",
-                session);
+                session,
+                session.AccessToken);
         }
 
         public StartupAccountCheckResultDto GetStartupAccountCheck(AuthCallbackResultDto callbackResult)

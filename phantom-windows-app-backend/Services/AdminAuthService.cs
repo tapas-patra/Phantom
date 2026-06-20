@@ -54,7 +54,7 @@ public sealed class AdminAuthService
             if (!_admins.ExistsAny())
             {
                 throw new BackendValidationException(
-                    "No admin account is configured. Set PHANTOM_BOOTSTRAP_ADMIN_EMAIL and PHANTOM_BOOTSTRAP_ADMIN_PASSWORD, or use the local fallback admin@phantom.local with PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY, then restart the backend.");
+                    "Admin sign-in is not available until an administrator account is configured.");
             }
 
             throw new BackendValidationException("Invalid admin email or password.");
@@ -106,8 +106,8 @@ public sealed class AdminAuthService
 
     public AdminAuthSessionDto GetSession(string authorizationHeader)
     {
-        var (admin, session, accessToken) = RequireAdminSession(authorizationHeader);
-        return ToDto(admin, session, accessToken, string.Empty);
+        var (admin, session, _) = RequireAdminSession(authorizationHeader);
+        return ToDto(admin, session, string.Empty, string.Empty);
     }
 
     public AdminPasswordResetResultDto StartPasswordReset(string email, string publicBackendBaseUrl)
@@ -135,7 +135,10 @@ public sealed class AdminAuthService
 
         var token = _tokenService.GenerateOpaqueToken();
         var expiresAtUtc = DateTime.UtcNow.AddMinutes(_options.AdminPasswordResetTtlMinutes);
-        var resetUrl = $"{publicBackendBaseUrl.TrimEnd('/')}/admin/reset-password?token={Uri.EscapeDataString(token)}";
+        var resetBaseUrl = string.IsNullOrWhiteSpace(_options.PublicWebsiteBaseUrl)
+            ? publicBackendBaseUrl.TrimEnd('/')
+            : _options.PublicWebsiteBaseUrl.TrimEnd('/');
+        var resetUrl = $"{resetBaseUrl}/admin/reset-password?token={Uri.EscapeDataString(token)}";
         var delivery = _emailService.SendAdminPasswordReset(admin.Email, resetUrl, expiresAtUtc);
         _passwordResets.Save(new AdminPasswordResetTokenRecord
         {

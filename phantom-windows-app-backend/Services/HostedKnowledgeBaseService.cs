@@ -16,7 +16,10 @@ public sealed class HostedKnowledgeBaseService
     private const int MaxDocumentsPerKnowledgeBase = 20;
     private const int MaxUploadFilesPerRequest = 5;
     private const long MaxUploadBytesPerFile = 2 * 1024 * 1024;
+    private const long MaxUploadBytesPerRequest = 8 * 1024 * 1024;
+    private const int MaxCharactersPerDocument = 250_000;
     private const int MaxChunksPerKnowledgeBase = 1200;
+    private const int MaxChunksPerDocument = 250;
     private const int ChunkSize = 800;
     private const int ChunkOverlap = 120;
     private const int EmbeddingDimensions = 64;
@@ -114,6 +117,12 @@ public sealed class HostedKnowledgeBaseService
             throw new BackendValidationException($"Upload at most {MaxUploadFilesPerRequest} documents per request.");
         }
 
+        var totalUploadBytes = files.Sum(file => file.Length);
+        if (totalUploadBytes > MaxUploadBytesPerRequest)
+        {
+            throw new BackendValidationException("The combined upload exceeds the 8 MB per-request limit.");
+        }
+
         var now = DateTime.UtcNow;
         var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId) ?? new HostedKnowledgeBaseRecord
         {
@@ -150,8 +159,19 @@ public sealed class HostedKnowledgeBaseService
                 throw new BackendValidationException($"'{file.FileName}' did not produce readable text.");
             }
 
+            if (extraction.Text.Length > MaxCharactersPerDocument)
+            {
+                throw new BackendValidationException(
+                    $"'{file.FileName}' exceeds the {MaxCharactersPerDocument:N0} character extraction limit.");
+            }
+
             var documentId = $"kb-doc-{Guid.NewGuid():N}";
             var documentChunks = BuildChunks(knowledgeBase, account, documentId, file.FileName, extraction.Text, now);
+            if (documentChunks.Count > MaxChunksPerDocument)
+            {
+                throw new BackendValidationException(
+                    $"'{file.FileName}' exceeds the per-document chunk limit of {MaxChunksPerDocument}.");
+            }
             var document = new HostedKnowledgeBaseDocumentRecord
             {
                 DocumentId = documentId,

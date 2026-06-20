@@ -10,26 +10,41 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class LockService
 {
     private readonly BackendOptions _options;
+    private readonly PostgresBackendStore _store;
     private readonly LockRepository _locks;
 
-    public LockService(BackendOptions options, LockRepository locks)
+    public LockService(BackendOptions options, PostgresBackendStore store, LockRepository locks)
     {
         _options = options;
+        _store = store;
         _locks = locks;
     }
 
-    public DeviceLockAcquireResultDto Acquire(DeviceLockAcquireRequestDto request)
+    public DeviceLockAcquireResultDto Acquire(DeviceLockAcquireRequestDto request, DesktopSessionRecord session)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.DeviceId) || string.IsNullOrWhiteSpace(request.SessionId))
         {
             throw new BackendValidationException("UserId, DeviceId, and SessionId are required.");
         }
 
-        var existing = _locks.FindActiveByUser(request.UserId);
+        if (!string.Equals(request.UserId, session.UserId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Lock request user does not match the authenticated session.");
+        }
+
+        if (!string.Equals(request.DeviceId, session.DeviceInstallId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Lock request device does not match the authenticated session.");
+        }
+
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var existing = _locks.FindActiveByUser(request.UserId, connection, transaction, forUpdate: true);
         if (existing != null && existing.ExpiresAtUtc > DateTime.UtcNow
             && (!string.Equals(existing.DeviceId, request.DeviceId, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(existing.SessionId, request.SessionId, StringComparison.OrdinalIgnoreCase)))
         {
+            transaction.Commit();
             return new DeviceLockAcquireResultDto
             {
                 Acquired = false,
@@ -50,7 +65,8 @@ public sealed class LockService
             LastHeartbeatAtUtc = DateTime.UtcNow,
             AppVersion = request.AppVersion
         };
-        _locks.Save(record);
+        _locks.Save(record, connection, transaction);
+        transaction.Commit();
 
         return new DeviceLockAcquireResultDto
         {
@@ -62,10 +78,22 @@ public sealed class LockService
         };
     }
 
-    public object Heartbeat(DeviceLockHeartbeatRequestDto request)
+    public object Heartbeat(DeviceLockHeartbeatRequestDto request, DesktopSessionRecord session)
     {
-        var record = _locks.FindBySessionId(request.SessionId)
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var record = _locks.FindBySessionId(request.SessionId, connection, transaction, forUpdate: true)
             ?? throw new BackendValidationException("Active lock not found.");
+
+        if (!string.Equals(record.UserId, session.UserId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Lock request user does not match the authenticated session.");
+        }
+
+        if (!string.Equals(request.DeviceId, session.DeviceInstallId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Lock request device does not match the authenticated session.");
+        }
 
         if (!string.Equals(record.LockToken, request.LockToken, StringComparison.Ordinal)
             || !string.Equals(record.DeviceId, request.DeviceId, StringComparison.OrdinalIgnoreCase))
@@ -75,7 +103,8 @@ public sealed class LockService
 
         record.LastHeartbeatAtUtc = DateTime.UtcNow;
         record.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(_options.LockTtlMinutes);
-        _locks.Save(record);
+        _locks.Save(record, connection, transaction);
+        transaction.Commit();
 
         return new
         {
@@ -84,17 +113,25 @@ public sealed class LockService
         };
     }
 
-    public object Release(DeviceLockReleaseRequestDto request)
+    public object Release(DeviceLockReleaseRequestDto request, DesktopSessionRecord session)
     {
-        var record = _locks.FindBySessionId(request.SessionId)
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var record = _locks.FindBySessionId(request.SessionId, connection, transaction, forUpdate: true)
             ?? throw new BackendValidationException("Active lock not found.");
+
+        if (!string.Equals(record.UserId, session.UserId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Lock request user does not match the authenticated session.");
+        }
 
         if (!string.Equals(record.LockToken, request.LockToken, StringComparison.Ordinal))
         {
             throw new BackendValidationException("Lock token mismatch.");
         }
 
-        _locks.Delete(request.SessionId);
+        _locks.Delete(request.SessionId, connection, transaction);
+        transaction.Commit();
         return new
         {
             released = true,

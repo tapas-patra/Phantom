@@ -6,15 +6,24 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class AdminService
 {
+    private readonly PostgresBackendStore _store;
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
     private readonly UsageLedgerRepository _usageLedger;
+    private readonly PaymentOrderRepository _payments;
 
-    public AdminService(AccountRepository accounts, LockRepository locks, UsageLedgerRepository usageLedger)
+    public AdminService(
+        PostgresBackendStore store,
+        AccountRepository accounts,
+        LockRepository locks,
+        UsageLedgerRepository usageLedger,
+        PaymentOrderRepository payments)
     {
+        _store = store;
         _accounts = accounts;
         _locks = locks;
         _usageLedger = usageLedger;
+        _payments = payments;
     }
 
     public AdminAccountSnapshotDto GetAccountSnapshot(string userId)
@@ -28,7 +37,10 @@ public sealed class AdminService
         {
             UserId = account.UserId,
             Email = account.Email,
+            EmailVerified = account.EmailVerified,
             PhoneVerified = account.PhoneVerified,
+            AccessTier = account.AccessTier,
+            PlanLabel = AccessModeResolver.GetPlanLabel(account),
             ProAvailableCredits = account.ProAvailableCredits,
             PremiumAvailableCredits = account.PremiumAvailableCredits,
             PremiumNegativeCredits = account.PremiumNegativeCredits,
@@ -57,13 +69,113 @@ public sealed class AdminService
             {
                 account.UserId,
                 account.Email,
+                account.EmailVerified,
                 account.PhoneVerified,
+                account.AccessTier,
+                planLabel = AccessModeResolver.GetPlanLabel(account),
                 account.ProAvailableCredits,
                 account.PremiumAvailableCredits,
                 account.PremiumNegativeCredits,
                 account.LeaseExpiresAtUtc,
                 account.OfflineModeEnabled,
                 account.LastValidatedAtUtc
+            })
+            .ToList();
+    }
+
+    public AdminAccountSnapshotDto UpdateAccount(AdminAccountUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.UserId))
+        {
+            throw new BackendValidationException("UserId is required.");
+        }
+
+        var normalizedTier = NormalizeAccessTier(request.AccessTier);
+        if (request.ProAvailableCredits < 0m)
+        {
+            throw new BackendValidationException("Pro credits cannot be negative.");
+        }
+
+        if (request.PremiumAvailableCredits < 0m)
+        {
+            throw new BackendValidationException("Premium credits cannot be negative.");
+        }
+
+        if (request.PremiumNegativeCredits < 0m)
+        {
+            throw new BackendValidationException("Premium negative credits cannot be negative.");
+        }
+
+        var account = _accounts.FindByUserId(request.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+
+        account.AccessTier = normalizedTier;
+        account.ProAvailableCredits = request.ProAvailableCredits;
+        account.PremiumAvailableCredits = request.PremiumAvailableCredits;
+        account.PremiumNegativeCredits = request.PremiumNegativeCredits;
+        account.OfflineModeEnabled = request.OfflineModeEnabled;
+        account.LastValidatedAtUtc = DateTime.UtcNow;
+        account.UpdatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(account);
+
+        return GetAccountSnapshot(account.UserId);
+    }
+
+    public object GetOverview()
+    {
+        using var connection = _store.OpenConnection();
+        return new
+        {
+            accountCount = ExecuteCount(connection, "SELECT COUNT(*) FROM desktop_accounts;"),
+            activeSessionCount = ExecuteCount(connection, "SELECT COUNT(*) FROM auth_sessions WHERE is_authenticated = TRUE AND revoked_at_utc IS NULL;"),
+            activeLockCount = ExecuteCount(connection, "SELECT COUNT(*) FROM interview_locks WHERE expires_at_utc > NOW();"),
+            ledgerEntryCount = ExecuteCount(connection, "SELECT COUNT(*) FROM usage_ledger;"),
+            managedCredentialCount = ExecuteCount(connection, "SELECT COUNT(*) FROM managed_provider_credentials;"),
+            paymentOrderCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders;"),
+            creditedPaymentCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders WHERE credited_at_utc IS NOT NULL;"),
+            paymentWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events;"),
+            processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;")
+        };
+    }
+
+    public IReadOnlyList<object> GetPaymentOrders(int maxCount = 100)
+    {
+        return _payments.ListRecentOrders(maxCount)
+            .Select(order => (object)new
+            {
+                order.CheckoutId,
+                order.UserId,
+                order.Email,
+                order.Target,
+                order.PackCode,
+                order.DisplayLabel,
+                order.Currency,
+                order.AmountMinor,
+                amountInr = order.AmountMinor / 100m,
+                order.Credits,
+                order.PremiumDebtCreditsCovered,
+                order.RazorpayOrderId,
+                order.RazorpayPaymentId,
+                status = order.CreditedAtUtc.HasValue ? "credited" : order.Status,
+                order.ClientConfirmed,
+                order.CreditedAtUtc,
+                order.CreatedAtUtc,
+                order.UpdatedAtUtc
+            })
+            .ToList();
+    }
+
+    public IReadOnlyList<object> GetPaymentWebhookEvents(int maxCount = 100)
+    {
+        return _payments.ListRecentWebhookEvents(maxCount)
+            .Select(eventRecord => (object)new
+            {
+                eventRecord.EventRecordId,
+                eventRecord.ExternalEventId,
+                eventRecord.EventType,
+                eventRecord.PayloadJson,
+                eventRecord.CreatedAtUtc,
+                eventRecord.ProcessedAtUtc
             })
             .ToList();
     }
@@ -130,5 +242,32 @@ public sealed class AdminService
             account.ProAvailableCredits,
             account.PremiumAvailableCredits
         };
+    }
+
+    private static int ExecuteCount(Npgsql.NpgsqlConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
+    private static string NormalizeAccessTier(string accessTier)
+    {
+        if (string.Equals(accessTier, AccessModeResolver.Free, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.Free;
+        }
+
+        if (string.Equals(accessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.ProByo;
+        }
+
+        if (string.Equals(accessTier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase))
+        {
+            return AccessModeResolver.Premium;
+        }
+
+        throw new BackendValidationException("Unsupported access tier.");
     }
 }

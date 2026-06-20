@@ -14,13 +14,16 @@ namespace SecureOverlay.Infrastructure.Sync
         private const int MaxAttemptsBeforeDeadLetter = 3;
 
         private readonly IUsageReconciliationRepository _repository;
+        private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedUsageClient _hostedUsageClient;
 
         public LocalUsageReconciliationService(
             IUsageReconciliationRepository repository,
+            IAuthSessionRepository authSessionRepository,
             IHostedUsageClient hostedUsageClient)
         {
             _repository = repository;
+            _authSessionRepository = authSessionRepository;
             _hostedUsageClient = hostedUsageClient;
         }
 
@@ -60,6 +63,14 @@ namespace SecureOverlay.Infrastructure.Sync
 
                 try
                 {
+                    var session = _authSessionRepository.Load();
+                    if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+                    {
+                        MarkFailed(record, "No authenticated desktop session is available for usage reconciliation.");
+                        result.FailedCount += 1;
+                        continue;
+                    }
+
                     record.AttemptCount += 1;
                     record.LastAttemptAtUtc = DateTime.UtcNow;
 
@@ -72,7 +83,7 @@ namespace SecureOverlay.Infrastructure.Sync
                         ChargedCredits = record.Payload.ChargedCredits,
                         ChargedBlocks = record.Payload.ChargedBlocks,
                         PremiumDebtAdded = record.Payload.PremiumDebtAdded
-                    });
+                    }, session.AccessToken);
 
                     if (response.Accepted)
                     {

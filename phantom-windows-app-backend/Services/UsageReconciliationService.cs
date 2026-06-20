@@ -9,25 +9,39 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class UsageReconciliationService
 {
     private const decimal ProtectedContinuationCap = 1.0m;
+    private readonly PostgresBackendStore _store;
     private readonly UsageLedgerRepository _usageLedger;
-    private readonly AccountStateService _accounts;
+    private readonly AccountRepository _accounts;
 
-    public UsageReconciliationService(UsageLedgerRepository usageLedger, AccountStateService accounts)
+    public UsageReconciliationService(
+        PostgresBackendStore store,
+        UsageLedgerRepository usageLedger,
+        AccountRepository accounts)
     {
+        _store = store;
         _usageLedger = usageLedger;
         _accounts = accounts;
     }
 
-    public UsageReconciliationResultDto Reconcile(UsageReconciliationRequestDto request)
+    public UsageReconciliationResultDto Reconcile(UsageReconciliationRequestDto request, string authenticatedUserId)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.SessionId))
         {
             throw new BackendValidationException("UserId and SessionId are required.");
         }
 
-        var existing = _usageLedger.FindBySessionId(request.SessionId);
+        if (!string.Equals(request.UserId, authenticatedUserId, StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Usage reconciliation user does not match the authenticated session.");
+        }
+
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        var existing = _usageLedger.FindBySessionId(request.SessionId, connection, transaction);
         if (existing != null)
         {
+            transaction.Commit();
             return new UsageReconciliationResultDto
             {
                 Accepted = true,
@@ -37,7 +51,8 @@ public sealed class UsageReconciliationService
             };
         }
 
-        var account = _accounts.RequireAccount(request.UserId);
+        var account = _accounts.FindByUserId(request.UserId, connection, transaction, forUpdate: true)
+            ?? throw new BackendValidationException("Account not found.");
         var isFreeTier = AccessModeResolver.IsFree(account);
         var existingDebt = Math.Max(0m, account.PremiumNegativeCredits);
         var remainingDebtBudget = Math.Max(0m, ProtectedContinuationCap - existingDebt);
@@ -84,7 +99,9 @@ public sealed class UsageReconciliationService
 
         account.PremiumNegativeCredits += addedDebt;
         account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
-        _accounts.Save(account);
+        account.LastValidatedAtUtc = DateTime.UtcNow;
+        account.UpdatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(account, connection, transaction);
 
         var ledger = new UsageLedgerRecord
         {
@@ -98,7 +115,8 @@ public sealed class UsageReconciliationService
             AddedPremiumDebt = addedDebt,
             CreatedAtUtc = DateTime.UtcNow
         };
-        _usageLedger.Save(ledger);
+        _usageLedger.Save(ledger, connection, transaction);
+        transaction.Commit();
 
         return new UsageReconciliationResultDto
         {

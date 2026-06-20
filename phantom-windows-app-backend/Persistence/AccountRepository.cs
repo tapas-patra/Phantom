@@ -15,8 +15,17 @@ public sealed class AccountRepository
     public DesktopAccountRecord? FindByUserId(string userId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM desktop_accounts WHERE user_id = @userId LIMIT 1;";
+        return FindByUserId(userId, connection, transaction: null, forUpdate: false);
+    }
+
+    public DesktopAccountRecord? FindByUserId(
+        string userId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM desktop_accounts WHERE user_id = @userId LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("userId", userId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -70,7 +79,12 @@ public sealed class AccountRepository
     public void Save(DesktopAccountRecord account)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        Save(account, connection, transaction: null);
+    }
+
+    public void Save(DesktopAccountRecord account, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO desktop_accounts (
     user_id, email, email_verified, email_verified_at_utc, access_tier, password_hash, phone_number_e164, phone_verified, phone_verified_at_utc, registration_device_fingerprint_hash, pro_available_credits, premium_available_credits,
@@ -99,6 +113,13 @@ ON CONFLICT(user_id) DO UPDATE SET
     updated_at_utc = EXCLUDED.updated_at_utc;";
         Bind(command, account);
         command.ExecuteNonQuery();
+    }
+
+    private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
     }
 
     private static void Bind(NpgsqlCommand command, DesktopAccountRecord account)

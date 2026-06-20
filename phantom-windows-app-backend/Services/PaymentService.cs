@@ -16,6 +16,7 @@ public sealed class PaymentService
     };
 
     private readonly BackendOptions _options;
+    private readonly PostgresBackendStore _store;
     private readonly AccountRepository _accounts;
     private readonly PaymentOrderRepository _paymentOrders;
     private readonly UsageLedgerRepository _usageLedger;
@@ -23,12 +24,14 @@ public sealed class PaymentService
 
     public PaymentService(
         BackendOptions options,
+        PostgresBackendStore store,
         AccountRepository accounts,
         PaymentOrderRepository paymentOrders,
         UsageLedgerRepository usageLedger,
         PaymentCatalog catalog)
     {
         _options = options;
+        _store = store;
         _accounts = accounts;
         _paymentOrders = paymentOrders;
         _usageLedger = usageLedger;
@@ -193,9 +196,12 @@ public sealed class PaymentService
             ? idElement.GetString() ?? $"webhook-{Guid.NewGuid():N}"
             : $"webhook-{Guid.NewGuid():N}";
 
-        var existingEvent = _paymentOrders.FindWebhookEvent(externalEventId);
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var existingEvent = _paymentOrders.FindWebhookEvent(externalEventId, connection, transaction, forUpdate: true);
         if (existingEvent != null && existingEvent.ProcessedAtUtc.HasValue)
         {
+            transaction.Commit();
             return new { processed = true, duplicate = true, eventType };
         }
 
@@ -211,16 +217,17 @@ public sealed class PaymentService
         if (string.Equals(eventType, "payment.captured", StringComparison.OrdinalIgnoreCase)
             || string.Equals(eventType, "order.paid", StringComparison.OrdinalIgnoreCase))
         {
-            ApplyOrderPaidEvent(root);
+            ApplyOrderPaidEvent(root, connection, transaction);
         }
 
         eventRecord.ProcessedAtUtc = DateTime.UtcNow;
-        _paymentOrders.SaveWebhookEvent(eventRecord);
+        _paymentOrders.SaveWebhookEvent(eventRecord, connection, transaction);
+        transaction.Commit();
         await Task.CompletedTask;
         return new { processed = true, duplicate = false, eventType };
     }
 
-    private void ApplyOrderPaidEvent(JsonElement root)
+    private void ApplyOrderPaidEvent(JsonElement root, Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction)
     {
         var paymentEntity = root.GetProperty("payload").GetProperty("payment").GetProperty("entity");
         var razorpayOrderId = paymentEntity.GetProperty("order_id").GetString() ?? string.Empty;
@@ -230,28 +237,36 @@ public sealed class PaymentService
             return;
         }
 
-        var order = _paymentOrders.FindByRazorpayOrderId(razorpayOrderId);
+        var order = _paymentOrders.FindByRazorpayOrderId(razorpayOrderId, connection, transaction, forUpdate: true);
         if (order == null || order.CreditedAtUtc.HasValue)
         {
             return;
         }
 
-        var account = _accounts.FindByUserId(order.UserId);
+        var account = _accounts.FindByUserId(order.UserId, connection, transaction, forUpdate: true);
         if (account == null)
         {
             return;
         }
 
+        var existingLedger = _usageLedger.FindBySessionId($"payment:{order.CheckoutId}", connection, transaction);
         order.RazorpayPaymentId = string.IsNullOrWhiteSpace(order.RazorpayPaymentId) ? razorpayPaymentId : order.RazorpayPaymentId;
-        ApplyWalletMutation(account, order);
+        if (existingLedger == null)
+        {
+            ApplyWalletMutation(account, order, connection, transaction);
+            _accounts.Save(account, connection, transaction);
+        }
         order.Status = "credited";
         order.CreditedAtUtc = DateTime.UtcNow;
         order.UpdatedAtUtc = DateTime.UtcNow;
-        _paymentOrders.Save(order);
-        _accounts.Save(account);
+        _paymentOrders.Save(order, connection, transaction);
     }
 
-    private void ApplyWalletMutation(DesktopAccountRecord account, PaymentOrderRecord order)
+    private void ApplyWalletMutation(
+        DesktopAccountRecord account,
+        PaymentOrderRecord order,
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction)
     {
         var ledger = new UsageLedgerRecord
         {
@@ -294,7 +309,7 @@ public sealed class PaymentService
         account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
         account.LastValidatedAtUtc = DateTime.UtcNow;
         account.UpdatedAtUtc = DateTime.UtcNow;
-        _usageLedger.Save(ledger);
+        _usageLedger.Save(ledger, connection, transaction);
     }
 
     private async Task<string> CreateRazorpayOrderAsync(string receipt, int amountMinor, CancellationToken cancellationToken)

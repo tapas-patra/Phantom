@@ -5,6 +5,7 @@ namespace Phantom.WindowsApp.Backend.Infrastructure;
 public sealed class BackendOptions
 {
     public string DatabaseUrl { get; init; } = string.Empty;
+    public string DashboardProjectionDatabaseUrl { get; init; } = string.Empty;
     public int DefaultLeaseHours { get; init; } = 24;
     public int LockTtlMinutes { get; init; } = 5;
     public decimal DefaultProCredits { get; init; } = 1.0m;
@@ -18,6 +19,8 @@ public sealed class BackendOptions
     public int AdminSessionTtlHours { get; init; } = 8;
     public int AdminPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
+    public string InternalApiKey { get; init; } = string.Empty;
+    public string SharedCookieDomain { get; init; } = string.Empty;
     public string BootstrapAdminEmail { get; init; } = string.Empty;
     public string BootstrapAdminPassword { get; init; } = string.Empty;
     public string BootstrapAdminDisplayName { get; init; } = string.Empty;
@@ -43,8 +46,11 @@ public sealed class BackendOptions
     public string OtpSendUrlTemplate { get; init; } = string.Empty;
     public string OtpVerifyUrlTemplate { get; init; } = string.Empty;
     public string MockOtpCode { get; init; } = "111111";
+    public bool AllowImplicitLocalAdminBootstrap { get; init; }
+    public bool AllowSeedTestUsers { get; init; }
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
+    public bool HasInternalApiKey => !string.IsNullOrWhiteSpace(InternalApiKey);
     public bool IsSmtpConfigured =>
         !string.IsNullOrWhiteSpace(SmtpHost)
         && !string.IsNullOrWhiteSpace(SmtpFromEmail);
@@ -57,6 +63,12 @@ public sealed class BackendOptions
         && !string.IsNullOrWhiteSpace(RazorpayKeySecret);
     public bool HasRazorpayWebhookSecret => !string.IsNullOrWhiteSpace(RazorpayWebhookSecret);
     public bool HasOtpApiKey => !string.IsNullOrWhiteSpace(OtpApiKey);
+    public bool HasDashboardProjectionReplica =>
+        !string.IsNullOrWhiteSpace(DashboardProjectionDatabaseUrl)
+        && !string.Equals(
+            DashboardProjectionDatabaseUrl.Trim(),
+            DatabaseUrl.Trim(),
+            StringComparison.OrdinalIgnoreCase);
 
     public static BackendOptions FromConfiguration(IConfiguration configuration)
     {
@@ -66,6 +78,10 @@ public sealed class BackendOptions
             DatabaseUrl = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_DATABASE_URL",
                 section["DatabaseUrl"],
+                string.Empty),
+            DashboardProjectionDatabaseUrl = ReadString(
+                "PHANTOM_DASHBOARD_BACKEND_DATABASE_URL",
+                section["DashboardProjectionDatabaseUrl"],
                 string.Empty),
             DefaultLeaseHours = ParseInt(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_LEASE_HOURS"),
@@ -118,6 +134,14 @@ public sealed class BackendOptions
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",
                 section["AdminApiKey"],
+                string.Empty),
+            InternalApiKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY",
+                section["InternalApiKey"],
+                string.Empty),
+            SharedCookieDomain = ReadString(
+                "PHANTOM_SHARED_COOKIE_DOMAIN",
+                section["SharedCookieDomain"],
                 string.Empty),
             BootstrapAdminEmail = ReadString(
                 "PHANTOM_BOOTSTRAP_ADMIN_EMAIL",
@@ -218,7 +242,15 @@ public sealed class BackendOptions
             MockOtpCode = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE",
                 section["MockOtpCode"],
-                "111111")
+                "111111"),
+            AllowImplicitLocalAdminBootstrap = ParseBool(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP"),
+                section["AllowImplicitLocalAdminBootstrap"],
+                false),
+            AllowSeedTestUsers = ParseBool(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING"),
+                section["AllowSeedTestUsers"],
+                false)
         };
     }
 

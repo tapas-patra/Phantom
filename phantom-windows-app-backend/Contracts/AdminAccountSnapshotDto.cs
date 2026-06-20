@@ -4,7 +4,10 @@ public sealed class AdminAccountSnapshotDto
 {
     public string UserId { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
+    public bool EmailVerified { get; set; }
     public bool PhoneVerified { get; set; }
+    public string AccessTier { get; set; } = "free";
+    public string PlanLabel { get; set; } = "Free";
     public decimal ProAvailableCredits { get; set; }
     public decimal PremiumAvailableCredits { get; set; }
     public decimal PremiumNegativeCredits { get; set; }

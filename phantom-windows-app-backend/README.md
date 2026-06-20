@@ -34,6 +34,7 @@ You can also apply [db/seed-test-users.sql](/Users/tapaskumarpatra/TKP-Other-per
 
 Default endpoints:
 - `GET /health`
+- `GET /health/details`
 - `GET /health/ready`
 - `POST /api/desktop/auth/register`
 - `POST /api/desktop/auth/login`
@@ -101,6 +102,8 @@ Recommended env vars:
 - `PHANTOM_BOOTSTRAP_ADMIN_EMAIL`
 - `PHANTOM_BOOTSTRAP_ADMIN_PASSWORD`
 - `PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME`
+- `PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP`
+- `PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING`
 
 Development-only mock OTP:
 ```bash
@@ -113,6 +116,12 @@ PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE=111111
 
 Browser admin auth uses the `/api/admin/auth/*` session endpoints.
 Backend-to-backend calls may still use the `X-Phantom-Admin-Key` header.
+
+Production notes:
+- `PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP` defaults to `false` and should stay `false` outside local recovery scenarios.
+- `PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING` defaults to `false`; test-user seeding now requires explicit opt-in.
+- `GET /health/details` exposes worker status for telemetry buffering, projection replication, and maintenance cleanup.
+- `GET /health/ready` now returns `503` when the database is down or worker degradation crosses readiness thresholds.
 
 Gmail OAuth bootstrap endpoints:
 - `GET /api/admin/integrations/gmail/oauth/status`

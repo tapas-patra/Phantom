@@ -15,12 +15,25 @@ public sealed class LockRepository
     public DesktopLockRecord? FindActiveByUser(string userId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        return FindActiveByUser(userId, connection, transaction: null, forUpdate: false);
+    }
+
+    public DesktopLockRecord? FindActiveByUser(
+        string userId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 SELECT * FROM interview_locks
 WHERE user_id = @userId
 ORDER BY expires_at_utc DESC
-LIMIT 1;";
+LIMIT 1";
+        if (forUpdate)
+        {
+            command.CommandText += " FOR UPDATE";
+        }
         command.Parameters.AddWithValue("userId", userId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -29,8 +42,17 @@ LIMIT 1;";
     public DesktopLockRecord? FindBySessionId(string sessionId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM interview_locks WHERE session_id = @sessionId LIMIT 1;";
+        return FindBySessionId(sessionId, connection, transaction: null, forUpdate: false);
+    }
+
+    public DesktopLockRecord? FindBySessionId(
+        string sessionId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM interview_locks WHERE session_id = @sessionId LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("sessionId", sessionId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -39,15 +61,20 @@ LIMIT 1;";
     public void Save(DesktopLockRecord record)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        Save(record, connection, transaction: null);
+    }
+
+    public void Save(DesktopLockRecord record, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO interview_locks (
     session_id, user_id, device_id, lock_token, expires_at_utc, last_heartbeat_at_utc, app_version
 ) VALUES (
     @sessionId, @userId, @deviceId, @lockToken, @expiresAt, @lastHeartbeatAt, @appVersion
 )
-ON CONFLICT(session_id) DO UPDATE SET
-    user_id = EXCLUDED.user_id,
+ON CONFLICT(user_id) DO UPDATE SET
+    session_id = EXCLUDED.session_id,
     device_id = EXCLUDED.device_id,
     lock_token = EXCLUDED.lock_token,
     expires_at_utc = EXCLUDED.expires_at_utc,
@@ -63,10 +90,22 @@ ON CONFLICT(session_id) DO UPDATE SET
         command.ExecuteNonQuery();
     }
 
+    private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
+    }
+
     public void Delete(string sessionId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
+        Delete(sessionId, connection, transaction: null);
+    }
+
+    public void Delete(string sessionId, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
         command.CommandText = "DELETE FROM interview_locks WHERE session_id = @sessionId;";
         command.Parameters.AddWithValue("sessionId", sessionId);
         command.ExecuteNonQuery();

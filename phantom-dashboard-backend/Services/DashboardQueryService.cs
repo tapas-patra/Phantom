@@ -1,4 +1,3 @@
-using Npgsql;
 using Phantom.Dashboard.Backend.Persistence;
 
 namespace Phantom.Dashboard.Backend.Services;
@@ -25,15 +24,18 @@ public sealed class DashboardQueryService
 SELECT
     user_id,
     email,
-    access_tier,
+    effective_access_tier,
+    plan_label,
     phone_verified,
     pro_available_credits,
     premium_available_credits,
     premium_negative_credits,
     lease_expires_at_utc,
     offline_mode_enabled,
-    last_validated_at_utc
-FROM desktop_accounts
+    last_validated_at_utc,
+    active_device_count,
+    last_activity_at_utc
+FROM dashboard_account_summaries
 WHERE
     (@userId <> '' AND user_id = @userId)
     OR (@email <> '' AND lower(email) = lower(@email))
@@ -47,34 +49,23 @@ LIMIT 1;";
             return null;
         }
 
-        var resolvedUserId = reader.GetString(reader.GetOrdinal("user_id"));
-        var resolvedEmail = reader.GetString(reader.GetOrdinal("email"));
-        var activeDeviceCount = CountDistinctDevices(resolvedUserId);
-        var lastActivityAtUtc = GetLastActivity(resolvedUserId);
-        var proCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits"));
-        var premiumCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits"));
-        var accessTier = reader.GetString(reader.GetOrdinal("access_tier"));
-        var effectiveTier = ResolveEffectiveTier(accessTier, proCredits, premiumCredits);
-
         return new
         {
-            userId = resolvedUserId,
-            email = resolvedEmail,
-            effectiveAccessTier = effectiveTier,
-            planLabel = effectiveTier.Equals("premium", StringComparison.OrdinalIgnoreCase)
-                ? "Premium"
-                : effectiveTier.Equals("pro_byo", StringComparison.OrdinalIgnoreCase)
-                    ? "Pro BYO"
-                    : "Free",
+            userId = reader.GetString(reader.GetOrdinal("user_id")),
+            email = reader.GetString(reader.GetOrdinal("email")),
+            effectiveAccessTier = reader.GetString(reader.GetOrdinal("effective_access_tier")),
+            planLabel = reader.GetString(reader.GetOrdinal("plan_label")),
             phoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
-            proAvailableCredits = proCredits,
-            premiumAvailableCredits = premiumCredits,
+            proAvailableCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits")),
+            premiumAvailableCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits")),
             premiumNegativeCredits = reader.GetDecimal(reader.GetOrdinal("premium_negative_credits")),
             leaseExpiresAtUtc = reader.GetDateTime(reader.GetOrdinal("lease_expires_at_utc")),
             offlineModeEnabled = reader.GetBoolean(reader.GetOrdinal("offline_mode_enabled")),
             lastValidatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_validated_at_utc")),
-            activeDeviceCount,
-            lastActivityAtUtc
+            activeDeviceCount = reader.GetInt32(reader.GetOrdinal("active_device_count")),
+            lastActivityAtUtc = reader.IsDBNull(reader.GetOrdinal("last_activity_at_utc"))
+                ? (DateTime?)null
+                : reader.GetDateTime(reader.GetOrdinal("last_activity_at_utc"))
         };
     }
 
@@ -84,9 +75,8 @@ LIMIT 1;";
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, added_premium_debt, created_at_utc
-FROM usage_ledger
+FROM dashboard_wallet_history
 WHERE user_id = @userId
-  AND session_id NOT LIKE 'payment:%'
 ORDER BY created_at_utc DESC
 LIMIT 50;";
         command.Parameters.AddWithValue("userId", userId);
@@ -114,7 +104,7 @@ LIMIT 50;";
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT checkout_id, target, pack_code, display_label, amount_minor, credits, premium_debt_credits_covered, status, client_confirmed, credited_at_utc, created_at_utc
-FROM payment_orders
+FROM dashboard_wallet_purchases
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
 LIMIT 50;";
@@ -133,9 +123,7 @@ LIMIT 50;";
                 amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
                 credits = reader.GetDecimal(reader.GetOrdinal("credits")),
                 premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
-                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
-                    ? reader.GetString(reader.GetOrdinal("status"))
-                    : "credited",
+                status = reader.GetString(reader.GetOrdinal("status")),
                 clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
                 creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
                     ? (DateTime?)null
@@ -152,16 +140,15 @@ LIMIT 50;";
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
-SELECT DISTINCT ON (device_install_id, device_fingerprint_hash)
+SELECT
     device_install_id,
     device_fingerprint_hash,
-    authenticated_at_utc,
+    last_authenticated_at_utc,
     auth_method,
-    is_authenticated,
-    revoked_at_utc
-FROM auth_sessions
+    is_active
+FROM dashboard_device_inventory
 WHERE user_id = @userId
-ORDER BY device_install_id, device_fingerprint_hash, authenticated_at_utc DESC;";
+ORDER BY last_authenticated_at_utc DESC;";
         command.Parameters.AddWithValue("userId", userId);
         using var reader = command.ExecuteReader();
         var items = new List<object>();
@@ -171,10 +158,9 @@ ORDER BY device_install_id, device_fingerprint_hash, authenticated_at_utc DESC;"
             {
                 deviceInstallId = reader.GetString(reader.GetOrdinal("device_install_id")),
                 deviceFingerprintHash = reader.GetString(reader.GetOrdinal("device_fingerprint_hash")),
-                lastAuthenticatedAtUtc = reader.GetDateTime(reader.GetOrdinal("authenticated_at_utc")),
+                lastAuthenticatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_authenticated_at_utc")),
                 authMethod = reader.GetString(reader.GetOrdinal("auth_method")),
-                isActive = reader.GetBoolean(reader.GetOrdinal("is_authenticated"))
-                    && reader.IsDBNull(reader.GetOrdinal("revoked_at_utc"))
+                isActive = reader.GetBoolean(reader.GetOrdinal("is_active"))
             });
         }
 
@@ -187,7 +173,7 @@ ORDER BY device_install_id, device_fingerprint_hash, authenticated_at_utc DESC;"
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT phone_verified, pro_available_credits, premium_available_credits
-FROM desktop_accounts
+FROM dashboard_account_summaries
 WHERE user_id = @userId
 LIMIT 1;";
         command.Parameters.AddWithValue("userId", userId);
@@ -213,209 +199,27 @@ LIMIT 1;";
     public object GetSupportPreview(string userId)
     {
         using var connection = _store.OpenConnection();
-        var lockSessionId = "";
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = @"
-SELECT session_id
-FROM interview_locks
-WHERE user_id = @userId
-ORDER BY expires_at_utc DESC
-LIMIT 1;";
-            command.Parameters.AddWithValue("userId", userId);
-            lockSessionId = command.ExecuteScalar() as string ?? string.Empty;
-        }
-
-        decimal lastCharge = 0m;
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = @"
-SELECT charged_credits
-FROM usage_ledger
-WHERE user_id = @userId
-  AND session_id NOT LIKE 'payment:%'
-ORDER BY created_at_utc DESC
-LIMIT 1;";
-            command.Parameters.AddWithValue("userId", userId);
-            var result = command.ExecuteScalar();
-            if (result != null && result != DBNull.Value)
-            {
-                lastCharge = Convert.ToDecimal(result);
-            }
-        }
-
-        double leaseHoursRemaining = 0;
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = @"
-SELECT lease_expires_at_utc
-FROM desktop_accounts
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT open_lock_session_id, last_usage_charge_credits, lease_expires_at_utc
+FROM dashboard_support_previews
 WHERE user_id = @userId
 LIMIT 1;";
-            command.Parameters.AddWithValue("userId", userId);
-            var result = command.ExecuteScalar();
-            if (result is DateTime leaseExpiresAtUtc)
-            {
-                leaseHoursRemaining = Math.Max(0, (leaseExpiresAtUtc - DateTime.UtcNow).TotalHours);
-            }
+        command.Parameters.AddWithValue("userId", userId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException("Account not found.");
         }
 
+        var leaseExpiresAtUtc = reader.GetDateTime(reader.GetOrdinal("lease_expires_at_utc"));
         return new
         {
-            openLockSessionId = lockSessionId,
-            lastUsageChargeCredits = lastCharge,
-            offlineLeaseHoursRemaining = Math.Round(leaseHoursRemaining, 1),
+            openLockSessionId = reader.GetString(reader.GetOrdinal("open_lock_session_id")),
+            lastUsageChargeCredits = reader.GetDecimal(reader.GetOrdinal("last_usage_charge_credits")),
+            offlineLeaseHoursRemaining = Math.Round(Math.Max(0, (leaseExpiresAtUtc - DateTime.UtcNow).TotalHours), 1),
             supportMessage = "Support dashboards can inspect wallet state, stale locks, and recent usage without mutating runtime authority."
         };
     }
 
-    public object GetAdminOverview()
-    {
-        using var connection = _store.OpenConnection();
-        return new
-        {
-            accountCount = ExecuteCount(connection, "SELECT COUNT(*) FROM desktop_accounts;"),
-            activeSessionCount = ExecuteCount(connection, "SELECT COUNT(*) FROM auth_sessions WHERE is_authenticated = TRUE AND revoked_at_utc IS NULL;"),
-            activeLockCount = ExecuteCount(connection, "SELECT COUNT(*) FROM interview_locks WHERE expires_at_utc > NOW();"),
-            ledgerEntryCount = ExecuteCount(connection, "SELECT COUNT(*) FROM usage_ledger;"),
-            managedCredentialCount = ExecuteCount(connection, "SELECT COUNT(*) FROM managed_provider_credentials;"),
-            paymentOrderCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders;"),
-            creditedPaymentCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders WHERE credited_at_utc IS NOT NULL;"),
-            paymentWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events;"),
-            processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;")
-        };
-    }
-
-    public IReadOnlyList<object> GetAdminPaymentOrders(int maxCount = 100)
-    {
-        using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-SELECT checkout_id, user_id, email, target, pack_code, display_label, currency, amount_minor, credits,
-       premium_debt_credits_covered, razorpay_order_id, razorpay_payment_id, status, client_confirmed,
-       credited_at_utc, created_at_utc, updated_at_utc
-FROM payment_orders
-ORDER BY created_at_utc DESC
-LIMIT @maxCount;";
-        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
-        using var reader = command.ExecuteReader();
-        var items = new List<object>();
-        while (reader.Read())
-        {
-            items.Add(new
-            {
-                checkoutId = reader.GetString(reader.GetOrdinal("checkout_id")),
-                userId = reader.GetString(reader.GetOrdinal("user_id")),
-                email = reader.GetString(reader.GetOrdinal("email")),
-                target = reader.GetString(reader.GetOrdinal("target")),
-                packCode = reader.GetString(reader.GetOrdinal("pack_code")),
-                displayLabel = reader.GetString(reader.GetOrdinal("display_label")),
-                currency = reader.GetString(reader.GetOrdinal("currency")),
-                amountMinor = reader.GetInt32(reader.GetOrdinal("amount_minor")),
-                amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
-                credits = reader.GetDecimal(reader.GetOrdinal("credits")),
-                premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
-                razorpayOrderId = reader.GetString(reader.GetOrdinal("razorpay_order_id")),
-                razorpayPaymentId = reader.GetString(reader.GetOrdinal("razorpay_payment_id")),
-                status = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
-                    ? reader.GetString(reader.GetOrdinal("status"))
-                    : "credited",
-                clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
-                creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
-                    ? (DateTime?)null
-                    : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
-                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
-                updatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
-            });
-        }
-
-        return items;
-    }
-
-    public IReadOnlyList<object> GetAdminPaymentWebhookEvents(int maxCount = 100)
-    {
-        using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-SELECT event_record_id, external_event_id, event_type, payload_json::text, created_at_utc, processed_at_utc
-FROM payment_webhook_events
-ORDER BY created_at_utc DESC
-LIMIT @maxCount;";
-        command.Parameters.AddWithValue("maxCount", Math.Max(1, maxCount));
-        using var reader = command.ExecuteReader();
-        var items = new List<object>();
-        while (reader.Read())
-        {
-            items.Add(new
-            {
-                eventRecordId = reader.GetString(reader.GetOrdinal("event_record_id")),
-                externalEventId = reader.GetString(reader.GetOrdinal("external_event_id")),
-                eventType = reader.GetString(reader.GetOrdinal("event_type")),
-                payloadJson = reader.GetString(reader.GetOrdinal("payload_json")),
-                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
-                processedAtUtc = reader.IsDBNull(reader.GetOrdinal("processed_at_utc"))
-                    ? (DateTime?)null
-                    : reader.GetDateTime(reader.GetOrdinal("processed_at_utc"))
-            });
-        }
-
-        return items;
-    }
-
-    private int CountDistinctDevices(string userId)
-    {
-        using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-SELECT COUNT(*) FROM (
-  SELECT DISTINCT device_install_id, device_fingerprint_hash
-  FROM auth_sessions
-  WHERE user_id = @userId
-) AS device_rows;";
-        command.Parameters.AddWithValue("userId", userId);
-        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
-    }
-
-    private DateTime? GetLastActivity(string userId)
-    {
-        using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-SELECT MAX(created_at_utc)
-FROM usage_ledger
-WHERE user_id = @userId
-  AND session_id NOT LIKE 'payment:%';";
-        command.Parameters.AddWithValue("userId", userId);
-        var result = command.ExecuteScalar();
-        return result == DBNull.Value || result == null ? null : Convert.ToDateTime(result);
-    }
-
-    private static int ExecuteCount(NpgsqlConnection connection, string sql)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
-    }
-
-    private static string ResolveEffectiveTier(string accessTier, decimal proCredits, decimal premiumCredits)
-    {
-        if (accessTier.Equals("free", StringComparison.OrdinalIgnoreCase)
-            && proCredits <= 0m
-            && premiumCredits <= 0.5m)
-        {
-            return "free";
-        }
-
-        if (premiumCredits > 0m)
-        {
-            return "premium";
-        }
-
-        if (proCredits > 0m)
-        {
-            return "pro_byo";
-        }
-
-        return "free";
-    }
 }

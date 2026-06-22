@@ -2019,15 +2019,28 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([
+    Promise.allSettled([
       fetchWalletHistory(accessToken, 1, 12),
       fetchWalletPurchases(accessToken, 1, 12),
-      fetchPaymentCatalog(accessToken).catch(() => null)
-    ]).then(([history, purchases, catalog]) => {
-      if (!cancelled) {
-        setWalletHistoryPage(history || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
-        setWalletPurchasesPage(purchases || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
-        setPaymentCatalog(catalog);
+      fetchPaymentCatalog(accessToken)
+    ]).then(([historyResult, purchasesResult, catalogResult]) => {
+      if (cancelled) {
+        return;
+      }
+
+      setWalletHistoryPage(
+        historyResult.status === "fulfilled"
+          ? historyResult.value
+          : { items: [], page: 1, hasNextPage: false, totalCount: 0 }
+      );
+      setWalletPurchasesPage(
+        purchasesResult.status === "fulfilled"
+          ? purchasesResult.value
+          : { items: [], page: 1, hasNextPage: false, totalCount: 0 }
+      );
+      setPaymentCatalog(catalogResult.status === "fulfilled" ? catalogResult.value : null);
+      if (historyResult.status === "rejected" || purchasesResult.status === "rejected") {
+        setStatus("Some wallet activity could not be loaded. Recharge options remain available.");
       }
     });
 

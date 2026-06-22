@@ -182,6 +182,8 @@ app.MapGet("/api/dashboard/account-summary", async (
 
 app.MapGet("/api/dashboard/wallet-history", async (
     HttpContext httpContext,
+    int? page,
+    int? pageSize,
     UserSessionValidator sessions,
     BrowserSessionCookieService cookies,
     DashboardQueryService queries,
@@ -189,11 +191,15 @@ app.MapGet("/api/dashboard/wallet-history", async (
     Results.Ok(queries.GetWalletHistory(
         (await sessions.RequireUserSessionAsync(
             cookies.GetUserAuthorizationHeader(httpContext.Request),
-            cancellationToken)).UserId)))
+            cancellationToken)).UserId,
+        page ?? 1,
+        pageSize ?? 12)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/wallet-purchases", async (
     HttpContext httpContext,
+    int? page,
+    int? pageSize,
     UserSessionValidator sessions,
     BrowserSessionCookieService cookies,
     DashboardQueryService queries,
@@ -201,11 +207,15 @@ app.MapGet("/api/dashboard/wallet-purchases", async (
     Results.Ok(queries.GetWalletPurchases(
         (await sessions.RequireUserSessionAsync(
             cookies.GetUserAuthorizationHeader(httpContext.Request),
-            cancellationToken)).UserId)))
+            cancellationToken)).UserId,
+        page ?? 1,
+        pageSize ?? 12)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/devices", async (
     HttpContext httpContext,
+    int? page,
+    int? pageSize,
     UserSessionValidator sessions,
     BrowserSessionCookieService cookies,
     DashboardQueryService queries,
@@ -213,7 +223,9 @@ app.MapGet("/api/dashboard/devices", async (
     Results.Ok(queries.GetDevices(
         (await sessions.RequireUserSessionAsync(
             cookies.GetUserAuthorizationHeader(httpContext.Request),
-            cancellationToken)).UserId)))
+            cancellationToken)).UserId,
+        page ?? 1,
+        pageSize ?? 10)))
     .RequireRateLimiting("dashboard-user");
 
 app.MapGet("/api/dashboard/download-entitlement", async (

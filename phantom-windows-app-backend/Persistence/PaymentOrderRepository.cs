@@ -72,6 +72,38 @@ LIMIT @maxCount;";
         return items;
     }
 
+    public IReadOnlyList<PaymentOrderRecord> ListPageForUser(string userId, int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM payment_orders
+WHERE user_id = @userId
+ORDER BY created_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<PaymentOrderRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public int CountForUser(string userId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM payment_orders WHERE user_id = @userId;";
+        command.Parameters.AddWithValue("userId", userId);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
     public IReadOnlyList<PaymentOrderRecord> ListRecentOrders(int maxCount)
     {
         using var connection = _store.OpenConnection();
@@ -89,6 +121,35 @@ LIMIT @maxCount;";
         }
 
         return items;
+    }
+
+    public IReadOnlyList<PaymentOrderRecord> ListOrdersPage(int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM payment_orders
+ORDER BY created_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<PaymentOrderRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public int CountOrders()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM payment_orders;";
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
     }
 
     public void Save(PaymentOrderRecord record)
@@ -183,6 +244,35 @@ LIMIT @maxCount;";
         }
 
         return items;
+    }
+
+    public IReadOnlyList<PaymentWebhookEventRecord> ListWebhookEventsPage(int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM payment_webhook_events
+ORDER BY created_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<PaymentWebhookEventRecord>();
+        while (reader.Read())
+        {
+            items.Add(MapEvent(reader));
+        }
+
+        return items;
+    }
+
+    public int CountWebhookEvents()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM payment_webhook_events;";
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
     }
 
     private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)

@@ -145,6 +145,38 @@ LIMIT @maxCount;";
         return items;
     }
 
+    public List<UsageLedgerRecord> ListPageForUser(string userId, int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM usage_ledger
+WHERE user_id = @userId
+ORDER BY created_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<UsageLedgerRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public int CountForUser(string userId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM usage_ledger WHERE user_id = @userId;";
+        command.Parameters.AddWithValue("userId", userId);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
     private static UsageLedgerRecord Map(NpgsqlDataReader reader)
     {
         return new UsageLedgerRecord

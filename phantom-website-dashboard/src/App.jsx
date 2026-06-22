@@ -5,12 +5,15 @@ import {
   confirmPaymentCheckout,
   createHostedKnowledgeBase,
   createPaymentCheckout,
+  createUserSupportTicket,
   deleteManagedAiCredential,
   fetchAccountSummary,
   fetchAdminOverview,
   fetchAdminPaymentOrders,
+  fetchAdminSupportTickets,
   fetchAdminPaymentWebhooks,
   fetchAdminUser,
+  fetchAdminUserLedger,
   fetchAdminUsers,
   fetchCurrentAdminSession,
   fetchCurrentUserSession,
@@ -32,16 +35,20 @@ import {
   refreshAdminSession,
   registerAccount,
   requestAdminPasswordReset,
+  requestUserPasswordReset,
   resendVerificationEmail,
   resetAdminPassword,
+  resetUserPassword,
   sendPhoneOtp,
   startGmailOAuth,
   triggerManagedAiCatalogRefresh,
   updateAdminUser,
+  updateAdminSupportTicket,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
+  fetchUserSupportTickets,
   verifyPhoneOtp,
   waiveAdminPremiumDebt
 } from "./lib/api";
@@ -66,6 +73,7 @@ const adminNav = [
   { to: "/admin", label: "Overview" },
   { to: "/admin/users", label: "Users" },
   { to: "/admin/payments", label: "Payments" },
+  { to: "/admin/tickets", label: "Tickets" },
   { to: "/admin/managed-ai", label: "Managed AI" }
 ];
 
@@ -547,6 +555,8 @@ export default function App() {
             <UserLoginPage userSession={userSession} onAuthenticated={handleUserAuthenticated} />
           }
         />
+        <Route path="/forgot-password" element={<UserForgotPasswordPage />} />
+        <Route path="/reset-password" element={<UserResetPasswordPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/desktop-return" element={<DesktopReturnPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
@@ -1066,7 +1076,7 @@ function UserLoginPage({ onAuthenticated, userSession }) {
           {status ? <p className="status-message status-error">{status}</p> : null}
           <div className="link-row">
             <Link to="/register">Create account</Link>
-            <Link to="/admin/login">Admin console</Link>
+            <Link to="/forgot-password">Forgot password?</Link>
           </div>
         </form>
       </section>
@@ -1286,6 +1296,117 @@ function RegisterPage() {
   );
 }
 
+function UserForgotPasswordPage() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      const result = await requestUserPasswordReset(email);
+      setStatus(result.message || "If that account exists, a reset link has been sent.");
+    } catch (error) {
+      setStatus(error.message || "Could not request a password reset.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="page">
+      <Seo
+        title="Password Reset | Phantom"
+        description="Request a Phantom account password reset."
+        noindex
+      />
+      <section className="auth-shell">
+        <article className="glass-panel auth-aside">
+          <p className="eyebrow">Account recovery</p>
+          <h1>Reset the user dashboard password by email.</h1>
+          <p>This flow is only for account holders using the main Phantom dashboard.</p>
+        </article>
+        <form className="glass-panel auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>Account email</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
+          </label>
+          <button className="button button-primary" type="submit" disabled={submitting}>
+            {submitting ? "Sending..." : "Send Reset Link"}
+          </button>
+          {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p> : null}
+          <div className="link-row">
+            <Link to="/login">Back to login</Link>
+          </div>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function UserResetPasswordPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const token = query.get("token") || "";
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      if (!token) {
+        throw new Error("Reset token missing from the URL.");
+      }
+      if (password !== confirmPassword) {
+        throw new Error("Passwords do not match.");
+      }
+      const result = await resetUserPassword(token, password);
+      setStatus(result.message || "Account password reset complete.");
+      setTimeout(() => {
+        navigate("/login", { replace: true });
+      }, 1000);
+    } catch (error) {
+      setStatus(error.message || "Could not reset the password.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="page">
+      <Seo title="Reset Password | Phantom" description="Set a new password for the Phantom user dashboard." noindex />
+      <section className="auth-shell">
+        <article className="glass-panel auth-aside">
+          <p className="eyebrow">Account reset</p>
+          <h1>Choose a new account password.</h1>
+          <p>Reset links are single-use and time-limited.</p>
+        </article>
+        <form className="glass-panel auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>New password</span>
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 10 characters" />
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" />
+          </label>
+          <button className="button button-primary" type="submit" disabled={submitting}>
+            {submitting ? "Resetting..." : "Reset Password"}
+          </button>
+          {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p> : null}
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function DesktopReturnPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1364,9 +1485,7 @@ function DesktopReturnPage() {
               </Link>
             </>
           ) : gmailOauthState === "success" ? (
-            <Link className="button button-primary" to="/admin/login">
-              Open Admin Login
-            </Link>
+            <span className="status-pill status-pill-good">Gmail OAuth complete. Continue from the `/admin` route.</span>
           ) : (
             <Link className="button button-primary" to="/login">
               Go To Login
@@ -1470,10 +1589,6 @@ function SessionLoadingPage({ label, title }) {
 function UserDashboardPage({ session }) {
   const [summary, setSummary] = useState(null);
   const [knowledgeBase, setKnowledgeBase] = useState(null);
-  const [walletHistory, setWalletHistory] = useState([]);
-  const [walletPurchases, setWalletPurchases] = useState([]);
-  const [paymentCatalog, setPaymentCatalog] = useState(null);
-  const [devices, setDevices] = useState([]);
   const [download, setDownload] = useState(null);
   const [support, setSupport] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1491,31 +1606,15 @@ function UserDashboardPage({ session }) {
           return;
         }
 
-        const [
-          history,
-          purchases,
-          deviceRows,
-          downloadEntitlement,
-          supportOverview,
-          knowledgeBaseStatus,
-          catalog
-        ] = await Promise.all([
-          fetchWalletHistory(session.accessToken),
-          fetchWalletPurchases(session.accessToken),
-          fetchDevices(session.accessToken),
+        const [downloadEntitlement, supportOverview, knowledgeBaseStatus] = await Promise.all([
           fetchDownloadEntitlement(session.accessToken),
           fetchSupportOverview(session.accessToken),
-          fetchHostedKnowledgeBase(session.accessToken),
-          fetchPaymentCatalog(session.accessToken).catch(() => null)
+          fetchHostedKnowledgeBase(session.accessToken)
         ]);
 
         if (!cancelled) {
           setSummary(account);
           setKnowledgeBase(knowledgeBaseStatus);
-          setWalletHistory(history);
-          setWalletPurchases(purchases);
-          setPaymentCatalog(catalog);
-          setDevices(deviceRows);
           setDownload(downloadEntitlement);
           setSupport(supportOverview);
         }
@@ -1536,17 +1635,9 @@ function UserDashboardPage({ session }) {
     };
   }, [session.accessToken, session.email, session.expiresAtUtc]);
 
-  async function refreshWalletState() {
-    const account = await fetchAccountSummary(session.accessToken);
-    const [history, purchases, catalog] = await Promise.all([
-      fetchWalletHistory(session.accessToken),
-      fetchWalletPurchases(session.accessToken),
-      fetchPaymentCatalog(session.accessToken).catch(() => null)
-    ]);
-    setSummary(account);
-    setWalletHistory(history);
-    setWalletPurchases(purchases);
-    setPaymentCatalog(catalog);
+  async function refreshSummary() {
+    const nextSummary = await fetchAccountSummary(session.accessToken);
+    setSummary(nextSummary);
   }
 
   if (loading) {
@@ -1597,13 +1688,11 @@ function UserDashboardPage({ session }) {
               index
               element={
                 <UserOverviewPanel
+                  accessToken={session.accessToken}
                   summary={summary}
-                  devices={devices}
                   download={download}
                   support={support}
                   knowledgeBase={knowledgeBase}
-                  walletHistory={walletHistory}
-                  walletPurchases={walletPurchases}
                 />
               }
             />
@@ -1624,16 +1713,13 @@ function UserDashboardPage({ session }) {
                 <WalletPanel
                   accessToken={session.accessToken}
                   summary={summary}
-                  walletHistory={walletHistory}
-                  walletPurchases={walletPurchases}
-                  paymentCatalog={paymentCatalog}
-                  onWalletUpdated={refreshWalletState}
+                  onSummaryChanged={refreshSummary}
                 />
               }
             />
-            <Route path="devices" element={<DevicesPanel devices={devices} />} />
-            <Route path="history" element={<HistoryPanel walletHistory={walletHistory} />} />
-            <Route path="support" element={<SupportPanel support={support} />} />
+            <Route path="devices" element={<DevicesPanel accessToken={session.accessToken} />} />
+            <Route path="history" element={<HistoryPanel accessToken={session.accessToken} />} />
+            <Route path="support" element={<SupportPanel accessToken={session.accessToken} support={support} />} />
           </Routes>
         </section>
       </section>
@@ -1641,7 +1727,42 @@ function UserDashboardPage({ session }) {
   );
 }
 
-function UserOverviewPanel({ summary, devices, download, support, knowledgeBase, walletHistory, walletPurchases }) {
+function UserOverviewPanel({ accessToken, summary, download, support, knowledgeBase }) {
+  const [devicesPage, setDevicesPage] = useState({ items: [] });
+  const [walletHistoryPage, setWalletHistoryPage] = useState({ items: [] });
+  const [walletPurchasesPage, setWalletPurchasesPage] = useState({ items: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      fetchDevices(accessToken, 1, 6),
+      fetchWalletHistory(accessToken, 1, 12),
+      fetchWalletPurchases(accessToken, 1, 12)
+    ])
+      .then(([nextDevices, nextHistory, nextPurchases]) => {
+        if (!cancelled) {
+          setDevicesPage(nextDevices || { items: [] });
+          setWalletHistoryPage(nextHistory || { items: [] });
+          setWalletPurchasesPage(nextPurchases || { items: [] });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDevicesPage({ items: [] });
+          setWalletHistoryPage({ items: [] });
+          setWalletPurchasesPage({ items: [] });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  const devices = devicesPage.items || [];
+  const walletHistory = walletHistoryPage.items || [];
+  const walletPurchases = walletPurchasesPage.items || [];
   const activeDeviceCount = devices.filter((item) => item.isActive).length;
   const purchaseStates = countBy(walletPurchases, (item) => item.status || "unknown");
 
@@ -1888,9 +2009,44 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   );
 }
 
-function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, paymentCatalog, onWalletUpdated }) {
+function WalletPanel({ accessToken, summary, onSummaryChanged }) {
+  const [walletHistoryPage, setWalletHistoryPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [walletPurchasesPage, setWalletPurchasesPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [paymentCatalog, setPaymentCatalog] = useState(null);
   const [status, setStatus] = useState("");
   const [submittingTarget, setSubmittingTarget] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      fetchWalletHistory(accessToken, 1, 12),
+      fetchWalletPurchases(accessToken, 1, 12),
+      fetchPaymentCatalog(accessToken).catch(() => null)
+    ]).then(([history, purchases, catalog]) => {
+      if (!cancelled) {
+        setWalletHistoryPage(history || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+        setWalletPurchasesPage(purchases || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+        setPaymentCatalog(catalog);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  async function refreshWalletState() {
+    const [history, purchases, catalog] = await Promise.all([
+      fetchWalletHistory(accessToken, walletHistoryPage.page || 1, 12),
+      fetchWalletPurchases(accessToken, walletPurchasesPage.page || 1, 12),
+      fetchPaymentCatalog(accessToken).catch(() => null)
+    ]);
+    await onSummaryChanged();
+    setWalletHistoryPage(history || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    setWalletPurchasesPage(purchases || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    setPaymentCatalog(catalog);
+  }
 
   async function handleCheckout(target, packCode) {
     setSubmittingTarget(`${target}:${packCode}`);
@@ -1905,7 +2061,7 @@ function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, pay
           razorpayPaymentId: response.razorpay_payment_id,
           razorpaySignature: response.razorpay_signature
         });
-        await onWalletUpdated();
+        await refreshWalletState();
         setStatus(confirmation?.message || "Payment verified. Wallet refresh complete.");
       });
     } catch (error) {
@@ -1983,9 +2139,9 @@ function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, pay
         title="Purchase history"
         columns={["Purchase", "Amount", "Credits", "Status", "Created"]}
         rows={
-          walletPurchases.length === 0
+          (walletPurchasesPage.items || []).length === 0
             ? null
-            : walletPurchases.map((item) => [
+            : walletPurchasesPage.items.map((item) => [
                 item.displayLabel,
                 formatInr(item.amountInr),
                 item.target === "premium_debt_settlement"
@@ -1996,15 +2152,24 @@ function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, pay
               ])
         }
         emptyLabel="No credit purchases recorded yet."
+        footer={
+          <PaginationBar
+            page={walletPurchasesPage.page || 1}
+            hasNextPage={Boolean(walletPurchasesPage.hasNextPage)}
+            totalCount={walletPurchasesPage.totalCount || 0}
+            onPrevious={() => loadWalletPurchasesPage(accessToken, walletPurchasesPage.page - 1, setWalletPurchasesPage)}
+            onNext={() => loadWalletPurchasesPage(accessToken, (walletPurchasesPage.page || 1) + 1, setWalletPurchasesPage)}
+          />
+        }
       />
 
       <DataTable
         title="Wallet history"
         columns={["Session", "Credits", "Blocks", "Debt", "Created"]}
         rows={
-          walletHistory.length === 0
+          (walletHistoryPage.items || []).length === 0
             ? null
-            : walletHistory.map((item) => [
+            : walletHistoryPage.items.map((item) => [
                 item.sessionId,
                 item.chargedCredits,
                 item.chargedBlocks,
@@ -2013,12 +2178,29 @@ function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, pay
               ])
         }
         emptyLabel="No wallet entries recorded yet."
+        footer={
+          <PaginationBar
+            page={walletHistoryPage.page || 1}
+            hasNextPage={Boolean(walletHistoryPage.hasNextPage)}
+            totalCount={walletHistoryPage.totalCount || 0}
+            onPrevious={() => loadWalletHistoryPage(accessToken, walletHistoryPage.page - 1, setWalletHistoryPage)}
+            onNext={() => loadWalletHistoryPage(accessToken, (walletHistoryPage.page || 1) + 1, setWalletHistoryPage)}
+          />
+        }
       />
     </div>
   );
 }
 
-function DevicesPanel({ devices }) {
+function DevicesPanel({ accessToken }) {
+  const [devicesPage, setDevicesPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+
+  useEffect(() => {
+    loadDevicesPage(accessToken, 1, setDevicesPage);
+  }, [accessToken]);
+
+  const devices = devicesPage.items || [];
+
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
@@ -2043,11 +2225,26 @@ function DevicesPanel({ devices }) {
           </article>
         ))
       )}
+      <article className="glass-panel table-span-full">
+        <PaginationBar
+          page={devicesPage.page || 1}
+          hasNextPage={Boolean(devicesPage.hasNextPage)}
+          totalCount={devicesPage.totalCount || 0}
+          onPrevious={() => loadDevicesPage(accessToken, devicesPage.page - 1, setDevicesPage)}
+          onNext={() => loadDevicesPage(accessToken, (devicesPage.page || 1) + 1, setDevicesPage)}
+        />
+      </article>
     </div>
   );
 }
 
-function HistoryPanel({ walletHistory }) {
+function HistoryPanel({ accessToken }) {
+  const [walletHistoryPage, setWalletHistoryPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+
+  useEffect(() => {
+    loadWalletHistoryPage(accessToken, 1, setWalletHistoryPage);
+  }, [accessToken]);
+
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
@@ -2058,9 +2255,9 @@ function HistoryPanel({ walletHistory }) {
         title="Usage charge history"
         columns={["Ledger entry", "Session", "Credits", "Debt", "Created"]}
         rows={
-          walletHistory.length === 0
+          (walletHistoryPage.items || []).length === 0
             ? null
-            : walletHistory.map((item) => [
+            : walletHistoryPage.items.map((item) => [
                 item.ledgerEntryId,
                 item.sessionId,
                 item.chargedCredits,
@@ -2069,17 +2266,61 @@ function HistoryPanel({ walletHistory }) {
               ])
         }
         emptyLabel="No usage ledger history recorded yet."
+        footer={
+          <PaginationBar
+            page={walletHistoryPage.page || 1}
+            hasNextPage={Boolean(walletHistoryPage.hasNextPage)}
+            totalCount={walletHistoryPage.totalCount || 0}
+            onPrevious={() => loadWalletHistoryPage(accessToken, walletHistoryPage.page - 1, setWalletHistoryPage)}
+            onNext={() => loadWalletHistoryPage(accessToken, (walletHistoryPage.page || 1) + 1, setWalletHistoryPage)}
+          />
+        }
       />
     </div>
   );
 }
 
-function SupportPanel({ support }) {
+function SupportPanel({ accessToken, support }) {
+  const [ticketsPage, setTicketsPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [ticketForm, setTicketForm] = useState({
+    subject: "",
+    category: "general",
+    priority: "normal",
+    description: ""
+  });
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    loadSupportTicketsPage(accessToken, 1, setTicketsPage);
+  }, [accessToken]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await createUserSupportTicket(accessToken, ticketForm);
+      setTicketForm({
+        subject: "",
+        category: "general",
+        priority: "normal",
+        description: ""
+      });
+      await loadSupportTicketsPage(accessToken, 1, setTicketsPage);
+      setStatus("Support ticket created.");
+    } catch (error) {
+      setStatus(error.message || "Could not create the support ticket.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
         <p className="eyebrow">Support preview</p>
-        <h1>Expose the signals users actually need before they contact support.</h1>
+        <h1>Expose the signals users actually need, then let them file a ticket without leaving the dashboard.</h1>
       </article>
       <article className="glass-panel table-span-full">
         <h3>{support?.openLockSessionId || "No active support event"}</h3>
@@ -2089,6 +2330,67 @@ function SupportPanel({ support }) {
           <MetricCard label="Lease hours left" value={String(support?.offlineLeaseHoursRemaining ?? 0)} />
         </div>
       </article>
+      <form className="glass-panel auth-form table-span-full" onSubmit={handleSubmit}>
+        <p className="eyebrow">Create support ticket</p>
+        <div className="admin-form">
+          <label>
+            Subject
+            <input value={ticketForm.subject} onChange={(event) => setTicketForm((current) => ({ ...current, subject: event.target.value }))} placeholder="Issue summary" />
+          </label>
+          <label>
+            Category
+            <select value={ticketForm.category} onChange={(event) => setTicketForm((current) => ({ ...current, category: event.target.value }))}>
+              <option value="general">General</option>
+              <option value="billing">Billing</option>
+              <option value="device_lock">Device lock</option>
+              <option value="access">Access</option>
+              <option value="knowledge_base">Knowledge base</option>
+            </select>
+          </label>
+          <label>
+            Priority
+            <select value={ticketForm.priority} onChange={(event) => setTicketForm((current) => ({ ...current, priority: event.target.value }))}>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+          <label className="table-span-full">
+            Description
+            <textarea rows={5} value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} placeholder="What happened, what you expected, and any relevant checkout/session/device details." />
+          </label>
+        </div>
+        <button className="button button-primary" type="submit" disabled={submitting}>
+          {submitting ? "Creating..." : "Create Ticket"}
+        </button>
+        {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p> : null}
+      </form>
+      <DataTable
+        title="Your support tickets"
+        columns={["Ticket", "Category", "Priority", "Status", "Updated"]}
+        rows={
+          (ticketsPage.items || []).length === 0
+            ? null
+            : ticketsPage.items.map((item) => [
+                item.subject,
+                item.category,
+                item.priority,
+                item.status,
+                formatDate(item.updatedAtUtc)
+              ])
+        }
+        emptyLabel="No support tickets created yet."
+        footer={
+          <PaginationBar
+            page={ticketsPage.page || 1}
+            hasNextPage={Boolean(ticketsPage.hasNextPage)}
+            totalCount={ticketsPage.totalCount || 0}
+            onPrevious={() => loadSupportTicketsPage(accessToken, ticketsPage.page - 1, setTicketsPage)}
+            onNext={() => loadSupportTicketsPage(accessToken, (ticketsPage.page || 1) + 1, setTicketsPage)}
+          />
+        }
+      />
     </div>
   );
 }
@@ -2273,10 +2575,7 @@ function AdminResetPasswordPage() {
 
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
-  const [users, setUsers] = useState([]);
   const [inventory, setInventory] = useState(null);
-  const [paymentOrders, setPaymentOrders] = useState([]);
-  const [paymentWebhooks, setPaymentWebhooks] = useState([]);
   const [gmailStatus, setGmailStatus] = useState(null);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2290,21 +2589,15 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, usersData, inventoryData, paymentOrdersData, paymentWebhooksData, gmailStatusData] = await Promise.all([
+        const [overviewData, inventoryData, gmailStatusData] = await Promise.all([
           fetchAdminOverview(adminSession.accessToken),
-          fetchAdminUsers(adminSession.accessToken),
           fetchManagedAiAdminInventory(adminSession.accessToken),
-          fetchAdminPaymentOrders(adminSession.accessToken),
-          fetchAdminPaymentWebhooks(adminSession.accessToken),
           fetchGmailOAuthStatus(adminSession.accessToken)
         ]);
 
         if (!cancelled) {
           setOverview(overviewData);
-          setUsers(usersData);
           setInventory(inventoryData);
-          setPaymentOrders(paymentOrdersData);
-          setPaymentWebhooks(paymentWebhooksData);
           setGmailStatus(gmailStatusData);
         }
       } catch (loadError) {
@@ -2330,22 +2623,12 @@ function AdminDashboardPage({ adminSession }) {
     return nextInventory;
   }
 
-  async function refreshUsers() {
-    const nextUsers = await fetchAdminUsers(adminSession.accessToken);
-    setUsers(nextUsers);
-    return nextUsers;
-  }
-
-  async function refreshPayments() {
-    const [nextOverview, nextOrders, nextWebhooks, nextGmailStatus] = await Promise.all([
+  async function refreshOverview() {
+    const [nextOverview, nextGmailStatus] = await Promise.all([
       fetchAdminOverview(adminSession.accessToken),
-      fetchAdminPaymentOrders(adminSession.accessToken),
-      fetchAdminPaymentWebhooks(adminSession.accessToken),
       fetchGmailOAuthStatus(adminSession.accessToken)
     ]);
     setOverview(nextOverview);
-    setPaymentOrders(nextOrders);
-    setPaymentWebhooks(nextWebhooks);
     setGmailStatus(nextGmailStatus);
   }
 
@@ -2410,9 +2693,7 @@ function AdminDashboardPage({ adminSession }) {
               element={
                 <AdminUsersPanel
                   accessToken={adminSession.accessToken}
-                  users={users}
                   inventory={inventory}
-                  onUsersChanged={refreshUsers}
                   onManagedInventoryChanged={refreshManagedInventory}
                 />
               }
@@ -2421,10 +2702,19 @@ function AdminDashboardPage({ adminSession }) {
               path="payments"
               element={
                 <AdminPaymentsPanel
+                  accessToken={adminSession.accessToken}
                   overview={overview}
-                  paymentOrders={paymentOrders}
-                  paymentWebhooks={paymentWebhooks}
-                  onRefresh={refreshPayments}
+                  onRefreshOverview={refreshOverview}
+                />
+              }
+            />
+            <Route
+              path="tickets"
+              element={
+                <AdminTicketsPanel
+                  accessToken={adminSession.accessToken}
+                  overview={overview}
+                  onRefreshOverview={refreshOverview}
                 />
               }
             />
@@ -2952,10 +3242,12 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
   );
 }
 
-function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onManagedInventoryChanged }) {
+function AdminUsersPanel({ accessToken }) {
   const [query, setQuery] = useState("");
+  const [usersPage, setUsersPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
+  const [ledgerPage, setLedgerPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [accountForm, setAccountForm] = useState({
     accessTier: "free",
     proAvailableCredits: "0",
@@ -2974,17 +3266,19 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredUsers = users.filter((item) => {
-    const haystack = [item.email, item.userId, item.accessTier, item.planLabel].join(" ").toLowerCase();
-    return !normalizedQuery || haystack.includes(normalizedQuery);
-  });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadAdminUsersPage(accessToken, 1, query, setUsersPage);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [accessToken, query]);
 
   useEffect(() => {
-    if (!selectedUserId && filteredUsers.length > 0) {
-      setSelectedUserId(filteredUsers[0].userId);
+    if (!selectedUserId && (usersPage.items || []).length > 0) {
+      setSelectedUserId(usersPage.items[0].userId);
     }
-  }, [filteredUsers, selectedUserId]);
+  }, [selectedUserId, usersPage.items]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2996,9 +3290,13 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
       }
 
       try {
-        const detail = await fetchAdminUser(accessToken, selectedUserId);
+        const [detail, nextLedger] = await Promise.all([
+          fetchAdminUser(accessToken, selectedUserId),
+          fetchAdminUserLedger(accessToken, selectedUserId, { page: 1, pageSize: 10 })
+        ]);
         if (!cancelled) {
           setSelectedUser(detail);
+          setLedgerPage(nextLedger || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
           setAccountForm({
             accessTier: detail.accessTier || "free",
             proAvailableCredits: String(detail.proAvailableCredits ?? 0),
@@ -3027,9 +3325,14 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
   }, [accessToken, selectedUserId]);
 
   async function syncSelectedUser(nextUserId = selectedUserId) {
-    const nextDetail = nextUserId ? await fetchAdminUser(accessToken, nextUserId) : null;
-    await onUsersChanged();
+    const [nextUsersPage, nextDetail, nextLedger] = await Promise.all([
+      fetchAdminUsers(accessToken, { page: usersPage.page || 1, pageSize: 20, query }),
+      nextUserId ? fetchAdminUser(accessToken, nextUserId) : Promise.resolve(null),
+      nextUserId ? fetchAdminUserLedger(accessToken, nextUserId, { page: ledgerPage.page || 1, pageSize: 10 }) : Promise.resolve({ items: [] })
+    ]);
+    setUsersPage(nextUsersPage);
     setSelectedUser(nextDetail);
+    setLedgerPage(nextLedger || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
   }
 
   async function handleAccountUpdate(event) {
@@ -3149,7 +3452,7 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
             <p className="eyebrow">Directory</p>
             <h3>User roster</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={onUsersChanged}>
+          <button className="button button-secondary button-compact" type="button" onClick={() => loadAdminUsersPage(accessToken, usersPage.page || 1, query, setUsersPage)}>
             Refresh
           </button>
         </div>
@@ -3159,23 +3462,13 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
         </label>
       </article>
 
-      <ManagedRuntimeSelectionCard
-        accessToken={accessToken}
-        inventory={inventory}
-        onRefresh={onManagedInventoryChanged}
-        className="glass-panel admin-form-panel table-span-full"
-        title="Set the managed provider and model for Premium users"
-        description="Premium users inherit one admin-selected managed runtime. Change it here while reviewing users, or open the full Managed AI page to rotate credentials and refresh provider catalogs."
-        showManageLink
-      />
-
       <DataTable
         title="Accounts"
         columns={["User", "Tier", "Pro", "Premium", "Debt", "Phone", "Detail"]}
         rows={
-          filteredUsers.length === 0
+          (usersPage.items || []).length === 0
             ? null
-            : filteredUsers.map((item) => [
+            : usersPage.items.map((item) => [
                 item.email,
                 item.planLabel,
                 item.proAvailableCredits,
@@ -3188,6 +3481,15 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
               ])
         }
         emptyLabel="No users matched the current search."
+        footer={
+          <PaginationBar
+            page={usersPage.page || 1}
+            hasNextPage={Boolean(usersPage.hasNextPage)}
+            totalCount={usersPage.totalCount || 0}
+            onPrevious={() => loadAdminUsersPage(accessToken, usersPage.page - 1, query, setUsersPage)}
+            onNext={() => loadAdminUsersPage(accessToken, (usersPage.page || 1) + 1, query, setUsersPage)}
+          />
+        }
       />
 
       {selectedUser ? (
@@ -3298,9 +3600,9 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
             title="Recent ledger entries"
             columns={["Ledger entry", "Session", "Credits", "Debt", "Created"]}
             rows={
-              (selectedUser.recentLedgerEntries || []).length === 0
+              (ledgerPage.items || []).length === 0
                 ? null
-                : selectedUser.recentLedgerEntries.map((item) => [
+                : ledgerPage.items.map((item) => [
                     item.ledgerEntryId,
                     item.sessionId,
                     item.chargedCredits,
@@ -3309,6 +3611,15 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
                   ])
             }
             emptyLabel="No recent ledger activity for this user."
+            footer={
+              <PaginationBar
+                page={ledgerPage.page || 1}
+                hasNextPage={Boolean(ledgerPage.hasNextPage)}
+                totalCount={ledgerPage.totalCount || 0}
+                onPrevious={() => loadAdminUserLedgerPage(accessToken, selectedUserId, ledgerPage.page - 1, setLedgerPage)}
+                onNext={() => loadAdminUserLedgerPage(accessToken, selectedUserId, (ledgerPage.page || 1) + 1, setLedgerPage)}
+              />
+            }
           />
         </>
       ) : null}
@@ -3319,14 +3630,26 @@ function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onMana
   );
 }
 
-function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefresh }) {
+function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
+  const [paymentOrdersPage, setPaymentOrdersPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [paymentWebhooksPage, setPaymentWebhooksPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedWebhook, setSelectedWebhook] = useState(null);
 
+  useEffect(() => {
+    Promise.all([
+      fetchAdminPaymentOrders(accessToken, { page: 1, pageSize: 20 }),
+      fetchAdminPaymentWebhooks(accessToken, { page: 1, pageSize: 20 })
+    ]).then(([orders, webhooks]) => {
+      setPaymentOrdersPage(orders || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+      setPaymentWebhooksPage(webhooks || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    });
+  }, [accessToken]);
+
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredOrders = paymentOrders.filter((item) => {
+  const filteredOrders = (paymentOrdersPage.items || []).filter((item) => {
     const matchesStatus = statusFilter === "all" || item.status === statusFilter;
     const haystack = [
       item.checkoutId,
@@ -3341,7 +3664,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
     return matchesStatus && matchesQuery;
   });
 
-  const filteredWebhooks = paymentWebhooks.filter((item) => {
+  const filteredWebhooks = (paymentWebhooksPage.items || []).filter((item) => {
     const haystack = [item.externalEventId, item.eventType, item.payloadJson].join(" ").toLowerCase();
     return !normalizedQuery || haystack.includes(normalizedQuery);
   });
@@ -3364,7 +3687,7 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
             <p className="eyebrow">Filters</p>
             <h3>Transactions and callbacks</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>
+          <button className="button button-secondary button-compact" type="button" onClick={() => refreshAdminPayments(accessToken, setPaymentOrdersPage, setPaymentWebhooksPage, onRefreshOverview)}>
             Refresh
           </button>
         </div>
@@ -3405,6 +3728,15 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
               ])
         }
         emptyLabel="No payment orders matched the current filters."
+        footer={
+          <PaginationBar
+            page={paymentOrdersPage.page || 1}
+            hasNextPage={Boolean(paymentOrdersPage.hasNextPage)}
+            totalCount={paymentOrdersPage.totalCount || 0}
+            onPrevious={() => loadAdminPaymentOrdersPage(accessToken, paymentOrdersPage.page - 1, setPaymentOrdersPage)}
+            onNext={() => loadAdminPaymentOrdersPage(accessToken, (paymentOrdersPage.page || 1) + 1, setPaymentOrdersPage)}
+          />
+        }
       />
 
       {selectedOrder ? (
@@ -3455,6 +3787,15 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
               ])
         }
         emptyLabel="No webhook events matched the current filters."
+        footer={
+          <PaginationBar
+            page={paymentWebhooksPage.page || 1}
+            hasNextPage={Boolean(paymentWebhooksPage.hasNextPage)}
+            totalCount={paymentWebhooksPage.totalCount || 0}
+            onPrevious={() => loadAdminPaymentWebhooksPage(accessToken, paymentWebhooksPage.page - 1, setPaymentWebhooksPage)}
+            onNext={() => loadAdminPaymentWebhooksPage(accessToken, (paymentWebhooksPage.page || 1) + 1, setPaymentWebhooksPage)}
+          />
+        }
       />
 
       {selectedWebhook ? (
@@ -3463,6 +3804,200 @@ function AdminPaymentsPanel({ overview, paymentOrders, paymentWebhooks, onRefres
           <h3>{selectedWebhook.eventType} · {selectedWebhook.externalEventId}</h3>
           <pre className="payload-preview">{prettyJson(selectedWebhook.payloadJson)}</pre>
         </article>
+      ) : null}
+    </div>
+  );
+}
+
+function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
+  const [ticketsPage, setTicketsPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [ticketForm, setTicketForm] = useState({
+    status: "open",
+    priority: "normal",
+    adminNotes: "",
+    resolutionSummary: ""
+  });
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  useEffect(() => {
+    loadAdminSupportTicketsPage(accessToken, 1, query, statusFilter, setTicketsPage);
+  }, [accessToken, query, statusFilter]);
+
+  useEffect(() => {
+    if (!selectedTicket && (ticketsPage.items || []).length > 0) {
+      const first = ticketsPage.items[0];
+      setSelectedTicket(first);
+      setTicketForm({
+        status: first.status,
+        priority: first.priority,
+        adminNotes: first.adminNotes || "",
+        resolutionSummary: first.resolutionSummary || ""
+      });
+    }
+  }, [selectedTicket, ticketsPage.items]);
+
+  function selectTicket(ticket) {
+    setSelectedTicket(ticket);
+    setTicketForm({
+      status: ticket.status,
+      priority: ticket.priority,
+      adminNotes: ticket.adminNotes || "",
+      resolutionSummary: ticket.resolutionSummary || ""
+    });
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!selectedTicket) {
+      return;
+    }
+
+    setBusy(true);
+    setFeedback("");
+    try {
+      const updated = await updateAdminSupportTicket(accessToken, {
+        ticketId: selectedTicket.ticketId,
+        status: ticketForm.status,
+        priority: ticketForm.priority,
+        adminNotes: ticketForm.adminNotes,
+        resolutionSummary: ticketForm.resolutionSummary
+      });
+      setSelectedTicket(updated);
+      await loadAdminSupportTicketsPage(accessToken, ticketsPage.page || 1, query, statusFilter, setTicketsPage);
+      await onRefreshOverview();
+      setFeedback("Support ticket updated.");
+    } catch (error) {
+      setFeedback(error.message || "Could not update the support ticket.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Support tickets</p>
+        <h1>Handle user-reported issues in the admin plane, not through ad hoc account edits.</h1>
+      </article>
+
+      <MetricCard label="Open tickets" value={String(overview?.openSupportTicketCount ?? 0)} />
+      <MetricCard label="Total tickets" value={String(overview?.supportTicketCount ?? 0)} />
+
+      <article className="glass-panel admin-form-panel table-span-full">
+        <div className="admin-form">
+          <label>
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="open">Open</option>
+              <option value="investigating">Investigating</option>
+              <option value="waiting_for_user">Waiting for user</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ticket ID, email, category, or subject" />
+          </label>
+        </div>
+      </article>
+
+      <DataTable
+        title="Ticket queue"
+        columns={["Ticket", "User", "Priority", "Status", "Updated", "Detail"]}
+        rows={
+          (ticketsPage.items || []).length === 0
+            ? null
+            : ticketsPage.items.map((item) => [
+                item.subject,
+                item.email,
+                item.priority,
+                item.status,
+                formatDate(item.updatedAtUtc),
+                <button className="table-action" type="button" onClick={() => selectTicket(item)}>
+                  Inspect
+                </button>
+              ])
+        }
+        emptyLabel="No support tickets matched the current filters."
+        footer={
+          <PaginationBar
+            page={ticketsPage.page || 1}
+            hasNextPage={Boolean(ticketsPage.hasNextPage)}
+            totalCount={ticketsPage.totalCount || 0}
+            onPrevious={() => loadAdminSupportTicketsPage(accessToken, ticketsPage.page - 1, query, statusFilter, setTicketsPage)}
+            onNext={() => loadAdminSupportTicketsPage(accessToken, (ticketsPage.page || 1) + 1, query, statusFilter, setTicketsPage)}
+          />
+        }
+      />
+
+      {selectedTicket ? (
+        <>
+          <div className="glass-panel table-panel table-span-full">
+            <div className="table-header">
+              <div>
+                <p className="eyebrow">Selected ticket</p>
+                <h3>{selectedTicket.ticketId}</h3>
+              </div>
+            </div>
+            <TableScroll>
+              <table>
+                <tbody>
+                  <tr><th>Subject</th><td>{selectedTicket.subject}</td></tr>
+                  <tr><th>User</th><td>{selectedTicket.email} · {selectedTicket.userId}</td></tr>
+                  <tr><th>Category</th><td>{selectedTicket.category}</td></tr>
+                  <tr><th>Priority</th><td>{selectedTicket.priority}</td></tr>
+                  <tr><th>Status</th><td>{selectedTicket.status}</td></tr>
+                  <tr><th>Created</th><td>{formatDate(selectedTicket.createdAtUtc)}</td></tr>
+                  <tr><th>Updated</th><td>{formatDate(selectedTicket.updatedAtUtc)}</td></tr>
+                  <tr><th>Description</th><td>{selectedTicket.description}</td></tr>
+                </tbody>
+              </table>
+            </TableScroll>
+          </div>
+
+          <form className="glass-panel admin-form-panel table-span-full" onSubmit={handleSubmit}>
+            <p className="eyebrow">Handle ticket</p>
+            <div className="admin-form">
+              <label>
+                Status
+                <select value={ticketForm.status} onChange={(event) => setTicketForm((current) => ({ ...current, status: event.target.value }))}>
+                  <option value="open">Open</option>
+                  <option value="investigating">Investigating</option>
+                  <option value="waiting_for_user">Waiting for user</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
+              <label>
+                Priority
+                <select value={ticketForm.priority} onChange={(event) => setTicketForm((current) => ({ ...current, priority: event.target.value }))}>
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+              <label className="table-span-full">
+                Admin notes
+                <textarea rows={4} value={ticketForm.adminNotes} onChange={(event) => setTicketForm((current) => ({ ...current, adminNotes: event.target.value }))} />
+              </label>
+              <label className="table-span-full">
+                Resolution summary
+                <textarea rows={3} value={ticketForm.resolutionSummary} onChange={(event) => setTicketForm((current) => ({ ...current, resolutionSummary: event.target.value }))} />
+              </label>
+            </div>
+            <button className="button button-primary" type="submit" disabled={busy}>
+              {busy ? "Saving..." : "Save Ticket Update"}
+            </button>
+            {feedback ? <p className={`status-message ${feedback.toLowerCase().includes("could not") ? "status-error" : ""}`}>{feedback}</p> : null}
+          </form>
+        </>
       ) : null}
     </div>
   );
@@ -3482,7 +4017,7 @@ function PackCard({ label, pack, buttonLabel, loading, onClick }) {
   );
 }
 
-function DataTable({ title, columns, rows, emptyLabel = "No records found." }) {
+function DataTable({ title, columns, rows, emptyLabel = "No records found.", footer = null }) {
   return (
     <div className="glass-panel table-panel table-span-full">
       <div className="table-header">
@@ -3512,16 +4047,34 @@ function DataTable({ title, columns, rows, emptyLabel = "No records found." }) {
                   ))}
                 </tr>
               ))
-            )}
-          </tbody>
-        </table>
+          )}
+        </tbody>
+      </table>
       </TableScroll>
+      {footer}
     </div>
   );
 }
 
 function TableScroll({ children }) {
   return <div className="table-scroll">{children}</div>;
+}
+
+function PaginationBar({ page, hasNextPage, totalCount, onPrevious, onNext }) {
+  return (
+    <div className="pagination-bar">
+      <span>{totalCount} total</span>
+      <div className="inline-actions">
+        <button className="button button-ghost button-compact" type="button" onClick={onPrevious} disabled={page <= 1}>
+          Previous
+        </button>
+        <span className="status-pill">Page {page}</span>
+        <button className="button button-ghost button-compact" type="button" onClick={onNext} disabled={!hasNextPage}>
+          Next
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function TimelineStep({ index, title, body }) {
@@ -3604,6 +4157,62 @@ function SimpleSparkline({ values }) {
       </defs>
     </svg>
   );
+}
+
+async function loadWalletHistoryPage(accessToken, page, setter) {
+  setter(await fetchWalletHistory(accessToken, Math.max(1, page), 12));
+}
+
+async function loadWalletPurchasesPage(accessToken, page, setter) {
+  setter(await fetchWalletPurchases(accessToken, Math.max(1, page), 12));
+}
+
+async function loadDevicesPage(accessToken, page, setter) {
+  setter(await fetchDevices(accessToken, Math.max(1, page), 10));
+}
+
+async function loadSupportTicketsPage(accessToken, page, setter) {
+  setter(await fetchUserSupportTickets(accessToken, Math.max(1, page), 10));
+}
+
+async function loadAdminUsersPage(accessToken, page, query, setter) {
+  setter(await fetchAdminUsers(accessToken, { page: Math.max(1, page), pageSize: 20, query }));
+}
+
+async function loadAdminUserLedgerPage(accessToken, userId, page, setter) {
+  if (!userId) {
+    setter({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    return;
+  }
+
+  setter(await fetchAdminUserLedger(accessToken, userId, { page: Math.max(1, page), pageSize: 10 }));
+}
+
+async function loadAdminPaymentOrdersPage(accessToken, page, setter) {
+  setter(await fetchAdminPaymentOrders(accessToken, { page: Math.max(1, page), pageSize: 20 }));
+}
+
+async function loadAdminPaymentWebhooksPage(accessToken, page, setter) {
+  setter(await fetchAdminPaymentWebhooks(accessToken, { page: Math.max(1, page), pageSize: 20 }));
+}
+
+async function refreshAdminPayments(accessToken, ordersSetter, webhooksSetter, refreshOverview) {
+  const [orders, webhooks] = await Promise.all([
+    fetchAdminPaymentOrders(accessToken, { page: 1, pageSize: 20 }),
+    fetchAdminPaymentWebhooks(accessToken, { page: 1, pageSize: 20 }),
+    refreshOverview()
+  ]);
+  ordersSetter(orders);
+  webhooksSetter(webhooks);
+}
+
+async function loadAdminSupportTicketsPage(accessToken, page, query, status, setter) {
+  setter(await fetchAdminSupportTickets(accessToken, {
+    page: Math.max(1, page),
+    pageSize: 20,
+    query,
+    status
+  }));
 }
 
 function setMeta(name, content, attribute = "name") {

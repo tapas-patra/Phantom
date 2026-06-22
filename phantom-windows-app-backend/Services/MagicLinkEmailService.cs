@@ -62,6 +62,19 @@ If you did not request this reset, ignore this email.
         return SendMail(recipientEmail, "Reset your Phantom admin password", body);
     }
 
+    public (string Status, string Error) SendUserPasswordReset(string recipientEmail, string resetUrl, DateTime expiresAtUtc)
+    {
+        var body = $"""
+Reset your Phantom account password:
+
+{resetUrl}
+
+This link expires at {expiresAtUtc:yyyy-MM-dd HH:mm:ss} UTC.
+If you did not request this reset, ignore this email.
+""";
+        return SendMail(recipientEmail, "Reset your Phantom account password", body);
+    }
+
     public string? GetDeliveryConfigurationError()
     {
         if (_options.HasGoogleOAuthClientSecrets && _options.HasSecretEncryptionKey)

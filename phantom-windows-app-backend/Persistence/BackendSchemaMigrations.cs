@@ -112,6 +112,21 @@ CREATE TABLE IF NOT EXISTS admin_password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_admin_password_reset_tokens_email_time
     ON admin_password_reset_tokens(email, created_at_utc DESC);
 
+CREATE TABLE IF NOT EXISTS user_password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_password_reset_tokens_email_time
+    ON user_password_reset_tokens(email, created_at_utc DESC);
+
 CREATE TABLE IF NOT EXISTS magic_links (
     token_hash TEXT PRIMARY KEY,
     email TEXT NOT NULL,
@@ -254,6 +269,30 @@ CREATE TABLE IF NOT EXISTS payment_webhook_events (
     created_at_utc TIMESTAMPTZ NOT NULL,
     processed_at_utc TIMESTAMPTZ NULL
 );
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    ticket_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    admin_notes TEXT NOT NULL DEFAULT '',
+    resolution_summary TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL,
+    resolved_at_utc TIMESTAMPTZ NULL,
+    last_admin_action_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_updated
+    ON support_tickets(user_id, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
+    ON support_tickets(status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_email_updated
+    ON support_tickets(lower(email), updated_at_utc DESC);
 
 CREATE TABLE IF NOT EXISTS integration_secrets (
     secret_key TEXT PRIMARY KEY,

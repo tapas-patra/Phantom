@@ -171,26 +171,40 @@ export async function resendVerificationEmail(email) {
   });
 }
 
+export async function requestUserPasswordReset(email) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function resetUserPassword(token, newPassword) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, newPassword })
+  });
+}
+
 export async function fetchAccountSummary(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/account-summary", {
     headers: authHeaders(accessToken)
   });
 }
 
-export async function fetchWalletHistory(accessToken) {
-  return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-history", {
+export async function fetchWalletHistory(accessToken, page = 1, pageSize = 12) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/wallet-history?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`, {
     headers: authHeaders(accessToken)
   });
 }
 
-export async function fetchWalletPurchases(accessToken) {
-  return request(DASHBOARD_API_BASE, "/api/dashboard/wallet-purchases", {
+export async function fetchWalletPurchases(accessToken, page = 1, pageSize = 12) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/wallet-purchases?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`, {
     headers: authHeaders(accessToken)
   });
 }
 
-export async function fetchDevices(accessToken) {
-  return request(DASHBOARD_API_BASE, "/api/dashboard/devices", {
+export async function fetchDevices(accessToken, page = 1, pageSize = 10) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/devices?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`, {
     headers: authHeaders(accessToken)
   });
 }
@@ -207,14 +221,38 @@ export async function fetchSupportOverview(accessToken) {
   });
 }
 
+export async function fetchUserSupportTickets(accessToken, page = 1, pageSize = 10) {
+  return request(
+    WINDOWS_BACKEND_API_BASE,
+    `/api/desktop/support/tickets?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`,
+    {
+      headers: authHeaders(accessToken)
+    }
+  );
+}
+
+export async function createUserSupportTicket(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/support/tickets", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function fetchAdminOverview(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
     headers: authHeaders(accessToken)
   });
 }
 
-export async function fetchAdminUsers(accessToken) {
-  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts", {
+export async function fetchAdminUsers(accessToken, { page = 1, pageSize = 20, query = "" } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+    query
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/accounts?${params.toString()}`, {
     headers: authHeaders(accessToken)
   });
 }
@@ -231,6 +269,21 @@ export async function updateAdminUser(accessToken, payload) {
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
   });
+}
+
+export async function fetchAdminUserLedger(accessToken, userId, { page = 1, pageSize = 10 } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+
+  return request(
+    WINDOWS_BACKEND_API_BASE,
+    `/api/admin/accounts/${encodeURIComponent(userId)}/ledger?${params.toString()}`,
+    {
+      headers: authHeaders(accessToken)
+    }
+  );
 }
 
 export async function grantAdminCredits(accessToken, payload) {
@@ -263,24 +316,47 @@ export async function fetchManagedAiAdminInventory(accessToken) {
   });
 }
 
-export async function fetchAdminPaymentOrders(accessToken, limit = 100) {
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/admin/payments/orders?limit=${encodeURIComponent(limit)}`,
-    {
-      headers: authHeaders(accessToken)
-    }
-  );
+export async function fetchAdminPaymentOrders(accessToken, { page = 1, pageSize = 20 } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/payments/orders?${params.toString()}`, {
+    headers: authHeaders(accessToken)
+  });
 }
 
-export async function fetchAdminPaymentWebhooks(accessToken, limit = 100) {
-  return request(
-    DASHBOARD_API_BASE,
-    `/api/dashboard/admin/payments/webhooks?limit=${encodeURIComponent(limit)}`,
-    {
-      headers: authHeaders(accessToken)
-    }
-  );
+export async function fetchAdminPaymentWebhooks(accessToken, { page = 1, pageSize = 20 } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/payments/webhooks?${params.toString()}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function fetchAdminSupportTickets(accessToken, { page = 1, pageSize = 20, query = "", status = "all" } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+    query,
+    status
+  });
+
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/support/tickets?${params.toString()}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateAdminSupportTicket(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/support/tickets/update", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function fetchGmailOAuthStatus(accessToken) {

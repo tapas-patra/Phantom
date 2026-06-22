@@ -18,6 +18,7 @@ public sealed class BackendOptions
     public int EmailVerificationTtlHours { get; init; } = 24;
     public int AdminSessionTtlHours { get; init; } = 8;
     public int AdminPasswordResetTtlMinutes { get; init; } = 30;
+    public int UserPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
     public string InternalApiKey { get; init; } = string.Empty;
     public string SharedCookieDomain { get; init; } = string.Empty;
@@ -130,6 +131,10 @@ public sealed class BackendOptions
             AdminPasswordResetTtlMinutes = ParseInt(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_PASSWORD_RESET_TTL_MINUTES"),
                 section["AdminPasswordResetTtlMinutes"],
+                30),
+            UserPasswordResetTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_USER_PASSWORD_RESET_TTL_MINUTES"),
+                section["UserPasswordResetTtlMinutes"],
                 30),
             AdminApiKey = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY",

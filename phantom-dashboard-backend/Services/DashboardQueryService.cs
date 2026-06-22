@@ -69,8 +69,11 @@ LIMIT 1;";
         };
     }
 
-    public IReadOnlyList<object> GetWalletHistory(string userId)
+    public object GetWalletHistory(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -78,8 +81,11 @@ SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, added_premi
 FROM dashboard_wallet_history
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
-LIMIT 50;";
+OFFSET @offset
+LIMIT @pageSize;";
         command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", offset);
+        command.Parameters.AddWithValue("pageSize", normalizedPageSize);
         using var reader = command.ExecuteReader();
         var items = new List<object>();
         while (reader.Read())
@@ -95,11 +101,14 @@ LIMIT 50;";
             });
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_wallet_history", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
-    public IReadOnlyList<object> GetWalletPurchases(string userId)
+    public object GetWalletPurchases(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -107,8 +116,11 @@ SELECT checkout_id, target, pack_code, display_label, amount_minor, credits, pre
 FROM dashboard_wallet_purchases
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
-LIMIT 50;";
+OFFSET @offset
+LIMIT @pageSize;";
         command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", offset);
+        command.Parameters.AddWithValue("pageSize", normalizedPageSize);
         using var reader = command.ExecuteReader();
         var items = new List<object>();
         while (reader.Read())
@@ -132,11 +144,14 @@ LIMIT 50;";
             });
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_wallet_purchases", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
-    public IReadOnlyList<object> GetDevices(string userId)
+    public object GetDevices(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -148,8 +163,12 @@ SELECT
     is_active
 FROM dashboard_device_inventory
 WHERE user_id = @userId
-ORDER BY last_authenticated_at_utc DESC;";
+ORDER BY last_authenticated_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
         command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", offset);
+        command.Parameters.AddWithValue("pageSize", normalizedPageSize);
         using var reader = command.ExecuteReader();
         var items = new List<object>();
         while (reader.Read())
@@ -164,7 +183,7 @@ ORDER BY last_authenticated_at_utc DESC;";
             });
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_device_inventory", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
     public object GetDownloadEntitlement(string userId)
@@ -221,5 +240,32 @@ LIMIT 1;";
             supportMessage = "Support dashboards can inspect wallet state, stale locks, and recent usage without mutating runtime authority."
         };
     }
+
+    private static object CreatePageResult(
+        Npgsql.NpgsqlConnection connection,
+        string tableName,
+        string userId,
+        List<object> items,
+        int page,
+        int pageSize,
+        int offset)
+    {
+        using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = $"SELECT COUNT(*) FROM {tableName} WHERE user_id = @userId;";
+        countCommand.Parameters.AddWithValue("userId", userId);
+        var totalCount = Convert.ToInt32(countCommand.ExecuteScalar() ?? 0);
+        return new
+        {
+            items,
+            page,
+            pageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
+    }
+
+    private static int NormalizePage(int page) => Math.Max(1, page);
+
+    private static int NormalizePageSize(int pageSize) => Math.Clamp(pageSize, 1, 50);
 
 }

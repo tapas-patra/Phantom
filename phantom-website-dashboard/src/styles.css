@@ -712,8 +712,26 @@ select:focus,
 }
 
 .table-scroll {
-  overflow-x: auto;
+  max-height: min(32rem, 65vh);
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(76, 201, 240, 0.45) rgba(255, 255, 255, 0.06);
+}
+
+.table-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(76, 201, 240, 0.32);
+  border-radius: 999px;
+}
+
+.table-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
 }
 
 table {
@@ -756,6 +774,16 @@ tbody tr:last-child th {
   overflow-x: auto;
   white-space: pre-wrap;
   color: #d8effd;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--muted);
 }
 
 .admin-form-panel,

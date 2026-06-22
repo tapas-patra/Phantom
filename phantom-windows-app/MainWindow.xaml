@@ -54,7 +54,7 @@
             <!-- Main Background -->
             <Border x:Name="WindowChromeBorder" Background="#78000000" CornerRadius="12" Margin="4" 
                     MouseLeftButtonDown="Border_MouseLeftButtonDown"
-                    BorderBrush="#45FFFFFF" BorderThickness="1"/>
+                    BorderBrush="Transparent" BorderThickness="0"/>
 
             <!-- Content -->
             <Grid x:Name="MainContentGrid" Margin="18,14,18,12">
@@ -128,7 +128,6 @@
                         <Button x:Name="ChatCollapseButton" Content="▴" Width="40" Height="32" Click="ChatCollapseButton_Click"
                             Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1.5"
                             Foreground="White" FontSize="18" FontWeight="Bold" Margin="0,0,8,0"
-                            ToolTip="Hide chat"
                             Style="{StaticResource ButtonStyle}"/>
 
                         <!-- AUTO-RESTART BUTTON -->
@@ -354,7 +353,6 @@
                             Foreground="White" 
                             FontSize="18" 
                             FontWeight="Bold"
-                            ToolTip="Send"
                             Style="{StaticResource ButtonStyle}"/>
                 </Grid>
 

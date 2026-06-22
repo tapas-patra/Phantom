@@ -3282,12 +3282,16 @@ namespace SecureOverlay
                     return (IntPtr)1;
                 }
 
-                // F15 - Settings
-                if (vkCode == NativeMethods.VK_F15)
+                // Ctrl + Alt + = - Settings
+                if (vkCode == NativeMethods.VK_OEM_PLUS)
                 {
-                    Log.WriteLine("Hotkey: F15 pressed");
-                    Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs()));
-                    return (IntPtr)1;
+                    if (NativeMethods.IsKeyPressed(NativeMethods.VK_CONTROL) &&
+                        NativeMethods.IsKeyPressed(NativeMethods.VK_MENU))
+                    {
+                        Log.WriteLine("Hotkey: Ctrl+Alt+= pressed");
+                        Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs()));
+                        return (IntPtr)1;
+                    }
                 }
 
                 // Ctrl + Alt + D - Toggle Debug Panel

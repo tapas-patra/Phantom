@@ -275,14 +275,13 @@ namespace SecureOverlay
 
 ✓ **Completely invisible** to screen sharing  
 ✓ Mouse cursor **IS visible**  
-✓ Click 🐛 to see debug logs  
 ✓ Click ⚙️ for settings  
 
 ## ⌨️ Hotkeys:
 - `Ctrl+Alt+`` = Hide/Show  
 - `Ctrl+Alt+-` = Quit  
 - `Ctrl+Alt+D` = Debug logs  
-- `F15` = Settings  
+- `Ctrl+Alt+=` = Settings  
 
 Ask me anything!";
 

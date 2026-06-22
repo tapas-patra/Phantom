@@ -473,7 +473,6 @@ namespace SecureOverlay
         {
             ProviderSelectorBorder.Visibility = Visibility.Visible;
             ModelSelectorBorder.Visibility = Visibility.Visible;
-            DebugButton.Visibility = HasByoEntitlement() ? Visibility.Visible : Visibility.Collapsed;
             if (!HasByoEntitlement())
             {
                 DebugPanel.Visibility = Visibility.Collapsed;

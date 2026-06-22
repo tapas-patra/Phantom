@@ -8,12 +8,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using FormsScreen = System.Windows.Forms.Screen;
 using SecureOverlay.Application.Billing;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Interviews;
@@ -69,18 +71,8 @@ namespace SecureOverlay
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
         private bool _isChatSectionCollapsed = false;
-
-        private const int ResizeBorderThickness = 8;
-        private const int WM_NCHITTEST = 0x0084;
-        private const int HTCLIENT = 1;
-        private const int HTLEFT = 10;
-        private const int HTRIGHT = 11;
-        private const int HTTOP = 12;
-        private const int HTTOPLEFT = 13;
-        private const int HTTOPRIGHT = 14;
-        private const int HTBOTTOM = 15;
-        private const int HTBOTTOMLEFT = 16;
-        private const int HTBOTTOMRIGHT = 17;
+        private const double ExpandedWindowMinHeight = 220;
+        private const double CollapsedWindowMinHeight = 100;
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -100,17 +92,9 @@ namespace SecureOverlay
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr SetCursor(IntPtr hCursor);
-
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WS_EX_NOACTIVATE = 0x08000000;
-        private const int WM_SETCURSOR = 0x0020;
-        private const int IDC_ARROW = 32512;
 
         private TaskViewMonitor _taskViewMonitor; 
         
@@ -1129,9 +1113,6 @@ namespace SecureOverlay
             }
 
             Log.WriteLine($"Window Handle: 0x{_windowHandle:X}");
-
-            var source = HwndSource.FromHwnd(_windowHandle);
-            source?.AddHook(WndProc);
 
             try
             {
@@ -3141,8 +3122,10 @@ namespace SecureOverlay
 
         private void ApplyWindowOpacity(double opacity, bool persistSetting)
         {
-            var clampedOpacity = Math.Max(0.4, Math.Min(1.0, opacity));
-            MainContentGrid.Opacity = clampedOpacity;
+            var clampedOpacity = Math.Max(0.05, Math.Min(1.0, opacity));
+            OuterShadowBorder.Opacity = clampedOpacity;
+            WindowChromeBorder.Opacity = 0.04 + (clampedOpacity * 0.96);
+            MainContentGrid.Opacity = 0.32 + (clampedOpacity * 0.68);
 
             if (persistSetting)
             {
@@ -3161,62 +3144,66 @@ namespace SecureOverlay
             _isChatSectionCollapsed = collapsed;
             ChatSectionContainer.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             ChatSectionRow.Height = collapsed ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
-            ChatCollapseButton.Content = collapsed ? "Show" : "Hide";
+            ChatCollapseButton.Content = collapsed ? "▾" : "▴";
+            ChatCollapseButton.ToolTip = collapsed ? "Show chat" : "Hide chat";
             CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+            MinHeight = collapsed ? CollapsedWindowMinHeight : ExpandedWindowMinHeight;
+            MainContentGrid.Margin = collapsed
+                ? new Thickness(18, 14, 18, 10)
+                : new Thickness(22, 18, 22, 14);
+            TitleBarGrid.Margin = collapsed
+                ? new Thickness(0)
+                : new Thickness(0, 0, 0, 10);
 
-            if (collapsed && Height > MinHeight)
+            if (collapsed)
             {
-                Height = MinHeight;
+                Height = CollapsedWindowMinHeight;
             }
-            else if (!collapsed && Height < 500)
+            else if (Height < 500)
             {
                 Height = 500;
             }
         }
 
-        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
         {
-            if (msg == WM_NCHITTEST)
+            if (sender is not Thumb thumb || thumb.Tag is not string tag)
             {
-                var result = HitTestResizeBorder(lParam);
-                if (result != HTCLIENT)
-                {
-                    handled = true;
-                    return new IntPtr(result);
-                }
+                return;
             }
 
-            if (msg == WM_SETCURSOR)
+            var minWidth = MinWidth;
+            var minHeight = MinHeight;
+            var currentLeft = Left;
+            var currentTop = Top;
+            var currentWidth = Width;
+            var currentHeight = Height;
+
+            if (tag.Contains("Left", StringComparison.Ordinal))
             {
-                SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW));
-                handled = true;
-                return IntPtr.Zero;
+                var nextWidth = Math.Max(minWidth, currentWidth - e.HorizontalChange);
+                var widthDelta = currentWidth - nextWidth;
+                Width = nextWidth;
+                Left = currentLeft + widthDelta;
             }
 
-            return IntPtr.Zero;
-        }
+            if (tag.Contains("Right", StringComparison.Ordinal))
+            {
+                Width = Math.Max(minWidth, currentWidth + e.HorizontalChange);
+            }
 
-        private int HitTestResizeBorder(IntPtr lParam)
-        {
-            var x = (short)((long)lParam & 0xFFFF);
-            var y = (short)(((long)lParam >> 16) & 0xFFFF);
-            var point = PointFromScreen(new Point(x, y));
+            if (tag.Contains("Top", StringComparison.Ordinal))
+            {
+                var nextHeight = Math.Max(minHeight, currentHeight - e.VerticalChange);
+                var heightDelta = currentHeight - nextHeight;
+                Height = nextHeight;
+                Top = currentTop + heightDelta;
+            }
 
-            var onLeft = point.X >= 0 && point.X <= ResizeBorderThickness;
-            var onRight = point.X <= ActualWidth && point.X >= ActualWidth - ResizeBorderThickness;
-            var onTop = point.Y >= 0 && point.Y <= ResizeBorderThickness;
-            var onBottom = point.Y <= ActualHeight && point.Y >= ActualHeight - ResizeBorderThickness;
-
-            if (onLeft && onTop) return HTTOPLEFT;
-            if (onRight && onTop) return HTTOPRIGHT;
-            if (onLeft && onBottom) return HTBOTTOMLEFT;
-            if (onRight && onBottom) return HTBOTTOMRIGHT;
-            if (onLeft) return HTLEFT;
-            if (onRight) return HTRIGHT;
-            if (onTop) return HTTOP;
-            if (onBottom) return HTBOTTOM;
-
-            return HTCLIENT;
+            if (tag.Contains("Bottom", StringComparison.Ordinal))
+            {
+                Height = Math.Max(minHeight, currentHeight + e.VerticalChange);
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -4056,16 +4043,9 @@ namespace SecureOverlay
             menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
-            // ✅ POSITION RELATIVE TO SCREEN (not window)
-            var mainWindowPosition = this.PointToScreen(new System.Windows.Point(0, 0));
-            var buttonRelativePosition = ProviderSelectorBorder.TransformToAncestor(this)
-                .Transform(new System.Windows.Point(0, 0));
-            
-            menuWindow.Left = mainWindowPosition.X + buttonRelativePosition.X;
-            menuWindow.Top = mainWindowPosition.Y + buttonRelativePosition.Y + 35;
-
             // ✅ SHOW WINDOW FIRST
             menuWindow.Show();
+            PositionDropdownMenu(menuWindow, ProviderSelectorBorder);
             menuWindow.Activate();
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
@@ -4202,16 +4182,9 @@ namespace SecureOverlay
             menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
-            // ✅ POSITION RELATIVE TO SCREEN (not window)
-            var mainWindowPosition = this.PointToScreen(new System.Windows.Point(0, 0));
-            var buttonRelativePosition = ModelSelectorBorder.TransformToAncestor(this)
-                .Transform(new System.Windows.Point(0, 0));
-            
-            menuWindow.Left = mainWindowPosition.X + buttonRelativePosition.X;
-            menuWindow.Top = mainWindowPosition.Y + buttonRelativePosition.Y + 35;
-
             // ✅ SHOW WINDOW FIRST
             menuWindow.Show();
+            PositionDropdownMenu(menuWindow, ModelSelectorBorder);
             menuWindow.Activate();
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
@@ -4257,6 +4230,51 @@ namespace SecureOverlay
                 {
                     _currentDropdownMenu = null;
                 }
+            }
+        }
+
+        private void PositionDropdownMenu(Window menuWindow, FrameworkElement anchor)
+        {
+            menuWindow.UpdateLayout();
+
+            var anchorTopLeft = anchor.PointToScreen(new Point(0, 0));
+            var anchorBottomLeft = anchor.PointToScreen(new Point(0, anchor.ActualHeight));
+            var anchorTopRight = anchor.PointToScreen(new Point(anchor.ActualWidth, 0));
+            var menuWidth = Math.Max(menuWindow.ActualWidth, menuWindow.Width);
+            var menuHeight = Math.Max(menuWindow.ActualHeight, menuWindow.Height);
+            var screenPoint = new System.Drawing.Point((int)anchorTopLeft.X, (int)anchorTopLeft.Y);
+            var workingArea = FormsScreen.FromPoint(screenPoint).WorkingArea;
+
+            var desiredLeft = anchorTopLeft.X;
+            var minLeft = workingArea.Left + 8;
+            var maxLeft = workingArea.Right - menuWidth - 8;
+            var left = Math.Max(minLeft, Math.Min(desiredLeft, Math.Max(minLeft, maxLeft)));
+
+            var belowTop = anchorBottomLeft.Y + 6;
+            var aboveTop = anchorTopLeft.Y - menuHeight - 6;
+            var canOpenBelow = belowTop + menuHeight <= workingArea.Bottom - 8;
+            var canOpenAbove = aboveTop >= workingArea.Top + 8;
+
+            double top;
+            if (canOpenBelow)
+            {
+                top = belowTop;
+            }
+            else if (canOpenAbove)
+            {
+                top = aboveTop;
+            }
+            else
+            {
+                top = Math.Max(workingArea.Top + 8, Math.Min(belowTop, workingArea.Bottom - menuHeight - 8));
+            }
+
+            menuWindow.Left = left;
+            menuWindow.Top = top;
+
+            if (anchorTopRight.X > workingArea.Right)
+            {
+                menuWindow.Left = Math.Max(workingArea.Left + 8, workingArea.Right - menuWidth - 8);
             }
         }
 
@@ -4390,10 +4408,25 @@ namespace SecureOverlay
             var displayModel = GetModelDisplayName(_settings.SelectedAI, currentModel);
             Log.WriteLine($"  Display name: {displayModel}");
             
-            ModelText.Text = displayModel;
+            ModelText.Text = GetCompactModelDisplayName(displayModel);
+            ModelSelectorBorder.ToolTip = displayModel;
+            ProviderSelectorBorder.ToolTip = providerName;
             
             Log.WriteLine($"✓ Title bar updated: {providerName} | {displayModel}");
             Log.WriteLine("═══════════════════════════════════════════════════════");
+        }
+
+        private string GetCompactModelDisplayName(string displayModel)
+        {
+            if (string.IsNullOrWhiteSpace(displayModel))
+            {
+                return string.Empty;
+            }
+
+            const int maxLength = 16;
+            return displayModel.Length <= maxLength
+                ? displayModel
+                : $"{displayModel[..13]}...";
         }
 
         // ✅ TEMPORARY DEBUG METHOD - Add this to MainWindow class

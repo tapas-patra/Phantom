@@ -12,7 +12,6 @@
     
     <Window.Resources>
         <DropShadowEffect x:Key="Shadow" ShadowDepth="3" BlurRadius="10" Opacity="1" Color="Black"/>
-        <SolidColorBrush x:Key="ResizeGripHitTestBrush" Color="#01000000"/>
         <Style x:Key="ButtonStyle" TargetType="Button">
             <Setter Property="Template">
                 <Setter.Value>
@@ -31,6 +30,16 @@
                     <Setter Property="Opacity" Value="0.8"/>
                 </Trigger>
             </Style.Triggers>
+        </Style>
+        <Style x:Key="ResizeThumbStyle" TargetType="Thumb">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -55,7 +64,7 @@
             <!-- Main Background -->
             <Border x:Name="WindowChromeBorder" Background="#96000000" CornerRadius="12" Margin="0"
                     MouseLeftButtonDown="Border_MouseLeftButtonDown"
-                    BorderBrush="#14000000" BorderThickness="1"/>
+                    BorderBrush="Transparent" BorderThickness="0"/>
 
             <!-- Content -->
             <Grid x:Name="MainContentGrid" Margin="18,14,18,12">
@@ -460,28 +469,28 @@
         </Grid>
 
         <Thumb Width="8" Height="Auto" HorizontalAlignment="Left" VerticalAlignment="Stretch"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="Left"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Left"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="8" Height="Auto" HorizontalAlignment="Right" VerticalAlignment="Stretch"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="Right"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Right"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Height="8" Width="Auto" HorizontalAlignment="Stretch" VerticalAlignment="Top"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="Top"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Top"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Height="8" Width="Auto" HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="Bottom"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Bottom"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Top"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="TopLeft"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="TopLeft"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Top"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="TopRight"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="TopRight"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="BottomLeft"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="BottomLeft"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-               Background="{StaticResource ResizeGripHitTestBrush}" Cursor="Arrow" ForceCursor="True" Tag="BottomRight"
+               Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="BottomRight"
                DragDelta="ResizeThumb_DragDelta"/>
 
         <!-- ═══════════════════════════════════════════════════════════════ -->

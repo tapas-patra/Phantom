@@ -3139,11 +3139,7 @@ namespace SecureOverlay
 
             var backgroundAlpha = (byte)Math.Round(92 + (normalizedOpacity * 132));
             WindowChromeBorder.Background = new SolidColorBrush(Color.FromArgb(backgroundAlpha, 0, 0, 0));
-            WindowChromeBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(
-                (byte)Math.Round(20 + (normalizedOpacity * 24)),
-                22,
-                29,
-                36));
+            WindowChromeBorder.BorderBrush = Brushes.Transparent;
 
             if (persistSetting)
             {

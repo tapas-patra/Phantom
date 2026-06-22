@@ -455,8 +455,9 @@ namespace SecureOverlay
 
         private void ApplyAccountTierChrome()
         {
-            ProviderSelectorBorder.Visibility = Visibility.Visible;
-            ModelSelectorBorder.Visibility = Visibility.Visible;
+            var selectorsVisible = HasByoEntitlement() ? Visibility.Visible : Visibility.Collapsed;
+            ProviderSelectorBorder.Visibility = selectorsVisible;
+            ModelSelectorBorder.Visibility = selectorsVisible;
             if (!HasByoEntitlement())
             {
                 DebugPanel.Visibility = Visibility.Collapsed;
@@ -3145,7 +3146,6 @@ namespace SecureOverlay
             ChatSectionContainer.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             ChatSectionRow.Height = collapsed ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
             ChatCollapseButton.Content = collapsed ? "▾" : "▴";
-            ChatCollapseButton.ToolTip = collapsed ? "Show chat" : "Hide chat";
             CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
             MinHeight = collapsed ? CollapsedWindowMinHeight : ExpandedWindowMinHeight;
             MainContentGrid.Margin = collapsed

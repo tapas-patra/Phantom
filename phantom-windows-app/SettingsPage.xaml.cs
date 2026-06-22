@@ -874,7 +874,8 @@ namespace SecureOverlay
             if (AIProviderComboBox.SelectedItem == null) return;
 
             var selected = AIProviderComboBox.SelectedItem as string;
-            PremiumManagedModelRow.Visibility = IsPremiumOnlyAccount() ? Visibility.Visible : Visibility.Collapsed;
+            ProviderSelectionSection.Visibility = IsPremiumOnlyAccount() ? Visibility.Collapsed : Visibility.Visible;
+            PremiumManagedModelRow.Visibility = Visibility.Collapsed;
             if (IsPremiumOnlyAccount())
             {
                 ChatGPTPanel.Visibility = Visibility.Collapsed;

@@ -26,6 +26,7 @@ builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
+builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
 builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
@@ -952,6 +953,18 @@ adminGroup.MapGet("/managed-ai/catalog", (ManagedAiCatalogService catalogService
     {
         providers = catalogService.ListCatalogProviders()
     });
+});
+
+adminGroup.MapGet("/managed-ai/selection", (ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.GetAdminRuntimeSelection());
+});
+
+adminGroup.MapPost("/managed-ai/selection", (
+    ManagedAiRuntimeSelectionUpdateRequestDto request,
+    ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.UpdateAdminRuntimeSelection(request));
 });
 
 adminGroup.MapPost("/managed-ai/catalog/vision", (

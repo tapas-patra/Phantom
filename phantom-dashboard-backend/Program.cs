@@ -310,6 +310,18 @@ adminGroup.MapPost("/managed-ai/catalog/refresh", async (
         cookies.GetAdminAuthorizationHeader(httpContext.Request),
         cancellationToken));
 });
+adminGroup.MapPost("/managed-ai/selection", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpdateRuntimeSelection(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
+        payload,
+        cancellationToken));
+});
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
     HttpContext httpContext,
     BrowserSessionCookieService cookies,

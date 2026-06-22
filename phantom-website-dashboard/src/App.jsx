@@ -39,6 +39,7 @@ import {
   triggerManagedAiCatalogRefresh,
   updateAdminUser,
   updateManagedAiModelVision,
+  updateManagedAiRuntimeSelection,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
   verifyPhoneOtp,
@@ -2556,6 +2557,9 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState("0");
   const [isEnabled, setIsEnabled] = useState(true);
+  const [selectionProviderId, setSelectionProviderId] = useState("");
+  const [selectionModelId, setSelectionModelId] = useState("");
+  const [savingSelection, setSavingSelection] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -2564,6 +2568,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
   const providers = inventory?.managedProviders || [];
   const credentials = inventory?.credentials || [];
   const catalogProviders = inventory?.catalogs?.providers || [];
+  const currentSelection = inventory?.selection || null;
   const refreshProviders = catalogRefreshResult?.providers || [];
 
   useEffect(() => {
@@ -2571,6 +2576,32 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
       setProviderId(providers[0].providerId);
     }
   }, [providerId, providers]);
+
+  useEffect(() => {
+    const catalogProviderIds = catalogProviders.map((item) => item.providerId);
+    const nextProviderId =
+      (currentSelection?.providerId && catalogProviderIds.includes(currentSelection.providerId)
+        ? currentSelection.providerId
+        : catalogProviderIds[0]) || "";
+    setSelectionProviderId(nextProviderId);
+
+    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    const nextModelId =
+      (currentSelection?.providerId === nextProviderId &&
+      nextProvider?.models?.some((model) => model.modelId === currentSelection?.modelId)
+        ? currentSelection.modelId
+        : nextProvider?.models?.[0]?.modelId) || "";
+    setSelectionModelId(nextModelId);
+  }, [catalogProviders, currentSelection?.modelId, currentSelection?.providerId]);
+
+  const selectedCatalogProvider = catalogProviders.find((item) => item.providerId === selectionProviderId);
+  const selectedCatalogModels = selectedCatalogProvider?.models || [];
+
+  function handleSelectionProviderChange(nextProviderId) {
+    setSelectionProviderId(nextProviderId);
+    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    setSelectionModelId(nextProvider?.models?.[0]?.modelId || "");
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -2625,6 +2656,25 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
     }
   }
 
+  async function handleSelectionSave(event) {
+    event.preventDefault();
+    setSavingSelection(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await updateManagedAiRuntimeSelection(accessToken, {
+        providerId: selectionProviderId,
+        modelId: selectionModelId
+      });
+      await onRefresh();
+      setSuccess("Managed runtime selection updated.");
+    } catch (selectionError) {
+      setLocalError(selectionError.message || "Could not update managed runtime selection.");
+    } finally {
+      setSavingSelection(false);
+    }
+  }
+
   async function handleVisionToggle(nextProviderId, modelId, supportsVision) {
     setLocalError("");
     setSuccess("");
@@ -2647,9 +2697,74 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
         <p className="eyebrow">Managed AI inventory</p>
         <h1>Operate provider credentials for hosted lanes without exposing secrets to users.</h1>
         <p>
-          Provider inventory belongs in admin. Users should only see available provider and model choices, not the
-          underlying credential layer.
+          Provider inventory belongs in admin. Managed users should inherit the single active provider and model
+          chosen here, while BYO users keep their own provider controls.
         </p>
+      </article>
+
+      <article className="glass-panel admin-form-panel">
+        <div className="table-header">
+          <div>
+            <p className="eyebrow">Managed runtime selection</p>
+            <h3>Choose the provider and model used for managed users</h3>
+          </div>
+        </div>
+        <p>
+          Premium and other managed lanes consume this selection as the global active hosted runtime. The desktop
+          app should no longer expose provider or model switching for managed users.
+        </p>
+        <form className="admin-form" onSubmit={handleSelectionSave}>
+          <div className="admin-form-inline">
+            <label>
+              Active provider
+              <select value={selectionProviderId} onChange={(event) => handleSelectionProviderChange(event.target.value)}>
+                {catalogProviders.map((provider) => (
+                  <option key={provider.providerId} value={provider.providerId}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Active model
+              <select value={selectionModelId} onChange={(event) => setSelectionModelId(event.target.value)}>
+                {selectedCatalogModels.map((model) => (
+                  <option key={model.modelId} value={model.modelId}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            className="button button-primary"
+            type="submit"
+            disabled={savingSelection || !selectionProviderId || !selectionModelId}
+          >
+            {savingSelection ? "Saving..." : "Set Active Runtime"}
+          </button>
+        </form>
+        <div className="stack-list">
+          <InfoRow
+            label="Current selection"
+            value={
+              currentSelection?.isConfigured
+                ? `${currentSelection.providerLabel || currentSelection.providerId} · ${currentSelection.modelDisplayName || currentSelection.modelId}`
+                : "Not configured"
+            }
+          />
+          <InfoRow
+            label="Selection status"
+            value={
+              currentSelection?.isConfigured
+                ? currentSelection?.isResolved
+                  ? "Resolved"
+                  : "Configured but not present in the latest catalog"
+                : "Missing"
+            }
+          />
+          <InfoRow label="Updated" value={formatDate(currentSelection?.updatedAtUtc)} />
+        </div>
       </article>
 
       <article className="glass-panel admin-form-panel">

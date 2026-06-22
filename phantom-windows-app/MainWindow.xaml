@@ -45,14 +45,14 @@
         <!-- ═══════════════════════════════════════════════════════════════ -->
         <Grid x:Name="ChatPageContainer" Visibility="Visible">
             <!-- Outer Shadow -->
-            <Border x:Name="OuterShadowBorder" Background="#60000000" CornerRadius="14" Margin="3">
+            <Border x:Name="OuterShadowBorder" Background="Transparent" CornerRadius="14" Margin="0">
                 <Border.Effect>
                     <DropShadowEffect ShadowDepth="0" BlurRadius="35" Opacity="0.9" Color="Black"/>
                 </Border.Effect>
             </Border>
 
             <!-- Main Background -->
-            <Border x:Name="WindowChromeBorder" Background="#78000000" CornerRadius="12" Margin="4" 
+            <Border x:Name="WindowChromeBorder" Background="#78000000" CornerRadius="12" Margin="0" 
                     MouseLeftButtonDown="Border_MouseLeftButtonDown"
                     BorderBrush="Transparent" BorderThickness="0"/>
 

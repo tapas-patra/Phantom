@@ -104,11 +104,13 @@
 
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
-                        <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
-                                  Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
-                        <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
-                                 FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
-                                 Foreground="Black"/>
+                        <StackPanel x:Name="ProviderSelectionSection">
+                            <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
+                                      Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                            <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
+                                     FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
+                                     Foreground="Black"/>
+                        </StackPanel>
                         <StackPanel x:Name="PremiumManagedModelRow" Visibility="Collapsed" Margin="0,0,0,20">
                             <TextBlock Text="Managed Model" FontSize="12" Foreground="White" Margin="0,0,0,6" Effect="{StaticResource Shadow}"/>
                             <ComboBox x:Name="ManagedModelComboBox" Height="35" FontSize="13" Foreground="Black"/>

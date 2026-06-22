@@ -311,6 +311,14 @@ export async function triggerManagedAiCatalogRefresh(accessToken) {
   });
 }
 
+export async function updateManagedAiRuntimeSelection(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/selection", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function deleteManagedAiCredential(accessToken, credentialId) {
   return request(
     DASHBOARD_API_BASE,

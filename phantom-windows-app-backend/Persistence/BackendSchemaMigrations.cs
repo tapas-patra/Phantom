@@ -6,7 +6,8 @@ public static class BackendSchemaMigrations
     {
         new SchemaMigration("001_backend_core_schema", CoreSchemaSql),
         new SchemaMigration("002_dashboard_projection_schema", DashboardProjectionSchemaSql),
-        new SchemaMigration("003_operational_indexes", OperationalIndexesSql)
+        new SchemaMigration("003_operational_indexes", OperationalIndexesSql),
+        new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -866,4 +867,12 @@ CREATE INDEX IF NOT EXISTS idx_payment_webhook_events_processed_at
     ON payment_webhook_events(processed_at_utc);
 CREATE INDEX IF NOT EXISTS idx_dashboard_projection_outbox_occurred_at
     ON dashboard_projection_outbox(occurred_at_utc);";
+
+    private const string ManagedAiRuntimeSelectionSql = @"
+CREATE TABLE IF NOT EXISTS managed_ai_runtime_selection (
+    selection_id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);";
 }

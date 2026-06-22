@@ -171,6 +171,7 @@ namespace SecureOverlay
             PopulateManagedModelChoices();
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
+            AutoSendAfterVoiceStopCheckBox.IsChecked = _settings.AutoSendAfterVoiceStopEnabled;
             
             // Rotation settings
             AutoSwitchKeysCheckBox.IsChecked = _settings.AutoSwitchKeysOnError;
@@ -1224,6 +1225,7 @@ namespace SecureOverlay
                 _settings.AllowByoSessionExtension = !IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
+                _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
                 

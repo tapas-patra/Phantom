@@ -1,9 +1,9 @@
 ﻿<Window x:Class="SecureOverlay.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Phantom" Height="500" Width="900"
+        Title="Phantom" Height="500" Width="900" MinHeight="220" MinWidth="760"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
-        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="CanResize"
         Left="100" Top="100"
         MouseDown="Window_MouseDown"
         MouseMove="Window_MouseMove"
@@ -57,14 +57,10 @@
                     BorderBrush="#90FFFFFF" BorderThickness="2"/>
 
             <!-- Content -->
-            <Grid Margin="30,25,30,25">
+            <Grid x:Name="MainContentGrid" Margin="30,25,30,25">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>  <!-- Title bar -->
-                    <RowDefinition Height="Auto"/>  <!-- Debug warning banner -->
-                    <RowDefinition Height="*"/>     <!-- Chat display -->
-                    <RowDefinition Height="Auto"/>  <!-- Input area -->
-                    <RowDefinition Height="Auto"/>  <!-- Status bar -->
-                    <RowDefinition Height="Auto"/>  <!-- Debug panel -->
+                    <RowDefinition x:Name="ChatSectionRow" Height="*"/>     <!-- Chat section -->
                 </Grid.RowDefinitions>
 
 
@@ -82,30 +78,6 @@
                         <TextBlock Text="Phantom" FontSize="18" FontWeight="Bold"
                                 Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"
                                 Effect="{StaticResource Shadow}"/>
-                        
-                        <!-- Provider Selector -->
-                        <Border Background="#50FFD700" CornerRadius="4" Padding="8,4" Margin="15,0,0,0"
-                                Cursor="Hand" MouseLeftButtonDown="ProviderSelector_Click"
-                                x:Name="ProviderSelectorBorder">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock x:Name="AIProviderText" Text="ChatGPT" FontSize="11" 
-                                        FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text=" ▼" FontSize="9" Foreground="White" Margin="4,0,0,0"
-                                        VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
-                        
-                        <!-- Model Selector -->
-                        <Border Background="#5000AAFF" CornerRadius="4" Padding="8,4" Margin="5,0,0,0"
-                                Cursor="Hand" MouseLeftButtonDown="ModelSelector_Click"
-                                x:Name="ModelSelectorBorder">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock x:Name="ModelText" Text="" FontSize="11" 
-                                        FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
-                                <TextBlock Text=" ▼" FontSize="9" Foreground="White" Margin="4,0,0,0"
-                                        VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
                         
                         <!-- API Key Indicator -->
                         <Border x:Name="APIKeyIndicator" Background="#5000FF00" CornerRadius="4" 
@@ -130,9 +102,34 @@
                             <TextBlock x:Name="TokenCounterText" Text="0k/8k" FontSize="11" 
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
+
+                        <Border Background="#30404A58" CornerRadius="6" Padding="10,6" Margin="12,0,0,0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Opacity" FontSize="11" Foreground="White"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"
+                                           Effect="{StaticResource Shadow}"/>
+                                <Slider x:Name="HeaderOpacitySlider"
+                                        Width="110"
+                                        Minimum="0.4"
+                                        Maximum="1.0"
+                                        Value="0.85"
+                                        ValueChanged="HeaderOpacitySlider_ValueChanged"/>
+                            </StackPanel>
+                        </Border>
                     </WrapPanel>
                     
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="CollapsedHeaderMicButton" Content="🎤" Width="40" Height="32" Click="VoiceButton_Click"
+                            Background="#5000AA00" BorderBrush="#9000AA00" BorderThickness="1.5"
+                            Foreground="White" FontSize="16" Margin="0,0,8,0"
+                            Visibility="Collapsed"
+                            Style="{StaticResource ButtonStyle}"/>
+
+                        <Button x:Name="ChatCollapseButton" Content="Hide" Width="52" Height="32" Click="ChatCollapseButton_Click"
+                            Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1.5"
+                            Foreground="White" FontSize="12" Margin="0,0,8,0"
+                            Style="{StaticResource ButtonStyle}"/>
+
                         <!-- AUTO-RESTART BUTTON -->
                         <Button Content="🔄" Width="40" Height="32" Click="RestartButton_Click"
                             Background="#50FF6B00" BorderBrush="#90FF6B00" BorderThickness="1.5"
@@ -148,12 +145,6 @@
                         <!-- CLEAR CHAT BUTTON -->
                         <Button Content="🔃" Width="40" Height="32" Click="ClearChatButton_Click"
                             Background="#50FFA500" BorderBrush="#90FFA500" BorderThickness="1.5"
-                            Foreground="White" FontSize="16" Margin="0,0,8,0" 
-                            Style="{StaticResource ButtonStyle}"/>
-                        
-                        <!-- DEBUG BUTTON -->
-                        <Button x:Name="DebugButton" Content="🐛" Width="40" Height="32" Click="DebugButton_Click"
-                            Background="#50AA00AA" BorderBrush="#90AA00AA" BorderThickness="1.5"
                             Foreground="White" FontSize="16" Margin="0,0,8,0" 
                             Style="{StaticResource ButtonStyle}"/>
                         
@@ -178,7 +169,16 @@
                 <!-- ═══════════════════════════════════════════════════════════════ -->
                 <!-- STATUS BANNERS (Grid.Row="1") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <StackPanel Grid.Row="1">
+                <Grid x:Name="ChatSectionContainer" Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
                     <Border x:Name="LaunchRestrictionBanner"
                             Background="#50FFB000" CornerRadius="6"
                             Padding="10" Margin="0,0,0,10"
@@ -222,9 +222,9 @@
                 </StackPanel>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- CHAT DISPLAY (Grid.Row="2") -->
+                <!-- CHAT DISPLAY (Grid.Row="1") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="2" Background="#40000000" BorderBrush="#70FFFFFF" 
+                <Border Grid.Row="1" Background="#40000000" BorderBrush="#70FFFFFF" 
                         BorderThickness="1.5" CornerRadius="10" Padding="15" Margin="0,0,0,15"
                         MouseDown="ChatArea_MouseDown"
                         Cursor="Arrow"
@@ -249,12 +249,14 @@
                 </Border>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- INPUT AREA (Grid.Row="3") -->
+                <!-- INPUT AREA (Grid.Row="2") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Grid Grid.Row="3" Margin="0,0,0,12">
+                <Grid Grid.Row="2" Margin="0,0,0,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>      <!-- Input box -->
                         <ColumnDefinition Width="Auto"/>   <!-- Screenshot button -->
+                        <ColumnDefinition Width="Auto"/>   <!-- Provider button -->
+                        <ColumnDefinition Width="Auto"/>   <!-- Model button -->
                         <ColumnDefinition Width="Auto"/>   <!-- Voice button -->
                         <ColumnDefinition Width="Auto"/>   <!-- Send button -->
                     </Grid.ColumnDefinitions>
@@ -304,8 +306,30 @@
                         <TextBlock x:Name="ScreenshotButtonText" Text="📸" FontSize="18"/>
                     </Button>
 
-                    <!-- Voice Button (Grid.Column="2") -->
-                    <Button Grid.Column="2" x:Name="VoiceButton" 
+                    <Border Grid.Column="2" Background="#50FFD700" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
+                            Cursor="Hand" MouseLeftButtonDown="ProviderSelector_Click"
+                            x:Name="ProviderSelectorBorder" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="AIProviderText" Text="ChatGPT" FontSize="11" 
+                                    FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
+                            <TextBlock Text=" ▼" FontSize="9" Foreground="White" Margin="4,0,0,0"
+                                    VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="3" Background="#5000AAFF" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
+                            Cursor="Hand" MouseLeftButtonDown="ModelSelector_Click"
+                            x:Name="ModelSelectorBorder" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="ModelText" Text="" FontSize="11" 
+                                    FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
+                            <TextBlock Text=" ▼" FontSize="9" Foreground="White" Margin="4,0,0,0"
+                                    VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Voice Button (Grid.Column="4") -->
+                    <Button Grid.Column="4" x:Name="VoiceButton" 
                             Content="🎤" 
                             Width="50" Height="40"
                             Click="VoiceButton_Click" 
@@ -317,8 +341,8 @@
                             FontSize="20" 
                             Style="{StaticResource ButtonStyle}"/>
 
-                    <!-- Send Button (Grid.Column="3") -->
-                    <Button Grid.Column="3" x:Name="SendButton"
+                    <!-- Send Button (Grid.Column="5") -->
+                    <Button Grid.Column="5" x:Name="SendButton"
                             Content="Send" 
                             Width="80" Height="40"
                             Click="SendButton_Click" 
@@ -333,9 +357,9 @@
                 </Grid>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- STATUS BAR (Grid.Row="4") -->
+                <!-- STATUS BAR (Grid.Row="3") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="4" Background="#40000000" CornerRadius="6" 
+                <Border Grid.Row="3" Background="#40000000" CornerRadius="6" 
                        Padding="12,8" BorderBrush="#60FFFFFF" BorderThickness="1"
                        MouseDown="StatusBar_MouseDown">
                     <Grid>
@@ -362,9 +386,9 @@
                 </Border>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- DEBUG PANEL (Grid.Row="5") - COLLAPSIBLE -->
+                <!-- DEBUG PANEL (Grid.Row="4") - COLLAPSIBLE -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="5" x:Name="DebugPanel" 
+                <Border Grid.Row="4" x:Name="DebugPanel" 
                         Background="#50000000" BorderBrush="#70FF00FF" BorderThickness="2"
                         CornerRadius="8" Padding="10" Margin="0,12,0,0"
                         Visibility="Collapsed">
@@ -423,6 +447,7 @@
                                  IsChecked="True"/>
                     </Grid>
                 </Border>
+                </Grid>
             </Grid>
         </Grid>
 

@@ -68,6 +68,19 @@ namespace SecureOverlay
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
+        private bool _isChatSectionCollapsed = false;
+
+        private const int ResizeBorderThickness = 8;
+        private const int WM_NCHITTEST = 0x0084;
+        private const int HTCLIENT = 1;
+        private const int HTLEFT = 10;
+        private const int HTRIGHT = 11;
+        private const int HTTOP = 12;
+        private const int HTTOPLEFT = 13;
+        private const int HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15;
+        private const int HTBOTTOMLEFT = 16;
+        private const int HTBOTTOMRIGHT = 17;
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -87,9 +100,17 @@ namespace SecureOverlay
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetCursor(IntPtr hCursor);
+
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int WM_SETCURSOR = 0x0020;
+        private const int IDC_ARROW = 32512;
 
         private TaskViewMonitor _taskViewMonitor; 
         
@@ -150,6 +171,8 @@ namespace SecureOverlay
             Log.WriteLine("Loading settings...");
             _settings = SettingsManager.Load();
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
+            HeaderOpacitySlider.Value = _settings.WindowOpacity;
+            ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -1107,6 +1130,9 @@ namespace SecureOverlay
             }
 
             Log.WriteLine($"Window Handle: 0x{_windowHandle:X}");
+
+            var source = HwndSource.FromHwnd(_windowHandle);
+            source?.AddHook(WndProc);
 
             try
             {
@@ -2432,6 +2458,8 @@ namespace SecureOverlay
                 Log.WriteLine("Voice input disabled in settings");
                 VoiceButton.IsEnabled = false;
                 VoiceButton.Opacity = 0.5;
+                CollapsedHeaderMicButton.IsEnabled = false;
+                CollapsedHeaderMicButton.Opacity = 0.5;
                 VoiceStatusText.Text = "Disabled";
                 return;
             }
@@ -2455,6 +2483,9 @@ namespace SecureOverlay
                     Log.WriteLine("✓ Voice service initialized successfully");
                     VoiceButton.IsEnabled = true;
                     VoiceButton.Opacity = 1.0;
+                    CollapsedHeaderMicButton.IsEnabled = true;
+                    CollapsedHeaderMicButton.Opacity = 1.0;
+                    SetVoiceButtonVisualState(isListening: false);
                     VoiceStatusText.Text = "Ready";
                     VoiceStatusText.Foreground = Brushes.LightGreen;
                 }
@@ -2463,6 +2494,8 @@ namespace SecureOverlay
                     Log.WriteLine("✗ Voice service initialization failed");
                     VoiceButton.IsEnabled = false;
                     VoiceButton.Opacity = 0.5;
+                    CollapsedHeaderMicButton.IsEnabled = false;
+                    CollapsedHeaderMicButton.Opacity = 0.5;
                     VoiceStatusText.Text = "Failed";
                     VoiceStatusText.Foreground = Brushes.Red;
                     
@@ -2479,6 +2512,8 @@ namespace SecureOverlay
                 
                 VoiceButton.IsEnabled = false;
                 VoiceButton.Opacity = 0.5;
+                CollapsedHeaderMicButton.IsEnabled = false;
+                CollapsedHeaderMicButton.Opacity = 0.5;
                 VoiceStatusText.Text = "Error";
                 VoiceStatusText.Foreground = Brushes.Red;
                 
@@ -2594,61 +2629,30 @@ namespace SecureOverlay
             {
                 Log.WriteLine("  Currently listening - stopping");
                 
-                _autoSendAfterVoice = true;
+                _autoSendAfterVoice = _settings.AutoSendAfterVoiceStopEnabled;
                 
                 _voiceService.StopListening();
-                VoiceButton.Content = "🎤";
-                VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
+                SetVoiceButtonVisualState(isListening: false);
                 VoiceStatusText.Text = "Processing speech...";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
                 Log.WriteLine("  ✓ Stopped listening - waiting for ALL speech to complete");
-                Log.WriteLine("  Auto-send enabled - starting completion timer");
-                
-                _voiceCompletionTimer?.Stop();
-                
-                _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+
+                if (_autoSendAfterVoice)
                 {
-                    Interval = TimeSpan.FromMilliseconds(1500)
-                };
-                
-                _voiceCompletionTimer.Tick += async (s, args) =>
+                    Log.WriteLine("  Auto-send enabled - starting completion timer");
+                    StartVoiceCompletionTimer();
+                    Log.WriteLine("  Started 1.5-second completion timer");
+                }
+                else
                 {
                     _voiceCompletionTimer?.Stop();
-                    
-                    Log.WriteLine("  Completion timer fired - checking if speech is complete...");
-                    
-                    if (!string.IsNullOrWhiteSpace(InputTextBox.Text) && 
-                        InputTextBox.Text != "Ask me anything..." &&
-                        _voiceService != null &&
-                        !_voiceService.IsListening())
-                    {
-                        Log.WriteLine($"  ✓ Speech FULLY completed. Auto-sending: '{InputTextBox.Text}'");
-                        
-                        StatusText.Text = "✓ Speech captured - Sending automatically...";
-                        StatusIndicator.Fill = Brushes.LightGreen;
-                        VoiceStatusText.Text = "Sending...";
-                        VoiceStatusText.Foreground = Brushes.LightGreen;
-                        
-                        await Task.Delay(500);
-                        
-                        await SendMessage();
-                        
-                        VoiceStatusText.Text = "Ready";
-                        VoiceStatusText.Foreground = Brushes.LightGreen;
-                    }
-                    else
-                    {
-                        Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
-                        StatusText.Text = "⚠️ No speech detected - try again";
-                        VoiceStatusText.Text = "Ready";
-                    }
-                    
-                    _autoSendAfterVoice = false;
-                };
-                
-                _voiceCompletionTimer.Start();
-                Log.WriteLine("  Started 1.5-second completion timer");
+                    StatusText.Text = "✓ Speech captured - Press Send to continue";
+                    StatusIndicator.Fill = Brushes.LightGreen;
+                    VoiceStatusText.Text = "Ready";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+                    Log.WriteLine("  Auto-send disabled - waiting for manual send");
+                }
             }
             else
             {
@@ -2662,8 +2666,7 @@ namespace SecureOverlay
                 _autoSendAfterVoice = false;
                 
                 _voiceService.StartListening();
-                VoiceButton.Content = "⏹️";
-                VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 255, 0, 0));
+                SetVoiceButtonVisualState(isListening: true);
                 VoiceStatusText.Text = "🎙️ Getting microphone ready";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
@@ -2671,6 +2674,65 @@ namespace SecureOverlay
             }
             
             Log.WriteLine("═══════════════════════════════════════════════");
+        }
+
+        private void StartVoiceCompletionTimer()
+        {
+            _voiceCompletionTimer?.Stop();
+
+            _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(1500)
+            };
+
+            _voiceCompletionTimer.Tick += async (s, args) =>
+            {
+                _voiceCompletionTimer?.Stop();
+
+                Log.WriteLine("  Completion timer fired - checking if speech is complete...");
+
+                if (!string.IsNullOrWhiteSpace(InputTextBox.Text) &&
+                    InputTextBox.Text != "Ask me anything..." &&
+                    _voiceService != null &&
+                    !_voiceService.IsListening())
+                {
+                    Log.WriteLine($"  ✓ Speech FULLY completed. Auto-sending: '{InputTextBox.Text}'");
+
+                    StatusText.Text = "✓ Speech captured - Sending automatically...";
+                    StatusIndicator.Fill = Brushes.LightGreen;
+                    VoiceStatusText.Text = "Sending...";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+
+                    await Task.Delay(500);
+                    await SendMessage();
+
+                    VoiceStatusText.Text = "Ready";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+                }
+                else
+                {
+                    Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
+                    StatusText.Text = "⚠️ No speech detected - try again";
+                    VoiceStatusText.Text = "Ready";
+                }
+
+                _autoSendAfterVoice = false;
+            };
+
+            _voiceCompletionTimer.Start();
+        }
+
+        private void SetVoiceButtonVisualState(bool isListening)
+        {
+            var content = isListening ? "⏹️" : "🎤";
+            var background = isListening
+                ? new SolidColorBrush(Color.FromArgb(80, 255, 0, 0))
+                : new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
+
+            VoiceButton.Content = content;
+            VoiceButton.Background = background;
+            CollapsedHeaderMicButton.Content = content;
+            CollapsedHeaderMicButton.Background = background;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -2853,6 +2915,8 @@ namespace SecureOverlay
                 RefreshAccountSnapshot();
                 ApplyAccountTierChrome();
                 UpdateCreditIndicator();
+                HeaderOpacitySlider.Value = _settings.WindowOpacity;
+                ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
@@ -3064,6 +3128,96 @@ namespace SecureOverlay
                     _cursorManager?.ResumeCursorChanges();
                 }
             }
+        }
+
+        private void HeaderOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            ApplyWindowOpacity(e.NewValue, persistSetting: true);
+        }
+
+        private void ApplyWindowOpacity(double opacity, bool persistSetting)
+        {
+            var clampedOpacity = Math.Max(0.4, Math.Min(1.0, opacity));
+            MainContentGrid.Opacity = clampedOpacity;
+
+            if (persistSetting)
+            {
+                _settings.WindowOpacity = clampedOpacity;
+                SettingsManager.Save(_settings);
+            }
+        }
+
+        private void ChatCollapseButton_Click(object sender, RoutedEventArgs e)
+        {
+            SetChatSectionCollapsed(!_isChatSectionCollapsed);
+        }
+
+        private void SetChatSectionCollapsed(bool collapsed)
+        {
+            _isChatSectionCollapsed = collapsed;
+            ChatSectionContainer.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            ChatSectionRow.Height = collapsed ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            ChatCollapseButton.Content = collapsed ? "Show" : "Hide";
+            CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+
+            if (collapsed && Height > MinHeight)
+            {
+                Height = MinHeight;
+            }
+            else if (!collapsed && Height < 500)
+            {
+                Height = 500;
+            }
+        }
+
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_NCHITTEST)
+            {
+                var result = HitTestResizeBorder(lParam);
+                if (result != HTCLIENT)
+                {
+                    handled = true;
+                    return new IntPtr(result);
+                }
+            }
+
+            if (msg == WM_SETCURSOR)
+            {
+                SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW));
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private int HitTestResizeBorder(IntPtr lParam)
+        {
+            var x = (short)((long)lParam & 0xFFFF);
+            var y = (short)(((long)lParam >> 16) & 0xFFFF);
+            var point = PointFromScreen(new Point(x, y));
+
+            var onLeft = point.X >= 0 && point.X <= ResizeBorderThickness;
+            var onRight = point.X <= ActualWidth && point.X >= ActualWidth - ResizeBorderThickness;
+            var onTop = point.Y >= 0 && point.Y <= ResizeBorderThickness;
+            var onBottom = point.Y <= ActualHeight && point.Y >= ActualHeight - ResizeBorderThickness;
+
+            if (onLeft && onTop) return HTTOPLEFT;
+            if (onRight && onTop) return HTTOPRIGHT;
+            if (onLeft && onBottom) return HTBOTTOMLEFT;
+            if (onRight && onBottom) return HTBOTTOMRIGHT;
+            if (onLeft) return HTLEFT;
+            if (onRight) return HTRIGHT;
+            if (onTop) return HTTOP;
+            if (onBottom) return HTBOTTOM;
+
+            return HTCLIENT;
         }
 
         // ═══════════════════════════════════════════════════════════════

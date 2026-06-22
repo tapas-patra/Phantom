@@ -45,4 +45,10 @@
     <PackageReference Include="Markdig.Wpf" Version="0.5.0.1" /> 
   </ItemGroup>
 
+  <ItemGroup>
+    <Resource Include="..\icons\phantom-logo.ico">
+      <Link>phantom-logo.ico</Link>
+    </Resource>
+  </ItemGroup>
+
 </Project>

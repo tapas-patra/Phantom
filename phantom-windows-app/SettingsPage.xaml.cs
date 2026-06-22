@@ -1012,7 +1012,26 @@ namespace SecureOverlay
                     return match;
                 }
 
-                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+                if (source is Visual || source is System.Windows.Media.Media3D.Visual3D)
+                {
+                    source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+                    continue;
+                }
+
+                if (source is FrameworkContentElement frameworkContentElement)
+                {
+                    source = frameworkContentElement.Parent;
+                    continue;
+                }
+
+                if (source is ContentElement contentElement)
+                {
+                    source = ContentOperations.GetParent(contentElement)
+                        ?? (contentElement as FrameworkContentElement)?.Parent;
+                    continue;
+                }
+
+                break;
             }
 
             return null;

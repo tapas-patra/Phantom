@@ -166,6 +166,15 @@ svg {
   font-size: 1.15rem;
 }
 
+.brandmark-logo {
+  display: block;
+  object-fit: contain;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .brandmark strong,
 h1,
 h2,

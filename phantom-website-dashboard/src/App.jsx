@@ -591,7 +591,7 @@ function SiteHeader({ surface, userSession, adminSession, onUserLogout, onAdminL
   return (
     <header className="site-header">
       <Link className="brandmark" to="/">
-        <span className="brandmark-mark">P</span>
+        <img className="brandmark-mark brandmark-logo" src="/brand/phantom-logo-192.png" alt="Phantom logo" />
         <span>
           <strong>Phantom</strong>
           <small>Protected Interview Runtime</small>

@@ -32,8 +32,8 @@
     <FileVersion>10.0.22631.4602</FileVersion>
     <AssemblyVersion>10.0.22631.4602</AssemblyVersion>
     
-    <!-- Use svchost icon -->
-    <ApplicationIcon>svchost.ico</ApplicationIcon>
+    <!-- Shared Phantom app icon -->
+    <ApplicationIcon>..\icons\phantom-logo.ico</ApplicationIcon>
     
   </PropertyGroup>
 

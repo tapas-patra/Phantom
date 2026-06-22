@@ -129,7 +129,10 @@ public sealed class PaymentService
 
     public object ConfirmClientPayment(DesktopAccountRecord account, PaymentClientConfirmationRequestDto request)
     {
-        var order = _paymentOrders.FindByCheckoutId(request.CheckoutId?.Trim() ?? string.Empty)
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        var order = _paymentOrders.FindByCheckoutId(request.CheckoutId?.Trim() ?? string.Empty, connection, transaction, forUpdate: true)
             ?? throw new BackendValidationException("Checkout not found.");
         if (!string.Equals(order.UserId, account.UserId, StringComparison.Ordinal))
         {
@@ -146,16 +149,18 @@ public sealed class PaymentService
         order.RazorpayPaymentId = request.RazorpayPaymentId.Trim();
         order.RazorpaySignature = request.RazorpaySignature.Trim();
         order.ClientConfirmed = true;
-        order.Status = "client_confirmed";
-        order.UpdatedAtUtc = DateTime.UtcNow;
-        _paymentOrders.Save(order);
+        ApplyConfirmedOrderCredit(order, connection, transaction);
+        transaction.Commit();
 
         return new
         {
             acknowledged = true,
             checkoutId = order.CheckoutId,
             status = order.Status,
-            message = "Payment acknowledged. Wallet credit will apply after trusted backend confirmation."
+            creditedAtUtc = order.CreditedAtUtc,
+            message = order.CreditedAtUtc.HasValue
+                ? "Payment verified and wallet credits applied."
+                : "Payment acknowledged. Wallet credit is pending backend confirmation."
         };
     }
 
@@ -238,8 +243,24 @@ public sealed class PaymentService
         }
 
         var order = _paymentOrders.FindByRazorpayOrderId(razorpayOrderId, connection, transaction, forUpdate: true);
-        if (order == null || order.CreditedAtUtc.HasValue)
+        if (order == null)
         {
+            return;
+        }
+        order.RazorpayPaymentId = string.IsNullOrWhiteSpace(order.RazorpayPaymentId) ? razorpayPaymentId : order.RazorpayPaymentId;
+        ApplyConfirmedOrderCredit(order, connection, transaction);
+    }
+
+    private void ApplyConfirmedOrderCredit(
+        PaymentOrderRecord order,
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction)
+    {
+        if (order.CreditedAtUtc.HasValue)
+        {
+            order.Status = "credited";
+            order.UpdatedAtUtc = DateTime.UtcNow;
+            _paymentOrders.Save(order, connection, transaction);
             return;
         }
 
@@ -250,12 +271,12 @@ public sealed class PaymentService
         }
 
         var existingLedger = _usageLedger.FindBySessionId($"payment:{order.CheckoutId}", connection, transaction);
-        order.RazorpayPaymentId = string.IsNullOrWhiteSpace(order.RazorpayPaymentId) ? razorpayPaymentId : order.RazorpayPaymentId;
         if (existingLedger == null)
         {
             ApplyWalletMutation(account, order, connection, transaction);
             _accounts.Save(account, connection, transaction);
         }
+
         order.Status = "credited";
         order.CreditedAtUtc = DateTime.UtcNow;
         order.UpdatedAtUtc = DateTime.UtcNow;

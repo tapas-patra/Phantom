@@ -1899,14 +1899,14 @@ function WalletPanel({ accessToken, summary, walletHistory, walletPurchases, pay
     try {
       const checkout = await createPaymentCheckout(accessToken, { target, packCode });
       await openRazorpayCheckout(checkout, async (response) => {
-        await confirmPaymentCheckout(accessToken, {
+        const confirmation = await confirmPaymentCheckout(accessToken, {
           checkoutId: checkout.checkoutId,
           razorpayOrderId: response.razorpay_order_id,
           razorpayPaymentId: response.razorpay_payment_id,
           razorpaySignature: response.razorpay_signature
         });
         await onWalletUpdated();
-        setStatus("Payment acknowledged. Wallet refresh complete.");
+        setStatus(confirmation?.message || "Payment verified. Wallet refresh complete.");
       });
     } catch (error) {
       setStatus(error.message || "Could not start checkout.");

@@ -49,6 +49,9 @@
     <Resource Include="..\icons\phantom-logo.ico">
       <Link>phantom-logo.ico</Link>
     </Resource>
+    <Resource Include="..\icons\phantom-logo-512.png">
+      <Link>phantom-logo-512.png</Link>
+    </Resource>
   </ItemGroup>
 
 </Project>

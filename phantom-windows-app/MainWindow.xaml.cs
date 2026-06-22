@@ -2873,6 +2873,12 @@ namespace SecureOverlay
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isHidden)
+            {
+                Log.WriteLine("Settings requested while hidden - restoring window before opening settings");
+                ToggleVisibility();
+            }
+
             Log.WriteLine("Settings button clicked - switching to settings page");
             RefreshAccountSnapshot();
 
@@ -3329,6 +3335,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Showing window...");
                 this.Opacity = 1.0;
+                IsHitTestVisible = true;
                 _isHidden = false;
                 
                 this.Activate();
@@ -3342,6 +3349,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Hiding window...");
                 this.Opacity = 0.0;
+                IsHitTestVisible = false;
                 _isHidden = true;
                 
                 _cursorManager?.DeactivateCustomCursor();

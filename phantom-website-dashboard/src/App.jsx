@@ -2411,7 +2411,9 @@ function AdminDashboardPage({ adminSession }) {
                 <AdminUsersPanel
                   accessToken={adminSession.accessToken}
                   users={users}
+                  inventory={inventory}
                   onUsersChanged={refreshUsers}
+                  onManagedInventoryChanged={refreshManagedInventory}
                 />
               }
             />
@@ -2551,31 +2553,23 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
   );
 }
 
-function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
-  const [providerId, setProviderId] = useState("ChatGPT");
-  const [label, setLabel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [priority, setPriority] = useState("0");
-  const [isEnabled, setIsEnabled] = useState(true);
+function ManagedRuntimeSelectionCard({
+  accessToken,
+  inventory,
+  onRefresh,
+  className = "glass-panel admin-form-panel",
+  title = "Choose the provider and model used for managed users",
+  description,
+  showManageLink = false
+}) {
   const [selectionProviderId, setSelectionProviderId] = useState("");
   const [selectionModelId, setSelectionModelId] = useState("");
   const [savingSelection, setSavingSelection] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const providers = inventory?.managedProviders || [];
-  const credentials = inventory?.credentials || [];
   const catalogProviders = inventory?.catalogs?.providers || [];
   const currentSelection = inventory?.selection || null;
-  const refreshProviders = catalogRefreshResult?.providers || [];
-
-  useEffect(() => {
-    if (providers.length > 0 && !providers.some((item) => item.providerId === providerId)) {
-      setProviderId(providers[0].providerId);
-    }
-  }, [providerId, providers]);
 
   useEffect(() => {
     const catalogProviderIds = catalogProviders.map((item) => item.providerId);
@@ -2602,6 +2596,129 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
     const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
     setSelectionModelId(nextProvider?.models?.[0]?.modelId || "");
   }
+
+  async function handleSelectionSave(event) {
+    event.preventDefault();
+    setSavingSelection(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await updateManagedAiRuntimeSelection(accessToken, {
+        providerId: selectionProviderId,
+        modelId: selectionModelId
+      });
+      await onRefresh();
+      setSuccess("Managed runtime selection updated.");
+    } catch (selectionError) {
+      setLocalError(selectionError.message || "Could not update managed runtime selection.");
+    } finally {
+      setSavingSelection(false);
+    }
+  }
+
+  return (
+    <article className={className}>
+      <div className="table-header">
+        <div>
+          <p className="eyebrow">Managed runtime selection</p>
+          <h3>{title}</h3>
+        </div>
+        {showManageLink ? (
+          <Link className="button button-secondary button-compact" to="/admin/managed-ai">
+            Open Managed AI
+          </Link>
+        ) : null}
+      </div>
+      <p>
+        {description ||
+          "Premium and other managed lanes consume this selection as the global active hosted runtime. The desktop app should no longer expose provider or model switching for managed users."}
+      </p>
+      {localError ? <p className="status-message status-error">{localError}</p> : null}
+      {success ? <p className="status-message">{success}</p> : null}
+      {catalogProviders.length === 0 ? (
+        <p>
+          No managed model catalog is available yet. Add at least one managed credential and refresh models from the
+          Managed AI page before setting the runtime.
+        </p>
+      ) : (
+        <form className="admin-form" onSubmit={handleSelectionSave}>
+          <div className="admin-form-inline">
+            <label>
+              Active provider
+              <select value={selectionProviderId} onChange={(event) => handleSelectionProviderChange(event.target.value)}>
+                {catalogProviders.map((provider) => (
+                  <option key={provider.providerId} value={provider.providerId}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Active model
+              <select value={selectionModelId} onChange={(event) => setSelectionModelId(event.target.value)}>
+                {selectedCatalogModels.map((model) => (
+                  <option key={model.modelId} value={model.modelId}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            className="button button-primary"
+            type="submit"
+            disabled={savingSelection || !selectionProviderId || !selectionModelId}
+          >
+            {savingSelection ? "Saving..." : "Set Active Runtime"}
+          </button>
+        </form>
+      )}
+      <div className="stack-list">
+        <InfoRow
+          label="Current selection"
+          value={
+            currentSelection?.isConfigured
+              ? `${currentSelection.providerLabel || currentSelection.providerId} · ${currentSelection.modelDisplayName || currentSelection.modelId}`
+              : "Not configured"
+          }
+        />
+        <InfoRow
+          label="Selection status"
+          value={
+            currentSelection?.isConfigured
+              ? currentSelection?.isResolved
+                ? "Resolved"
+                : "Configured but not present in the latest catalog"
+              : "Missing"
+          }
+        />
+        <InfoRow label="Updated" value={formatDate(currentSelection?.updatedAtUtc)} />
+      </div>
+    </article>
+  );
+}
+
+function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
+  const [providerId, setProviderId] = useState("ChatGPT");
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [priority, setPriority] = useState("0");
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const providers = inventory?.managedProviders || [];
+  const credentials = inventory?.credentials || [];
+  const catalogProviders = inventory?.catalogs?.providers || [];
+  const refreshProviders = catalogRefreshResult?.providers || [];
+
+  useEffect(() => {
+    if (providers.length > 0 && !providers.some((item) => item.providerId === providerId)) {
+      setProviderId(providers[0].providerId);
+    }
+  }, [providerId, providers]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -2656,25 +2773,6 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
     }
   }
 
-  async function handleSelectionSave(event) {
-    event.preventDefault();
-    setSavingSelection(true);
-    setLocalError("");
-    setSuccess("");
-    try {
-      await updateManagedAiRuntimeSelection(accessToken, {
-        providerId: selectionProviderId,
-        modelId: selectionModelId
-      });
-      await onRefresh();
-      setSuccess("Managed runtime selection updated.");
-    } catch (selectionError) {
-      setLocalError(selectionError.message || "Could not update managed runtime selection.");
-    } finally {
-      setSavingSelection(false);
-    }
-  }
-
   async function handleVisionToggle(nextProviderId, modelId, supportsVision) {
     setLocalError("");
     setSuccess("");
@@ -2702,70 +2800,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
         </p>
       </article>
 
-      <article className="glass-panel admin-form-panel">
-        <div className="table-header">
-          <div>
-            <p className="eyebrow">Managed runtime selection</p>
-            <h3>Choose the provider and model used for managed users</h3>
-          </div>
-        </div>
-        <p>
-          Premium and other managed lanes consume this selection as the global active hosted runtime. The desktop
-          app should no longer expose provider or model switching for managed users.
-        </p>
-        <form className="admin-form" onSubmit={handleSelectionSave}>
-          <div className="admin-form-inline">
-            <label>
-              Active provider
-              <select value={selectionProviderId} onChange={(event) => handleSelectionProviderChange(event.target.value)}>
-                {catalogProviders.map((provider) => (
-                  <option key={provider.providerId} value={provider.providerId}>
-                    {provider.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Active model
-              <select value={selectionModelId} onChange={(event) => setSelectionModelId(event.target.value)}>
-                {selectedCatalogModels.map((model) => (
-                  <option key={model.modelId} value={model.modelId}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <button
-            className="button button-primary"
-            type="submit"
-            disabled={savingSelection || !selectionProviderId || !selectionModelId}
-          >
-            {savingSelection ? "Saving..." : "Set Active Runtime"}
-          </button>
-        </form>
-        <div className="stack-list">
-          <InfoRow
-            label="Current selection"
-            value={
-              currentSelection?.isConfigured
-                ? `${currentSelection.providerLabel || currentSelection.providerId} · ${currentSelection.modelDisplayName || currentSelection.modelId}`
-                : "Not configured"
-            }
-          />
-          <InfoRow
-            label="Selection status"
-            value={
-              currentSelection?.isConfigured
-                ? currentSelection?.isResolved
-                  ? "Resolved"
-                  : "Configured but not present in the latest catalog"
-                : "Missing"
-            }
-          />
-          <InfoRow label="Updated" value={formatDate(currentSelection?.updatedAtUtc)} />
-        </div>
-      </article>
+      <ManagedRuntimeSelectionCard accessToken={accessToken} inventory={inventory} onRefresh={onRefresh} />
 
       <article className="glass-panel admin-form-panel">
         <div className="table-header">
@@ -2917,7 +2952,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
   );
 }
 
-function AdminUsersPanel({ accessToken, users, onUsersChanged }) {
+function AdminUsersPanel({ accessToken, users, inventory, onUsersChanged, onManagedInventoryChanged }) {
   const [query, setQuery] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
@@ -3123,6 +3158,16 @@ function AdminUsersPanel({ accessToken, users, onUsersChanged }) {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="email, user ID, or tier" />
         </label>
       </article>
+
+      <ManagedRuntimeSelectionCard
+        accessToken={accessToken}
+        inventory={inventory}
+        onRefresh={onManagedInventoryChanged}
+        className="glass-panel admin-form-panel table-span-full"
+        title="Set the managed provider and model for Premium users"
+        description="Premium users inherit one admin-selected managed runtime. Change it here while reviewing users, or open the full Managed AI page to rotate credentials and refresh provider catalogs."
+        showManageLink
+      />
 
       <DataTable
         title="Accounts"

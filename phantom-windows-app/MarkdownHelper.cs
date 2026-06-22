@@ -96,7 +96,7 @@ namespace SecureOverlay
                     // MULTI-LINE CODE BLOCK - GREEN TEXT
                     // ══════════════════════════════════════════════════════════════
                     
-                    paragraph.Background = new SolidColorBrush(Color.FromRgb(25, 25, 25));
+                    paragraph.Background = Brushes.Transparent;
                     paragraph.Foreground = new SolidColorBrush(Color.FromRgb(0, 255, 127)); // Bright green
                     paragraph.FontFamily = new FontFamily("Consolas, Courier New, monospace");
                     paragraph.FontSize = 13;
@@ -158,11 +158,10 @@ namespace SecureOverlay
             {
                 if (uiContainer.Child is System.Windows.Controls.Border border)
                 {
-                    // Dark background for code blocks
-                    border.Background = new SolidColorBrush(Color.FromRgb(25, 25, 25));
-                    border.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0));
-                    border.BorderThickness = new Thickness(2);
-                    border.CornerRadius = new CornerRadius(5);
+                    border.Background = Brushes.Transparent;
+                    border.BorderBrush = Brushes.Transparent;
+                    border.BorderThickness = new Thickness(0);
+                    border.CornerRadius = new CornerRadius(0);
                     border.Padding = new Thickness(10);
                     
                     if (border.Child is System.Windows.Controls.TextBlock textBlock)
@@ -213,7 +212,7 @@ namespace SecureOverlay
                         if (isInlineCode)
                         {
                             // ✓✓ APPLY YELLOW INLINE CODE STYLING
-                            run.Background = new SolidColorBrush(Color.FromRgb(50, 50, 50)); // Dark background
+                            run.Background = Brushes.Transparent;
                             run.Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)); // Bright gold/yellow
                             run.FontFamily = new FontFamily("Consolas, Courier New, monospace");
                             run.FontSize = 13;
@@ -271,20 +270,130 @@ namespace SecureOverlay
 
         public static void AddWelcomeMessage(FlowDocument document)
         {
-            var welcome = @"# Welcome to your invisible AI assistant! 🤖
+            document.Blocks.Add(CreateWelcomeHeading());
+            document.Blocks.Add(CreateWelcomeBullet("✓ ", "Completely invisible", " to screen sharing"));
+            document.Blocks.Add(CreateWelcomeBullet("✓ ", "Mouse cursor", " IS visible"));
+            document.Blocks.Add(CreateWelcomeBullet("✓ ", "Click ⚙️", " for settings"));
+            document.Blocks.Add(CreateWelcomeSubheading("⌨️ Hotkeys:"));
+            document.Blocks.Add(CreateHotkeyLine("Ctrl+Alt+`", "Hide/Show"));
+            document.Blocks.Add(CreateHotkeyLine("Ctrl+Alt+-", "Quit"));
+            document.Blocks.Add(CreateHotkeyLine("Ctrl+Alt+=", "Settings"));
+            document.Blocks.Add(CreateWelcomeFooter());
+        }
 
-✓ **Completely invisible** to screen sharing  
-✓ Mouse cursor **IS visible**  
-✓ Click ⚙️ for settings  
+        private static Paragraph CreateWelcomeHeading()
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 0, 0, 12)
+            };
 
-## ⌨️ Hotkeys:
-- `Ctrl+Alt+`` = Hide/Show  
-- `Ctrl+Alt+-` = Quit  
-- `Ctrl+Alt+=` = Settings  
+            paragraph.Inlines.Add(new Run("Welcome to your invisible AI assistant! 🤖")
+            {
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 22,
+                FontWeight = FontWeights.Bold
+            });
 
-Ask me anything!";
+            return paragraph;
+        }
 
-            AppendMarkdown(document, welcome, false);
+        private static Paragraph CreateWelcomeBullet(string prefix, string highlightedText, string suffix)
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 3, 0, 3)
+            };
+
+            paragraph.Inlines.Add(new Run(prefix)
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(144, 238, 144)),
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14,
+                FontWeight = FontWeights.Bold
+            });
+            paragraph.Inlines.Add(new Run(highlightedText)
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)),
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14,
+                FontWeight = FontWeights.Bold
+            });
+            paragraph.Inlines.Add(new Run(suffix)
+            {
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14
+            });
+
+            return paragraph;
+        }
+
+        private static Paragraph CreateWelcomeSubheading(string text)
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 14, 0, 8)
+            };
+
+            paragraph.Inlines.Add(new Run(text)
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)),
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 18,
+                FontWeight = FontWeights.Bold
+            });
+
+            return paragraph;
+        }
+
+        private static Paragraph CreateHotkeyLine(string hotkey, string action)
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+
+            paragraph.Inlines.Add(new Run("• ")
+            {
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14
+            });
+            paragraph.Inlines.Add(new Run(hotkey)
+            {
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)),
+                FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+                FontSize = 13,
+                FontWeight = FontWeights.Bold
+            });
+            paragraph.Inlines.Add(new Run($" = {action}")
+            {
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14
+            });
+
+            return paragraph;
+        }
+
+        private static Paragraph CreateWelcomeFooter()
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(0, 14, 0, 10)
+            };
+
+            paragraph.Inlines.Add(new Run("Ask me anything!")
+            {
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14
+            });
+
+            return paragraph;
         }
     }
 }

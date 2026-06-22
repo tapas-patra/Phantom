@@ -45,19 +45,19 @@
         <!-- ═══════════════════════════════════════════════════════════════ -->
         <Grid x:Name="ChatPageContainer" Visibility="Visible">
             <!-- Outer Shadow -->
-            <Border x:Name="OuterShadowBorder" Background="#60000000" CornerRadius="15" Margin="8">
+            <Border x:Name="OuterShadowBorder" Background="#60000000" CornerRadius="14" Margin="3">
                 <Border.Effect>
                     <DropShadowEffect ShadowDepth="0" BlurRadius="35" Opacity="0.9" Color="Black"/>
                 </Border.Effect>
             </Border>
 
             <!-- Main Background -->
-            <Border x:Name="WindowChromeBorder" Background="#70000000" CornerRadius="12" Margin="10" 
+            <Border x:Name="WindowChromeBorder" Background="#78000000" CornerRadius="12" Margin="4" 
                     MouseLeftButtonDown="Border_MouseLeftButtonDown"
-                    BorderBrush="#90FFFFFF" BorderThickness="2"/>
+                    BorderBrush="#45FFFFFF" BorderThickness="1"/>
 
             <!-- Content -->
-            <Grid x:Name="MainContentGrid" Margin="22,18,22,14">
+            <Grid x:Name="MainContentGrid" Margin="18,14,18,12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>  <!-- Title bar -->
                     <RowDefinition x:Name="ChatSectionRow" Height="*"/>     <!-- Chat section -->
@@ -110,7 +110,7 @@
                                            Effect="{StaticResource Shadow}"/>
                                 <Slider x:Name="HeaderOpacitySlider"
                                         Width="110"
-                                        Minimum="0.05"
+                                        Minimum="0.28"
                                         Maximum="1.0"
                                         Value="0.85"
                                         ValueChanged="HeaderOpacitySlider_ValueChanged"/>
@@ -127,7 +127,7 @@
 
                         <Button x:Name="ChatCollapseButton" Content="▴" Width="40" Height="32" Click="ChatCollapseButton_Click"
                             Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1.5"
-                            Foreground="White" FontSize="12" Margin="0,0,8,0"
+                            Foreground="White" FontSize="18" FontWeight="Bold" Margin="0,0,8,0"
                             ToolTip="Hide chat"
                             Style="{StaticResource ButtonStyle}"/>
 

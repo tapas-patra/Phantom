@@ -3122,10 +3122,10 @@ namespace SecureOverlay
 
         private void ApplyWindowOpacity(double opacity, bool persistSetting)
         {
-            var clampedOpacity = Math.Max(0.05, Math.Min(1.0, opacity));
-            OuterShadowBorder.Opacity = clampedOpacity;
-            WindowChromeBorder.Opacity = 0.04 + (clampedOpacity * 0.96);
-            MainContentGrid.Opacity = 0.32 + (clampedOpacity * 0.68);
+            var clampedOpacity = Math.Max(0.28, Math.Min(1.0, opacity));
+            OuterShadowBorder.Opacity = 0.22 + (clampedOpacity * 0.78);
+            WindowChromeBorder.Opacity = 0.34 + (clampedOpacity * 0.66);
+            MainContentGrid.Opacity = 0.58 + (clampedOpacity * 0.42);
 
             if (persistSetting)
             {
@@ -3149,8 +3149,8 @@ namespace SecureOverlay
             CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
             MinHeight = collapsed ? CollapsedWindowMinHeight : ExpandedWindowMinHeight;
             MainContentGrid.Margin = collapsed
-                ? new Thickness(18, 14, 18, 10)
-                : new Thickness(22, 18, 22, 14);
+                ? new Thickness(14, 10, 14, 8)
+                : new Thickness(18, 14, 18, 12);
             TitleBarGrid.Margin = collapsed
                 ? new Thickness(0)
                 : new Thickness(0, 0, 0, 10);
@@ -3955,6 +3955,7 @@ namespace SecureOverlay
                 Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false,
                 Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
                 Cursor = Cursors.Arrow,
@@ -4089,6 +4090,7 @@ namespace SecureOverlay
                 Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false,
                 Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
                 Cursor = Cursors.Arrow,
@@ -4237,23 +4239,26 @@ namespace SecureOverlay
         {
             menuWindow.UpdateLayout();
 
-            var anchorTopLeft = anchor.PointToScreen(new Point(0, 0));
-            var anchorBottomLeft = anchor.PointToScreen(new Point(0, anchor.ActualHeight));
-            var anchorTopRight = anchor.PointToScreen(new Point(anchor.ActualWidth, 0));
+            var anchorTopLeftPx = anchor.PointToScreen(new Point(0, 0));
+            var anchorBottomLeftPx = anchor.PointToScreen(new Point(0, anchor.ActualHeight));
             var menuWidth = Math.Max(menuWindow.ActualWidth, menuWindow.Width);
             var menuHeight = Math.Max(menuWindow.ActualHeight, menuWindow.Height);
-            var screenPoint = new System.Drawing.Point((int)anchorTopLeft.X, (int)anchorTopLeft.Y);
-            var workingArea = FormsScreen.FromPoint(screenPoint).WorkingArea;
+            var screenPoint = new System.Drawing.Point((int)anchorTopLeftPx.X, (int)anchorTopLeftPx.Y);
+            var workingAreaPx = FormsScreen.FromPoint(screenPoint).WorkingArea;
+            var anchorTopLeft = ScreenPixelsToDip(anchorTopLeftPx);
+            var anchorBottomLeft = ScreenPixelsToDip(anchorBottomLeftPx);
+            var workingAreaTopLeft = ScreenPixelsToDip(new Point(workingAreaPx.Left, workingAreaPx.Top));
+            var workingAreaBottomRight = ScreenPixelsToDip(new Point(workingAreaPx.Right, workingAreaPx.Bottom));
 
             var desiredLeft = anchorTopLeft.X;
-            var minLeft = workingArea.Left + 8;
-            var maxLeft = workingArea.Right - menuWidth - 8;
+            var minLeft = workingAreaTopLeft.X + 8;
+            var maxLeft = workingAreaBottomRight.X - menuWidth - 8;
             var left = Math.Max(minLeft, Math.Min(desiredLeft, Math.Max(minLeft, maxLeft)));
 
             var belowTop = anchorBottomLeft.Y + 6;
             var aboveTop = anchorTopLeft.Y - menuHeight - 6;
-            var canOpenBelow = belowTop + menuHeight <= workingArea.Bottom - 8;
-            var canOpenAbove = aboveTop >= workingArea.Top + 8;
+            var canOpenBelow = belowTop + menuHeight <= workingAreaBottomRight.Y - 8;
+            var canOpenAbove = aboveTop >= workingAreaTopLeft.Y + 8;
 
             double top;
             if (canOpenBelow)
@@ -4266,16 +4271,18 @@ namespace SecureOverlay
             }
             else
             {
-                top = Math.Max(workingArea.Top + 8, Math.Min(belowTop, workingArea.Bottom - menuHeight - 8));
+                top = Math.Max(workingAreaTopLeft.Y + 8, Math.Min(belowTop, workingAreaBottomRight.Y - menuHeight - 8));
             }
 
             menuWindow.Left = left;
             menuWindow.Top = top;
+        }
 
-            if (anchorTopRight.X > workingArea.Right)
-            {
-                menuWindow.Left = Math.Max(workingArea.Left + 8, workingArea.Right - menuWidth - 8);
-            }
+        private Point ScreenPixelsToDip(Point pixelPoint)
+        {
+            var source = PresentationSource.FromVisual(this);
+            var transform = source?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+            return transform.Transform(pixelPoint);
         }
 
 

@@ -7,7 +7,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("001_backend_core_schema", CoreSchemaSql),
         new SchemaMigration("002_dashboard_projection_schema", DashboardProjectionSchemaSql),
         new SchemaMigration("003_operational_indexes", OperationalIndexesSql),
-        new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql)
+        new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql),
+        new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -914,4 +915,95 @@ CREATE TABLE IF NOT EXISTS managed_ai_runtime_selection (
     model_id TEXT NOT NULL,
     updated_at_utc TIMESTAMPTZ NOT NULL
 );";
+
+    private const string SupportAndAuthSchemaPatchSql = @"
+CREATE TABLE IF NOT EXISTS user_password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_password_reset_tokens_email_time
+    ON user_password_reset_tokens(email, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    ticket_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    admin_notes TEXT NOT NULL DEFAULT '',
+    resolution_summary TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL,
+    resolved_at_utc TIMESTAMPTZ NULL,
+    last_admin_action_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_updated
+    ON support_tickets(user_id, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
+    ON support_tickets(status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_email_updated
+    ON support_tickets(lower(email), updated_at_utc DESC);
+
+CREATE OR REPLACE FUNCTION refresh_dashboard_device_inventory(p_user_id TEXT)
+RETURNS VOID AS $$
+BEGIN
+    DELETE FROM dashboard_device_inventory d
+    WHERE d.user_id = p_user_id
+      AND NOT EXISTS (
+          SELECT 1
+          FROM auth_sessions s
+          WHERE s.user_id = p_user_id
+            AND s.auth_method NOT LIKE 'admin:%'
+            AND s.device_install_id = d.device_install_id
+            AND s.device_fingerprint_hash = d.device_fingerprint_hash
+      );
+
+    INSERT INTO dashboard_device_inventory (
+        user_id, device_install_id, device_fingerprint_hash,
+        last_authenticated_at_utc, auth_method, is_active
+    )
+    SELECT
+        ranked.user_id,
+        ranked.device_install_id,
+        ranked.device_fingerprint_hash,
+        ranked.authenticated_at_utc,
+        ranked.auth_method,
+        (ranked.is_authenticated = TRUE AND ranked.revoked_at_utc IS NULL) AS is_active
+    FROM (
+        SELECT
+            s.user_id,
+            s.device_install_id,
+            s.device_fingerprint_hash,
+            s.authenticated_at_utc,
+            s.auth_method,
+            s.is_authenticated,
+            s.revoked_at_utc,
+            ROW_NUMBER() OVER (
+                PARTITION BY s.user_id, s.device_install_id, s.device_fingerprint_hash
+                ORDER BY s.authenticated_at_utc DESC, s.session_id DESC
+            ) AS row_number
+        FROM auth_sessions s
+        WHERE s.user_id = p_user_id
+          AND s.auth_method NOT LIKE 'admin:%'
+    ) ranked
+    WHERE ranked.row_number = 1
+    ON CONFLICT (user_id, device_install_id, device_fingerprint_hash) DO UPDATE SET
+        last_authenticated_at_utc = EXCLUDED.last_authenticated_at_utc,
+        auth_method = EXCLUDED.auth_method,
+        is_active = EXCLUDED.is_active;
+END;
+$$ LANGUAGE plpgsql;
+";
 }

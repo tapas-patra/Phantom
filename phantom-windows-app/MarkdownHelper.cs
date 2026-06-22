@@ -280,7 +280,6 @@ namespace SecureOverlay
 ## ⌨️ Hotkeys:
 - `Ctrl+Alt+`` = Hide/Show  
 - `Ctrl+Alt+-` = Quit  
-- `Ctrl+Alt+D` = Debug logs  
 - `Ctrl+Alt+=` = Settings  
 
 Ask me anything!";

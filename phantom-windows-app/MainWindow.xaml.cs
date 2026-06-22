@@ -455,18 +455,23 @@ namespace SecureOverlay
 
         private void ApplyAccountTierChrome()
         {
-            var selectorsVisible = HasByoEntitlement() ? Visibility.Visible : Visibility.Collapsed;
+            var selectorsVisible = ShouldShowByoSelectors() ? Visibility.Visible : Visibility.Collapsed;
             ProviderSelectorBorder.Visibility = selectorsVisible;
             ModelSelectorBorder.Visibility = selectorsVisible;
-            if (!HasByoEntitlement())
+            if (!ShouldShowByoSelectors())
             {
                 DebugPanel.Visibility = Visibility.Collapsed;
             }
 
-            if (!HasByoEntitlement())
+            if (!ShouldShowByoSelectors())
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private bool ShouldShowByoSelectors()
+        {
+            return HasByoEntitlement() && _currentAI is not HostedManagedAiService;
         }
 
         private void UpdateCreditIndicator()
@@ -1297,6 +1302,7 @@ namespace SecureOverlay
 
             _currentAI = newAI;
             UpdateTokenCounter();
+            ApplyAccountTierChrome();
 
             if (!_currentAI.IsConfigured())
             {
@@ -2894,7 +2900,6 @@ namespace SecureOverlay
                 _settings = SettingsManager.Load();
                 RefreshManagedCatalogCache();
                 RefreshAccountSnapshot();
-                ApplyAccountTierChrome();
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
@@ -2903,6 +2908,7 @@ namespace SecureOverlay
                 
                 // Reinitialize AI with new settings
                 InitializeAI();
+                ApplyAccountTierChrome();
 
                 if (_conversationManager != null)
                 {
@@ -3123,10 +3129,21 @@ namespace SecureOverlay
 
         private void ApplyWindowOpacity(double opacity, bool persistSetting)
         {
-            var clampedOpacity = Math.Max(0.28, Math.Min(1.0, opacity));
-            OuterShadowBorder.Opacity = 0.22 + (clampedOpacity * 0.78);
-            WindowChromeBorder.Opacity = 0.34 + (clampedOpacity * 0.66);
-            MainContentGrid.Opacity = 0.58 + (clampedOpacity * 0.42);
+            const double minOpacity = 0.30;
+            const double maxOpacity = 1.20;
+            var clampedOpacity = Math.Max(minOpacity, Math.Min(maxOpacity, opacity));
+            var normalizedOpacity = (clampedOpacity - minOpacity) / (maxOpacity - minOpacity);
+
+            OuterShadowBorder.Opacity = 0.24 + (normalizedOpacity * 0.76);
+            MainContentGrid.Opacity = 0.90 + (normalizedOpacity * 0.10);
+
+            var backgroundAlpha = (byte)Math.Round(92 + (normalizedOpacity * 132));
+            WindowChromeBorder.Background = new SolidColorBrush(Color.FromArgb(backgroundAlpha, 0, 0, 0));
+            WindowChromeBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(
+                (byte)Math.Round(20 + (normalizedOpacity * 24)),
+                22,
+                29,
+                36));
 
             if (persistSetting)
             {

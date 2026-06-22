@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Navigation;
 using SecureOverlay.Application.Context;
@@ -980,6 +981,41 @@ namespace SecureOverlay
             {
                 FakeCursorSizePanel.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private void SettingsScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (sender is not ScrollViewer scrollViewer)
+            {
+                return;
+            }
+
+            if (e.OriginalSource is DependencyObject source
+                && FindAncestor<TextBoxBase>(source) != null)
+            {
+                return;
+            }
+
+            const double scrollStep = 42d;
+            var delta = e.Delta > 0 ? -scrollStep : scrollStep;
+            var nextOffset = Math.Max(0d, Math.Min(scrollViewer.ScrollableHeight, scrollViewer.VerticalOffset + delta));
+            scrollViewer.ScrollToVerticalOffset(nextOffset);
+            e.Handled = true;
+        }
+
+        private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+        {
+            while (source != null)
+            {
+                if (source is T match)
+                {
+                    return match;
+                }
+
+                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+            }
+
+            return null;
         }
 
         private void FakeCursorSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

@@ -26,7 +26,7 @@
     </UserControl.Resources>
 
     <Grid>
-        <Border Background="#70000000" CornerRadius="12" BorderBrush="#90FFFFFF" BorderThickness="2">
+        <Border Background="#78000000" CornerRadius="12" BorderBrush="#2432404C" BorderThickness="1">
             <Border.Effect>
                 <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.9" Color="Black"/>
             </Border.Effect>
@@ -43,7 +43,11 @@
                           Foreground="White" Margin="0,0,0,20" Effect="{StaticResource Shadow}"/>
 
                 <!-- Settings Content -->
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer x:Name="SettingsScrollViewer"
+                              Grid.Row="1"
+                              VerticalScrollBarVisibility="Auto"
+                              CanContentScroll="False"
+                              PreviewMouseWheel="SettingsScrollViewer_PreviewMouseWheel">
                     <StackPanel>
                         
                         <Border x:Name="PremiumManagedNotice" Background="#503A245D" CornerRadius="8"

@@ -1012,7 +1012,7 @@ namespace SecureOverlay
                     return match;
                 }
 
-                if (source is Visual || source is System.Windows.Media.Media3D.Visual3D)
+                if (source is System.Windows.Media.Visual || source is System.Windows.Media.Media3D.Visual3D)
                 {
                     source = System.Windows.Media.VisualTreeHelper.GetParent(source);
                     continue;

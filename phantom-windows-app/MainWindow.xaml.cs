@@ -640,7 +640,7 @@ namespace SecureOverlay
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
-            return projectedCharge > GetTotalPaidCreditsAvailable();
+            return projectedCharge >= GetTotalPaidCreditsAvailable();
         }
 
         private void PauseInterviewSessionForError(string reason)

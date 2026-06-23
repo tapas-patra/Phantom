@@ -78,7 +78,7 @@ public sealed class LockService
         };
     }
 
-    public object Heartbeat(DeviceLockHeartbeatRequestDto request, DesktopSessionRecord session)
+    public DeviceLockAcquireResultDto Heartbeat(DeviceLockHeartbeatRequestDto request, DesktopSessionRecord session)
     {
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -106,10 +106,13 @@ public sealed class LockService
         _locks.Save(record, connection, transaction);
         transaction.Commit();
 
-        return new
+        return new DeviceLockAcquireResultDto
         {
-            succeeded = true,
-            expiresAtUtc = record.ExpiresAtUtc
+            Acquired = true,
+            LockToken = record.LockToken,
+            ExpiresAtUtc = record.ExpiresAtUtc,
+            HolderDeviceId = record.DeviceId,
+            HolderSessionId = record.SessionId
         };
     }
 

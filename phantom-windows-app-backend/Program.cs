@@ -227,7 +227,7 @@ app.UseRateLimiter();
 
 app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
 {
-    status = "ok",
+    status = "live",
     service = "phantom-windows-app-backend",
     utc = DateTime.UtcNow
 }));
@@ -239,15 +239,19 @@ var internalGroup = app.MapGroup("/api/internal")
 internalGroup.MapGet("/health/details", (
     PostgresBackendStore store,
     BackendOptions options,
-    OperationalMetricsService metrics) => Results.Ok(new
+    OperationalMetricsService metrics) =>
 {
-    status = store.CanConnect() ? "ok" : "degraded",
-    service = "phantom-windows-app-backend",
-    database = store.CanConnect() ? "reachable" : "unreachable",
-    projectionReplicaEnabled = options.HasDashboardProjectionReplica,
-    workers = metrics.CreateSnapshot(),
-    utc = DateTime.UtcNow
-}));
+    var databaseReachable = store.CanConnect();
+    return Results.Ok(new
+    {
+        status = databaseReachable ? "ok" : "degraded",
+        service = "phantom-windows-app-backend",
+        database = databaseReachable ? "reachable" : "unreachable",
+        projectionReplicaEnabled = options.HasDashboardProjectionReplica,
+        workers = metrics.CreateSnapshot(),
+        utc = DateTime.UtcNow
+    });
+});
 
 app.MapGet("/health/ready", (
     PostgresBackendStore store,

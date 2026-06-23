@@ -33,6 +33,8 @@ using SecureOverlay.Infrastructure.Interviews;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Sync;
 using SecureOverlay.Infrastructure.Telemetry;
+using SecureOverlay.Platform.Windows.Device;
+using SecureOverlay.Platform.Windows.Secrets;
 using System.Windows.Media.Imaging;
 using System.IO; 
 
@@ -180,9 +182,16 @@ namespace SecureOverlay
                 _authSessionRepository,
                 _accountCacheRepository,
                 _hostedAccountClient);
-            _interviewLockService = new LocalInterviewLockService(
+            var deviceProfile = new WindowsDeviceIdentityService(
+                new SqliteDeviceProfileRepository(store),
+                new WindowsSecretVault(store))
+                .GetOrCreateProfile();
+            _interviewLockService = new HostedInterviewLockService(
                 interviewSessionRepository,
-                _accountCacheRepository);
+                _accountCacheRepository,
+                _authSessionRepository,
+                HostedClientFactory.CreateLockClient(_hostedRuntimeOptions),
+                deviceProfile.InstallId);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
                 _authSessionRepository,
@@ -202,20 +211,7 @@ namespace SecureOverlay
                 _lastInterviewActivityUtc = DateTime.UtcNow;
             }
 
-            var reconciliationFlush = _usageReconciliationService.FlushPending();
-            if (reconciliationFlush.PendingBefore > 0)
-            {
-                Log.WriteLine(
-                    $"Usage reconciliation flush: pending={reconciliationFlush.PendingBefore}, " +
-                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
-                LogUsageQueueSnapshot();
-                _telemetryService.Track("sync", "usage_reconciliation_flush", new Dictionary<string, string>
-                {
-                    ["pending"] = reconciliationFlush.PendingBefore.ToString(),
-                    ["synced"] = reconciliationFlush.SyncedCount.ToString(),
-                    ["failed"] = reconciliationFlush.FailedCount.ToString()
-                });
-            }
+            _usageReconciliationService.FlushPendingInBackground();
             
             // ✅ UPDATED: Check for cached conversation in SEPARATE file
             bool hasRestoredConversation = false;
@@ -815,7 +811,7 @@ namespace SecureOverlay
                     ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                     PremiumDebtAdded = completion.PremiumDebtAdded
                 });
-                var reconciliationFlush = _usageReconciliationService.FlushPending();
+                _usageReconciliationService.FlushPendingInBackground();
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
@@ -841,8 +837,7 @@ namespace SecureOverlay
                     $"Boundary finalization complete: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
                     $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
                 Log.WriteLine(
-                    $"Boundary usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
-                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                    $"Boundary usage reconciliation queued for background flush: session={completion.SessionId}");
                 LogUsageQueueSnapshot();
                 _telemetryService.Track("billing", "interview_session_boundary_finalized", new Dictionary<string, string>
                 {
@@ -4794,13 +4789,10 @@ namespace SecureOverlay
                             ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                             PremiumDebtAdded = completion.PremiumDebtAdded
                         });
-                        var reconciliationFlush = _usageReconciliationService.FlushPending();
                         Log.WriteLine(
                             $"  ✓ Interview finalized: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
                             $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
-                        Log.WriteLine(
-                            $"  ✓ Usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
-                            $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                        _usageReconciliationService.FlushPendingInBackground();
                         LogUsageQueueSnapshot();
                         _telemetryService.Track("billing", "interview_session_finalized", new Dictionary<string, string>
                         {
@@ -4811,9 +4803,9 @@ namespace SecureOverlay
                         });
                         _telemetryService.Track("sync", "usage_reconciliation_after_finalize", new Dictionary<string, string>
                         {
-                            ["pending"] = reconciliationFlush.PendingBefore.ToString(),
-                            ["synced"] = reconciliationFlush.SyncedCount.ToString(),
-                            ["failed"] = reconciliationFlush.FailedCount.ToString()
+                            ["pending"] = "background",
+                            ["synced"] = "background",
+                            ["failed"] = "background"
                         });
                     }
 

@@ -6,6 +6,7 @@ namespace SecureOverlay.Application.Sync
     {
         void Enqueue(UsageReconciliationPayload payload);
         UsageReconciliationFlushResult FlushPending();
+        void FlushPendingInBackground();
         UsageReconciliationQueueSnapshot GetQueueSnapshot();
     }
 }

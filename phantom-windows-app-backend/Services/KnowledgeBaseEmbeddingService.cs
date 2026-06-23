@@ -436,7 +436,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         var isTransient = numericStatusCode == 408
             || numericStatusCode == 429
             || numericStatusCode >= 500;
-        var retryAfterSeconds = retryAfter.HasValue
+        int? retryAfterSeconds = retryAfter.HasValue
             ? Math.Max(1, (int)Math.Ceiling(retryAfter.Value.TotalSeconds))
             : null;
         var message = numericStatusCode == 429

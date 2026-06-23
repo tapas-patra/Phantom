@@ -1,3 +1,5 @@
+using Phantom.WindowsApp.Backend.Persistence;
+
 namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class HostedKnowledgeBaseReindexWorker : BackgroundService

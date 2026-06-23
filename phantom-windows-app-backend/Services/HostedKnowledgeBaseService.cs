@@ -259,7 +259,7 @@ public sealed class HostedKnowledgeBaseService
         var activeJob = _reindexJobs.FindActiveForKnowledgeBase(knowledgeBase.KnowledgeBaseId);
         if (activeJob != null)
         {
-            return MapReindexJob(activeJob);
+            return MapReindexJob(activeJob)!;
         }
 
         var profile = _embeddingService.ActiveProfile;
@@ -284,7 +284,7 @@ public sealed class HostedKnowledgeBaseService
                 ?? MapReindexJob(job)!;
         }
 
-        return MapReindexJob(job);
+        return MapReindexJob(job)!;
     }
 
     public HostedKnowledgeBaseReindexJobDto? GetLatestReindexJob(DesktopAccountRecord account, string? jobId = null)

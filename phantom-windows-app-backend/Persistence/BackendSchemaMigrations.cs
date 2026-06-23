@@ -1066,7 +1066,7 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_search_vector
     USING GIN (to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text));
 ";
 
-    private static readonly string HostedKnowledgeBaseVectorUpgradeSql = $@"
+    private const string HostedKnowledgeBaseVectorUpgradeSql = @"
 CREATE EXTENSION IF NOT EXISTS vector;
 
 ALTER TABLE hosted_knowledge_bases
@@ -1098,7 +1098,7 @@ ALTER TABLE hosted_kb_chunks
 ALTER TABLE hosted_kb_chunks
     ADD COLUMN IF NOT EXISTS indexed_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE hosted_kb_chunks
-    ADD COLUMN IF NOT EXISTS embedding vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions});
+    ADD COLUMN IF NOT EXISTS embedding vector(1536);
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_status
     ON hosted_kb_documents(knowledge_base_id, status, uploaded_at_utc DESC);

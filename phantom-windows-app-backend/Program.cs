@@ -94,14 +94,28 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
+        context.HttpContext.Response.Headers["Retry-After"] = "5";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            error = "Too many requests. Please wait a few seconds and try again."
+        }, cancellationToken);
+    };
     options.AddPolicy("auth", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-            _ => new FixedWindowRateLimiterOptions
+            $"{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}:{httpContext.Request.Path.Value?.ToLowerInvariant() ?? "/"}",
+            partitionKey => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 15,
+                PermitLimit = partitionKey.EndsWith("/api/desktop/auth/login", StringComparison.Ordinal)
+                    || partitionKey.EndsWith("/api/admin/auth/login", StringComparison.Ordinal)
+                    ? 20
+                    : 30,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
+                QueueLimit = 2,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 AutoReplenishment = true
             }));
     options.AddPolicy("desktop-api", httpContext =>
@@ -766,8 +780,15 @@ app.MapGet("/api/desktop/context-packs", (
     HttpContext httpContext,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(contextPacks.List(account));
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        return Results.Ok(contextPacks.List(account));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs", (
@@ -775,8 +796,15 @@ app.MapPost("/api/desktop/context-packs", (
     DesktopContextPackUpsertRequestDto request,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(contextPacks.Upsert(account, request));
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        return Results.Ok(contextPacks.Upsert(account, request));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs/delete", (
@@ -784,9 +812,16 @@ app.MapPost("/api/desktop/context-packs/delete", (
     DesktopContextPackDeleteRequestDto request,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    contextPacks.Delete(account, request.PackId);
-    return Results.Ok(new { deleted = true });
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        contextPacks.Delete(account, request.PackId);
+        return Results.Ok(new { deleted = true });
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/payments/catalog", (

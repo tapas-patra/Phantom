@@ -19,17 +19,20 @@ namespace SecureOverlay.Infrastructure.Billing
         private readonly IAccountCacheRepository _accountCacheRepository;
         private readonly IInterviewSessionRepository _interviewSessionRepository;
         private readonly Func<bool> _preferByoCreditsFirst;
+        private readonly Func<bool> _canUseByoCredits;
 
         public LocalCreditMeteringService(
             IAuthSessionRepository authSessionRepository,
             IAccountCacheRepository accountCacheRepository,
             IInterviewSessionRepository interviewSessionRepository,
-            Func<bool> preferByoCreditsFirst)
+            Func<bool> preferByoCreditsFirst,
+            Func<bool> canUseByoCredits)
         {
             _authSessionRepository = authSessionRepository;
             _accountCacheRepository = accountCacheRepository;
             _interviewSessionRepository = interviewSessionRepository;
             _preferByoCreditsFirst = preferByoCreditsFirst;
+            _canUseByoCredits = canUseByoCredits;
         }
 
         public InterviewSessionActivationResult EnsureInterviewSession()
@@ -242,7 +245,9 @@ namespace SecureOverlay.Infrastructure.Billing
             {
                 if (_preferByoCreditsFirst())
                 {
-                    if (remainingPremiumCharge > 0m && snapshot.ProAvailableCredits > consumedProCredits)
+                    if (_canUseByoCredits()
+                        && remainingPremiumCharge > 0m
+                        && snapshot.ProAvailableCredits > consumedProCredits)
                     {
                         var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
                         consumedProCredits += byoFallback;
@@ -268,7 +273,9 @@ namespace SecureOverlay.Infrastructure.Billing
                         remainingPaidCharge -= premiumFallback;
                     }
 
-                    if (remainingPremiumCharge > 0m && snapshot.ProAvailableCredits > consumedProCredits)
+                    if (_canUseByoCredits()
+                        && remainingPremiumCharge > 0m
+                        && snapshot.ProAvailableCredits > consumedProCredits)
                     {
                         var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
                         consumedProCredits += byoFallback;
@@ -395,7 +402,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
         private CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
-            if (!IsFreeTier(snapshot) && _preferByoCreditsFirst() && snapshot.ProAvailableCredits > 0m)
+            if (!IsFreeTier(snapshot) && _canUseByoCredits() && _preferByoCreditsFirst() && snapshot.ProAvailableCredits > 0m)
             {
                 return CreditLedgerType.Pro;
             }
@@ -405,7 +412,7 @@ namespace SecureOverlay.Infrastructure.Billing
                 return CreditLedgerType.Premium;
             }
 
-            if (snapshot.ProAvailableCredits > 0m)
+            if (_canUseByoCredits() && snapshot.ProAvailableCredits > 0m)
             {
                 return CreditLedgerType.Pro;
             }

@@ -172,7 +172,8 @@ namespace SecureOverlay
                 _authSessionRepository,
                 _accountCacheRepository,
                 interviewSessionRepository,
-                () => _settings.PreferByoCreditsFirst);
+                () => _settings.PreferByoCreditsFirst,
+                () => HasAnyConfiguredByoProvider());
             _contextPackService = new LocalContextPackService(contextPackRepository);
             _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
                 new LocalKnowledgeRetrievalService(),
@@ -825,7 +826,7 @@ namespace SecureOverlay
         private decimal GetTotalPaidCreditsAvailable()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
-            var byoCredits = HasByoEntitlement()
+            var byoCredits = HasByoEntitlement() && HasAnyConfiguredByoProvider()
                 ? (_accountSnapshot?.ProAvailableCredits ?? 0m)
                 : 0m;
             return premiumCredits + byoCredits;

@@ -54,7 +54,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
 
     public HostedKnowledgeBaseEmbeddingConfigDto GetAdminConfiguration()
     {
-        return ResolveConfiguration();
+        return ToDto(ResolveConfiguration());
     }
 
     public HostedKnowledgeBaseEmbeddingConfigDto UpdateAdminConfiguration(HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto request)
@@ -335,8 +335,37 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         }
     }
 
-    private sealed class HostedKnowledgeBaseEmbeddingResolvedConfig : HostedKnowledgeBaseEmbeddingConfigDto
+    private static HostedKnowledgeBaseEmbeddingConfigDto ToDto(HostedKnowledgeBaseEmbeddingResolvedConfig configuration)
     {
+        return new HostedKnowledgeBaseEmbeddingConfigDto
+        {
+            IsEnabled = configuration.IsEnabled,
+            ProviderId = configuration.ProviderId,
+            BaseUrl = configuration.BaseUrl,
+            ModelId = configuration.ModelId,
+            Dimensions = configuration.Dimensions,
+            Version = configuration.Version,
+            BatchSize = configuration.BatchSize,
+            HasApiKey = configuration.HasApiKey,
+            IsConfigured = configuration.IsConfigured,
+            ConfigSource = configuration.ConfigSource,
+            UpdatedAtUtc = configuration.UpdatedAtUtc
+        };
+    }
+
+    private sealed class HostedKnowledgeBaseEmbeddingResolvedConfig
+    {
+        public bool IsEnabled { get; init; }
+        public string ProviderId { get; init; } = string.Empty;
+        public string BaseUrl { get; init; } = string.Empty;
+        public string ModelId { get; init; } = string.Empty;
+        public int Dimensions { get; init; }
+        public int Version { get; init; }
+        public int BatchSize { get; init; }
+        public bool HasApiKey { get; init; }
+        public bool IsConfigured { get; init; }
+        public string ConfigSource { get; init; } = string.Empty;
+        public DateTime? UpdatedAtUtc { get; init; }
         public string ApiKey { get; init; } = string.Empty;
     }
 

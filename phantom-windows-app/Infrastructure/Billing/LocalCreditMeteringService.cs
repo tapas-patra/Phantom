@@ -228,25 +228,56 @@ namespace SecureOverlay.Infrastructure.Billing
             var premiumExtensionCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumDebtExtension, out var extensionCharge) ? extensionCharge : 0m;
             var freeTrialManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.FreeTrialManaged, out var freeCharge) ? freeCharge : 0m;
 
-            var paidChargeBeforeDebt = Math.Max(0m, requestedCharge - premiumExtensionCharge);
-            decimal consumedPremiumCredits;
-            decimal consumedProCredits;
-            decimal remainingPaidCharge;
+            var requestedByoCharge = proByoCharge;
+            var requestedPremiumCharge = premiumManagedCharge;
+            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, requestedByoCharge);
+            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, requestedPremiumCharge);
+            var remainingByoCharge = Math.Max(0m, requestedByoCharge - consumedProCredits);
+            var remainingPremiumCharge = Math.Max(0m, requestedPremiumCharge - consumedPremiumCredits);
+            var remainingPaidCharge = remainingByoCharge + remainingPremiumCharge;
 
-            if (_preferByoCreditsFirst())
+            // If the local cache drifted and the originally targeted lane cannot fully cover
+            // its portion, spill the remainder into the other paid lane before debt.
+            if (remainingPaidCharge > 0m)
             {
-                consumedProCredits = Math.Min(snapshot.ProAvailableCredits, paidChargeBeforeDebt);
-                remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedProCredits);
-                consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, remainingPaidCharge);
-                remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedPremiumCredits);
+                if (_preferByoCreditsFirst())
+                {
+                    if (remainingPremiumCharge > 0m && snapshot.ProAvailableCredits > consumedProCredits)
+                    {
+                        var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
+                        consumedProCredits += byoFallback;
+                        remainingPremiumCharge -= byoFallback;
+                        remainingPaidCharge -= byoFallback;
+                    }
+
+                    if (remainingByoCharge > 0m && snapshot.PremiumAvailableCredits > consumedPremiumCredits)
+                    {
+                        var premiumFallback = Math.Min(snapshot.PremiumAvailableCredits - consumedPremiumCredits, remainingByoCharge);
+                        consumedPremiumCredits += premiumFallback;
+                        remainingByoCharge -= premiumFallback;
+                        remainingPaidCharge -= premiumFallback;
+                    }
+                }
+                else
+                {
+                    if (remainingByoCharge > 0m && snapshot.PremiumAvailableCredits > consumedPremiumCredits)
+                    {
+                        var premiumFallback = Math.Min(snapshot.PremiumAvailableCredits - consumedPremiumCredits, remainingByoCharge);
+                        consumedPremiumCredits += premiumFallback;
+                        remainingByoCharge -= premiumFallback;
+                        remainingPaidCharge -= premiumFallback;
+                    }
+
+                    if (remainingPremiumCharge > 0m && snapshot.ProAvailableCredits > consumedProCredits)
+                    {
+                        var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
+                        consumedProCredits += byoFallback;
+                        remainingPremiumCharge -= byoFallback;
+                        remainingPaidCharge -= byoFallback;
+                    }
+                }
             }
-            else
-            {
-                consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, paidChargeBeforeDebt);
-                remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedPremiumCredits);
-                consumedProCredits = Math.Min(snapshot.ProAvailableCredits, remainingPaidCharge);
-                remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedProCredits);
-            }
+
             var primaryShortfall = remainingPaidCharge;
             var premiumDebtAdded = 0m;
 

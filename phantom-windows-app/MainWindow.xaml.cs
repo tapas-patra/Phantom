@@ -473,7 +473,22 @@ namespace SecureOverlay
 
         private bool ShouldShowByoSelectors()
         {
-            return HasByoEntitlement() && _currentAI is not HostedManagedAiService;
+            if (!HasByoEntitlement())
+            {
+                return false;
+            }
+
+            if (PreferByoCreditsFirst())
+            {
+                return true;
+            }
+
+            if (!HasPremiumManagedEntitlement() || !PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return true;
+            }
+
+            return _currentAI is not HostedManagedAiService;
         }
 
         private void UpdateCreditIndicator()
@@ -967,6 +982,33 @@ namespace SecureOverlay
             return _rotationManager != null && _rotationManager.GetTotalKeyCount(provider) > 0;
         }
 
+        private bool HasAnyConfiguredByoProvider()
+        {
+            if (_rotationManager == null)
+            {
+                return false;
+            }
+
+            return AIModelRegistry.GetAllProviders().Any(provider => _rotationManager.GetTotalKeyCount(provider) > 0);
+        }
+
+        private string GetFallbackConfiguredByoProvider()
+        {
+            if (_rotationManager == null)
+            {
+                return _settings.SelectedAI;
+            }
+
+            if (HasConfiguredByoKeysForProvider(_settings.SelectedAI))
+            {
+                return _settings.SelectedAI;
+            }
+
+            return AIModelRegistry.GetAllProviders()
+                .FirstOrDefault(provider => _rotationManager.GetTotalKeyCount(provider) > 0)
+                ?? _settings.SelectedAI;
+        }
+
         private bool PremiumCreditsCanStillCoverCurrentSession()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
@@ -1073,7 +1115,7 @@ namespace SecureOverlay
 
             if (PreferByoCreditsFirst())
             {
-                if (HasConfiguredByoKeysForProvider(provider) && ByoCreditsCanStillCoverCurrentSession())
+                if (HasAnyConfiguredByoProvider() && ByoCreditsCanStillCoverCurrentSession())
                 {
                     return true;
                 }
@@ -1089,7 +1131,7 @@ namespace SecureOverlay
                 return false;
             }
 
-            if (HasConfiguredByoKeysForProvider(provider))
+            if (HasAnyConfiguredByoProvider())
             {
                 return true;
             }
@@ -1323,10 +1365,19 @@ namespace SecureOverlay
                 }
             }
             
-            Log.WriteLine($"✓ Loading model from settings: {currentModel}");
-
             var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
-            var runtimeProvider = useByoRuntime ? _settings.SelectedAI : GetManagedRuntimeProviderId();
+            var runtimeProvider = useByoRuntime ? GetFallbackConfiguredByoProvider() : GetManagedRuntimeProviderId();
+            if (useByoRuntime && !string.Equals(runtimeProvider, _settings.SelectedAI, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.SelectedAI = runtimeProvider;
+                SettingsManager.Save(_settings);
+            }
+
+            currentModel = useByoRuntime
+                ? (_rotationManager?.GetCurrentModel(runtimeProvider) ?? currentModel)
+                : GetManagedRuntimeModelId(runtimeProvider);
+
+            Log.WriteLine($"✓ Loading model from settings: {currentModel}");
             var runtimeModel = useByoRuntime ? currentModel : GetManagedRuntimeModelId(runtimeProvider);
             
             // Create AI service with rotation

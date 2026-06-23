@@ -25,7 +25,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid PreviewMouseLeftButtonDown="Root_PreviewMouseLeftButtonDown">
         <Border Background="#78000000" CornerRadius="12" BorderBrush="Transparent" BorderThickness="0">
             <Border.Effect>
                 <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.9" Color="Black"/>

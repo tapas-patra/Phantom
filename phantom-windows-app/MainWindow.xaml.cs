@@ -120,6 +120,7 @@ namespace SecureOverlay
         private bool _isBoundaryFinalizationInProgress;
         private string? _forcedManagedExtensionProviderId;
         private DateTime? _lastInterviewActivityUtc;
+        private int _interviewLockHeartbeatCount;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -479,13 +480,13 @@ namespace SecureOverlay
             RefreshAccountSnapshot();
             if (_accountSnapshot == null)
             {
-                CreditIndicatorText.Text = "Credits: unavailable";
+                CreditIndicatorText.Text = "Cr n/a";
                 return;
             }
 
             if (IsFreeTrialAccount())
             {
-                CreditIndicatorText.Text = "Free Trial | 2 x 15 min demo blocks";
+                CreditIndicatorText.Text = "Trial 2x15m";
                 return;
             }
 
@@ -493,18 +494,18 @@ namespace SecureOverlay
             if (hasPremiumLaneOrDebt && HasByoEntitlement())
             {
                 CreditIndicatorText.Text =
-                    $"Premium -> BYO | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | BYO {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                    $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | B {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
                 return;
             }
 
             if (hasPremiumLaneOrDebt)
             {
                 CreditIndicatorText.Text =
-                    $"Premium | Credits {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                    $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
                 return;
             }
 
-            CreditIndicatorText.Text = $"Pro BYO | Credits {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+            CreditIndicatorText.Text = $"BYO {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
         }
 
         private void StartSessionStatusTimer()
@@ -543,11 +544,11 @@ namespace SecureOverlay
             if (activeSession.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
             {
                 var pausedElapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
-                var pausedBilledMinutes = Math.Max(1, (int)Math.Ceiling(pausedElapsed.TotalSeconds / 60d));
+                var pausedBilledMinutes = Math.Max(0, (int)Math.Floor(pausedElapsed.TotalSeconds / 60d));
                 var pausedProjectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(pausedElapsed);
 
                 SessionTimerBorder.Visibility = Visibility.Visible;
-                SessionTimerText.Text = $"Session {pausedElapsed:hh\\:mm\\:ss}";
+                SessionTimerText.Text = $"T {pausedElapsed:hh\\:mm\\:ss}";
                 SessionStatusText.Text = $"Paused | {pausedBilledMinutes} min | {pausedProjectedCharge:0.##} cr";
                 return;
             }
@@ -559,11 +560,11 @@ namespace SecureOverlay
             }
 
             var elapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
-            var billedMinutes = Math.Max(1, (int)Math.Ceiling(elapsed.TotalSeconds / 60d));
+            var billedMinutes = Math.Max(0, (int)Math.Floor(elapsed.TotalSeconds / 60d));
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(elapsed);
 
             SessionTimerBorder.Visibility = Visibility.Visible;
-            SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
+            SessionTimerText.Text = $"T {elapsed:hh\\:mm\\:ss}";
             SessionStatusText.Text = $"Live | {billedMinutes} min | {projectedCharge:0.##} cr";
         }
 
@@ -1358,7 +1359,7 @@ namespace SecureOverlay
             if (keyCount > 1)
             {
                 // Show indicator with key info
-                APIKeyText.Text = $"Key #{currentIndex + 1}/{keyCount}";
+                APIKeyText.Text = $"K{currentIndex + 1}/{keyCount}";
                 APIKeyIndicator.Visibility = Visibility.Visible;
                 
                 // Color code based on available keys
@@ -1378,7 +1379,7 @@ namespace SecureOverlay
             else if (keyCount == 1)
             {
                 // Single key - hide indicator (optional: can show "Key #1")
-                APIKeyText.Text = "Key #1";
+                APIKeyText.Text = "K1";
                 APIKeyIndicator.Visibility = Visibility.Collapsed; // Change to Visible if you want to show it
                 
                 Log.WriteLine($"  Single key - indicator hidden");
@@ -2112,6 +2113,7 @@ namespace SecureOverlay
             }
 
             _interviewLockHeartbeatTimer?.Stop();
+            _interviewLockHeartbeatCount = 0;
             _interviewLockHeartbeatTimer = new System.Windows.Threading.DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds > 0 ? session.HeartbeatIntervalSeconds : 60)
@@ -2145,10 +2147,15 @@ namespace SecureOverlay
             }
 
             Log.WriteLine($"Interview lock heartbeat refreshed until {heartbeat.LockExpiresAtUtc:O}");
-            _telemetryService.Track("lock", "interview_lock_heartbeat", new Dictionary<string, string>
+            _interviewLockHeartbeatCount++;
+            if (_interviewLockHeartbeatCount == 1 || _interviewLockHeartbeatCount % 5 == 0)
             {
-                ["expires_at"] = heartbeat.LockExpiresAtUtc?.ToString("O") ?? string.Empty
-            });
+                _telemetryService.Track("lock", "interview_lock_heartbeat", new Dictionary<string, string>
+                {
+                    ["expires_at"] = heartbeat.LockExpiresAtUtc?.ToString("O") ?? string.Empty,
+                    ["heartbeat_count"] = _interviewLockHeartbeatCount.ToString()
+                });
+            }
         }
 
         private async void SendButton_Click(object sender, RoutedEventArgs e)
@@ -2881,6 +2888,7 @@ namespace SecureOverlay
 
             Log.WriteLine("Settings button clicked - switching to settings page");
             RefreshAccountSnapshot();
+            Activate();
 
             _settingsPage = new SettingsPage(_accountSnapshot);
             _settingsPage.SettingsClosed += OnSettingsClosed;
@@ -3223,6 +3231,32 @@ namespace SecureOverlay
             {
                 Height = Math.Max(minHeight, currentHeight + e.VerticalChange);
             }
+        }
+
+        private void ResizeThumb_MouseEnter(object sender, MouseEventArgs e)
+        {
+            if (sender is Thumb thumb && thumb.Tag is string tag)
+            {
+                _cursorManager?.SetResizeCursorHint(tag);
+            }
+        }
+
+        private void ResizeThumb_MouseLeave(object sender, MouseEventArgs e)
+        {
+            _cursorManager?.ClearResizeCursorHint();
+        }
+
+        private void ResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (sender is Thumb thumb && thumb.Tag is string tag)
+            {
+                _cursorManager?.SetResizeCursorHint(tag);
+            }
+        }
+
+        private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            _cursorManager?.ClearResizeCursorHint();
         }
 
         // ═══════════════════════════════════════════════════════════════

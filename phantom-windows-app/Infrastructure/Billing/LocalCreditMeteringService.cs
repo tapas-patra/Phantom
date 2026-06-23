@@ -446,12 +446,7 @@ namespace SecureOverlay.Infrastructure.Billing
 
         public static decimal EstimateChargeForElapsed(TimeSpan elapsed)
         {
-            return RoundCredits(RoundUpToMinute(elapsed) * CreditsPerMinute);
-        }
-
-        private static int RoundUpToMinute(TimeSpan duration)
-        {
-            return Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds / 60d));
+            return RoundCredits(Math.Max(0m, (decimal)elapsed.TotalSeconds / 60m));
         }
 
         private static decimal RoundDownCredits(decimal credits)

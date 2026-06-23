@@ -10,6 +10,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Navigation;
+using System.Windows.Threading;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Services;
@@ -66,6 +67,13 @@ namespace SecureOverlay
             ProtectAllComboBoxes();
             
             _isInitializing = false;
+
+            Loaded += SettingsPage_Loaded;
+        }
+
+        private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(FocusInitialEditor), DispatcherPriority.Input);
         }
 
         private void ProtectAllComboBoxes()
@@ -124,6 +132,121 @@ namespace SecureOverlay
             foreach (var model in _settings.NvidiaModels)
             {
                 NvidiaModelBox.Items.Add(model);
+            }
+        }
+
+        private void Root_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is not DependencyObject source)
+            {
+                return;
+            }
+
+            var textBox = FindAncestor<TextBoxBase>(source);
+            if (textBox == null || !textBox.IsEnabled || textBox.IsReadOnly)
+            {
+                return;
+            }
+
+            if (!textBox.IsKeyboardFocusWithin)
+            {
+                textBox.Focus();
+                Keyboard.Focus(textBox);
+            }
+        }
+
+        private void FocusInitialEditor()
+        {
+            var preferredTextBox = GetFocusableTextBoxes()
+                .FirstOrDefault(box => box.IsVisible)
+                ?? ResumeBox;
+
+            if (preferredTextBox == null || !preferredTextBox.IsEnabled || preferredTextBox.IsReadOnly)
+            {
+                return;
+            }
+
+            preferredTextBox.Focus();
+            Keyboard.Focus(preferredTextBox);
+            if (preferredTextBox is TextBox textBox)
+            {
+                textBox.CaretIndex = textBox.Text?.Length ?? 0;
+            }
+        }
+
+        private IEnumerable<TextBox> GetFocusableTextBoxes()
+        {
+            if (ContextPackNameTextBox != null)
+            {
+                yield return ContextPackNameTextBox;
+            }
+
+            if (_chatGPTKeys.Count > 0 && ChatGPTKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(ChatGPTKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (_claudeKeys.Count > 0 && ClaudeKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(ClaudeKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (_mistralKeys.Count > 0 && MistralKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(MistralKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (_geminiKeys.Count > 0 && GeminiKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(GeminiKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (_groqKeys.Count > 0 && GroqKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(GroqKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (_nvidiaKeys.Count > 0 && NvidiaKeysList?.Items.Count > 0)
+            {
+                foreach (var item in FindVisualChildren<TextBox>(NvidiaKeysList))
+                {
+                    yield return item;
+                }
+            }
+
+            if (ResumeBox != null)
+            {
+                yield return ResumeBox;
+            }
+
+            if (JobDescriptionBox != null)
+            {
+                yield return JobDescriptionBox;
+            }
+
+            if (AutoPauseMinutesTextBox != null)
+            {
+                yield return AutoPauseMinutesTextBox;
+            }
+
+            if (FakeCursorSizeTextBox != null)
+            {
+                yield return FakeCursorSizeTextBox;
             }
         }
 
@@ -1037,6 +1160,29 @@ namespace SecureOverlay
             return null;
         }
 
+        private static IEnumerable<T> FindVisualChildren<T>(DependencyObject? root) where T : DependencyObject
+        {
+            if (root == null)
+            {
+                yield break;
+            }
+
+            var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (var index = 0; index < count; index++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(root, index);
+                if (child is T match)
+                {
+                    yield return match;
+                }
+
+                foreach (var descendant in FindVisualChildren<T>(child))
+                {
+                    yield return descendant;
+                }
+            }
+        }
+
         private void FakeCursorSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_isUpdatingSlider || _isInitializing) return;
@@ -1695,8 +1841,9 @@ namespace SecureOverlay
                 return false;
             }
 
-            var activeProviders = CountConfiguredProviders(providerKeys);
-            if (providerKeys.Count == 0 && activeProviders >= MaxProvidersForByo)
+            var activeProviders = CountConfiguredProviders();
+            var providerAlreadyConfigured = providerKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key));
+            if (!providerAlreadyConfigured && activeProviders >= MaxProvidersForByo)
             {
                 InvisibleMessageBox.Show(
                     $"BYO accounts can configure at most {MaxProvidersForByo} providers.",

@@ -44,6 +44,7 @@ import {
   triggerManagedAiCatalogRefresh,
   updateAdminUser,
   updateAdminSupportTicket,
+  updateKnowledgeBaseEmbeddingConfig,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
   uploadHostedKnowledgeBaseDocuments,
@@ -3001,6 +3002,145 @@ function ManagedRuntimeSelectionCard({
   );
 }
 
+function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh }) {
+  const kbEmbedding = inventory?.kbEmbedding || null;
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [providerId, setProviderId] = useState("openai");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
+  const [modelId, setModelId] = useState("text-embedding-3-small");
+  const [dimensions, setDimensions] = useState("1536");
+  const [version, setVersion] = useState("1");
+  const [batchSize, setBatchSize] = useState("32");
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    setIsEnabled(kbEmbedding?.isEnabled ?? true);
+    setProviderId(kbEmbedding?.providerId || "openai");
+    setBaseUrl(kbEmbedding?.baseUrl || "https://api.openai.com/v1");
+    setModelId(kbEmbedding?.modelId || "text-embedding-3-small");
+    setDimensions(String(kbEmbedding?.dimensions || 1536));
+    setVersion(String(kbEmbedding?.version || 1));
+    setBatchSize(String(kbEmbedding?.batchSize || 32));
+    setApiKey("");
+  }, [
+    kbEmbedding?.baseUrl,
+    kbEmbedding?.batchSize,
+    kbEmbedding?.dimensions,
+    kbEmbedding?.isEnabled,
+    kbEmbedding?.modelId,
+    kbEmbedding?.providerId,
+    kbEmbedding?.version
+  ]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await updateKnowledgeBaseEmbeddingConfig(accessToken, {
+        isEnabled,
+        providerId,
+        baseUrl,
+        modelId,
+        dimensions: Number(dimensions) || 0,
+        version: Number(version) || 0,
+        batchSize: Number(batchSize) || 0,
+        apiKey
+      });
+      setApiKey("");
+      await onRefresh();
+      setSuccess("Knowledge-base embedding config updated.");
+    } catch (saveError) {
+      setLocalError(saveError.message || "Could not update knowledge-base embedding config.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="glass-panel admin-form-panel">
+      <div className="table-header">
+        <div>
+          <p className="eyebrow">Knowledge-base retrieval</p>
+          <h3>Embedding profile</h3>
+        </div>
+      </div>
+      <p>
+        This controls the embedding model used for hosted knowledge-base indexing and semantic search. It is
+        intentionally separate from the managed chat runtime so provider or pricing changes on chat do not force KB
+        rework.
+      </p>
+      {localError ? <p className="status-message status-error">{localError}</p> : null}
+      {success ? <p className="status-message">{success}</p> : null}
+      <form className="admin-form" onSubmit={handleSubmit}>
+        <label className="admin-toggle">
+          <input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} />
+          <span>Enable semantic indexing and vector search</span>
+        </label>
+        <div className="admin-form-inline">
+          <label>
+            Provider
+            <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+              <option value="openai">openai</option>
+              <option value="openai-compatible">openai-compatible</option>
+            </select>
+          </label>
+          <label>
+            Base URL
+            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+          </label>
+        </div>
+        <div className="admin-form-inline">
+          <label>
+            Model
+            <input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="text-embedding-3-small" />
+          </label>
+          <label>
+            Dimensions
+            <input value={dimensions} onChange={(event) => setDimensions(event.target.value)} inputMode="numeric" disabled />
+          </label>
+        </div>
+        <div className="admin-form-inline">
+          <label>
+            Version
+            <input value={version} onChange={(event) => setVersion(event.target.value)} inputMode="numeric" />
+          </label>
+          <label>
+            Batch size
+            <input value={batchSize} onChange={(event) => setBatchSize(event.target.value)} inputMode="numeric" />
+          </label>
+        </div>
+        <label>
+          API key
+          <textarea
+            rows={3}
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder={kbEmbedding?.hasApiKey ? "Leave blank to keep the stored key" : "Paste embedding API key"}
+          />
+        </label>
+        <button className="button button-primary" type="submit" disabled={saving}>
+          {saving ? "Saving..." : "Save Embedding Profile"}
+        </button>
+      </form>
+      <p>
+        Storage is currently indexed for 1536-dimension embeddings. Change provider, base URL, model, or API key here,
+        then bump the version and trigger KB reindexing when you switch embedding models.
+      </p>
+      <div className="stack-list">
+        <InfoRow label="Status" value={kbEmbedding?.isConfigured ? "Configured" : kbEmbedding?.isEnabled ? "Missing key or invalid profile" : "Disabled"} />
+        <InfoRow label="Stored key" value={kbEmbedding?.hasApiKey ? "Present" : "Missing"} />
+        <InfoRow label="Config source" value={kbEmbedding?.configSource || "unknown"} />
+        <InfoRow label="Updated" value={formatDate(kbEmbedding?.updatedAtUtc)} />
+      </div>
+    </article>
+  );
+}
+
 function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
   const [providerId, setProviderId] = useState("ChatGPT");
   const [label, setLabel] = useState("");
@@ -3104,6 +3244,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
       </article>
 
       <ManagedRuntimeSelectionCard accessToken={accessToken} inventory={inventory} onRefresh={onRefresh} />
+      <KnowledgeBaseEmbeddingConfigCard accessToken={accessToken} inventory={inventory} onRefresh={onRefresh} />
 
       <article className="glass-panel admin-form-panel">
         <div className="table-header">

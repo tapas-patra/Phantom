@@ -42,8 +42,9 @@ Endpoints:
 - `GET /api/dashboard/download-entitlement` with `Authorization: Bearer <user access token>`
 - `GET /api/dashboard/support/preview` with `Authorization: Bearer <user access token>`
 - `GET /api/dashboard/admin/overview` with `Authorization: Bearer <admin access token>`
-- `GET /api/dashboard/admin/managed-ai/credentials` with `Authorization: Bearer <admin access token>`
+- `GET /api/dashboard/admin/managed-ai/credentials` with `Authorization: Bearer <admin access token>` and includes the persisted KB embedding profile in the inventory payload
 - `POST /api/dashboard/admin/managed-ai/credentials` with `Authorization: Bearer <admin access token>`
+- `POST /api/dashboard/admin/kb/embedding-config` with `Authorization: Bearer <admin access token>`
 - `DELETE /api/dashboard/admin/managed-ai/credentials/{credentialId}` with `Authorization: Bearer <admin access token>`
 
 Production notes:

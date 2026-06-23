@@ -1,3 +1,5 @@
+using Phantom.WindowsApp.Backend.Infrastructure;
+
 namespace Phantom.WindowsApp.Backend.Persistence;
 
 public static class BackendSchemaMigrations
@@ -10,7 +12,10 @@ public static class BackendSchemaMigrations
         new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql),
         new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql),
         new SchemaMigration("006_usage_credit_split", UsageCreditSplitSql),
-        new SchemaMigration("007_hosted_kb_search_index", HostedKnowledgeBaseSearchIndexSql)
+        new SchemaMigration("007_hosted_kb_search_index", HostedKnowledgeBaseSearchIndexSql),
+        new SchemaMigration("008_hosted_kb_vector_upgrade", HostedKnowledgeBaseVectorUpgradeSql),
+        new SchemaMigration("009_hosted_kb_embedding_admin_config", HostedKnowledgeBaseEmbeddingAdminConfigSql),
+        new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -337,12 +342,16 @@ CREATE TABLE IF NOT EXISTS managed_provider_catalog (
     refreshed_at_utc TIMESTAMPTZ NOT NULL
 );
 
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS hosted_knowledge_bases (
     knowledge_base_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     status TEXT NOT NULL,
+    embedding_model TEXT NOT NULL DEFAULT '',
+    embedding_version INTEGER NOT NULL DEFAULT 0,
     document_count INTEGER NOT NULL,
     chunk_count INTEGER NOT NULL,
     last_processed_at_utc TIMESTAMPTZ NULL,
@@ -360,12 +369,17 @@ CREATE TABLE IF NOT EXISTS hosted_kb_documents (
     file_name TEXT NOT NULL,
     content_type TEXT NOT NULL,
     source_type TEXT NOT NULL,
+    extracted_text TEXT NOT NULL DEFAULT '',
+    content_sha256 TEXT NOT NULL DEFAULT '',
+    embedding_model TEXT NOT NULL DEFAULT '',
+    embedding_version INTEGER NOT NULL DEFAULT 0,
     character_count INTEGER NOT NULL,
     chunk_count INTEGER NOT NULL,
     status TEXT NOT NULL,
     error TEXT NOT NULL,
     uploaded_at_utc TIMESTAMPTZ NOT NULL,
-    processed_at_utc TIMESTAMPTZ NULL
+    processed_at_utc TIMESTAMPTZ NULL,
+    indexed_at_utc TIMESTAMPTZ NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_kb
@@ -378,11 +392,18 @@ CREATE TABLE IF NOT EXISTS hosted_kb_chunks (
     user_id TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     document_title TEXT NOT NULL,
+    section_title TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL,
     search_text TEXT NOT NULL,
     embedding_json JSONB NOT NULL,
+    content_sha256 TEXT NOT NULL DEFAULT '',
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    embedding_model TEXT NOT NULL DEFAULT '',
+    embedding_version INTEGER NOT NULL DEFAULT 0,
+    embedding vector(1536) NULL,
     token_count INTEGER NOT NULL,
-    created_at_utc TIMESTAMPTZ NOT NULL
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    indexed_at_utc TIMESTAMPTZ NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_kb
@@ -400,6 +421,19 @@ CREATE TABLE IF NOT EXISTS desktop_context_packs (
 
 CREATE INDEX IF NOT EXISTS idx_desktop_context_packs_user_id
     ON desktop_context_packs(user_id, updated_at_utc DESC, name ASC);
+
+CREATE TABLE IF NOT EXISTS hosted_kb_embedding_config (
+    config_id TEXT PRIMARY KEY,
+    is_enabled BOOLEAN NOT NULL,
+    provider_id TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    batch_size INTEGER NOT NULL,
+    encrypted_api_key TEXT NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
 ";
 
     private const string DashboardProjectionSchemaSql = @"
@@ -1030,6 +1064,94 @@ ALTER TABLE dashboard_wallet_history
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_search_vector
     ON hosted_kb_chunks
     USING GIN (to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text));
+";
+
+    private static readonly string HostedKnowledgeBaseVectorUpgradeSql = $@"
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE hosted_knowledge_bases
+    ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_knowledge_bases
+    ADD COLUMN IF NOT EXISTS embedding_version INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS extracted_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS content_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS embedding_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS indexed_at_utc TIMESTAMPTZ NULL;
+
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS section_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS content_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{{}}'::jsonb;
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS embedding_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS indexed_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE hosted_kb_chunks
+    ADD COLUMN IF NOT EXISTS embedding vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions});
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_status
+    ON hosted_kb_documents(knowledge_base_id, status, uploaded_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_indexed
+    ON hosted_kb_chunks(knowledge_base_id, indexed_at_utc, document_id, chunk_index);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw
+    ON hosted_kb_chunks
+    USING hnsw (embedding vector_cosine_ops);
+";
+
+    private const string HostedKnowledgeBaseEmbeddingAdminConfigSql = @"
+CREATE TABLE IF NOT EXISTS hosted_kb_embedding_config (
+    config_id TEXT PRIMARY KEY,
+    is_enabled BOOLEAN NOT NULL,
+    provider_id TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    batch_size INTEGER NOT NULL,
+    encrypted_api_key TEXT NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+";
+
+    private const string HostedKnowledgeBaseReindexJobsSql = @"
+CREATE TABLE IF NOT EXISTS hosted_kb_reindex_jobs (
+    job_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    target_embedding_model TEXT NOT NULL DEFAULT '',
+    target_embedding_version INTEGER NOT NULL DEFAULT 0,
+    total_documents INTEGER NOT NULL DEFAULT 0,
+    processed_documents INTEGER NOT NULL DEFAULT 0,
+    requested_at_utc TIMESTAMPTZ NOT NULL,
+    started_at_utc TIMESTAMPTZ NULL,
+    completed_at_utc TIMESTAMPTZ NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_reindex_jobs_kb_requested
+    ON hosted_kb_reindex_jobs(knowledge_base_id, requested_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_reindex_jobs_status_requested
+    ON hosted_kb_reindex_jobs(status, requested_at_utc ASC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hosted_kb_reindex_jobs_active_kb
+    ON hosted_kb_reindex_jobs(knowledge_base_id)
+    WHERE status IN ('queued', 'running');
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

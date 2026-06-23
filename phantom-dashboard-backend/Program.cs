@@ -334,6 +334,18 @@ adminGroup.MapPost("/managed-ai/selection", async (
         payload,
         cancellationToken));
 });
+adminGroup.MapPost("/kb/embedding-config", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpdateKnowledgeBaseEmbeddingConfig(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
+        payload,
+        cancellationToken));
+});
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
     HttpContext httpContext,
     BrowserSessionCookieService cookies,

@@ -47,6 +47,14 @@ public sealed class BackendOptions
     public string OtpSendUrlTemplate { get; init; } = string.Empty;
     public string OtpVerifyUrlTemplate { get; init; } = string.Empty;
     public string MockOtpCode { get; init; } = "111111";
+    public bool KnowledgeBaseEmbeddingEnabled { get; init; } = true;
+    public string KnowledgeBaseEmbeddingProvider { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultProvider;
+    public string KnowledgeBaseEmbeddingBaseUrl { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBaseUrl;
+    public string KnowledgeBaseEmbeddingApiKey { get; init; } = string.Empty;
+    public string KnowledgeBaseEmbeddingModel { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultModel;
+    public int KnowledgeBaseEmbeddingDimensions { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions;
+    public int KnowledgeBaseEmbeddingVersion { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion;
+    public int KnowledgeBaseEmbeddingBatchSize { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize;
     public bool AllowImplicitLocalAdminBootstrap { get; init; }
     public bool AllowSeedTestUsers { get; init; }
 
@@ -248,6 +256,38 @@ public sealed class BackendOptions
                 "PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE",
                 section["MockOtpCode"],
                 "111111"),
+            KnowledgeBaseEmbeddingEnabled = ParseBool(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_ENABLED"),
+                section["KnowledgeBaseEmbeddingEnabled"],
+                true),
+            KnowledgeBaseEmbeddingProvider = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_PROVIDER",
+                section["KnowledgeBaseEmbeddingProvider"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultProvider),
+            KnowledgeBaseEmbeddingBaseUrl = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BASE_URL",
+                section["KnowledgeBaseEmbeddingBaseUrl"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultBaseUrl),
+            KnowledgeBaseEmbeddingApiKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_API_KEY",
+                section["KnowledgeBaseEmbeddingApiKey"],
+                string.Empty),
+            KnowledgeBaseEmbeddingModel = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_MODEL",
+                section["KnowledgeBaseEmbeddingModel"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultModel),
+            KnowledgeBaseEmbeddingDimensions = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_DIMENSIONS"),
+                section["KnowledgeBaseEmbeddingDimensions"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions),
+            KnowledgeBaseEmbeddingVersion = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_VERSION"),
+                section["KnowledgeBaseEmbeddingVersion"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion),
+            KnowledgeBaseEmbeddingBatchSize = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BATCH_SIZE"),
+                section["KnowledgeBaseEmbeddingBatchSize"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize),
             AllowImplicitLocalAdminBootstrap = ParseBool(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP"),
                 section["AllowImplicitLocalAdminBootstrap"],

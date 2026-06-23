@@ -395,6 +395,14 @@ export async function updateManagedAiRuntimeSelection(accessToken, payload) {
   });
 }
 
+export async function updateKnowledgeBaseEmbeddingConfig(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/kb/embedding-config", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function deleteManagedAiCredential(accessToken, credentialId) {
   return request(
     DASHBOARD_API_BASE,

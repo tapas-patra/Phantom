@@ -29,6 +29,8 @@ builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
 builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseEmbeddingConfigRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseReindexJobRepository>();
 builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
@@ -47,6 +49,7 @@ builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<IKnowledgeBaseEmbeddingService, KnowledgeBaseEmbeddingService>();
 builder.Services.AddSingleton<PaymentCatalog>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
@@ -60,6 +63,7 @@ builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
+builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryBufferService>();
@@ -225,6 +229,26 @@ app.UseExceptionHandler(exceptionApp =>
             await context.Response.WriteAsJsonAsync(new
             {
                 error = "Database unavailable."
+            });
+            return;
+        }
+
+        if (exception is EmbeddingProviderException embeddingException)
+        {
+            context.Response.StatusCode = embeddingException.IsTransient
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status502BadGateway;
+            if (embeddingException.RetryAfterSeconds.HasValue && embeddingException.RetryAfterSeconds.Value > 0)
+            {
+                context.Response.Headers["Retry-After"] = embeddingException.RetryAfterSeconds.Value.ToString();
+            }
+
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = embeddingException.Message,
+                retryable = embeddingException.IsTransient,
+                providerStatusCode = embeddingException.ProviderStatusCode,
+                retryAfterSeconds = embeddingException.RetryAfterSeconds
             });
             return;
         }
@@ -766,14 +790,32 @@ app.MapPost("/api/desktop/kb/documents", async (
     return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
-app.MapGet("/api/desktop/kb/search", (
+app.MapPost("/api/desktop/kb/reindex", (
     HttpContext httpContext,
-    string query,
-    int? maxSnippets,
     HostedKnowledgeBaseService knowledgeBases) =>
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
+    return Results.Ok(knowledgeBases.QueueReindex(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/reindex", (
+    HttpContext httpContext,
+    string? jobId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetLatestReindexJob(account, jobId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/search", async (
+    HttpContext httpContext,
+    string query,
+    int? maxSnippets,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.SearchAsync(account, query, maxSnippets ?? 3, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/context-packs", (
@@ -1077,6 +1119,18 @@ adminGroup.MapPost("/managed-ai/catalog/vision", (
     ManagedAiCatalogService catalogService) =>
 {
     return Results.Ok(catalogService.UpdateModelVisionSupport(request));
+});
+
+adminGroup.MapGet("/kb/embedding-config", (IKnowledgeBaseEmbeddingService embeddingService) =>
+{
+    return Results.Ok(embeddingService.GetAdminConfiguration());
+});
+
+adminGroup.MapPost("/kb/embedding-config", (
+    HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto request,
+    IKnowledgeBaseEmbeddingService embeddingService) =>
+{
+    return Results.Ok(embeddingService.UpdateAdminConfiguration(request));
 });
 
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (

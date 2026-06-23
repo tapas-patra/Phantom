@@ -185,8 +185,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             attempt++;
             try
             {
-                using var request = BuildEmbeddingRequest(profile, apiKey, inputs);
-                using var response = await HttpClient.SendAsync(request, cancellationToken);
+                using var response = await SendEmbeddingRequestAsync(profile, apiKey, inputs, cancellationToken);
                 var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
@@ -367,9 +366,10 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
     private static HttpRequestMessage BuildEmbeddingRequest(
         KnowledgeBaseEmbeddingProfile profile,
         string apiKey,
-        IReadOnlyList<string> inputs)
+        IReadOnlyList<string> inputs,
+        string? requestUrl = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{profile.BaseUrl.TrimEnd('/')}/embeddings");
+        var request = new HttpRequestMessage(HttpMethod.Post, requestUrl ?? $"{profile.BaseUrl.TrimEnd('/')}/embeddings");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         var payload = new Dictionary<string, object?>
@@ -385,6 +385,28 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
 
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         return request;
+    }
+
+    private static async Task<HttpResponseMessage> SendEmbeddingRequestAsync(
+        KnowledgeBaseEmbeddingProfile profile,
+        string apiKey,
+        IReadOnlyList<string> inputs,
+        CancellationToken cancellationToken)
+    {
+        var primaryUrl = $"{profile.BaseUrl.TrimEnd('/')}/embeddings";
+        using (var primaryRequest = BuildEmbeddingRequest(profile, apiKey, inputs, primaryUrl))
+        {
+            var primaryResponse = await HttpClient.SendAsync(primaryRequest, cancellationToken);
+            if (primaryResponse.StatusCode != System.Net.HttpStatusCode.NotFound || HasVersionSegment(profile.BaseUrl))
+            {
+                return primaryResponse;
+            }
+
+            primaryResponse.Dispose();
+        }
+
+        var fallbackUrl = $"{profile.BaseUrl.TrimEnd('/')}/v1/embeddings";
+        return await HttpClient.SendAsync(BuildEmbeddingRequest(profile, apiKey, inputs, fallbackUrl), cancellationToken);
     }
 
     private static IReadOnlyList<float[]> ParseEmbeddingResponse(KnowledgeBaseEmbeddingProfile profile, string responseText)
@@ -464,5 +486,15 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
     {
         return providerId.Equals("openai", StringComparison.OrdinalIgnoreCase)
             || providerId.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasVersionSegment(string baseUrl)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.TrimEnd('/').EndsWith("/v1", StringComparison.OrdinalIgnoreCase);
     }
 }

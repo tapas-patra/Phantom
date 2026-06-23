@@ -478,7 +478,7 @@ namespace SecureOverlay
                 return false;
             }
 
-            return IsByoLaneActiveNow();
+            return PreferByoCreditsFirst() || IsByoLaneActiveNow();
         }
 
         private void UpdateCreditIndicator()
@@ -736,6 +736,8 @@ namespace SecureOverlay
                     EndedAtUtc = completion.EndedAtUtc,
                     ChargedCredits = completion.ChargedCredits,
                     ChargedBlocks = completion.ChargedBlocks,
+                    ConsumedProCredits = completion.ConsumedProCredits,
+                    ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                     PremiumDebtAdded = completion.PremiumDebtAdded
                 });
                 var reconciliationFlush = _usageReconciliationService.FlushPending();
@@ -4713,6 +4715,8 @@ namespace SecureOverlay
                             EndedAtUtc = completion.EndedAtUtc,
                             ChargedCredits = completion.ChargedCredits,
                             ChargedBlocks = completion.ChargedBlocks,
+                            ConsumedProCredits = completion.ConsumedProCredits,
+                            ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                             PremiumDebtAdded = completion.PremiumDebtAdded
                         });
                         var reconciliationFlush = _usageReconciliationService.FlushPending();

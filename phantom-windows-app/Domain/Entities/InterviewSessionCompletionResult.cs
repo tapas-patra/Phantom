@@ -8,6 +8,8 @@ namespace SecureOverlay.Domain.Entities
         public System.DateTime EndedAtUtc { get; set; }
         public decimal ChargedCredits { get; set; }
         public int ChargedBlocks { get; set; }
+        public decimal ConsumedProCredits { get; set; }
+        public decimal ConsumedPremiumCredits { get; set; }
         public decimal PremiumDebtAdded { get; set; }
         public decimal RemainingProCredits { get; set; }
         public decimal RemainingPremiumCredits { get; set; }

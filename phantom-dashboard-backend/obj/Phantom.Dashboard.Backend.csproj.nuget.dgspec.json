@@ -10,11 +10,11 @@
         "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
         "projectName": "Phantom.Dashboard.Backend",
         "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
-        "packagesPath": "/private/tmp/.nuget/packages/",
+        "packagesPath": "/private/tmp/phantom-dotnet-home/.nuget/packages/",
         "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/private/tmp/.nuget/NuGet/NuGet.Config"
+          "/private/tmp/phantom-dotnet-home/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"

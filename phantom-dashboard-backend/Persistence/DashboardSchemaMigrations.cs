@@ -34,9 +34,16 @@ CREATE TABLE IF NOT EXISTS dashboard_wallet_history (
     session_id TEXT NOT NULL,
     charged_credits NUMERIC(18,2) NOT NULL,
     charged_blocks INTEGER NOT NULL,
+    charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
     added_premium_debt NUMERIC(18,2) NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_wallet_history_user_created
     ON dashboard_wallet_history(user_id, created_at_utc DESC);

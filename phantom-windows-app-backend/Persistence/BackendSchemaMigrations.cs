@@ -8,12 +8,14 @@ public static class BackendSchemaMigrations
         new SchemaMigration("002_dashboard_projection_schema", DashboardProjectionSchemaSql),
         new SchemaMigration("003_operational_indexes", OperationalIndexesSql),
         new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql),
-        new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql)
+        new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql),
+        new SchemaMigration("006_usage_credit_split", UsageCreditSplitSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
     {
-        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql)
+        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql),
+        new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql)
     };
 
     private const string CoreSchemaSql = @"
@@ -169,6 +171,8 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
     ended_at_utc TIMESTAMPTZ NOT NULL,
     charged_credits NUMERIC(18,2) NOT NULL,
     charged_blocks INTEGER NOT NULL,
+    charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
     added_premium_debt NUMERIC(18,2) NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
@@ -424,6 +428,8 @@ CREATE TABLE IF NOT EXISTS dashboard_wallet_history (
     session_id TEXT NOT NULL,
     charged_credits NUMERIC(18,2) NOT NULL,
     charged_blocks INTEGER NOT NULL,
+    charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
     added_premium_debt NUMERIC(18,2) NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
@@ -1005,5 +1011,24 @@ BEGIN
         is_active = EXCLUDED.is_active;
 END;
 $$ LANGUAGE plpgsql;
+";
+
+    private const string UsageCreditSplitSql = @"
+ALTER TABLE usage_ledger
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE usage_ledger
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+";
+
+    private const string DashboardProjectionUsageCreditSplitSql = @"
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
 ";
 }

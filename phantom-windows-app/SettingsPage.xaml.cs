@@ -1603,7 +1603,9 @@ namespace SecureOverlay
             {
                 PremiumManagedNoticeTitle.Text = "Premium With BYO Fallback";
                 PremiumManagedNoticeBody.Text =
-                    "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
+                    _settings.PreferByoCreditsFirst
+                        ? "BYO credits are prioritized first for this account. Your provider keys and models stay available here immediately, and Phantom falls back to managed Premium only after BYO credits are exhausted."
+                        : "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
             }
 
             if (isFreeTrial)
@@ -1619,7 +1621,9 @@ namespace SecureOverlay
             {
                 SessionContinuationTitle.Text = "Paid Session Extension";
                 SessionContinuationDescription.Text =
-                    "Premium is consumed first. If Premium is depleted and BYO is available, Phantom falls back to BYO. This setting only matters if the interview would continue after all available paid credits are exhausted.";
+                    _settings.PreferByoCreditsFirst
+                        ? "BYO is consumed first for this account. If BYO is depleted and Premium is still available, Phantom falls back to managed Premium. This setting only matters if the interview would continue after all available paid credits are exhausted."
+                        : "Premium is consumed first. If Premium is depleted and BYO is available, Phantom falls back to BYO. This setting only matters if the interview would continue after all available paid credits are exhausted.";
                 SessionContinuationCheckBox.Content =
                     "Allow this interview to continue after available paid credits are exhausted";
                 SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;

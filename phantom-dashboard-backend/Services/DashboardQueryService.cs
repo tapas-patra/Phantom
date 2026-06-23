@@ -79,7 +79,7 @@ LIMIT 1;";
         using (var command = connection.CreateCommand())
         {
             command.CommandText = @"
-SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, added_premium_debt, created_at_utc
+SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, charged_pro_credits, charged_premium_credits, added_premium_debt, created_at_utc
 FROM dashboard_wallet_history
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
@@ -97,6 +97,8 @@ LIMIT @pageSize;";
                     sessionId = reader.GetString(reader.GetOrdinal("session_id")),
                     chargedCredits = reader.GetDecimal(reader.GetOrdinal("charged_credits")),
                     chargedBlocks = reader.GetInt32(reader.GetOrdinal("charged_blocks")),
+                    chargedProCredits = reader.GetDecimal(reader.GetOrdinal("charged_pro_credits")),
+                    chargedPremiumCredits = reader.GetDecimal(reader.GetOrdinal("charged_premium_credits")),
                     addedPremiumDebt = reader.GetDecimal(reader.GetOrdinal("added_premium_debt")),
                     createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
                 });

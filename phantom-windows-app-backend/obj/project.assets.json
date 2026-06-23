@@ -12,7 +12,7 @@
     ]
   },
   "packageFolders": {
-    "/private/tmp/dotnet-home/.nuget/packages/": {}
+    "/private/tmp/phantom-dotnet-home/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
@@ -20,11 +20,11 @@
       "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
       "projectName": "Phantom.WindowsApp.Backend",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/Phantom.WindowsApp.Backend.csproj",
-      "packagesPath": "/private/tmp/dotnet-home/.nuget/packages/",
+      "packagesPath": "/private/tmp/phantom-dotnet-home/.nuget/packages/",
       "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app-backend/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/private/tmp/dotnet-home/.nuget/NuGet/NuGet.Config"
+        "/private/tmp/phantom-dotnet-home/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"

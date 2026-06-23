@@ -322,6 +322,8 @@ namespace SecureOverlay.Infrastructure.Billing
                 EndedAtUtc = endedAtUtc,
                 ChargedBlocks = blocks,
                 ChargedCredits = chargedCredits,
+                ConsumedProCredits = consumedProCredits,
+                ConsumedPremiumCredits = consumedPremiumCredits,
                 PremiumDebtAdded = premiumDebtAdded,
                 RemainingProCredits = snapshot.ProAvailableCredits,
                 RemainingPremiumCredits = snapshot.PremiumAvailableCredits

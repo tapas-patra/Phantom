@@ -236,6 +236,8 @@ public sealed class AdminService
                 entry.SessionId,
                 entry.ChargedCredits,
                 entry.ChargedBlocks,
+                entry.ChargedProCredits,
+                entry.ChargedPremiumCredits,
                 entry.AddedPremiumDebt,
                 entry.CreatedAtUtc
             })

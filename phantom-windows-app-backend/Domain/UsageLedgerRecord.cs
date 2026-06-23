@@ -9,6 +9,8 @@ public sealed class UsageLedgerRecord
     public DateTime EndedAtUtc { get; set; }
     public decimal ChargedCredits { get; set; }
     public int ChargedBlocks { get; set; }
+    public decimal ChargedProCredits { get; set; }
+    public decimal ChargedPremiumCredits { get; set; }
     public decimal AddedPremiumDebt { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }

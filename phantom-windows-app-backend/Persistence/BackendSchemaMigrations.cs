@@ -9,7 +9,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("003_operational_indexes", OperationalIndexesSql),
         new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql),
         new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql),
-        new SchemaMigration("006_usage_credit_split", UsageCreditSplitSql)
+        new SchemaMigration("006_usage_credit_split", UsageCreditSplitSql),
+        new SchemaMigration("007_hosted_kb_search_index", HostedKnowledgeBaseSearchIndexSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1023,6 +1024,12 @@ ALTER TABLE dashboard_wallet_history
     ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE dashboard_wallet_history
     ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+";
+
+    private const string HostedKnowledgeBaseSearchIndexSql = @"
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_search_vector
+    ON hosted_kb_chunks
+    USING GIN (to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text));
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

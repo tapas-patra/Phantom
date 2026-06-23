@@ -1,3 +1,4 @@
+using System;
 using Npgsql;
 using Phantom.WindowsApp.Backend.Domain;
 
@@ -50,6 +51,42 @@ SELECT * FROM hosted_kb_chunks
 WHERE knowledge_base_id = @knowledgeBaseId
 ORDER BY document_id ASC, chunk_index ASC;";
         command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        using var reader = command.ExecuteReader();
+        var items = new List<HostedKnowledgeBaseChunkRecord>();
+        while (reader.Read())
+        {
+            items.Add(MapChunk(reader));
+        }
+
+        return items;
+    }
+
+    public IReadOnlyList<HostedKnowledgeBaseChunkRecord> SearchChunkCandidates(string knowledgeBaseId, string query, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(knowledgeBaseId) || string.IsNullOrWhiteSpace(query) || limit <= 0)
+        {
+            return Array.Empty<HostedKnowledgeBaseChunkRecord>();
+        }
+
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT chunk_id, knowledge_base_id, document_id, user_id, chunk_index, document_title, text, search_text, embedding_json, token_count, created_at_utc
+FROM hosted_kb_chunks
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
+      @@ plainto_tsquery('simple', @query)
+ORDER BY ts_rank_cd(
+        to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text),
+        plainto_tsquery('simple', @query)
+    ) DESC,
+    token_count DESC,
+    document_id ASC,
+    chunk_index ASC
+LIMIT @limit;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("limit", limit);
         using var reader = command.ExecuteReader();
         var items = new List<HostedKnowledgeBaseChunkRecord>();
         while (reader.Read())

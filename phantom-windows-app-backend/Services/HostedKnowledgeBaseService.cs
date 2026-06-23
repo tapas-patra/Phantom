@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -23,11 +24,16 @@ public sealed class HostedKnowledgeBaseService
     private const int ChunkSize = 800;
     private const int ChunkOverlap = 120;
     private const int EmbeddingDimensions = 64;
+    private const int SearchCandidateMultiplier = 12;
+    private const int MinSearchCandidateCount = 24;
+    private const int MaxSearchCandidateCount = 72;
+    private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(3);
 
     private readonly HostedKnowledgeBaseRepository _knowledgeBases;
     private readonly AuthSessionRepository _sessions;
     private readonly AccountRepository _accounts;
     private readonly TokenService _tokens;
+    private readonly ConcurrentDictionary<string, CachedSearchEntry> _searchCache = new(StringComparer.Ordinal);
 
     public HostedKnowledgeBaseService(
         HostedKnowledgeBaseRepository knowledgeBases,
@@ -212,6 +218,7 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.UpdatedAtUtc = now;
 
         _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, mergedDocuments, mergedChunks);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
 
         return new HostedKnowledgeBaseUploadResultDto
         {
@@ -236,9 +243,30 @@ public sealed class HostedKnowledgeBaseService
         }
 
         var normalizedQuery = NormalizeWhitespace(query);
+        var snippetLimit = Math.Clamp(maxSnippets, 1, 6);
+        var cacheKey = BuildSearchCacheKey(knowledgeBase.KnowledgeBaseId, normalizedQuery, snippetLimit);
+        if (TryGetCachedSearch(cacheKey, out var cachedSnippets))
+        {
+            return new HostedKnowledgeBaseSearchResultDto
+            {
+                KnowledgeBase = MapSummary(account, knowledgeBase),
+                Snippets = cachedSnippets
+            };
+        }
+
         var queryEmbedding = BuildEmbedding(normalizedQuery);
         var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var topChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+        var candidateLimit = Math.Clamp(
+            snippetLimit * SearchCandidateMultiplier,
+            MinSearchCandidateCount,
+            MaxSearchCandidateCount);
+        var candidates = _knowledgeBases.SearchChunkCandidates(knowledgeBase.KnowledgeBaseId, normalizedQuery, candidateLimit);
+        if (candidates.Count == 0)
+        {
+            candidates = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId);
+        }
+
+        var topChunks = candidates
             .Select(chunk => new HostedKnowledgeBaseSnippetDto
             {
                 DocumentId = chunk.DocumentId,
@@ -248,8 +276,14 @@ public sealed class HostedKnowledgeBaseService
             })
             .Where(item => item.Score > 0d)
             .OrderByDescending(item => item.Score)
-            .Take(Math.Clamp(maxSnippets, 1, 6))
+            .Take(snippetLimit)
             .ToArray();
+
+        _searchCache[cacheKey] = new CachedSearchEntry
+        {
+            CachedAtUtc = DateTime.UtcNow,
+            Snippets = topChunks
+        };
 
         return new HostedKnowledgeBaseSearchResultDto
         {
@@ -514,5 +548,41 @@ public sealed class HostedKnowledgeBaseService
         return Regex.Split(value.ToLowerInvariant(), @"[^a-z0-9+#.]+")
             .Where(token => token.Length >= 3)
             .ToList();
+    }
+
+    private static string BuildSearchCacheKey(string knowledgeBaseId, string normalizedQuery, int maxSnippets)
+    {
+        return $"{knowledgeBaseId}:{maxSnippets}:{normalizedQuery}";
+    }
+
+    private bool TryGetCachedSearch(string cacheKey, out IReadOnlyList<HostedKnowledgeBaseSnippetDto> snippets)
+    {
+        if (_searchCache.TryGetValue(cacheKey, out var cached)
+            && DateTime.UtcNow - cached.CachedAtUtc <= SearchCacheTtl)
+        {
+            snippets = cached.Snippets;
+            return true;
+        }
+
+        _searchCache.TryRemove(cacheKey, out _);
+        snippets = Array.Empty<HostedKnowledgeBaseSnippetDto>();
+        return false;
+    }
+
+    private void InvalidateSearchCache(string knowledgeBaseId)
+    {
+        foreach (var key in _searchCache.Keys)
+        {
+            if (key.StartsWith($"{knowledgeBaseId}:", StringComparison.Ordinal))
+            {
+                _searchCache.TryRemove(key, out _);
+            }
+        }
+    }
+
+    private sealed class CachedSearchEntry
+    {
+        public DateTime CachedAtUtc { get; init; }
+        public IReadOnlyList<HostedKnowledgeBaseSnippetDto> Snippets { get; init; } = Array.Empty<HostedKnowledgeBaseSnippetDto>();
     }
 }

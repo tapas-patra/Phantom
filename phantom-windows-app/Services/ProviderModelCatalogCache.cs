@@ -55,6 +55,41 @@ namespace SecureOverlay.Services
             SyncLegacyModelListsFromCache(settings);
         }
 
+        public static void ReplaceCatalog(AppSettings settings, ManagedAiCatalogDto catalog)
+        {
+            settings.ManagedAiCatalogCache = new ManagedAiCatalogDto
+            {
+                RefreshedAtUtc = catalog.RefreshedAtUtc,
+                Providers = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Where(item => !string.IsNullOrWhiteSpace(item.ProviderId))
+                    .Select(item => new ManagedAiProviderOptionDto
+                    {
+                        ProviderId = item.ProviderId,
+                        Label = string.IsNullOrWhiteSpace(item.Label) ? item.ProviderId : item.Label,
+                        RefreshedAtUtc = item.RefreshedAtUtc,
+                        Models = (item.Models ?? new List<ManagedAiModelOptionDto>())
+                            .Where(model => !string.IsNullOrWhiteSpace(model.ModelId))
+                            .GroupBy(model => model.ModelId, StringComparer.OrdinalIgnoreCase)
+                            .Select(group =>
+                            {
+                                var first = group.First();
+                                return new ManagedAiModelOptionDto
+                                {
+                                    ModelId = first.ModelId,
+                                    DisplayName = string.IsNullOrWhiteSpace(first.DisplayName) ? first.ModelId : first.DisplayName,
+                                    SupportsVision = group.Any(model => model.SupportsVision)
+                                };
+                            })
+                            .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
+                            .ToList()
+                    })
+                    .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            };
+
+            SyncLegacyModelListsFromCache(settings);
+        }
+
         public static void UpsertProvider(
             AppSettings settings,
             string providerId,

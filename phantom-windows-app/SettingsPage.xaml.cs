@@ -199,6 +199,7 @@ namespace SecureOverlay
             SessionContinuationCheckBox.IsChecked = IsFreeTrialAccount()
                 ? _settings.AllowFreeTrialSessionExtension
                 : _settings.AllowByoSessionExtension;
+            BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
             
@@ -1298,6 +1299,7 @@ namespace SecureOverlay
                 _settings.AutoSwitchModelsOnError = AutoSwitchModelsCheckBox.IsChecked == true;
                 _settings.AllowFreeTrialSessionExtension = IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
                 _settings.AllowByoSessionExtension = !IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
+                _settings.PreferByoCreditsFirst = BillingPriorityCheckBox.IsChecked == true;
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
@@ -1622,6 +1624,9 @@ namespace SecureOverlay
                     "Allow this interview to continue after available paid credits are exhausted";
                 SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;
             }
+
+            BillingPriorityCheckBox.Visibility = isPremium && isByo ? Visibility.Visible : Visibility.Collapsed;
+            BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
 
             UpdateKnowledgeBaseStatusNotice();
             SaveContextPackButton.IsEnabled = IsPremiumAccount();

@@ -18,15 +18,18 @@ namespace SecureOverlay.Infrastructure.Billing
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IAccountCacheRepository _accountCacheRepository;
         private readonly IInterviewSessionRepository _interviewSessionRepository;
+        private readonly Func<bool> _preferByoCreditsFirst;
 
         public LocalCreditMeteringService(
             IAuthSessionRepository authSessionRepository,
             IAccountCacheRepository accountCacheRepository,
-            IInterviewSessionRepository interviewSessionRepository)
+            IInterviewSessionRepository interviewSessionRepository,
+            Func<bool> preferByoCreditsFirst)
         {
             _authSessionRepository = authSessionRepository;
             _accountCacheRepository = accountCacheRepository;
             _interviewSessionRepository = interviewSessionRepository;
+            _preferByoCreditsFirst = preferByoCreditsFirst;
         }
 
         public InterviewSessionActivationResult EnsureInterviewSession()
@@ -226,10 +229,24 @@ namespace SecureOverlay.Infrastructure.Billing
             var freeTrialManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.FreeTrialManaged, out var freeCharge) ? freeCharge : 0m;
 
             var paidChargeBeforeDebt = Math.Max(0m, requestedCharge - premiumExtensionCharge);
-            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, paidChargeBeforeDebt);
-            var remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedPremiumCredits);
-            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, remainingPaidCharge);
-            remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedProCredits);
+            decimal consumedPremiumCredits;
+            decimal consumedProCredits;
+            decimal remainingPaidCharge;
+
+            if (_preferByoCreditsFirst())
+            {
+                consumedProCredits = Math.Min(snapshot.ProAvailableCredits, paidChargeBeforeDebt);
+                remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedProCredits);
+                consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, remainingPaidCharge);
+                remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedPremiumCredits);
+            }
+            else
+            {
+                consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, paidChargeBeforeDebt);
+                remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedPremiumCredits);
+                consumedProCredits = Math.Min(snapshot.ProAvailableCredits, remainingPaidCharge);
+                remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedProCredits);
+            }
             var primaryShortfall = remainingPaidCharge;
             var premiumDebtAdded = 0m;
 
@@ -343,8 +360,13 @@ namespace SecureOverlay.Infrastructure.Billing
             }
         }
 
-        private static CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
+        private CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
+            if (!IsFreeTier(snapshot) && _preferByoCreditsFirst() && snapshot.ProAvailableCredits > 0m)
+            {
+                return CreditLedgerType.Pro;
+            }
+
             if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits > 0m)
             {
                 return CreditLedgerType.Premium;

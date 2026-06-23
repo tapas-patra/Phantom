@@ -55,6 +55,7 @@ namespace SecureOverlay.Services
         public bool AutoSwitchModelsOnError { get; set; } = true;
         public bool AllowByoSessionExtension { get; set; } = false;
         public bool AllowFreeTrialSessionExtension { get; set; } = false;
+        public bool PreferByoCreditsFirst { get; set; } = false;
         public bool AutoPauseOnInactivityEnabled { get; set; } = true;
         public int AutoPauseOnInactivityMinutes { get; set; } = 10;
         

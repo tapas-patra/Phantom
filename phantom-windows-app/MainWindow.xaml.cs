@@ -171,7 +171,8 @@ namespace SecureOverlay
             _creditMeteringService = new LocalCreditMeteringService(
                 _authSessionRepository,
                 _accountCacheRepository,
-                interviewSessionRepository);
+                interviewSessionRepository,
+                () => _settings.PreferByoCreditsFirst);
             _contextPackService = new LocalContextPackService(contextPackRepository);
             _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
                 new LocalKnowledgeRetrievalService(),
@@ -846,7 +847,7 @@ namespace SecureOverlay
                         .Where(item => !string.IsNullOrWhiteSpace(item))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
-                    ProviderModelCatalogCache.MergeCatalog(_settings, catalog);
+                    ProviderModelCatalogCache.ReplaceCatalog(_settings, catalog);
                     SettingsManager.Save(_settings);
                 }
             }
@@ -984,6 +985,29 @@ namespace SecureOverlay
             return projectedCharge < premiumCredits;
         }
 
+        private bool ByoCreditsCanStillCoverCurrentSession()
+        {
+            var byoCredits = _accountSnapshot?.ProAvailableCredits ?? 0m;
+            if (byoCredits <= 0m)
+            {
+                return false;
+            }
+
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null)
+            {
+                return true;
+            }
+
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(activeSession));
+            return projectedCharge < byoCredits;
+        }
+
+        private bool PreferByoCreditsFirst()
+        {
+            return _settings.PreferByoCreditsFirst && HasByoEntitlement() && HasPremiumManagedEntitlement();
+        }
+
         private string GetManagedRuntimeProviderId()
         {
             return _settings.ManagedAiCatalogCache?.Providers?
@@ -1045,6 +1069,19 @@ namespace SecureOverlay
             if (!IsManagedProvider(provider))
             {
                 return true;
+            }
+
+            if (PreferByoCreditsFirst())
+            {
+                if (HasConfiguredByoKeysForProvider(provider) && ByoCreditsCanStillCoverCurrentSession())
+                {
+                    return true;
+                }
+
+                if (HasPremiumManagedEntitlement())
+                {
+                    return false;
+                }
             }
 
             if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())

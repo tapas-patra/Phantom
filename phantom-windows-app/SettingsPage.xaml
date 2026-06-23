@@ -90,6 +90,10 @@
                                 <CheckBox x:Name="SessionContinuationCheckBox"
                                          Content="Allow session extension beyond the first 15-minute block"
                                          Foreground="White" FontSize="13"/>
+                                <CheckBox x:Name="BillingPriorityCheckBox"
+                                         Content="When both Premium and BYO credits are available, use BYO first"
+                                         Foreground="White" FontSize="13" Margin="0,10,0,0"
+                                         Visibility="Collapsed"/>
                             </StackPanel>
                         </Border>
 

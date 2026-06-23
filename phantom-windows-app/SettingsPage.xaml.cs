@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Navigation;
 using SecureOverlay.Application.Context;
@@ -126,6 +127,25 @@ namespace SecureOverlay
             }
         }
 
+        private void Root_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is not DependencyObject source)
+            {
+                return;
+            }
+
+            var textBox = FindAncestor<TextBoxBase>(source);
+            if (textBox == null || !textBox.IsEnabled || textBox.IsReadOnly)
+            {
+                return;
+            }
+
+            if (!textBox.IsKeyboardFocusWithin)
+            {
+                textBox.Focus();
+                Keyboard.Focus(textBox);
+            }
+        }
 
         private void LoadSettings()
         {
@@ -171,6 +191,7 @@ namespace SecureOverlay
             PopulateManagedModelChoices();
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
+            AutoSendAfterVoiceStopCheckBox.IsChecked = _settings.AutoSendAfterVoiceStopEnabled;
             
             // Rotation settings
             AutoSwitchKeysCheckBox.IsChecked = _settings.AutoSwitchKeysOnError;
@@ -178,6 +199,7 @@ namespace SecureOverlay
             SessionContinuationCheckBox.IsChecked = IsFreeTrialAccount()
                 ? _settings.AllowFreeTrialSessionExtension
                 : _settings.AllowByoSessionExtension;
+            BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
             
@@ -873,7 +895,8 @@ namespace SecureOverlay
             if (AIProviderComboBox.SelectedItem == null) return;
 
             var selected = AIProviderComboBox.SelectedItem as string;
-            PremiumManagedModelRow.Visibility = IsPremiumOnlyAccount() ? Visibility.Visible : Visibility.Collapsed;
+            ProviderSelectionSection.Visibility = IsPremiumOnlyAccount() ? Visibility.Collapsed : Visibility.Visible;
+            PremiumManagedModelRow.Visibility = Visibility.Collapsed;
             if (IsPremiumOnlyAccount())
             {
                 ChatGPTPanel.Visibility = Visibility.Collapsed;
@@ -978,6 +1001,60 @@ namespace SecureOverlay
             {
                 FakeCursorSizePanel.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private void SettingsScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (sender is not ScrollViewer scrollViewer)
+            {
+                return;
+            }
+
+            if (e.OriginalSource is DependencyObject source
+                && FindAncestor<TextBoxBase>(source) != null)
+            {
+                return;
+            }
+
+            const double scrollStep = 42d;
+            var delta = e.Delta > 0 ? -scrollStep : scrollStep;
+            var nextOffset = Math.Max(0d, Math.Min(scrollViewer.ScrollableHeight, scrollViewer.VerticalOffset + delta));
+            scrollViewer.ScrollToVerticalOffset(nextOffset);
+            e.Handled = true;
+        }
+
+        private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+        {
+            while (source != null)
+            {
+                if (source is T match)
+                {
+                    return match;
+                }
+
+                if (source is System.Windows.Media.Visual || source is System.Windows.Media.Media3D.Visual3D)
+                {
+                    source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+                    continue;
+                }
+
+                if (source is FrameworkContentElement frameworkContentElement)
+                {
+                    source = frameworkContentElement.Parent;
+                    continue;
+                }
+
+                if (source is ContentElement contentElement)
+                {
+                    source = ContentOperations.GetParent(contentElement)
+                        ?? (contentElement as FrameworkContentElement)?.Parent;
+                    continue;
+                }
+
+                break;
+            }
+
+            return null;
         }
 
         private void FakeCursorSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -1222,8 +1299,10 @@ namespace SecureOverlay
                 _settings.AutoSwitchModelsOnError = AutoSwitchModelsCheckBox.IsChecked == true;
                 _settings.AllowFreeTrialSessionExtension = IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
                 _settings.AllowByoSessionExtension = !IsFreeTrialAccount() && SessionContinuationCheckBox.IsChecked == true;
+                _settings.PreferByoCreditsFirst = BillingPriorityCheckBox.IsChecked == true;
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
+                _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
                 
@@ -1524,7 +1603,9 @@ namespace SecureOverlay
             {
                 PremiumManagedNoticeTitle.Text = "Premium With BYO Fallback";
                 PremiumManagedNoticeBody.Text =
-                    "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
+                    _settings.PreferByoCreditsFirst
+                        ? "BYO credits are prioritized first for this account. Your provider keys and models stay available here immediately, and Phantom falls back to managed Premium only after BYO credits are exhausted."
+                        : "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
             }
 
             if (isFreeTrial)
@@ -1540,11 +1621,16 @@ namespace SecureOverlay
             {
                 SessionContinuationTitle.Text = "Paid Session Extension";
                 SessionContinuationDescription.Text =
-                    "Premium is consumed first. If Premium is depleted and BYO is available, Phantom falls back to BYO. This setting only matters if the interview would continue after all available paid credits are exhausted.";
+                    _settings.PreferByoCreditsFirst
+                        ? "BYO is consumed first for this account. If BYO is depleted and Premium is still available, Phantom falls back to managed Premium. This setting only matters if the interview would continue after all available paid credits are exhausted."
+                        : "Premium is consumed first. If Premium is depleted and BYO is available, Phantom falls back to BYO. This setting only matters if the interview would continue after all available paid credits are exhausted.";
                 SessionContinuationCheckBox.Content =
                     "Allow this interview to continue after available paid credits are exhausted";
                 SessionContinuationCheckBox.IsChecked = _settings.AllowByoSessionExtension;
             }
+
+            BillingPriorityCheckBox.Visibility = isPremium && isByo ? Visibility.Visible : Visibility.Collapsed;
+            BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
 
             UpdateKnowledgeBaseStatusNotice();
             SaveContextPackButton.IsEnabled = IsPremiumAccount();
@@ -1637,8 +1723,9 @@ namespace SecureOverlay
                 return false;
             }
 
-            var activeProviders = CountConfiguredProviders(providerKeys);
-            if (providerKeys.Count == 0 && activeProviders >= MaxProvidersForByo)
+            var activeProviders = CountConfiguredProviders();
+            var providerAlreadyConfigured = providerKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key));
+            if (!providerAlreadyConfigured && activeProviders >= MaxProvidersForByo)
             {
                 InvisibleMessageBox.Show(
                     $"BYO accounts can configure at most {MaxProvidersForByo} providers.",

@@ -32,8 +32,8 @@
     <FileVersion>10.0.22631.4602</FileVersion>
     <AssemblyVersion>10.0.22631.4602</AssemblyVersion>
     
-    <!-- Use svchost icon -->
-    <ApplicationIcon>svchost.ico</ApplicationIcon>
+    <!-- Shared Phantom app icon -->
+    <ApplicationIcon>..\icons\phantom-logo.ico</ApplicationIcon>
     
   </PropertyGroup>
 
@@ -43,6 +43,15 @@
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
     <PackageReference Include="Markdig.Wpf" Version="0.5.0.1" /> 
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\icons\phantom-logo.ico">
+      <Link>phantom-logo.ico</Link>
+    </Resource>
+    <Resource Include="..\icons\phantom-logo-512.png">
+      <Link>phantom-logo-512.png</Link>
+    </Resource>
   </ItemGroup>
 
 </Project>

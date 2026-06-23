@@ -69,77 +69,100 @@ LIMIT 1;";
         };
     }
 
-    public IReadOnlyList<object> GetWalletHistory(string userId)
+    public object GetWalletHistory(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = new List<object>();
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, added_premium_debt, created_at_utc
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+SELECT ledger_entry_id, session_id, charged_credits, charged_blocks, charged_pro_credits, charged_premium_credits, added_premium_debt, created_at_utc
 FROM dashboard_wallet_history
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
-LIMIT 50;";
-        command.Parameters.AddWithValue("userId", userId);
-        using var reader = command.ExecuteReader();
-        var items = new List<object>();
-        while (reader.Read())
-        {
-            items.Add(new
+OFFSET @offset
+LIMIT @pageSize;";
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("offset", offset);
+            command.Parameters.AddWithValue("pageSize", normalizedPageSize);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
             {
-                ledgerEntryId = reader.GetString(reader.GetOrdinal("ledger_entry_id")),
-                sessionId = reader.GetString(reader.GetOrdinal("session_id")),
-                chargedCredits = reader.GetDecimal(reader.GetOrdinal("charged_credits")),
-                chargedBlocks = reader.GetInt32(reader.GetOrdinal("charged_blocks")),
-                addedPremiumDebt = reader.GetDecimal(reader.GetOrdinal("added_premium_debt")),
-                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
-            });
+                items.Add(new
+                {
+                    ledgerEntryId = reader.GetString(reader.GetOrdinal("ledger_entry_id")),
+                    sessionId = reader.GetString(reader.GetOrdinal("session_id")),
+                    chargedCredits = reader.GetDecimal(reader.GetOrdinal("charged_credits")),
+                    chargedBlocks = reader.GetInt32(reader.GetOrdinal("charged_blocks")),
+                    chargedProCredits = reader.GetDecimal(reader.GetOrdinal("charged_pro_credits")),
+                    chargedPremiumCredits = reader.GetDecimal(reader.GetOrdinal("charged_premium_credits")),
+                    addedPremiumDebt = reader.GetDecimal(reader.GetOrdinal("added_premium_debt")),
+                    createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
+                });
+            }
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_wallet_history", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
-    public IReadOnlyList<object> GetWalletPurchases(string userId)
+    public object GetWalletPurchases(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = new List<object>();
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
 SELECT checkout_id, target, pack_code, display_label, amount_minor, credits, premium_debt_credits_covered, status, client_confirmed, credited_at_utc, created_at_utc
 FROM dashboard_wallet_purchases
 WHERE user_id = @userId
 ORDER BY created_at_utc DESC
-LIMIT 50;";
-        command.Parameters.AddWithValue("userId", userId);
-        using var reader = command.ExecuteReader();
-        var items = new List<object>();
-        while (reader.Read())
-        {
-            items.Add(new
+OFFSET @offset
+LIMIT @pageSize;";
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("offset", offset);
+            command.Parameters.AddWithValue("pageSize", normalizedPageSize);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
             {
-                checkoutId = reader.GetString(reader.GetOrdinal("checkout_id")),
-                target = reader.GetString(reader.GetOrdinal("target")),
-                packCode = reader.GetString(reader.GetOrdinal("pack_code")),
-                displayLabel = reader.GetString(reader.GetOrdinal("display_label")),
-                amountMinor = reader.GetInt32(reader.GetOrdinal("amount_minor")),
-                amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
-                credits = reader.GetDecimal(reader.GetOrdinal("credits")),
-                premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
-                status = reader.GetString(reader.GetOrdinal("status")),
-                clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
-                creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
-                    ? (DateTime?)null
-                    : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
-                createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
-            });
+                items.Add(new
+                {
+                    checkoutId = reader.GetString(reader.GetOrdinal("checkout_id")),
+                    target = reader.GetString(reader.GetOrdinal("target")),
+                    packCode = reader.GetString(reader.GetOrdinal("pack_code")),
+                    displayLabel = reader.GetString(reader.GetOrdinal("display_label")),
+                    amountMinor = reader.GetInt32(reader.GetOrdinal("amount_minor")),
+                    amountInr = reader.GetInt32(reader.GetOrdinal("amount_minor")) / 100m,
+                    credits = reader.GetDecimal(reader.GetOrdinal("credits")),
+                    premiumDebtCreditsCovered = reader.GetDecimal(reader.GetOrdinal("premium_debt_credits_covered")),
+                    status = reader.GetString(reader.GetOrdinal("status")),
+                    clientConfirmed = reader.GetBoolean(reader.GetOrdinal("client_confirmed")),
+                    creditedAtUtc = reader.IsDBNull(reader.GetOrdinal("credited_at_utc"))
+                        ? (DateTime?)null
+                        : reader.GetDateTime(reader.GetOrdinal("credited_at_utc")),
+                    createdAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
+                });
+            }
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_wallet_purchases", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
-    public IReadOnlyList<object> GetDevices(string userId)
+    public object GetDevices(string userId, int page, int pageSize)
     {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = new List<object>();
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
 SELECT
     device_install_id,
     device_fingerprint_hash,
@@ -148,23 +171,27 @@ SELECT
     is_active
 FROM dashboard_device_inventory
 WHERE user_id = @userId
-ORDER BY last_authenticated_at_utc DESC;";
-        command.Parameters.AddWithValue("userId", userId);
-        using var reader = command.ExecuteReader();
-        var items = new List<object>();
-        while (reader.Read())
-        {
-            items.Add(new
+ORDER BY last_authenticated_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("offset", offset);
+            command.Parameters.AddWithValue("pageSize", normalizedPageSize);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
             {
-                deviceInstallId = reader.GetString(reader.GetOrdinal("device_install_id")),
-                deviceFingerprintHash = reader.GetString(reader.GetOrdinal("device_fingerprint_hash")),
-                lastAuthenticatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_authenticated_at_utc")),
-                authMethod = reader.GetString(reader.GetOrdinal("auth_method")),
-                isActive = reader.GetBoolean(reader.GetOrdinal("is_active"))
-            });
+                items.Add(new
+                {
+                    deviceInstallId = reader.GetString(reader.GetOrdinal("device_install_id")),
+                    deviceFingerprintHash = reader.GetString(reader.GetOrdinal("device_fingerprint_hash")),
+                    lastAuthenticatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_authenticated_at_utc")),
+                    authMethod = reader.GetString(reader.GetOrdinal("auth_method")),
+                    isActive = reader.GetBoolean(reader.GetOrdinal("is_active"))
+                });
+            }
         }
 
-        return items;
+        return CreatePageResult(connection, "dashboard_device_inventory", userId, items, normalizedPage, normalizedPageSize, offset);
     }
 
     public object GetDownloadEntitlement(string userId)
@@ -221,5 +248,32 @@ LIMIT 1;";
             supportMessage = "Support dashboards can inspect wallet state, stale locks, and recent usage without mutating runtime authority."
         };
     }
+
+    private static object CreatePageResult(
+        Npgsql.NpgsqlConnection connection,
+        string tableName,
+        string userId,
+        List<object> items,
+        int page,
+        int pageSize,
+        int offset)
+    {
+        using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = $"SELECT COUNT(*) FROM {tableName} WHERE user_id = @userId;";
+        countCommand.Parameters.AddWithValue("userId", userId);
+        var totalCount = Convert.ToInt32(countCommand.ExecuteScalar() ?? 0);
+        return new
+        {
+            items,
+            page,
+            pageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
+    }
+
+    private static int NormalizePage(int page) => Math.Max(1, page);
+
+    private static int NormalizePageSize(int pageSize) => Math.Clamp(pageSize, 1, 50);
 
 }

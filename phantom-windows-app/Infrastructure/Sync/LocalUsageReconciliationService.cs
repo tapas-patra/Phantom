@@ -82,6 +82,8 @@ namespace SecureOverlay.Infrastructure.Sync
                         EndedAtUtc = record.Payload.EndedAtUtc,
                         ChargedCredits = record.Payload.ChargedCredits,
                         ChargedBlocks = record.Payload.ChargedBlocks,
+                        ConsumedProCredits = record.Payload.ConsumedProCredits,
+                        ConsumedPremiumCredits = record.Payload.ConsumedPremiumCredits,
                         PremiumDebtAdded = record.Payload.PremiumDebtAdded
                     }, session.AccessToken);
 

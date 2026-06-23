@@ -62,9 +62,13 @@ public sealed class AdminService
         };
     }
 
-    public IReadOnlyList<object> ListAccounts()
+    public object ListAccounts(string query, int page, int pageSize)
     {
-        return _accounts.ListAll()
+        var normalizedQuery = query?.Trim().ToLowerInvariant() ?? string.Empty;
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = _accounts.ListPage(normalizedQuery, offset, normalizedPageSize)
             .Select(account => (object)new
             {
                 account.UserId,
@@ -81,6 +85,15 @@ public sealed class AdminService
                 account.LastValidatedAtUtc
             })
             .ToList();
+        var totalCount = _accounts.CountPage(normalizedQuery);
+        return new
+        {
+            items,
+            page = normalizedPage,
+            pageSize = normalizedPageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
     }
 
     public AdminAccountSnapshotDto UpdateAccount(AdminAccountUpdateRequestDto request)
@@ -134,13 +147,18 @@ public sealed class AdminService
             paymentOrderCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders;"),
             creditedPaymentCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_orders WHERE credited_at_utc IS NOT NULL;"),
             paymentWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events;"),
-            processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;")
+            processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;"),
+            openSupportTicketCount = ExecuteCount(connection, "SELECT COUNT(*) FROM support_tickets WHERE status IN ('open', 'investigating', 'waiting_for_user');"),
+            supportTicketCount = ExecuteCount(connection, "SELECT COUNT(*) FROM support_tickets;")
         };
     }
 
-    public IReadOnlyList<object> GetPaymentOrders(int maxCount = 100)
+    public object GetPaymentOrders(int page = 1, int pageSize = 25)
     {
-        return _payments.ListRecentOrders(maxCount)
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = _payments.ListOrdersPage(offset, normalizedPageSize)
             .Select(order => (object)new
             {
                 order.CheckoutId,
@@ -163,11 +181,23 @@ public sealed class AdminService
                 order.UpdatedAtUtc
             })
             .ToList();
+        var totalCount = _payments.CountOrders();
+        return new
+        {
+            items,
+            page = normalizedPage,
+            pageSize = normalizedPageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
     }
 
-    public IReadOnlyList<object> GetPaymentWebhookEvents(int maxCount = 100)
+    public object GetPaymentWebhookEvents(int page = 1, int pageSize = 25)
     {
-        return _payments.ListRecentWebhookEvents(maxCount)
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = _payments.ListWebhookEventsPage(offset, normalizedPageSize)
             .Select(eventRecord => (object)new
             {
                 eventRecord.EventRecordId,
@@ -178,6 +208,49 @@ public sealed class AdminService
                 eventRecord.ProcessedAtUtc
             })
             .ToList();
+        var totalCount = _payments.CountWebhookEvents();
+        return new
+        {
+            items,
+            page = normalizedPage,
+            pageSize = normalizedPageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
+    }
+
+    public object GetLedgerEntries(string userId, int page = 1, int pageSize = 25)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new BackendValidationException("UserId is required.");
+        }
+
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = _usageLedger.ListPageForUser(userId, offset, normalizedPageSize)
+            .Select(entry => (object)new
+            {
+                entry.LedgerEntryId,
+                entry.SessionId,
+                entry.ChargedCredits,
+                entry.ChargedBlocks,
+                entry.ChargedProCredits,
+                entry.ChargedPremiumCredits,
+                entry.AddedPremiumDebt,
+                entry.CreatedAtUtc
+            })
+            .ToList();
+        var totalCount = _usageLedger.CountForUser(userId);
+        return new
+        {
+            items,
+            page = normalizedPage,
+            pageSize = normalizedPageSize,
+            totalCount,
+            hasNextPage = offset + items.Count < totalCount
+        };
     }
 
     public object ClearLock(AdminLockClearRequestDto request)
@@ -270,4 +343,8 @@ public sealed class AdminService
 
         throw new BackendValidationException("Unsupported access tier.");
     }
+
+    private static int NormalizePage(int page) => Math.Max(1, page);
+
+    private static int NormalizePageSize(int pageSize) => Math.Clamp(pageSize, 1, 50);
 }

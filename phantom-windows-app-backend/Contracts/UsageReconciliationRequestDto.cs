@@ -8,5 +8,7 @@ public sealed class UsageReconciliationRequestDto
     public DateTime EndedAtUtc { get; set; }
     public decimal ChargedCredits { get; set; }
     public int ChargedBlocks { get; set; }
+    public decimal ConsumedProCredits { get; set; }
+    public decimal ConsumedPremiumCredits { get; set; }
     public decimal PremiumDebtAdded { get; set; }
 }

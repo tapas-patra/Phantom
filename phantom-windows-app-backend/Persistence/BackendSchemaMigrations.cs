@@ -6,12 +6,16 @@ public static class BackendSchemaMigrations
     {
         new SchemaMigration("001_backend_core_schema", CoreSchemaSql),
         new SchemaMigration("002_dashboard_projection_schema", DashboardProjectionSchemaSql),
-        new SchemaMigration("003_operational_indexes", OperationalIndexesSql)
+        new SchemaMigration("003_operational_indexes", OperationalIndexesSql),
+        new SchemaMigration("004_managed_ai_runtime_selection", ManagedAiRuntimeSelectionSql),
+        new SchemaMigration("005_support_and_auth_schema_patch", SupportAndAuthSchemaPatchSql),
+        new SchemaMigration("006_usage_credit_split", UsageCreditSplitSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
     {
-        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql)
+        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql),
+        new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql)
     };
 
     private const string CoreSchemaSql = @"
@@ -111,6 +115,21 @@ CREATE TABLE IF NOT EXISTS admin_password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_admin_password_reset_tokens_email_time
     ON admin_password_reset_tokens(email, created_at_utc DESC);
 
+CREATE TABLE IF NOT EXISTS user_password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_password_reset_tokens_email_time
+    ON user_password_reset_tokens(email, created_at_utc DESC);
+
 CREATE TABLE IF NOT EXISTS magic_links (
     token_hash TEXT PRIMARY KEY,
     email TEXT NOT NULL,
@@ -152,6 +171,8 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
     ended_at_utc TIMESTAMPTZ NOT NULL,
     charged_credits NUMERIC(18,2) NOT NULL,
     charged_blocks INTEGER NOT NULL,
+    charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
     added_premium_debt NUMERIC(18,2) NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
@@ -253,6 +274,30 @@ CREATE TABLE IF NOT EXISTS payment_webhook_events (
     created_at_utc TIMESTAMPTZ NOT NULL,
     processed_at_utc TIMESTAMPTZ NULL
 );
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    ticket_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    admin_notes TEXT NOT NULL DEFAULT '',
+    resolution_summary TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL,
+    resolved_at_utc TIMESTAMPTZ NULL,
+    last_admin_action_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_updated
+    ON support_tickets(user_id, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
+    ON support_tickets(status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_email_updated
+    ON support_tickets(lower(email), updated_at_utc DESC);
 
 CREATE TABLE IF NOT EXISTS integration_secrets (
     secret_key TEXT PRIMARY KEY,
@@ -383,6 +428,8 @@ CREATE TABLE IF NOT EXISTS dashboard_wallet_history (
     session_id TEXT NOT NULL,
     charged_credits NUMERIC(18,2) NOT NULL,
     charged_blocks INTEGER NOT NULL,
+    charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
+    charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0,
     added_premium_debt NUMERIC(18,2) NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
@@ -866,4 +913,122 @@ CREATE INDEX IF NOT EXISTS idx_payment_webhook_events_processed_at
     ON payment_webhook_events(processed_at_utc);
 CREATE INDEX IF NOT EXISTS idx_dashboard_projection_outbox_occurred_at
     ON dashboard_projection_outbox(occurred_at_utc);";
+
+    private const string ManagedAiRuntimeSelectionSql = @"
+CREATE TABLE IF NOT EXISTS managed_ai_runtime_selection (
+    selection_id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);";
+
+    private const string SupportAndAuthSchemaPatchSql = @"
+CREATE TABLE IF NOT EXISTS user_password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    consumed BOOLEAN NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_password_reset_tokens_email_time
+    ON user_password_reset_tokens(email, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    ticket_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    admin_notes TEXT NOT NULL DEFAULT '',
+    resolution_summary TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL,
+    resolved_at_utc TIMESTAMPTZ NULL,
+    last_admin_action_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_updated
+    ON support_tickets(user_id, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
+    ON support_tickets(status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_email_updated
+    ON support_tickets(lower(email), updated_at_utc DESC);
+
+CREATE OR REPLACE FUNCTION refresh_dashboard_device_inventory(p_user_id TEXT)
+RETURNS VOID AS $$
+BEGIN
+    DELETE FROM dashboard_device_inventory d
+    WHERE d.user_id = p_user_id
+      AND NOT EXISTS (
+          SELECT 1
+          FROM auth_sessions s
+          WHERE s.user_id = p_user_id
+            AND s.auth_method NOT LIKE 'admin:%'
+            AND s.device_install_id = d.device_install_id
+            AND s.device_fingerprint_hash = d.device_fingerprint_hash
+      );
+
+    INSERT INTO dashboard_device_inventory (
+        user_id, device_install_id, device_fingerprint_hash,
+        last_authenticated_at_utc, auth_method, is_active
+    )
+    SELECT
+        ranked.user_id,
+        ranked.device_install_id,
+        ranked.device_fingerprint_hash,
+        ranked.authenticated_at_utc,
+        ranked.auth_method,
+        (ranked.is_authenticated = TRUE AND ranked.revoked_at_utc IS NULL) AS is_active
+    FROM (
+        SELECT
+            s.user_id,
+            s.device_install_id,
+            s.device_fingerprint_hash,
+            s.authenticated_at_utc,
+            s.auth_method,
+            s.is_authenticated,
+            s.revoked_at_utc,
+            ROW_NUMBER() OVER (
+                PARTITION BY s.user_id, s.device_install_id, s.device_fingerprint_hash
+                ORDER BY s.authenticated_at_utc DESC, s.session_id DESC
+            ) AS row_number
+        FROM auth_sessions s
+        WHERE s.user_id = p_user_id
+          AND s.auth_method NOT LIKE 'admin:%'
+    ) ranked
+    WHERE ranked.row_number = 1
+    ON CONFLICT (user_id, device_install_id, device_fingerprint_hash) DO UPDATE SET
+        last_authenticated_at_utc = EXCLUDED.last_authenticated_at_utc,
+        auth_method = EXCLUDED.auth_method,
+        is_active = EXCLUDED.is_active;
+END;
+$$ LANGUAGE plpgsql;
+";
+
+    private const string UsageCreditSplitSql = @"
+ALTER TABLE usage_ledger
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE usage_ledger
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+";
+
+    private const string DashboardProjectionUsageCreditSplitSql = @"
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE dashboard_wallet_history
+    ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+";
 }

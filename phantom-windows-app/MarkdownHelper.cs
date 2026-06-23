@@ -96,7 +96,7 @@ namespace SecureOverlay
                     // MULTI-LINE CODE BLOCK - GREEN TEXT
                     // ══════════════════════════════════════════════════════════════
                     
-                    paragraph.Background = new SolidColorBrush(Color.FromRgb(25, 25, 25));
+                    paragraph.Background = Brushes.Transparent;
                     paragraph.Foreground = new SolidColorBrush(Color.FromRgb(0, 255, 127)); // Bright green
                     paragraph.FontFamily = new FontFamily("Consolas, Courier New, monospace");
                     paragraph.FontSize = 13;
@@ -158,11 +158,10 @@ namespace SecureOverlay
             {
                 if (uiContainer.Child is System.Windows.Controls.Border border)
                 {
-                    // Dark background for code blocks
-                    border.Background = new SolidColorBrush(Color.FromRgb(25, 25, 25));
-                    border.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0));
-                    border.BorderThickness = new Thickness(2);
-                    border.CornerRadius = new CornerRadius(5);
+                    border.Background = Brushes.Transparent;
+                    border.BorderBrush = Brushes.Transparent;
+                    border.BorderThickness = new Thickness(0);
+                    border.CornerRadius = new CornerRadius(0);
                     border.Padding = new Thickness(10);
                     
                     if (border.Child is System.Windows.Controls.TextBlock textBlock)
@@ -213,7 +212,7 @@ namespace SecureOverlay
                         if (isInlineCode)
                         {
                             // ✓✓ APPLY YELLOW INLINE CODE STYLING
-                            run.Background = new SolidColorBrush(Color.FromRgb(50, 50, 50)); // Dark background
+                            run.Background = Brushes.Transparent;
                             run.Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)); // Bright gold/yellow
                             run.FontFamily = new FontFamily("Consolas, Courier New, monospace");
                             run.FontSize = 13;
@@ -274,15 +273,13 @@ namespace SecureOverlay
             var welcome = @"# Welcome to your invisible AI assistant! 🤖
 
 ✓ **Completely invisible** to screen sharing  
-✓ Mouse cursor **IS visible**  
-✓ Click 🐛 to see debug logs  
-✓ Click ⚙️ for settings  
+✓ **Mouse cursor** IS visible  
+✓ **Click ⚙️** for settings  
 
 ## ⌨️ Hotkeys:
-- `Ctrl+Alt+`` = Hide/Show  
+- `Ctrl+Alt+\`` = Hide/Show  
 - `Ctrl+Alt+-` = Quit  
-- `Ctrl+Alt+D` = Debug logs  
-- `F15` = Settings  
+- `Ctrl+Alt+=` = Settings  
 
 Ask me anything!";
 

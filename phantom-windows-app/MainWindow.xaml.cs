@@ -8,12 +8,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using FormsScreen = System.Windows.Forms.Screen;
 using SecureOverlay.Application.Billing;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Interviews;
@@ -68,6 +70,9 @@ namespace SecureOverlay
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
+        private bool _isChatSectionCollapsed = false;
+        private const double ExpandedWindowMinHeight = 220;
+        private const double CollapsedWindowMinHeight = 88;
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -115,6 +120,7 @@ namespace SecureOverlay
         private bool _isBoundaryFinalizationInProgress;
         private string? _forcedManagedExtensionProviderId;
         private DateTime? _lastInterviewActivityUtc;
+        private int _interviewLockHeartbeatCount;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -150,6 +156,8 @@ namespace SecureOverlay
             Log.WriteLine("Loading settings...");
             _settings = SettingsManager.Load();
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
+            HeaderOpacitySlider.Value = _settings.WindowOpacity;
+            ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -163,7 +171,9 @@ namespace SecureOverlay
             _creditMeteringService = new LocalCreditMeteringService(
                 _authSessionRepository,
                 _accountCacheRepository,
-                interviewSessionRepository);
+                interviewSessionRepository,
+                () => _settings.PreferByoCreditsFirst,
+                () => HasAnyConfiguredByoProvider());
             _contextPackService = new LocalContextPackService(contextPackRepository);
             _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
                 new LocalKnowledgeRetrievalService(),
@@ -323,7 +333,7 @@ namespace SecureOverlay
                         foreach (var msg in displayMessages)
                         {
                             var isUser = msg.Role == "user";
-                            var aiName = _currentAI?.GetProviderName() ?? "AI";
+                            var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
                             var fullText = prefix + msg.Content;
                             
@@ -448,18 +458,33 @@ namespace SecureOverlay
 
         private void ApplyAccountTierChrome()
         {
-            ProviderSelectorBorder.Visibility = Visibility.Visible;
-            ModelSelectorBorder.Visibility = Visibility.Visible;
-            DebugButton.Visibility = HasByoEntitlement() ? Visibility.Visible : Visibility.Collapsed;
-            if (!HasByoEntitlement())
+            var selectorsVisible = ShouldShowByoSelectors() ? Visibility.Visible : Visibility.Collapsed;
+            ProviderSelectorBorder.Visibility = selectorsVisible;
+            ModelSelectorBorder.Visibility = selectorsVisible;
+            if (!ShouldShowByoSelectors())
             {
                 DebugPanel.Visibility = Visibility.Collapsed;
             }
 
-            if (!HasByoEntitlement())
+            if (!ShouldShowByoSelectors())
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private bool ShouldShowByoSelectors()
+        {
+            if (!HasByoEntitlement())
+            {
+                return false;
+            }
+
+            if (!HasAnyConfiguredByoProvider())
+            {
+                return false;
+            }
+
+            return PreferByoCreditsFirst() || IsByoLaneActiveNow();
         }
 
         private void UpdateCreditIndicator()
@@ -467,13 +492,15 @@ namespace SecureOverlay
             RefreshAccountSnapshot();
             if (_accountSnapshot == null)
             {
-                CreditIndicatorText.Text = "Credits: unavailable";
+                CreditIndicatorText.Text = "Cr n/a";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
             if (IsFreeTrialAccount())
             {
-                CreditIndicatorText.Text = "Free Trial | 2 x 15 min demo blocks";
+                CreditIndicatorText.Text = "Trial 2x15m";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
@@ -481,18 +508,83 @@ namespace SecureOverlay
             if (hasPremiumLaneOrDebt && HasByoEntitlement())
             {
                 CreditIndicatorText.Text =
-                    $"Premium -> BYO | Premium {_accountSnapshot.PremiumAvailableCredits:0.##} | BYO {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                    $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | B {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
             if (hasPremiumLaneOrDebt)
             {
                 CreditIndicatorText.Text =
-                    $"Premium | Credits {_accountSnapshot.PremiumAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                    $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
-            CreditIndicatorText.Text = $"Pro BYO | Credits {_accountSnapshot.ProAvailableCredits:0.##} | Debt {_accountSnapshot.PremiumNegativeCredits:0.##}";
+            CreditIndicatorText.Text = $"BYO {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+            UpdateActiveCreditModeIndicator();
+        }
+
+        private void UpdateActiveCreditModeIndicator()
+        {
+            if (ActiveCreditModeText == null || ActiveCreditModeBorder == null)
+            {
+                return;
+            }
+
+            var (label, background) = ResolveActiveCreditMode();
+            ActiveCreditModeText.Text = label;
+            ActiveCreditModeBorder.Background = background;
+        }
+
+        private (string Label, Brush Background) ResolveActiveCreditMode()
+        {
+            if (_accountSnapshot == null)
+            {
+                return ("Idle", new SolidColorBrush(Color.FromArgb(0x50, 0x50, 0x50, 0x50)));
+            }
+
+            if (IsFreeTrialAccount())
+            {
+                return ("Trial", new SolidColorBrush(Color.FromArgb(0x50, 0x22, 0x6F, 0xA8)));
+            }
+
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession != null)
+            {
+                return DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI) switch
+                {
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.ProByo
+                        => ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45))),
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumDebtExtension
+                        => ("Debt", new SolidColorBrush(Color.FromArgb(0x50, 0x9A, 0x3D, 0x00))),
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumManaged
+                        => ("Premium", new SolidColorBrush(Color.FromArgb(0x50, 0x6A, 0x4C, 0x1F))),
+                    _ => ("Trial", new SolidColorBrush(Color.FromArgb(0x50, 0x22, 0x6F, 0xA8)))
+                };
+            }
+
+            if (_accountSnapshot.PremiumNegativeCredits > 0m)
+            {
+                return ("Debt", new SolidColorBrush(Color.FromArgb(0x50, 0x9A, 0x3D, 0x00)));
+            }
+
+            if (IsByoLaneActiveNow())
+            {
+                return ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45)));
+            }
+
+            if (HasPremiumManagedEntitlement())
+            {
+                return ("Premium", new SolidColorBrush(Color.FromArgb(0x50, 0x6A, 0x4C, 0x1F)));
+            }
+
+            if (HasByoEntitlement() && HasAnyConfiguredByoProvider())
+            {
+                return ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45)));
+            }
+
+            return ("Idle", new SolidColorBrush(Color.FromArgb(0x50, 0x50, 0x50, 0x50)));
         }
 
         private void StartSessionStatusTimer()
@@ -525,17 +617,21 @@ namespace SecureOverlay
                 _lastInterviewActivityUtc = null;
                 SessionTimerBorder.Visibility = Visibility.Collapsed;
                 SessionStatusText.Text = string.Empty;
+                UpdateActiveCreditModeIndicator();
                 return;
             }
+
+            SyncRuntimeWithCurrentCreditLane();
+            UpdateActiveCreditModeIndicator();
 
             if (activeSession.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
             {
                 var pausedElapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
-                var pausedBilledMinutes = Math.Max(1, (int)Math.Ceiling(pausedElapsed.TotalSeconds / 60d));
+                var pausedBilledMinutes = Math.Max(0, (int)Math.Floor(pausedElapsed.TotalSeconds / 60d));
                 var pausedProjectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(pausedElapsed);
 
                 SessionTimerBorder.Visibility = Visibility.Visible;
-                SessionTimerText.Text = $"Session {pausedElapsed:hh\\:mm\\:ss}";
+                SessionTimerText.Text = $"T {pausedElapsed:hh\\:mm\\:ss}";
                 SessionStatusText.Text = $"Paused | {pausedBilledMinutes} min | {pausedProjectedCharge:0.##} cr";
                 return;
             }
@@ -547,11 +643,11 @@ namespace SecureOverlay
             }
 
             var elapsed = _creditMeteringService.GetMeteredElapsed(activeSession);
-            var billedMinutes = Math.Max(1, (int)Math.Ceiling(elapsed.TotalSeconds / 60d));
+            var billedMinutes = Math.Max(0, (int)Math.Floor(elapsed.TotalSeconds / 60d));
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(elapsed);
 
             SessionTimerBorder.Visibility = Visibility.Visible;
-            SessionTimerText.Text = $"Session {elapsed:hh\\:mm\\:ss}";
+            SessionTimerText.Text = $"T {elapsed:hh\\:mm\\:ss}";
             SessionStatusText.Text = $"Live | {billedMinutes} min | {projectedCharge:0.##} cr";
         }
 
@@ -627,7 +723,7 @@ namespace SecureOverlay
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(session));
-            return projectedCharge > GetTotalPaidCreditsAvailable();
+            return projectedCharge >= GetTotalPaidCreditsAvailable();
         }
 
         private void PauseInterviewSessionForError(string reason)
@@ -715,6 +811,8 @@ namespace SecureOverlay
                     EndedAtUtc = completion.EndedAtUtc,
                     ChargedCredits = completion.ChargedCredits,
                     ChargedBlocks = completion.ChargedBlocks,
+                    ConsumedProCredits = completion.ConsumedProCredits,
+                    ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                     PremiumDebtAdded = completion.PremiumDebtAdded
                 });
                 var reconciliationFlush = _usageReconciliationService.FlushPending();
@@ -802,7 +900,7 @@ namespace SecureOverlay
         private decimal GetTotalPaidCreditsAvailable()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
-            var byoCredits = HasByoEntitlement()
+            var byoCredits = HasByoEntitlement() && HasAnyConfiguredByoProvider()
                 ? (_accountSnapshot?.ProAvailableCredits ?? 0m)
                 : 0m;
             return premiumCredits + byoCredits;
@@ -831,7 +929,7 @@ namespace SecureOverlay
                         .Where(item => !string.IsNullOrWhiteSpace(item))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
-                    ProviderModelCatalogCache.MergeCatalog(_settings, catalog);
+                    ProviderModelCatalogCache.ReplaceCatalog(_settings, catalog);
                     SettingsManager.Save(_settings);
                 }
             }
@@ -951,6 +1049,33 @@ namespace SecureOverlay
             return _rotationManager != null && _rotationManager.GetTotalKeyCount(provider) > 0;
         }
 
+        private bool HasAnyConfiguredByoProvider()
+        {
+            if (_rotationManager == null)
+            {
+                return false;
+            }
+
+            return AIModelRegistry.GetAllProviders().Any(provider => _rotationManager.GetTotalKeyCount(provider) > 0);
+        }
+
+        private string GetFallbackConfiguredByoProvider()
+        {
+            if (_rotationManager == null)
+            {
+                return _settings.SelectedAI;
+            }
+
+            if (HasConfiguredByoKeysForProvider(_settings.SelectedAI))
+            {
+                return _settings.SelectedAI;
+            }
+
+            return AIModelRegistry.GetAllProviders()
+                .FirstOrDefault(provider => _rotationManager.GetTotalKeyCount(provider) > 0)
+                ?? _settings.SelectedAI;
+        }
+
         private bool PremiumCreditsCanStillCoverCurrentSession()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
@@ -966,7 +1091,95 @@ namespace SecureOverlay
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(activeSession));
-            return projectedCharge <= premiumCredits;
+            return projectedCharge < premiumCredits;
+        }
+
+        private bool ByoCreditsCanStillCoverCurrentSession()
+        {
+            var byoCredits = _accountSnapshot?.ProAvailableCredits ?? 0m;
+            if (byoCredits <= 0m)
+            {
+                return false;
+            }
+
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession == null)
+            {
+                return true;
+            }
+
+            var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(activeSession));
+            return projectedCharge < byoCredits;
+        }
+
+        private bool PreferByoCreditsFirst()
+        {
+            return _settings.PreferByoCreditsFirst && HasByoEntitlement() && HasPremiumManagedEntitlement();
+        }
+
+        private bool IsByoLaneActiveNow()
+        {
+            if (IsFreeTrialAccount() || !HasByoEntitlement() || !HasAnyConfiguredByoProvider())
+            {
+                return false;
+            }
+
+            if (PreferByoCreditsFirst())
+            {
+                return ByoCreditsCanStillCoverCurrentSession() || !HasPremiumManagedEntitlement();
+            }
+
+            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private string GetManagedRuntimeProviderId()
+        {
+            return _settings.ManagedAiCatalogCache?.Providers?
+                .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.ProviderId))
+                ?.ProviderId
+                ?? _settings.SelectedAI;
+        }
+
+        private string GetManagedRuntimeModelId(string provider)
+        {
+            return ProviderModelCatalogCache.GetModelIds(_settings, provider).FirstOrDefault()
+                ?? _rotationManager?.GetCurrentModel(provider)
+                ?? string.Empty;
+        }
+
+        private string GetCurrentDisplayProvider()
+        {
+            return _currentAI is HostedManagedAiService
+                ? "AI"
+                : (_currentAI?.GetProviderName() ?? "AI");
+        }
+
+        private string GetCurrentRuntimeProviderId()
+        {
+            return _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeProviderId()
+                : _settings.SelectedAI;
+        }
+
+        private void SyncRuntimeWithCurrentCreditLane()
+        {
+            if (_currentAI == null)
+            {
+                return;
+            }
+
+            var shouldUseByoRuntime = IsByoLaneActiveNow();
+            var isUsingByoRuntime = _currentAI is not HostedManagedAiService;
+            if (shouldUseByoRuntime != isUsingByoRuntime)
+            {
+                Log.WriteLine($"Credit lane changed - reinitializing AI. BYO required: {shouldUseByoRuntime}");
+                InitializeAI();
+            }
         }
 
         private bool ShouldUseByoRuntimeForCurrentSelection(string provider)
@@ -987,22 +1200,7 @@ namespace SecureOverlay
                 return true;
             }
 
-            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
-            {
-                return false;
-            }
-
-            if (HasConfiguredByoKeysForProvider(provider))
-            {
-                return true;
-            }
-
-            if (_settings.AllowByoSessionExtension)
-            {
-                return false;
-            }
-
-            return true;
+            return IsByoLaneActiveNow();
         }
 
         private bool CanUseManagedExtensionFallbackForProvider(string provider)
@@ -1226,9 +1424,20 @@ namespace SecureOverlay
                 }
             }
             
-            Log.WriteLine($"✓ Loading model from settings: {currentModel}");
-
             var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
+            var runtimeProvider = useByoRuntime ? GetFallbackConfiguredByoProvider() : GetManagedRuntimeProviderId();
+            if (useByoRuntime && !string.Equals(runtimeProvider, _settings.SelectedAI, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.SelectedAI = runtimeProvider;
+                SettingsManager.Save(_settings);
+            }
+
+            currentModel = useByoRuntime
+                ? (_rotationManager?.GetCurrentModel(runtimeProvider) ?? currentModel)
+                : GetManagedRuntimeModelId(runtimeProvider);
+
+            Log.WriteLine($"✓ Loading model from settings: {currentModel}");
+            var runtimeModel = useByoRuntime ? currentModel : GetManagedRuntimeModelId(runtimeProvider);
             
             // Create AI service with rotation
             IAIService newAI = useByoRuntime
@@ -1236,13 +1445,11 @@ namespace SecureOverlay
                 : new HostedManagedAiService(
                     _authSessionRepository,
                     _hostedRuntimeOptions,
-                    _settings.SelectedAI,
-                    currentModel,
+                    runtimeProvider,
+                    runtimeModel,
                     _settings.AllowByoSessionExtension);
-            
-            AIProviderText.Text = newAI.GetProviderName();
 
-            var modelConfig = GetModelConfigForCurrentSelection(_settings.SelectedAI, currentModel);
+            var modelConfig = GetModelConfigForCurrentSelection(runtimeProvider, runtimeModel);
             
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
@@ -1290,14 +1497,15 @@ namespace SecureOverlay
 
             _currentAI = newAI;
             UpdateTokenCounter();
+            ApplyAccountTierChrome();
 
             if (!_currentAI.IsConfigured())
             {
-                Log.WriteLine($"⚠️ {_currentAI.GetProviderName()} not configured (no API key)");
+                Log.WriteLine($"⚠️ {GetCurrentDisplayProvider()} not configured (no API key)");
             }
             else
             {
-                Log.WriteLine($"✓ AI service: {_currentAI.GetProviderName()} (configured)");
+                Log.WriteLine($"✓ AI service: {GetCurrentDisplayProvider()} (configured)");
             }
             
             // NEW: Update indicator immediately after AI is initialized
@@ -1345,7 +1553,7 @@ namespace SecureOverlay
             if (keyCount > 1)
             {
                 // Show indicator with key info
-                APIKeyText.Text = $"Key #{currentIndex + 1}/{keyCount}";
+                APIKeyText.Text = $"K{currentIndex + 1}/{keyCount}";
                 APIKeyIndicator.Visibility = Visibility.Visible;
                 
                 // Color code based on available keys
@@ -1365,7 +1573,7 @@ namespace SecureOverlay
             else if (keyCount == 1)
             {
                 // Single key - hide indicator (optional: can show "Key #1")
-                APIKeyText.Text = "Key #1";
+                APIKeyText.Text = "K1";
                 APIKeyIndicator.Visibility = Visibility.Collapsed; // Change to Visible if you want to show it
                 
                 Log.WriteLine($"  Single key - indicator hidden");
@@ -1691,7 +1899,7 @@ namespace SecureOverlay
             StatusText.Text = "🔄 Thinking...";
             StatusIndicator.Fill = Brushes.Yellow;
             
-            var aiName = _currentAI.GetProviderName();
+            var aiName = GetCurrentDisplayProvider();
             
             lock (_streamBuffer)
             {
@@ -1771,7 +1979,7 @@ namespace SecureOverlay
                     StatusText.Text = "🔄 Switching to managed extension...";
                     StatusIndicator.Fill = Brushes.Yellow;
 
-                    aiName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
+                    aiName = GetCurrentDisplayProvider();
                     _currentStreamingParagraph = new Paragraph
                     {
                         Foreground = Brushes.White,
@@ -2099,6 +2307,7 @@ namespace SecureOverlay
             }
 
             _interviewLockHeartbeatTimer?.Stop();
+            _interviewLockHeartbeatCount = 0;
             _interviewLockHeartbeatTimer = new System.Windows.Threading.DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds > 0 ? session.HeartbeatIntervalSeconds : 60)
@@ -2132,10 +2341,15 @@ namespace SecureOverlay
             }
 
             Log.WriteLine($"Interview lock heartbeat refreshed until {heartbeat.LockExpiresAtUtc:O}");
-            _telemetryService.Track("lock", "interview_lock_heartbeat", new Dictionary<string, string>
+            _interviewLockHeartbeatCount++;
+            if (_interviewLockHeartbeatCount == 1 || _interviewLockHeartbeatCount % 5 == 0)
             {
-                ["expires_at"] = heartbeat.LockExpiresAtUtc?.ToString("O") ?? string.Empty
-            });
+                _telemetryService.Track("lock", "interview_lock_heartbeat", new Dictionary<string, string>
+                {
+                    ["expires_at"] = heartbeat.LockExpiresAtUtc?.ToString("O") ?? string.Empty,
+                    ["heartbeat_count"] = _interviewLockHeartbeatCount.ToString()
+                });
+            }
         }
 
         private async void SendButton_Click(object sender, RoutedEventArgs e)
@@ -2432,6 +2646,8 @@ namespace SecureOverlay
                 Log.WriteLine("Voice input disabled in settings");
                 VoiceButton.IsEnabled = false;
                 VoiceButton.Opacity = 0.5;
+                CollapsedHeaderMicButton.IsEnabled = false;
+                CollapsedHeaderMicButton.Opacity = 0.5;
                 VoiceStatusText.Text = "Disabled";
                 return;
             }
@@ -2455,6 +2671,9 @@ namespace SecureOverlay
                     Log.WriteLine("✓ Voice service initialized successfully");
                     VoiceButton.IsEnabled = true;
                     VoiceButton.Opacity = 1.0;
+                    CollapsedHeaderMicButton.IsEnabled = true;
+                    CollapsedHeaderMicButton.Opacity = 1.0;
+                    SetVoiceButtonVisualState(isListening: false);
                     VoiceStatusText.Text = "Ready";
                     VoiceStatusText.Foreground = Brushes.LightGreen;
                 }
@@ -2463,6 +2682,8 @@ namespace SecureOverlay
                     Log.WriteLine("✗ Voice service initialization failed");
                     VoiceButton.IsEnabled = false;
                     VoiceButton.Opacity = 0.5;
+                    CollapsedHeaderMicButton.IsEnabled = false;
+                    CollapsedHeaderMicButton.Opacity = 0.5;
                     VoiceStatusText.Text = "Failed";
                     VoiceStatusText.Foreground = Brushes.Red;
                     
@@ -2479,6 +2700,8 @@ namespace SecureOverlay
                 
                 VoiceButton.IsEnabled = false;
                 VoiceButton.Opacity = 0.5;
+                CollapsedHeaderMicButton.IsEnabled = false;
+                CollapsedHeaderMicButton.Opacity = 0.5;
                 VoiceStatusText.Text = "Error";
                 VoiceStatusText.Foreground = Brushes.Red;
                 
@@ -2594,61 +2817,30 @@ namespace SecureOverlay
             {
                 Log.WriteLine("  Currently listening - stopping");
                 
-                _autoSendAfterVoice = true;
+                _autoSendAfterVoice = _settings.AutoSendAfterVoiceStopEnabled;
                 
                 _voiceService.StopListening();
-                VoiceButton.Content = "🎤";
-                VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
+                SetVoiceButtonVisualState(isListening: false);
                 VoiceStatusText.Text = "Processing speech...";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
                 Log.WriteLine("  ✓ Stopped listening - waiting for ALL speech to complete");
-                Log.WriteLine("  Auto-send enabled - starting completion timer");
-                
-                _voiceCompletionTimer?.Stop();
-                
-                _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+
+                if (_autoSendAfterVoice)
                 {
-                    Interval = TimeSpan.FromMilliseconds(1500)
-                };
-                
-                _voiceCompletionTimer.Tick += async (s, args) =>
+                    Log.WriteLine("  Auto-send enabled - starting completion timer");
+                    StartVoiceCompletionTimer();
+                    Log.WriteLine("  Started 1.5-second completion timer");
+                }
+                else
                 {
                     _voiceCompletionTimer?.Stop();
-                    
-                    Log.WriteLine("  Completion timer fired - checking if speech is complete...");
-                    
-                    if (!string.IsNullOrWhiteSpace(InputTextBox.Text) && 
-                        InputTextBox.Text != "Ask me anything..." &&
-                        _voiceService != null &&
-                        !_voiceService.IsListening())
-                    {
-                        Log.WriteLine($"  ✓ Speech FULLY completed. Auto-sending: '{InputTextBox.Text}'");
-                        
-                        StatusText.Text = "✓ Speech captured - Sending automatically...";
-                        StatusIndicator.Fill = Brushes.LightGreen;
-                        VoiceStatusText.Text = "Sending...";
-                        VoiceStatusText.Foreground = Brushes.LightGreen;
-                        
-                        await Task.Delay(500);
-                        
-                        await SendMessage();
-                        
-                        VoiceStatusText.Text = "Ready";
-                        VoiceStatusText.Foreground = Brushes.LightGreen;
-                    }
-                    else
-                    {
-                        Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
-                        StatusText.Text = "⚠️ No speech detected - try again";
-                        VoiceStatusText.Text = "Ready";
-                    }
-                    
-                    _autoSendAfterVoice = false;
-                };
-                
-                _voiceCompletionTimer.Start();
-                Log.WriteLine("  Started 1.5-second completion timer");
+                    StatusText.Text = "✓ Speech captured - Press Send to continue";
+                    StatusIndicator.Fill = Brushes.LightGreen;
+                    VoiceStatusText.Text = "Ready";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+                    Log.WriteLine("  Auto-send disabled - waiting for manual send");
+                }
             }
             else
             {
@@ -2662,8 +2854,7 @@ namespace SecureOverlay
                 _autoSendAfterVoice = false;
                 
                 _voiceService.StartListening();
-                VoiceButton.Content = "⏹️";
-                VoiceButton.Background = new SolidColorBrush(Color.FromArgb(80, 255, 0, 0));
+                SetVoiceButtonVisualState(isListening: true);
                 VoiceStatusText.Text = "🎙️ Getting microphone ready";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
@@ -2671,6 +2862,65 @@ namespace SecureOverlay
             }
             
             Log.WriteLine("═══════════════════════════════════════════════");
+        }
+
+        private void StartVoiceCompletionTimer()
+        {
+            _voiceCompletionTimer?.Stop();
+
+            _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(1500)
+            };
+
+            _voiceCompletionTimer.Tick += async (s, args) =>
+            {
+                _voiceCompletionTimer?.Stop();
+
+                Log.WriteLine("  Completion timer fired - checking if speech is complete...");
+
+                if (!string.IsNullOrWhiteSpace(InputTextBox.Text) &&
+                    InputTextBox.Text != "Ask me anything..." &&
+                    _voiceService != null &&
+                    !_voiceService.IsListening())
+                {
+                    Log.WriteLine($"  ✓ Speech FULLY completed. Auto-sending: '{InputTextBox.Text}'");
+
+                    StatusText.Text = "✓ Speech captured - Sending automatically...";
+                    StatusIndicator.Fill = Brushes.LightGreen;
+                    VoiceStatusText.Text = "Sending...";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+
+                    await Task.Delay(500);
+                    await SendMessage();
+
+                    VoiceStatusText.Text = "Ready";
+                    VoiceStatusText.Foreground = Brushes.LightGreen;
+                }
+                else
+                {
+                    Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
+                    StatusText.Text = "⚠️ No speech detected - try again";
+                    VoiceStatusText.Text = "Ready";
+                }
+
+                _autoSendAfterVoice = false;
+            };
+
+            _voiceCompletionTimer.Start();
+        }
+
+        private void SetVoiceButtonVisualState(bool isListening)
+        {
+            var content = isListening ? "⏹️" : "🎤";
+            var background = isListening
+                ? new SolidColorBrush(Color.FromArgb(80, 255, 0, 0))
+                : new SolidColorBrush(Color.FromArgb(80, 0, 170, 0));
+
+            VoiceButton.Content = content;
+            VoiceButton.Background = background;
+            CollapsedHeaderMicButton.Content = content;
+            CollapsedHeaderMicButton.Background = background;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -2824,8 +3074,15 @@ namespace SecureOverlay
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isHidden)
+            {
+                Log.WriteLine("Settings requested while hidden - restoring window before opening settings");
+                ToggleVisibility();
+            }
+
             Log.WriteLine("Settings button clicked - switching to settings page");
             RefreshAccountSnapshot();
+            Activate();
 
             _settingsPage = new SettingsPage(_accountSnapshot);
             _settingsPage.SettingsClosed += OnSettingsClosed;
@@ -2851,13 +3108,15 @@ namespace SecureOverlay
                 _settings = SettingsManager.Load();
                 RefreshManagedCatalogCache();
                 RefreshAccountSnapshot();
-                ApplyAccountTierChrome();
                 UpdateCreditIndicator();
+                HeaderOpacitySlider.Value = _settings.WindowOpacity;
+                ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
                 // Reinitialize AI with new settings
                 InitializeAI();
+                ApplyAccountTierChrome();
 
                 if (_conversationManager != null)
                 {
@@ -3066,6 +3325,134 @@ namespace SecureOverlay
             }
         }
 
+        private void HeaderOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            ApplyWindowOpacity(e.NewValue, persistSetting: true);
+        }
+
+        private void ApplyWindowOpacity(double opacity, bool persistSetting)
+        {
+            const double minOpacity = 0.30;
+            const double maxOpacity = 1.20;
+            var clampedOpacity = Math.Max(minOpacity, Math.Min(maxOpacity, opacity));
+            var normalizedOpacity = (clampedOpacity - minOpacity) / (maxOpacity - minOpacity);
+
+            OuterShadowBorder.Opacity = 0.24 + (normalizedOpacity * 0.76);
+            MainContentGrid.Opacity = 0.90 + (normalizedOpacity * 0.10);
+
+            var backgroundAlpha = (byte)Math.Round(92 + (normalizedOpacity * 132));
+            WindowChromeBorder.Background = new SolidColorBrush(Color.FromArgb(backgroundAlpha, 0, 0, 0));
+            WindowChromeBorder.BorderBrush = Brushes.Transparent;
+
+            if (persistSetting)
+            {
+                _settings.WindowOpacity = clampedOpacity;
+                SettingsManager.Save(_settings);
+            }
+        }
+
+        private void ChatCollapseButton_Click(object sender, RoutedEventArgs e)
+        {
+            SetChatSectionCollapsed(!_isChatSectionCollapsed);
+        }
+
+        private void SetChatSectionCollapsed(bool collapsed)
+        {
+            _isChatSectionCollapsed = collapsed;
+            ChatSectionContainer.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            ChatSectionRow.Height = collapsed ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            ChatCollapseButton.Content = collapsed ? "▾" : "▴";
+            CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+            MinHeight = collapsed ? CollapsedWindowMinHeight : ExpandedWindowMinHeight;
+            MainContentGrid.Margin = collapsed
+                ? new Thickness(12, 8, 12, 6)
+                : new Thickness(18, 14, 18, 12);
+            TitleBarGrid.Margin = collapsed
+                ? new Thickness(0, 0, 0, 2)
+                : new Thickness(0, 0, 0, 10);
+
+            if (collapsed)
+            {
+                Height = CollapsedWindowMinHeight;
+            }
+            else if (Height < 500)
+            {
+                Height = 500;
+            }
+        }
+
+        private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (sender is not Thumb thumb || thumb.Tag is not string tag)
+            {
+                return;
+            }
+
+            var minWidth = MinWidth;
+            var minHeight = MinHeight;
+            var currentLeft = Left;
+            var currentTop = Top;
+            var currentWidth = Width;
+            var currentHeight = Height;
+
+            if (tag.Contains("Left", StringComparison.Ordinal))
+            {
+                var nextWidth = Math.Max(minWidth, currentWidth - e.HorizontalChange);
+                var widthDelta = currentWidth - nextWidth;
+                Width = nextWidth;
+                Left = currentLeft + widthDelta;
+            }
+
+            if (tag.Contains("Right", StringComparison.Ordinal))
+            {
+                Width = Math.Max(minWidth, currentWidth + e.HorizontalChange);
+            }
+
+            if (tag.Contains("Top", StringComparison.Ordinal))
+            {
+                var nextHeight = Math.Max(minHeight, currentHeight - e.VerticalChange);
+                var heightDelta = currentHeight - nextHeight;
+                Height = nextHeight;
+                Top = currentTop + heightDelta;
+            }
+
+            if (tag.Contains("Bottom", StringComparison.Ordinal))
+            {
+                Height = Math.Max(minHeight, currentHeight + e.VerticalChange);
+            }
+        }
+
+        private void ResizeThumb_MouseEnter(object sender, MouseEventArgs e)
+        {
+            if (sender is Thumb thumb && thumb.Tag is string tag)
+            {
+                _cursorManager?.SetResizeCursorHint(tag);
+            }
+        }
+
+        private void ResizeThumb_MouseLeave(object sender, MouseEventArgs e)
+        {
+            _cursorManager?.ClearResizeCursorHint();
+        }
+
+        private void ResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (sender is Thumb thumb && thumb.Tag is string tag)
+            {
+                _cursorManager?.SetResizeCursorHint(tag);
+            }
+        }
+
+        private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            _cursorManager?.ClearResizeCursorHint();
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // KEYBOARD HOOKS - GLOBAL HOTKEYS
         // ═══════════════════════════════════════════════════════════════
@@ -3142,12 +3529,16 @@ namespace SecureOverlay
                     return (IntPtr)1;
                 }
 
-                // F15 - Settings
-                if (vkCode == NativeMethods.VK_F15)
+                // Ctrl + Alt + = - Settings
+                if (vkCode == NativeMethods.VK_OEM_PLUS)
                 {
-                    Log.WriteLine("Hotkey: F15 pressed");
-                    Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs()));
-                    return (IntPtr)1;
+                    if (NativeMethods.IsKeyPressed(NativeMethods.VK_CONTROL) &&
+                        NativeMethods.IsKeyPressed(NativeMethods.VK_MENU))
+                    {
+                        Log.WriteLine("Hotkey: Ctrl+Alt+= pressed");
+                        Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs()));
+                        return (IntPtr)1;
+                    }
                 }
 
                 // Ctrl + Alt + D - Toggle Debug Panel
@@ -3172,6 +3563,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Showing window...");
                 this.Opacity = 1.0;
+                IsHitTestVisible = true;
                 _isHidden = false;
                 
                 this.Activate();
@@ -3185,6 +3577,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Hiding window...");
                 this.Opacity = 0.0;
+                IsHitTestVisible = false;
                 _isHidden = true;
                 
                 _cursorManager?.DeactivateCustomCursor();
@@ -3717,8 +4110,10 @@ namespace SecureOverlay
                 return false;
             }
 
-            var provider = _settings.SelectedAI;
-            var currentModel = _rotationManager.GetCurrentModel(provider);
+            var provider = GetCurrentRuntimeProviderId();
+            var currentModel = _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeModelId(provider)
+                : _rotationManager.GetCurrentModel(provider);
             
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
@@ -3815,6 +4210,7 @@ namespace SecureOverlay
                 Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false,
                 Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
                 Cursor = Cursors.Arrow,
@@ -3903,16 +4299,9 @@ namespace SecureOverlay
             menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
-            // ✅ POSITION RELATIVE TO SCREEN (not window)
-            var mainWindowPosition = this.PointToScreen(new System.Windows.Point(0, 0));
-            var buttonRelativePosition = ProviderSelectorBorder.TransformToAncestor(this)
-                .Transform(new System.Windows.Point(0, 0));
-            
-            menuWindow.Left = mainWindowPosition.X + buttonRelativePosition.X;
-            menuWindow.Top = mainWindowPosition.Y + buttonRelativePosition.Y + 35;
-
             // ✅ SHOW WINDOW FIRST
             menuWindow.Show();
+            PositionDropdownMenu(menuWindow, ProviderSelectorBorder);
             menuWindow.Activate();
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
@@ -3956,6 +4345,7 @@ namespace SecureOverlay
                 Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false,
                 Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
                 Cursor = Cursors.Arrow,
@@ -4049,16 +4439,9 @@ namespace SecureOverlay
             menuBorder.Child = menuScrollViewer;
             menuWindow.Content = menuBorder;
 
-            // ✅ POSITION RELATIVE TO SCREEN (not window)
-            var mainWindowPosition = this.PointToScreen(new System.Windows.Point(0, 0));
-            var buttonRelativePosition = ModelSelectorBorder.TransformToAncestor(this)
-                .Transform(new System.Windows.Point(0, 0));
-            
-            menuWindow.Left = mainWindowPosition.X + buttonRelativePosition.X;
-            menuWindow.Top = mainWindowPosition.Y + buttonRelativePosition.Y + 35;
-
             // ✅ SHOW WINDOW FIRST
             menuWindow.Show();
+            PositionDropdownMenu(menuWindow, ModelSelectorBorder);
             menuWindow.Activate();
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
@@ -4105,6 +4488,56 @@ namespace SecureOverlay
                     _currentDropdownMenu = null;
                 }
             }
+        }
+
+        private void PositionDropdownMenu(Window menuWindow, FrameworkElement anchor)
+        {
+            menuWindow.UpdateLayout();
+
+            var anchorTopLeftPx = anchor.PointToScreen(new Point(0, 0));
+            var anchorBottomLeftPx = anchor.PointToScreen(new Point(0, anchor.ActualHeight));
+            var menuWidth = Math.Max(menuWindow.ActualWidth, menuWindow.Width);
+            var menuHeight = Math.Max(menuWindow.ActualHeight, menuWindow.Height);
+            var screenPoint = new System.Drawing.Point((int)anchorTopLeftPx.X, (int)anchorTopLeftPx.Y);
+            var workingAreaPx = FormsScreen.FromPoint(screenPoint).WorkingArea;
+            var anchorTopLeft = ScreenPixelsToDip(anchorTopLeftPx);
+            var anchorBottomLeft = ScreenPixelsToDip(anchorBottomLeftPx);
+            var workingAreaTopLeft = ScreenPixelsToDip(new Point(workingAreaPx.Left, workingAreaPx.Top));
+            var workingAreaBottomRight = ScreenPixelsToDip(new Point(workingAreaPx.Right, workingAreaPx.Bottom));
+
+            var desiredLeft = anchorTopLeft.X;
+            var minLeft = workingAreaTopLeft.X + 8;
+            var maxLeft = workingAreaBottomRight.X - menuWidth - 8;
+            var left = Math.Max(minLeft, Math.Min(desiredLeft, Math.Max(minLeft, maxLeft)));
+
+            var belowTop = anchorBottomLeft.Y + 6;
+            var aboveTop = anchorTopLeft.Y - menuHeight - 6;
+            var canOpenBelow = belowTop + menuHeight <= workingAreaBottomRight.Y - 8;
+            var canOpenAbove = aboveTop >= workingAreaTopLeft.Y + 8;
+
+            double top;
+            if (canOpenBelow)
+            {
+                top = belowTop;
+            }
+            else if (canOpenAbove)
+            {
+                top = aboveTop;
+            }
+            else
+            {
+                top = Math.Max(workingAreaTopLeft.Y + 8, Math.Min(belowTop, workingAreaBottomRight.Y - menuHeight - 8));
+            }
+
+            menuWindow.Left = left;
+            menuWindow.Top = top;
+        }
+
+        private Point ScreenPixelsToDip(Point pixelPoint)
+        {
+            var source = PresentationSource.FromVisual(this);
+            var transform = source?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+            return transform.Transform(pixelPoint);
         }
 
 
@@ -4225,22 +4658,40 @@ namespace SecureOverlay
             Log.WriteLine("UPDATING PROVIDER AND MODEL DISPLAY");
 
             // Update provider display
-            var providerName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
+            var providerName = GetCurrentDisplayProvider();
             AIProviderText.Text = providerName;
             Log.WriteLine($"  Provider display: {providerName}");
             
             // Update model display
-            var currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
+            var runtimeProvider = GetCurrentRuntimeProviderId();
+            var currentModel = _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeModelId(runtimeProvider)
+                : (_rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "");
             Log.WriteLine($"  Current model ID: {currentModel}");
             
             // ✅ USE REGISTRY - Get display name
-            var displayModel = GetModelDisplayName(_settings.SelectedAI, currentModel);
+            var displayModel = GetModelDisplayName(runtimeProvider, currentModel);
             Log.WriteLine($"  Display name: {displayModel}");
             
-            ModelText.Text = displayModel;
+            ModelText.Text = GetCompactModelDisplayName(displayModel);
+            ModelSelectorBorder.ToolTip = null;
+            ProviderSelectorBorder.ToolTip = null;
             
             Log.WriteLine($"✓ Title bar updated: {providerName} | {displayModel}");
             Log.WriteLine("═══════════════════════════════════════════════════════");
+        }
+
+        private string GetCompactModelDisplayName(string displayModel)
+        {
+            if (string.IsNullOrWhiteSpace(displayModel))
+            {
+                return string.Empty;
+            }
+
+            const int maxLength = 16;
+            return displayModel.Length <= maxLength
+                ? displayModel
+                : $"{displayModel[..13]}...";
         }
 
         // ✅ TEMPORARY DEBUG METHOD - Add this to MainWindow class
@@ -4339,6 +4790,8 @@ namespace SecureOverlay
                             EndedAtUtc = completion.EndedAtUtc,
                             ChargedCredits = completion.ChargedCredits,
                             ChargedBlocks = completion.ChargedBlocks,
+                            ConsumedProCredits = completion.ConsumedProCredits,
+                            ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                             PremiumDebtAdded = completion.PremiumDebtAdded
                         });
                         var reconciliationFlush = _usageReconciliationService.FlushPending();

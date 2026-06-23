@@ -39,10 +39,12 @@ public sealed class UsageLedgerRepository
         command.CommandText = @"
 INSERT INTO usage_ledger (
     ledger_entry_id, user_id, session_id, started_at_utc, ended_at_utc,
-    charged_credits, charged_blocks, added_premium_debt, created_at_utc
+    charged_credits, charged_blocks, charged_pro_credits, charged_premium_credits,
+    added_premium_debt, created_at_utc
 ) VALUES (
     @ledgerEntryId, @userId, @sessionId, @startedAt, @endedAt,
-    @chargedCredits, @chargedBlocks, @addedDebt, @createdAt
+    @chargedCredits, @chargedBlocks, @chargedProCredits, @chargedPremiumCredits,
+    @addedDebt, @createdAt
 );";
         command.Parameters.AddWithValue("ledgerEntryId", record.LedgerEntryId);
         command.Parameters.AddWithValue("userId", record.UserId);
@@ -51,6 +53,8 @@ INSERT INTO usage_ledger (
         command.Parameters.AddWithValue("endedAt", record.EndedAtUtc);
         command.Parameters.AddWithValue("chargedCredits", record.ChargedCredits);
         command.Parameters.AddWithValue("chargedBlocks", record.ChargedBlocks);
+        command.Parameters.AddWithValue("chargedProCredits", record.ChargedProCredits);
+        command.Parameters.AddWithValue("chargedPremiumCredits", record.ChargedPremiumCredits);
         command.Parameters.AddWithValue("addedDebt", record.AddedPremiumDebt);
         command.Parameters.AddWithValue("createdAt", record.CreatedAtUtc);
         command.ExecuteNonQuery();
@@ -145,6 +149,38 @@ LIMIT @maxCount;";
         return items;
     }
 
+    public List<UsageLedgerRecord> ListPageForUser(string userId, int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM usage_ledger
+WHERE user_id = @userId
+ORDER BY created_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<UsageLedgerRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public int CountForUser(string userId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM usage_ledger WHERE user_id = @userId;";
+        command.Parameters.AddWithValue("userId", userId);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
     private static UsageLedgerRecord Map(NpgsqlDataReader reader)
     {
         return new UsageLedgerRecord
@@ -156,6 +192,8 @@ LIMIT @maxCount;";
             EndedAtUtc = reader.GetDateTime(reader.GetOrdinal("ended_at_utc")),
             ChargedCredits = reader.GetDecimal(reader.GetOrdinal("charged_credits")),
             ChargedBlocks = reader.GetInt32(reader.GetOrdinal("charged_blocks")),
+            ChargedProCredits = reader.GetDecimal(reader.GetOrdinal("charged_pro_credits")),
+            ChargedPremiumCredits = reader.GetDecimal(reader.GetOrdinal("charged_premium_credits")),
             AddedPremiumDebt = reader.GetDecimal(reader.GetOrdinal("added_premium_debt")),
             CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc"))
         };

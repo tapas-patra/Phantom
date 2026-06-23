@@ -55,6 +55,7 @@ namespace SecureOverlay.Services
         public bool AutoSwitchModelsOnError { get; set; } = true;
         public bool AllowByoSessionExtension { get; set; } = false;
         public bool AllowFreeTrialSessionExtension { get; set; } = false;
+        public bool PreferByoCreditsFirst { get; set; } = false;
         public bool AutoPauseOnInactivityEnabled { get; set; } = true;
         public int AutoPauseOnInactivityMinutes { get; set; } = 10;
         
@@ -64,6 +65,7 @@ namespace SecureOverlay.Services
         
         // UI Settings
         public bool VoiceInputEnabled { get; set; } = true;
+        public bool AutoSendAfterVoiceStopEnabled { get; set; } = true;
         public bool MicrophonePermissionGranted { get; set; } = false;
         public double WindowOpacity { get; set; } = 0.85;
         public bool UseFakeCursor { get; set; } = true;

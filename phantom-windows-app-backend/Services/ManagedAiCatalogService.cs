@@ -18,6 +18,7 @@ public sealed class ManagedAiCatalogService
 
     private readonly ManagedProviderCredentialRepository _credentials;
     private readonly ManagedProviderCatalogRepository _catalogRepository;
+    private readonly ManagedAiRuntimeSelectionRepository _runtimeSelectionRepository;
     private readonly SecretProtector _protector;
     private readonly ILogger<ManagedAiCatalogService> _logger;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -25,11 +26,13 @@ public sealed class ManagedAiCatalogService
     public ManagedAiCatalogService(
         ManagedProviderCredentialRepository credentials,
         ManagedProviderCatalogRepository catalogRepository,
+        ManagedAiRuntimeSelectionRepository runtimeSelectionRepository,
         SecretProtector protector,
         ILogger<ManagedAiCatalogService> logger)
     {
         _credentials = credentials;
         _catalogRepository = catalogRepository;
+        _runtimeSelectionRepository = runtimeSelectionRepository;
         _protector = protector;
         _logger = logger;
     }
@@ -50,6 +53,42 @@ public sealed class ManagedAiCatalogService
             .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var runtimeSelection = GetResolvedRuntimeSelection(providers);
+        if (runtimeSelection != null)
+        {
+            providers = providers
+                .Where(item => string.Equals(item.ProviderId, runtimeSelection.ProviderId, StringComparison.OrdinalIgnoreCase))
+                .Select(item => new ManagedAiProviderOptionDto
+                {
+                    ProviderId = item.ProviderId,
+                    Label = item.Label,
+                    RefreshedAtUtc = item.RefreshedAtUtc,
+                    Models = item.Models
+                        .Where(model => string.Equals(model.ModelId, runtimeSelection.ModelId, StringComparison.OrdinalIgnoreCase))
+                        .ToArray()
+                })
+                .Where(item => item.Models.Count > 0)
+                .ToArray();
+        }
+        else if (providers.Length > 0)
+        {
+            var fallbackProvider = providers[0];
+            var fallbackModel = fallbackProvider.Models.FirstOrDefault();
+            if (fallbackModel != null)
+            {
+                providers = new[]
+                {
+                    new ManagedAiProviderOptionDto
+                    {
+                        ProviderId = fallbackProvider.ProviderId,
+                        Label = fallbackProvider.Label,
+                        RefreshedAtUtc = fallbackProvider.RefreshedAtUtc,
+                        Models = new[] { fallbackModel }
+                    }
+                };
+            }
+        }
+
         return new ManagedAiCatalogDto
         {
             Providers = providers,
@@ -65,6 +104,48 @@ public sealed class ManagedAiCatalogService
             .Select(MapProvider)
             .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    public ManagedAiRuntimeSelectionDto GetAdminRuntimeSelection()
+    {
+        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
+        return MapRuntimeSelection(_runtimeSelectionRepository.Get(), ListCatalogProviders());
+    }
+
+    public ManagedAiRuntimeSelectionDto UpdateAdminRuntimeSelection(ManagedAiRuntimeSelectionUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
+        var providers = ListCatalogProviders();
+        var provider = providers.FirstOrDefault(item => string.Equals(item.ProviderId, request.ProviderId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new BackendValidationException("Managed provider catalog not found.");
+        var model = provider.Models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new BackendValidationException("Managed model not found.");
+
+        if (!_credentials.ListByProvider(provider.ProviderId).Any(item => item.IsEnabled))
+        {
+            throw new BackendValidationException("At least one enabled credential is required for the selected provider.");
+        }
+
+        var record = new ManagedAiRuntimeSelectionRecord
+        {
+            SelectionId = ManagedAiRuntimeSelectionRepository.GlobalSelectionId,
+            ProviderId = provider.ProviderId,
+            ModelId = model.ModelId,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        _runtimeSelectionRepository.Save(record);
+        return MapRuntimeSelection(record, providers);
     }
 
     public bool IsAllowedModel(string provider, string model)
@@ -254,6 +335,54 @@ public sealed class ManagedAiCatalogService
             ?.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray()
             ?? Array.Empty<ManagedAiModelOptionDto>();
+    }
+
+    private ManagedAiRuntimeSelectionRecord? GetResolvedRuntimeSelection(
+        IReadOnlyList<ManagedAiProviderOptionDto> providers)
+    {
+        var selection = _runtimeSelectionRepository.Get();
+        if (selection == null)
+        {
+            return null;
+        }
+
+        var provider = providers.FirstOrDefault(item => string.Equals(item.ProviderId, selection.ProviderId, StringComparison.OrdinalIgnoreCase));
+        if (provider == null)
+        {
+            return null;
+        }
+
+        return provider.Models.Any(item => string.Equals(item.ModelId, selection.ModelId, StringComparison.OrdinalIgnoreCase))
+            ? selection
+            : null;
+    }
+
+    private static ManagedAiRuntimeSelectionDto MapRuntimeSelection(
+        ManagedAiRuntimeSelectionRecord? selection,
+        IReadOnlyList<ManagedAiProviderOptionDto> providers)
+    {
+        if (selection == null)
+        {
+            return new ManagedAiRuntimeSelectionDto
+            {
+                IsConfigured = false,
+                IsResolved = false
+            };
+        }
+
+        var provider = providers.FirstOrDefault(item => string.Equals(item.ProviderId, selection.ProviderId, StringComparison.OrdinalIgnoreCase));
+        var model = provider?.Models.FirstOrDefault(item => string.Equals(item.ModelId, selection.ModelId, StringComparison.OrdinalIgnoreCase));
+
+        return new ManagedAiRuntimeSelectionDto
+        {
+            IsConfigured = true,
+            IsResolved = provider != null && model != null,
+            ProviderId = selection.ProviderId,
+            ProviderLabel = provider?.Label ?? selection.ProviderId,
+            ModelId = selection.ModelId,
+            ModelDisplayName = model?.DisplayName ?? selection.ModelId,
+            UpdatedAtUtc = selection.UpdatedAtUtc
+        };
     }
 
     private static async Task<IReadOnlyList<ManagedAiModelOptionDto>> FetchModelsForProviderAsync(

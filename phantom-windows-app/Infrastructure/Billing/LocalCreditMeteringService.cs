@@ -18,15 +18,21 @@ namespace SecureOverlay.Infrastructure.Billing
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IAccountCacheRepository _accountCacheRepository;
         private readonly IInterviewSessionRepository _interviewSessionRepository;
+        private readonly Func<bool> _preferByoCreditsFirst;
+        private readonly Func<bool> _canUseByoCredits;
 
         public LocalCreditMeteringService(
             IAuthSessionRepository authSessionRepository,
             IAccountCacheRepository accountCacheRepository,
-            IInterviewSessionRepository interviewSessionRepository)
+            IInterviewSessionRepository interviewSessionRepository,
+            Func<bool> preferByoCreditsFirst,
+            Func<bool> canUseByoCredits)
         {
             _authSessionRepository = authSessionRepository;
             _accountCacheRepository = accountCacheRepository;
             _interviewSessionRepository = interviewSessionRepository;
+            _preferByoCreditsFirst = preferByoCreditsFirst;
+            _canUseByoCredits = canUseByoCredits;
         }
 
         public InterviewSessionActivationResult EnsureInterviewSession()
@@ -225,9 +231,61 @@ namespace SecureOverlay.Infrastructure.Billing
             var premiumExtensionCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumDebtExtension, out var extensionCharge) ? extensionCharge : 0m;
             var freeTrialManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.FreeTrialManaged, out var freeCharge) ? freeCharge : 0m;
 
-            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, proByoCharge);
-            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, premiumManagedCharge);
-            var primaryShortfall = Math.Max(0m, proByoCharge - consumedProCredits) + Math.Max(0m, premiumManagedCharge - consumedPremiumCredits);
+            var requestedByoCharge = proByoCharge;
+            var requestedPremiumCharge = premiumManagedCharge;
+            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, requestedByoCharge);
+            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, requestedPremiumCharge);
+            var remainingByoCharge = Math.Max(0m, requestedByoCharge - consumedProCredits);
+            var remainingPremiumCharge = Math.Max(0m, requestedPremiumCharge - consumedPremiumCredits);
+            var remainingPaidCharge = remainingByoCharge + remainingPremiumCharge;
+
+            // If the local cache drifted and the originally targeted lane cannot fully cover
+            // its portion, spill the remainder into the other paid lane before debt.
+            if (remainingPaidCharge > 0m)
+            {
+                if (_preferByoCreditsFirst())
+                {
+                    if (_canUseByoCredits()
+                        && remainingPremiumCharge > 0m
+                        && snapshot.ProAvailableCredits > consumedProCredits)
+                    {
+                        var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
+                        consumedProCredits += byoFallback;
+                        remainingPremiumCharge -= byoFallback;
+                        remainingPaidCharge -= byoFallback;
+                    }
+
+                    if (remainingByoCharge > 0m && snapshot.PremiumAvailableCredits > consumedPremiumCredits)
+                    {
+                        var premiumFallback = Math.Min(snapshot.PremiumAvailableCredits - consumedPremiumCredits, remainingByoCharge);
+                        consumedPremiumCredits += premiumFallback;
+                        remainingByoCharge -= premiumFallback;
+                        remainingPaidCharge -= premiumFallback;
+                    }
+                }
+                else
+                {
+                    if (remainingByoCharge > 0m && snapshot.PremiumAvailableCredits > consumedPremiumCredits)
+                    {
+                        var premiumFallback = Math.Min(snapshot.PremiumAvailableCredits - consumedPremiumCredits, remainingByoCharge);
+                        consumedPremiumCredits += premiumFallback;
+                        remainingByoCharge -= premiumFallback;
+                        remainingPaidCharge -= premiumFallback;
+                    }
+
+                    if (_canUseByoCredits()
+                        && remainingPremiumCharge > 0m
+                        && snapshot.ProAvailableCredits > consumedProCredits)
+                    {
+                        var byoFallback = Math.Min(snapshot.ProAvailableCredits - consumedProCredits, remainingPremiumCharge);
+                        consumedProCredits += byoFallback;
+                        remainingPremiumCharge -= byoFallback;
+                        remainingPaidCharge -= byoFallback;
+                    }
+                }
+            }
+
+            var primaryShortfall = remainingPaidCharge;
             var premiumDebtAdded = 0m;
 
             if (!IsFreeTier(snapshot))
@@ -302,6 +360,8 @@ namespace SecureOverlay.Infrastructure.Billing
                 EndedAtUtc = endedAtUtc,
                 ChargedBlocks = blocks,
                 ChargedCredits = chargedCredits,
+                ConsumedProCredits = consumedProCredits,
+                ConsumedPremiumCredits = consumedPremiumCredits,
                 PremiumDebtAdded = premiumDebtAdded,
                 RemainingProCredits = snapshot.ProAvailableCredits,
                 RemainingPremiumCredits = snapshot.PremiumAvailableCredits
@@ -340,14 +400,19 @@ namespace SecureOverlay.Infrastructure.Billing
             }
         }
 
-        private static CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
+        private CreditLedgerType? ResolveEligibleLedger(AccountCacheSnapshot snapshot)
         {
+            if (!IsFreeTier(snapshot) && _canUseByoCredits() && _preferByoCreditsFirst() && snapshot.ProAvailableCredits > 0m)
+            {
+                return CreditLedgerType.Pro;
+            }
+
             if (!IsFreeTier(snapshot) && snapshot.PremiumAvailableCredits > 0m)
             {
                 return CreditLedgerType.Premium;
             }
 
-            if (snapshot.ProAvailableCredits > 0m)
+            if (_canUseByoCredits() && snapshot.ProAvailableCredits > 0m)
             {
                 return CreditLedgerType.Pro;
             }
@@ -446,12 +511,12 @@ namespace SecureOverlay.Infrastructure.Billing
 
         public static decimal EstimateChargeForElapsed(TimeSpan elapsed)
         {
-            return RoundCredits(RoundUpToMinute(elapsed) * CreditsPerMinute);
+            return RoundCredits(GetCompletedMinutes(elapsed) * CreditsPerMinute);
         }
 
-        private static int RoundUpToMinute(TimeSpan duration)
+        private static int GetCompletedMinutes(TimeSpan duration)
         {
-            return Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds / 60d));
+            return Math.Max(0, (int)Math.Floor(duration.TotalSeconds / 60d));
         }
 
         private static decimal RoundDownCredits(decimal credits)

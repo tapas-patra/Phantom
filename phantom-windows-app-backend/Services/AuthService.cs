@@ -8,24 +8,33 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class AuthService
 {
     private readonly BackendOptions _options;
+    private readonly AccountRepository _accounts;
+    private readonly UserPasswordResetRepository _passwordResets;
     private readonly AuthSessionRepository _sessions;
     private readonly MagicLinkRepository _magicLinks;
     private readonly MagicLinkEmailService _emailService;
+    private readonly PasswordHasher _passwordHasher;
     private readonly TokenService _tokenService;
     private readonly TelemetryRepository _telemetry;
 
     public AuthService(
         BackendOptions options,
+        AccountRepository accounts,
+        UserPasswordResetRepository passwordResets,
         AuthSessionRepository sessions,
         MagicLinkRepository magicLinks,
         MagicLinkEmailService emailService,
+        PasswordHasher passwordHasher,
         TokenService tokenService,
         TelemetryRepository telemetry)
     {
         _options = options;
+        _accounts = accounts;
+        _passwordResets = passwordResets;
         _sessions = sessions;
         _magicLinks = magicLinks;
         _emailService = emailService;
+        _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _telemetry = telemetry;
     }
@@ -135,6 +144,93 @@ public sealed class AuthService
             ?? throw new BackendValidationException("Magic link token not found.");
     }
 
+    public UserPasswordResetResultDto StartPasswordReset(string email, string publicBackendBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            throw new BackendValidationException("Email is required.");
+        }
+
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var account = _accounts.FindByEmail(normalizedEmail);
+        var genericMessage = "If that account exists, a password reset link has been sent.";
+
+        if (account == null || !account.EmailVerified)
+        {
+            SaveSecurityTelemetry("user_password_reset_requested_unknown", normalizedEmail);
+            return new UserPasswordResetResultDto { Message = genericMessage };
+        }
+
+        var deliveryConfigurationError = _emailService.GetDeliveryConfigurationError();
+        if (!string.IsNullOrWhiteSpace(deliveryConfigurationError))
+        {
+            throw new BackendValidationException(deliveryConfigurationError);
+        }
+
+        var token = _tokenService.GenerateOpaqueToken();
+        var expiresAtUtc = DateTime.UtcNow.AddMinutes(_options.UserPasswordResetTtlMinutes);
+        var resetBaseUrl = string.IsNullOrWhiteSpace(_options.PublicWebsiteBaseUrl)
+            ? publicBackendBaseUrl.TrimEnd('/')
+            : _options.PublicWebsiteBaseUrl.TrimEnd('/');
+        var resetUrl = $"{resetBaseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+        var delivery = _emailService.SendUserPasswordReset(account.Email, resetUrl, expiresAtUtc);
+        _passwordResets.Save(new UserPasswordResetTokenRecord
+        {
+            TokenHash = _tokenService.HashToken(token),
+            UserId = account.UserId,
+            Email = account.Email,
+            ExpiresAtUtc = expiresAtUtc,
+            CreatedAtUtc = DateTime.UtcNow,
+            Consumed = false,
+            DeliveryStatus = delivery.Status,
+            DeliveryError = delivery.Error
+        });
+        SaveSecurityTelemetry("user_password_reset_requested", account.Email);
+
+        return new UserPasswordResetResultDto { Message = genericMessage };
+    }
+
+    public UserPasswordResetResultDto CompletePasswordReset(UserPasswordResetCompleteRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token))
+        {
+            throw new BackendValidationException("Token is required.");
+        }
+
+        ValidateUserPassword(request.NewPassword);
+
+        var tokenRecord = _passwordResets.FindByTokenHash(_tokenService.HashToken(request.Token))
+            ?? throw new BackendValidationException("Password reset token not found.");
+        if (tokenRecord.Consumed)
+        {
+            throw new BackendValidationException("Password reset token already used.");
+        }
+
+        if (tokenRecord.ExpiresAtUtc <= DateTime.UtcNow)
+        {
+            throw new BackendValidationException("Password reset token has expired.");
+        }
+
+        var account = _accounts.FindByUserId(tokenRecord.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+
+        account.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+        account.LastValidatedAtUtc = DateTime.UtcNow;
+        account.UpdatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(account);
+        _sessions.RevokeAllByUserId(account.UserId);
+
+        tokenRecord.Consumed = true;
+        tokenRecord.ConsumedAtUtc = DateTime.UtcNow;
+        _passwordResets.Save(tokenRecord);
+        SaveSecurityTelemetry("user_password_reset_completed", account.Email);
+
+        return new UserPasswordResetResultDto
+        {
+            Message = "Account password reset complete."
+        };
+    }
+
     private static AuthSessionDto ToDto(DesktopSessionRecord session, string accessToken, string refreshToken)
     {
         return new AuthSessionDto
@@ -150,5 +246,25 @@ public sealed class AuthService
             ExpiresAtUtc = session.ExpiresAtUtc,
             IsAuthenticated = session.IsAuthenticated
         };
+    }
+
+    private static void ValidateUserPassword(string password)
+    {
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 10)
+        {
+            throw new BackendValidationException("Password must be at least 10 characters.");
+        }
+    }
+
+    private void SaveSecurityTelemetry(string eventName, string email)
+    {
+        _telemetry.Save(new TelemetryEventRecord
+        {
+            EventId = $"telemetry-{Guid.NewGuid():N}",
+            Category = "auth_security",
+            EventName = eventName,
+            PayloadJson = $$"""{"email":"{{email}}"}""",
+            CreatedAtUtc = DateTime.UtcNow
+        });
     }
 }

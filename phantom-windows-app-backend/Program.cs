@@ -18,6 +18,7 @@ builder.Services.AddSingleton<DashboardProjectionReplicaStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AdminAccountRepository>();
 builder.Services.AddSingleton<AdminPasswordResetRepository>();
+builder.Services.AddSingleton<UserPasswordResetRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
@@ -26,11 +27,13 @@ builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
+builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
 builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<PaymentOrderRepository>();
+builder.Services.AddSingleton<SupportTicketRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
@@ -55,6 +58,7 @@ builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
+builder.Services.AddSingleton<SupportTicketService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -448,6 +452,22 @@ app.MapPost("/api/desktop/auth/logout", (
     return Results.Ok(new { revoked = true });
 }).RequireRateLimiting("auth");
 
+app.MapPost("/api/desktop/auth/forgot-password", (
+    HttpContext httpContext,
+    UserPasswordResetStartRequestDto request,
+    AuthService auth) =>
+{
+    var publicBaseUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}";
+    return Results.Ok(auth.StartPasswordReset(request.Email, publicBaseUrl));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/auth/reset-password", (
+    UserPasswordResetCompleteRequestDto request,
+    AuthService auth) =>
+{
+    return Results.Ok(auth.CompletePasswordReset(request));
+}).RequireRateLimiting("auth");
+
 app.MapGet("/api/desktop/auth/me", (
     HttpContext httpContext,
     BrowserSessionCookieService cookies,
@@ -683,6 +703,27 @@ app.MapGet("/api/desktop/kb", (
     return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/support/tickets", (
+    HttpContext httpContext,
+    int? page,
+    int? pageSize,
+    DesktopSessionService desktopSessions,
+    SupportTicketService supportTickets) =>
+{
+    var account = desktopSessions.RequireAccount(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(supportTickets.ListUserTickets(account.UserId, page ?? 1, pageSize ?? 10));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/support/tickets", (
+    HttpContext httpContext,
+    SupportTicketCreateRequestDto request,
+    DesktopSessionService desktopSessions,
+    SupportTicketService supportTickets) =>
+{
+    var account = desktopSessions.RequireAccount(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(supportTickets.CreateTicket(account, request));
+}).RequireRateLimiting("desktop-api");
+
 app.MapPost("/api/desktop/kb", (
     HttpContext httpContext,
     HostedKnowledgeBaseCreateRequestDto request,
@@ -879,9 +920,18 @@ adminGroup.MapGet("/accounts/{userId}", (
     return Results.Ok(admin.GetAccountSnapshot(userId));
 });
 
-adminGroup.MapGet("/accounts", (AdminService admin) =>
+adminGroup.MapGet("/accounts", (string? query, int? page, int? pageSize, AdminService admin) =>
 {
-    return Results.Ok(admin.ListAccounts());
+    return Results.Ok(admin.ListAccounts(query ?? string.Empty, page ?? 1, pageSize ?? 20));
+});
+
+adminGroup.MapGet("/accounts/{userId}/ledger", (
+    string userId,
+    int? page,
+    int? pageSize,
+    AdminService admin) =>
+{
+    return Results.Ok(admin.GetLedgerEntries(userId, page ?? 1, pageSize ?? 10));
 });
 
 adminGroup.MapPost("/accounts/update", (
@@ -896,14 +946,31 @@ adminGroup.MapGet("/overview", (AdminService admin) =>
     return Results.Ok(admin.GetOverview());
 });
 
-adminGroup.MapGet("/payments/orders", (int? limit, AdminService admin) =>
+adminGroup.MapGet("/payments/orders", (int? page, int? pageSize, AdminService admin) =>
 {
-    return Results.Ok(admin.GetPaymentOrders(limit ?? 100));
+    return Results.Ok(admin.GetPaymentOrders(page ?? 1, pageSize ?? 20));
 });
 
-adminGroup.MapGet("/payments/webhooks", (int? limit, AdminService admin) =>
+adminGroup.MapGet("/payments/webhooks", (int? page, int? pageSize, AdminService admin) =>
 {
-    return Results.Ok(admin.GetPaymentWebhookEvents(limit ?? 100));
+    return Results.Ok(admin.GetPaymentWebhookEvents(page ?? 1, pageSize ?? 20));
+});
+
+adminGroup.MapGet("/support/tickets", (
+    string? query,
+    string? status,
+    int? page,
+    int? pageSize,
+    SupportTicketService supportTickets) =>
+{
+    return Results.Ok(supportTickets.ListAdminTickets(query ?? string.Empty, status ?? string.Empty, page ?? 1, pageSize ?? 20));
+});
+
+adminGroup.MapPost("/support/tickets/update", (
+    SupportTicketUpdateRequestDto request,
+    SupportTicketService supportTickets) =>
+{
+    return Results.Ok(supportTickets.UpdateTicket(request));
 });
 
 adminGroup.MapPost("/locks/clear", (
@@ -952,6 +1019,18 @@ adminGroup.MapGet("/managed-ai/catalog", (ManagedAiCatalogService catalogService
     {
         providers = catalogService.ListCatalogProviders()
     });
+});
+
+adminGroup.MapGet("/managed-ai/selection", (ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.GetAdminRuntimeSelection());
+});
+
+adminGroup.MapPost("/managed-ai/selection", (
+    ManagedAiRuntimeSelectionUpdateRequestDto request,
+    ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.UpdateAdminRuntimeSelection(request));
 });
 
 adminGroup.MapPost("/managed-ai/catalog/vision", (

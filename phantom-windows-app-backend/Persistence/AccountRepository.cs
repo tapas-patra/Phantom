@@ -56,6 +56,52 @@ public sealed class AccountRepository
         return items;
     }
 
+    public List<DesktopAccountRecord> ListPage(string query, int offset, int pageSize)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM desktop_accounts
+WHERE (
+    @query = ''
+    OR lower(email) LIKE @queryLike
+    OR lower(user_id) LIKE @queryLike
+    OR lower(access_tier) LIKE @queryLike
+)
+ORDER BY updated_at_utc DESC, email ASC
+OFFSET @offset
+LIMIT @pageSize;";
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("queryLike", $"%{query}%");
+        command.Parameters.AddWithValue("offset", Math.Max(0, offset));
+        command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        using var reader = command.ExecuteReader();
+        var items = new List<DesktopAccountRecord>();
+        while (reader.Read())
+        {
+            items.Add(Map(reader));
+        }
+
+        return items;
+    }
+
+    public int CountPage(string query)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT COUNT(*) FROM desktop_accounts
+WHERE (
+    @query = ''
+    OR lower(email) LIKE @queryLike
+    OR lower(user_id) LIKE @queryLike
+    OR lower(access_tier) LIKE @queryLike
+);";
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("queryLike", $"%{query}%");
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
     public DesktopAccountRecord? FindByPhoneNumber(string phoneNumberE164)
     {
         using var connection = _store.OpenConnection();

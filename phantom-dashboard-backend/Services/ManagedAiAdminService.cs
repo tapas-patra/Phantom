@@ -13,6 +13,7 @@ public sealed class ManagedAiAdminService
     {
         var credentials = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", authorizationHeader, null, cancellationToken);
         var catalogs = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", authorizationHeader, null, cancellationToken);
+        var selection = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/selection", authorizationHeader, null, cancellationToken);
         return new
         {
             managedProviders = new[]
@@ -24,6 +25,7 @@ public sealed class ManagedAiAdminService
                 new { providerId = "Groq", label = "Groq", lane = "managed" },
                 new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" }
             },
+            selection,
             credentials,
             catalogs
         };
@@ -62,6 +64,11 @@ public sealed class ManagedAiAdminService
     public Task<object?> RefreshCatalog(string authorizationHeader, CancellationToken cancellationToken)
     {
         return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", authorizationHeader, null, cancellationToken);
+    }
+
+    public Task<object?> UpdateRuntimeSelection(string authorizationHeader, object payload, CancellationToken cancellationToken)
+    {
+        return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/selection", authorizationHeader, payload, cancellationToken);
     }
 
     public async Task DeleteCredential(string authorizationHeader, string credentialId, CancellationToken cancellationToken)

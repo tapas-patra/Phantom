@@ -267,15 +267,19 @@ ON CONFLICT (user_id) DO UPDATE SET
         command.Transaction = transaction;
         command.CommandText = @"
 INSERT INTO dashboard_wallet_history (
-    ledger_entry_id, user_id, session_id, charged_credits, charged_blocks, added_premium_debt, created_at_utc
+    ledger_entry_id, user_id, session_id, charged_credits, charged_blocks,
+    charged_pro_credits, charged_premium_credits, added_premium_debt, created_at_utc
 ) VALUES (
-    @ledgerEntryId, @userId, @sessionId, @chargedCredits, @chargedBlocks, @addedPremiumDebt, @createdAtUtc
+    @ledgerEntryId, @userId, @sessionId, @chargedCredits, @chargedBlocks,
+    @chargedProCredits, @chargedPremiumCredits, @addedPremiumDebt, @createdAtUtc
 )
 ON CONFLICT (ledger_entry_id) DO UPDATE SET
     user_id = EXCLUDED.user_id,
     session_id = EXCLUDED.session_id,
     charged_credits = EXCLUDED.charged_credits,
     charged_blocks = EXCLUDED.charged_blocks,
+    charged_pro_credits = EXCLUDED.charged_pro_credits,
+    charged_premium_credits = EXCLUDED.charged_premium_credits,
     added_premium_debt = EXCLUDED.added_premium_debt,
     created_at_utc = EXCLUDED.created_at_utc;";
         command.Parameters.AddWithValue("ledgerEntryId", root.GetProperty("ledger_entry_id").GetString() ?? string.Empty);
@@ -283,6 +287,8 @@ ON CONFLICT (ledger_entry_id) DO UPDATE SET
         command.Parameters.AddWithValue("sessionId", root.GetProperty("session_id").GetString() ?? string.Empty);
         command.Parameters.AddWithValue("chargedCredits", root.GetProperty("charged_credits").GetDecimal());
         command.Parameters.AddWithValue("chargedBlocks", root.GetProperty("charged_blocks").GetInt32());
+        command.Parameters.AddWithValue("chargedProCredits", root.GetProperty("charged_pro_credits").GetDecimal());
+        command.Parameters.AddWithValue("chargedPremiumCredits", root.GetProperty("charged_premium_credits").GetDecimal());
         command.Parameters.AddWithValue("addedPremiumDebt", root.GetProperty("added_premium_debt").GetDecimal());
         command.Parameters.AddWithValue("createdAtUtc", root.GetProperty("created_at_utc").GetDateTime());
         command.ExecuteNonQuery();

@@ -60,24 +60,70 @@ public sealed class UsageReconciliationService
             ? 0m
             : Math.Max(0m, Math.Min(request.PremiumDebtAdded, remainingDebtBudget));
         requestedDebt = Math.Min(requestedDebt, request.ChargedCredits);
-        var remainingCharge = Math.Max(0m, request.ChargedCredits - requestedDebt);
-        var appliedCredits = 0m;
-
-        if (remainingCharge > 0m && account.PremiumAvailableCredits > 0m)
+        var requestedPaidCharge = Math.Max(0m, request.ChargedCredits - requestedDebt);
+        var explicitProCharge = Math.Max(0m, request.ConsumedProCredits);
+        var explicitPremiumCharge = Math.Max(0m, request.ConsumedPremiumCredits);
+        var explicitPaidCharge = explicitProCharge + explicitPremiumCharge;
+        var hasExplicitSplit = explicitPaidCharge > 0m || requestedPaidCharge == 0m;
+        if (explicitPaidCharge > requestedPaidCharge)
         {
-            var fromPremium = Math.Min(account.PremiumAvailableCredits, remainingCharge);
-            account.PremiumAvailableCredits -= fromPremium;
-            remainingCharge -= fromPremium;
-            appliedCredits += fromPremium;
+            throw new BackendValidationException("Usage reconciliation credit split exceeds the charged amount.");
         }
 
-        if (!isFreeTier && remainingCharge > 0m && account.ProAvailableCredits > 0m)
+        var remainingCharge = requestedPaidCharge;
+        var consumedProCredits = 0m;
+        var consumedPremiumCredits = 0m;
+
+        if (hasExplicitSplit)
         {
-            var fromPro = Math.Min(account.ProAvailableCredits, remainingCharge);
-            account.ProAvailableCredits -= fromPro;
-            remainingCharge -= fromPro;
-            appliedCredits += fromPro;
+            if (!isFreeTier && explicitProCharge > 0m && account.ProAvailableCredits > 0m)
+            {
+                consumedProCredits = Math.Min(account.ProAvailableCredits, explicitProCharge);
+                account.ProAvailableCredits -= consumedProCredits;
+                remainingCharge -= consumedProCredits;
+            }
+
+            if (explicitPremiumCharge > 0m && account.PremiumAvailableCredits > 0m)
+            {
+                consumedPremiumCredits = Math.Min(account.PremiumAvailableCredits, explicitPremiumCharge);
+                account.PremiumAvailableCredits -= consumedPremiumCredits;
+                remainingCharge -= consumedPremiumCredits;
+            }
+
+            if (!isFreeTier && remainingCharge > 0m && account.ProAvailableCredits > 0m)
+            {
+                var fallbackPro = Math.Min(account.ProAvailableCredits, remainingCharge);
+                account.ProAvailableCredits -= fallbackPro;
+                consumedProCredits += fallbackPro;
+                remainingCharge -= fallbackPro;
+            }
+
+            if (remainingCharge > 0m && account.PremiumAvailableCredits > 0m)
+            {
+                var fallbackPremium = Math.Min(account.PremiumAvailableCredits, remainingCharge);
+                account.PremiumAvailableCredits -= fallbackPremium;
+                consumedPremiumCredits += fallbackPremium;
+                remainingCharge -= fallbackPremium;
+            }
         }
+        else
+        {
+            if (remainingCharge > 0m && account.PremiumAvailableCredits > 0m)
+            {
+                consumedPremiumCredits = Math.Min(account.PremiumAvailableCredits, remainingCharge);
+                account.PremiumAvailableCredits -= consumedPremiumCredits;
+                remainingCharge -= consumedPremiumCredits;
+            }
+
+            if (!isFreeTier && remainingCharge > 0m && account.ProAvailableCredits > 0m)
+            {
+                consumedProCredits = Math.Min(account.ProAvailableCredits, remainingCharge);
+                account.ProAvailableCredits -= consumedProCredits;
+                remainingCharge -= consumedProCredits;
+            }
+        }
+
+        var appliedCredits = consumedProCredits + consumedPremiumCredits;
 
         var addedDebt = !isFreeTier ? requestedDebt : 0m;
 
@@ -112,6 +158,8 @@ public sealed class UsageReconciliationService
             EndedAtUtc = request.EndedAtUtc,
             ChargedCredits = request.ChargedCredits,
             ChargedBlocks = request.ChargedBlocks,
+            ChargedProCredits = consumedProCredits,
+            ChargedPremiumCredits = consumedPremiumCredits,
             AddedPremiumDebt = addedDebt,
             CreatedAtUtc = DateTime.UtcNow
         };

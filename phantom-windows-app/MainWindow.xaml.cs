@@ -72,7 +72,7 @@ namespace SecureOverlay
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
         private bool _isChatSectionCollapsed = false;
         private const double ExpandedWindowMinHeight = 220;
-        private const double CollapsedWindowMinHeight = 100;
+        private const double CollapsedWindowMinHeight = 88;
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -479,6 +479,11 @@ namespace SecureOverlay
                 return false;
             }
 
+            if (!HasAnyConfiguredByoProvider())
+            {
+                return false;
+            }
+
             return PreferByoCreditsFirst() || IsByoLaneActiveNow();
         }
 
@@ -488,12 +493,14 @@ namespace SecureOverlay
             if (_accountSnapshot == null)
             {
                 CreditIndicatorText.Text = "Cr n/a";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
             if (IsFreeTrialAccount())
             {
                 CreditIndicatorText.Text = "Trial 2x15m";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
@@ -502,6 +509,7 @@ namespace SecureOverlay
             {
                 CreditIndicatorText.Text =
                     $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | B {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
@@ -509,10 +517,74 @@ namespace SecureOverlay
             {
                 CreditIndicatorText.Text =
                     $"P {_accountSnapshot.PremiumAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
             CreditIndicatorText.Text = $"BYO {_accountSnapshot.ProAvailableCredits:0.##} | D {_accountSnapshot.PremiumNegativeCredits:0.##}";
+            UpdateActiveCreditModeIndicator();
+        }
+
+        private void UpdateActiveCreditModeIndicator()
+        {
+            if (ActiveCreditModeText == null || ActiveCreditModeBorder == null)
+            {
+                return;
+            }
+
+            var (label, background) = ResolveActiveCreditMode();
+            ActiveCreditModeText.Text = label;
+            ActiveCreditModeBorder.Background = background;
+        }
+
+        private (string Label, Brush Background) ResolveActiveCreditMode()
+        {
+            if (_accountSnapshot == null)
+            {
+                return ("Idle", new SolidColorBrush(Color.FromArgb(0x50, 0x50, 0x50, 0x50)));
+            }
+
+            if (IsFreeTrialAccount())
+            {
+                return ("Trial", new SolidColorBrush(Color.FromArgb(0x50, 0x22, 0x6F, 0xA8)));
+            }
+
+            var activeSession = _creditMeteringService.GetActiveSession();
+            if (activeSession != null)
+            {
+                return DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI) switch
+                {
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.ProByo
+                        => ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45))),
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumDebtExtension
+                        => ("Debt", new SolidColorBrush(Color.FromArgb(0x50, 0x9A, 0x3D, 0x00))),
+                    SecureOverlay.Domain.Enums.InterviewUsageSource.PremiumManaged
+                        => ("Premium", new SolidColorBrush(Color.FromArgb(0x50, 0x6A, 0x4C, 0x1F))),
+                    _ => ("Trial", new SolidColorBrush(Color.FromArgb(0x50, 0x22, 0x6F, 0xA8)))
+                };
+            }
+
+            if (_accountSnapshot.PremiumNegativeCredits > 0m)
+            {
+                return ("Debt", new SolidColorBrush(Color.FromArgb(0x50, 0x9A, 0x3D, 0x00)));
+            }
+
+            if (IsByoLaneActiveNow())
+            {
+                return ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45)));
+            }
+
+            if (HasPremiumManagedEntitlement())
+            {
+                return ("Premium", new SolidColorBrush(Color.FromArgb(0x50, 0x6A, 0x4C, 0x1F)));
+            }
+
+            if (HasByoEntitlement() && HasAnyConfiguredByoProvider())
+            {
+                return ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45)));
+            }
+
+            return ("Idle", new SolidColorBrush(Color.FromArgb(0x50, 0x50, 0x50, 0x50)));
         }
 
         private void StartSessionStatusTimer()
@@ -545,10 +617,12 @@ namespace SecureOverlay
                 _lastInterviewActivityUtc = null;
                 SessionTimerBorder.Visibility = Visibility.Collapsed;
                 SessionStatusText.Text = string.Empty;
+                UpdateActiveCreditModeIndicator();
                 return;
             }
 
             SyncRuntimeWithCurrentCreditLane();
+            UpdateActiveCreditModeIndicator();
 
             if (activeSession.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
             {
@@ -3296,10 +3370,10 @@ namespace SecureOverlay
             CollapsedHeaderMicButton.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
             MinHeight = collapsed ? CollapsedWindowMinHeight : ExpandedWindowMinHeight;
             MainContentGrid.Margin = collapsed
-                ? new Thickness(14, 10, 14, 8)
+                ? new Thickness(12, 8, 12, 6)
                 : new Thickness(18, 14, 18, 12);
             TitleBarGrid.Margin = collapsed
-                ? new Thickness(0)
+                ? new Thickness(0, 0, 0, 2)
                 : new Thickness(0, 0, 0, 10);
 
             if (collapsed)

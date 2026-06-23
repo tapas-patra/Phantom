@@ -104,6 +104,11 @@
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
+                        <Border x:Name="ActiveCreditModeBorder" Background="#50505050" CornerRadius="4" Padding="6,2" Margin="4,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="ActiveCreditModeText" Text="Idle" FontSize="9"
+                                    FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
+                        </Border>
+
                         <Border x:Name="SessionTimerBorder" Background="#503A245D" CornerRadius="4" Padding="6,2" Margin="4,0,0,0"
                                 Visibility="Collapsed" VerticalAlignment="Center">
                             <TextBlock x:Name="SessionTimerText" Text="T 00:00:00" FontSize="9"

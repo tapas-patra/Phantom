@@ -1090,7 +1090,7 @@ ALTER TABLE hosted_kb_chunks
 ALTER TABLE hosted_kb_chunks
     ADD COLUMN IF NOT EXISTS content_sha256 TEXT NOT NULL DEFAULT '';
 ALTER TABLE hosted_kb_chunks
-    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{{}}'::jsonb;
+    ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE hosted_kb_chunks
     ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '';
 ALTER TABLE hosted_kb_chunks

@@ -88,6 +88,39 @@ public sealed class HostedKnowledgeBaseService
         return MapSummary(account, knowledgeBase);
     }
 
+    public HostedKnowledgeBaseDocumentContentDto GetDocumentContent(
+        DesktopAccountRecord account,
+        string documentId)
+    {
+        EnsureCanManage(account);
+
+        if (string.IsNullOrWhiteSpace(documentId))
+        {
+            throw new BackendValidationException("Document ID is required.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var document = _knowledgeBases.FindDocument(knowledgeBase.KnowledgeBaseId, documentId.Trim())
+            ?? throw new BackendValidationException("Hosted knowledge-base document not found.");
+
+        return new HostedKnowledgeBaseDocumentContentDto
+        {
+            DocumentId = document.DocumentId,
+            FileName = document.FileName,
+            ContentType = document.ContentType,
+            SourceType = document.SourceType,
+            ExtractedText = document.ExtractedText,
+            CharacterCount = document.CharacterCount,
+            ChunkCount = document.ChunkCount,
+            Status = document.Status,
+            Error = document.Error,
+            UploadedAtUtc = document.UploadedAtUtc,
+            ProcessedAtUtc = document.ProcessedAtUtc,
+            IndexedAtUtc = document.IndexedAtUtc
+        };
+    }
+
     public HostedKnowledgeBaseSummaryDto CreateOrUpdateKnowledgeBase(DesktopAccountRecord account, HostedKnowledgeBaseCreateRequestDto request)
     {
         EnsureCanManage(account);
@@ -285,6 +318,46 @@ public sealed class HostedKnowledgeBaseService
         }
 
         return MapReindexJob(job)!;
+    }
+
+    public HostedKnowledgeBaseSummaryDto DeleteDocument(
+        DesktopAccountRecord account,
+        string documentId)
+    {
+        EnsureCanManage(account);
+
+        if (string.IsNullOrWhiteSpace(documentId))
+        {
+            throw new BackendValidationException("Document ID is required.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+
+        var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
+        var document = existingDocuments.FirstOrDefault(item => string.Equals(item.DocumentId, documentId.Trim(), StringComparison.Ordinal))
+            ?? throw new BackendValidationException("Hosted knowledge-base document not found.");
+        var remainingDocuments = existingDocuments
+            .Where(item => !string.Equals(item.DocumentId, document.DocumentId, StringComparison.Ordinal))
+            .ToList();
+        var remainingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+            .Where(chunk => !string.Equals(chunk.DocumentId, document.DocumentId, StringComparison.Ordinal))
+            .ToList();
+
+        knowledgeBase.DocumentCount = remainingDocuments.Count;
+        knowledgeBase.ChunkCount = remainingChunks.Count;
+        knowledgeBase.Status = remainingChunks.Count > 0 ? "ready" : "empty";
+        knowledgeBase.LastProcessedAtUtc = DateTime.UtcNow;
+        knowledgeBase.UpdatedAtUtc = DateTime.UtcNow;
+        if (remainingDocuments.Count == 0)
+        {
+            knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
+            knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
+        }
+
+        _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, remainingDocuments, remainingChunks);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
+        return MapSummary(account, knowledgeBase, remainingDocuments);
     }
 
     public HostedKnowledgeBaseReindexJobDto? GetLatestReindexJob(DesktopAccountRecord account, string? jobId = null)

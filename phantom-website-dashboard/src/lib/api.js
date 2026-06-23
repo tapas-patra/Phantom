@@ -449,6 +449,19 @@ export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
   });
 }
 
+export async function fetchHostedKnowledgeBaseDocument(accessToken, documentId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/documents/${encodeURIComponent(documentId)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function deleteHostedKnowledgeBaseDocument(accessToken, documentId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/documents/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchPaymentCatalog(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/payments/catalog", {
     headers: authHeaders(accessToken)

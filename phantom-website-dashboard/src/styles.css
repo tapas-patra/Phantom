@@ -765,6 +765,28 @@ tbody tr:last-child th {
   font-weight: 700;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.document-preview {
+  max-height: min(32rem, 60vh);
+  overflow: auto;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.document-preview pre {
+  margin: 0;
+  padding: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d8effd;
+}
+
 .payload-preview {
   margin: 0;
   padding: 18px;

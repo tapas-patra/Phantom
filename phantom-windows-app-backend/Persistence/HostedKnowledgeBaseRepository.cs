@@ -43,6 +43,21 @@ ORDER BY uploaded_at_utc DESC;";
         return items;
     }
 
+    public HostedKnowledgeBaseDocumentRecord? FindDocument(string knowledgeBaseId, string documentId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_documents
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND document_id = @documentId
+LIMIT 1;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        command.Parameters.AddWithValue("documentId", documentId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? MapDocument(reader) : null;
+    }
+
     public IReadOnlyList<HostedKnowledgeBaseChunkRecord> ListChunks(string knowledgeBaseId)
     {
         using var connection = _store.OpenConnection();

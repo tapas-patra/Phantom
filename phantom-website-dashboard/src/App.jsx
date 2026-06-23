@@ -6,6 +6,7 @@ import {
   createHostedKnowledgeBase,
   createPaymentCheckout,
   createUserSupportTicket,
+  deleteHostedKnowledgeBaseDocument,
   deleteManagedAiCredential,
   fetchAccountSummary,
   fetchAdminOverview,
@@ -21,6 +22,7 @@ import {
   fetchDownloadEntitlement,
   fetchGmailOAuthStatus,
   fetchHostedKnowledgeBase,
+  fetchHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
   fetchPaymentCatalog,
   fetchSupportOverview,
@@ -1843,6 +1845,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   const [description, setDescription] = useState(knowledgeBase?.description || "");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState(null);
+  const [documentLoadingId, setDocumentLoadingId] = useState("");
+  const [deletingDocumentId, setDeletingDocumentId] = useState("");
 
   useEffect(() => {
     setName(knowledgeBase?.name || "My Premium Knowledge Base");
@@ -1853,6 +1858,17 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   const blockedMessage =
     knowledgeBase?.blockedReason
     || "Hosted knowledge bases are available only while Premium access and credits are active.";
+
+  useEffect(() => {
+    if (!selectedDocument?.documentId) {
+      return;
+    }
+
+    const nextDocument = (knowledgeBase?.documents || []).find((item) => item.documentId === selectedDocument.documentId);
+    if (!nextDocument) {
+      setSelectedDocument(null);
+    }
+  }, [knowledgeBase?.documents, selectedDocument?.documentId]);
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -1891,6 +1907,46 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } finally {
       setSubmitting(false);
       event.target.value = "";
+    }
+  }
+
+  async function handleViewDocument(documentId) {
+    setDocumentLoadingId(documentId);
+    setStatus("");
+    try {
+      const document = await fetchHostedKnowledgeBaseDocument(accessToken, documentId);
+      setSelectedDocument(document);
+    } catch (error) {
+      setStatus(error.message || "Could not load that document.");
+    } finally {
+      setDocumentLoadingId("");
+    }
+  }
+
+  async function handleDeleteDocument(documentId) {
+    const document = (knowledgeBase?.documents || []).find((item) => item.documentId === documentId);
+    if (!document) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete '${document.fileName}' from the hosted knowledge base?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDocumentId(documentId);
+    setStatus("");
+    try {
+      const nextKnowledgeBase = await deleteHostedKnowledgeBaseDocument(accessToken, documentId);
+      onKnowledgeBaseChanged(nextKnowledgeBase);
+      if (selectedDocument?.documentId === documentId) {
+        setSelectedDocument(null);
+      }
+      setStatus("Document deleted from the hosted knowledge base.");
+    } catch (error) {
+      setStatus(error.message || "Could not delete that document.");
+    } finally {
+      setDeletingDocumentId("");
     }
   }
 
@@ -1979,12 +2035,13 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
                 <th>Chars</th>
                 <th>Chunks</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {(knowledgeBase?.documents || []).length === 0 ? (
                 <tr>
-                  <td colSpan="5">No hosted documents processed yet.</td>
+                  <td colSpan="6">No hosted documents processed yet.</td>
                 </tr>
               ) : (
                 knowledgeBase.documents.map((document) => (
@@ -1994,6 +2051,26 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
                     <td>{document.characterCount}</td>
                     <td>{document.chunkCount}</td>
                     <td>{document.status}</td>
+                    <td>
+                      <div className="table-actions">
+                        <button
+                          className="button button-secondary button-compact"
+                          type="button"
+                          onClick={() => handleViewDocument(document.documentId)}
+                          disabled={submitting || deletingDocumentId === document.documentId}
+                        >
+                          {documentLoadingId === document.documentId ? "Loading..." : "View"}
+                        </button>
+                        <button
+                          className="button button-secondary button-compact"
+                          type="button"
+                          onClick={() => handleDeleteDocument(document.documentId)}
+                          disabled={submitting || deletingDocumentId === document.documentId}
+                        >
+                          {deletingDocumentId === document.documentId ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -2006,6 +2083,27 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
           </p>
         ) : null}
       </div>
+
+      {selectedDocument ? (
+        <article className="glass-panel table-span-full">
+          <div className="table-header">
+            <div>
+              <p className="eyebrow">Document content</p>
+              <h3>{selectedDocument.fileName}</h3>
+            </div>
+            <button className="button button-secondary button-compact" type="button" onClick={() => setSelectedDocument(null)}>
+              Close
+            </button>
+          </div>
+          <p>
+            {selectedDocument.sourceType || selectedDocument.contentType || "file"} · {selectedDocument.characterCount} chars ·{" "}
+            {selectedDocument.chunkCount} chunks
+          </p>
+          <div className="document-preview">
+            <pre>{selectedDocument.extractedText || "No extracted text is available for this document."}</pre>
+          </div>
+        </article>
+      ) : null}
     </div>
   );
 }

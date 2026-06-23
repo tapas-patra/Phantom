@@ -790,6 +790,24 @@ app.MapPost("/api/desktop/kb/documents", async (
     return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/kb/documents/{documentId}", (
+    HttpContext httpContext,
+    string documentId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetDocumentContent(account, documentId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapDelete("/api/desktop/kb/documents/{documentId}", (
+    HttpContext httpContext,
+    string documentId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.DeleteDocument(account, documentId));
+}).RequireRateLimiting("desktop-api");
+
 app.MapPost("/api/desktop/kb/reindex", (
     HttpContext httpContext,
     HostedKnowledgeBaseService knowledgeBases) =>

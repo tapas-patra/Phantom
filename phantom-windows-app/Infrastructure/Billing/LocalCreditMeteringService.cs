@@ -225,9 +225,12 @@ namespace SecureOverlay.Infrastructure.Billing
             var premiumExtensionCharge = chargesBySource.TryGetValue(InterviewUsageSource.PremiumDebtExtension, out var extensionCharge) ? extensionCharge : 0m;
             var freeTrialManagedCharge = chargesBySource.TryGetValue(InterviewUsageSource.FreeTrialManaged, out var freeCharge) ? freeCharge : 0m;
 
-            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, proByoCharge);
-            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, premiumManagedCharge);
-            var primaryShortfall = Math.Max(0m, proByoCharge - consumedProCredits) + Math.Max(0m, premiumManagedCharge - consumedPremiumCredits);
+            var paidChargeBeforeDebt = Math.Max(0m, requestedCharge - premiumExtensionCharge);
+            var consumedPremiumCredits = Math.Min(snapshot.PremiumAvailableCredits, paidChargeBeforeDebt);
+            var remainingPaidCharge = Math.Max(0m, paidChargeBeforeDebt - consumedPremiumCredits);
+            var consumedProCredits = Math.Min(snapshot.ProAvailableCredits, remainingPaidCharge);
+            remainingPaidCharge = Math.Max(0m, remainingPaidCharge - consumedProCredits);
+            var primaryShortfall = remainingPaidCharge;
             var premiumDebtAdded = 0m;
 
             if (!IsFreeTier(snapshot))

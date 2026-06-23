@@ -331,7 +331,7 @@ namespace SecureOverlay
                         foreach (var msg in displayMessages)
                         {
                             var isUser = msg.Role == "user";
-                            var aiName = _currentAI?.GetProviderName() ?? "AI";
+                            var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
                             var fullText = prefix + msg.Content;
                             
@@ -540,6 +540,8 @@ namespace SecureOverlay
                 SessionStatusText.Text = string.Empty;
                 return;
             }
+
+            SyncRuntimeWithCurrentCreditLane();
 
             if (activeSession.State == SecureOverlay.Domain.Enums.InterviewSessionState.Paused)
             {
@@ -979,7 +981,52 @@ namespace SecureOverlay
             }
 
             var projectedCharge = LocalCreditMeteringService.EstimateChargeForElapsed(_creditMeteringService.GetMeteredElapsed(activeSession));
-            return projectedCharge <= premiumCredits;
+            return projectedCharge < premiumCredits;
+        }
+
+        private string GetManagedRuntimeProviderId()
+        {
+            return _settings.ManagedAiCatalogCache?.Providers?
+                .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.ProviderId))
+                ?.ProviderId
+                ?? _settings.SelectedAI;
+        }
+
+        private string GetManagedRuntimeModelId(string provider)
+        {
+            return ProviderModelCatalogCache.GetModelIds(_settings, provider).FirstOrDefault()
+                ?? _rotationManager?.GetCurrentModel(provider)
+                ?? string.Empty;
+        }
+
+        private string GetCurrentDisplayProvider()
+        {
+            return _currentAI is HostedManagedAiService
+                ? "AI"
+                : (_currentAI?.GetProviderName() ?? "AI");
+        }
+
+        private string GetCurrentRuntimeProviderId()
+        {
+            return _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeProviderId()
+                : _settings.SelectedAI;
+        }
+
+        private void SyncRuntimeWithCurrentCreditLane()
+        {
+            if (_currentAI == null)
+            {
+                return;
+            }
+
+            var shouldUseByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
+            var isUsingByoRuntime = _currentAI is not HostedManagedAiService;
+            if (shouldUseByoRuntime != isUsingByoRuntime)
+            {
+                Log.WriteLine($"Credit lane changed - reinitializing AI. BYO required: {shouldUseByoRuntime}");
+                InitializeAI();
+            }
         }
 
         private bool ShouldUseByoRuntimeForCurrentSelection(string provider)
@@ -1242,6 +1289,8 @@ namespace SecureOverlay
             Log.WriteLine($"✓ Loading model from settings: {currentModel}");
 
             var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
+            var runtimeProvider = useByoRuntime ? _settings.SelectedAI : GetManagedRuntimeProviderId();
+            var runtimeModel = useByoRuntime ? currentModel : GetManagedRuntimeModelId(runtimeProvider);
             
             // Create AI service with rotation
             IAIService newAI = useByoRuntime
@@ -1249,13 +1298,11 @@ namespace SecureOverlay
                 : new HostedManagedAiService(
                     _authSessionRepository,
                     _hostedRuntimeOptions,
-                    _settings.SelectedAI,
-                    currentModel,
+                    runtimeProvider,
+                    runtimeModel,
                     _settings.AllowByoSessionExtension);
-            
-            AIProviderText.Text = newAI.GetProviderName();
 
-            var modelConfig = GetModelConfigForCurrentSelection(_settings.SelectedAI, currentModel);
+            var modelConfig = GetModelConfigForCurrentSelection(runtimeProvider, runtimeModel);
             
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
@@ -1307,11 +1354,11 @@ namespace SecureOverlay
 
             if (!_currentAI.IsConfigured())
             {
-                Log.WriteLine($"⚠️ {_currentAI.GetProviderName()} not configured (no API key)");
+                Log.WriteLine($"⚠️ {GetCurrentDisplayProvider()} not configured (no API key)");
             }
             else
             {
-                Log.WriteLine($"✓ AI service: {_currentAI.GetProviderName()} (configured)");
+                Log.WriteLine($"✓ AI service: {GetCurrentDisplayProvider()} (configured)");
             }
             
             // NEW: Update indicator immediately after AI is initialized
@@ -1705,7 +1752,7 @@ namespace SecureOverlay
             StatusText.Text = "🔄 Thinking...";
             StatusIndicator.Fill = Brushes.Yellow;
             
-            var aiName = _currentAI.GetProviderName();
+            var aiName = GetCurrentDisplayProvider();
             
             lock (_streamBuffer)
             {
@@ -1785,7 +1832,7 @@ namespace SecureOverlay
                     StatusText.Text = "🔄 Switching to managed extension...";
                     StatusIndicator.Fill = Brushes.Yellow;
 
-                    aiName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
+                    aiName = GetCurrentDisplayProvider();
                     _currentStreamingParagraph = new Paragraph
                     {
                         Foreground = Brushes.White,
@@ -3916,8 +3963,10 @@ namespace SecureOverlay
                 return false;
             }
 
-            var provider = _settings.SelectedAI;
-            var currentModel = _rotationManager.GetCurrentModel(provider);
+            var provider = GetCurrentRuntimeProviderId();
+            var currentModel = _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeModelId(provider)
+                : _rotationManager.GetCurrentModel(provider);
             
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
@@ -4462,21 +4511,24 @@ namespace SecureOverlay
             Log.WriteLine("UPDATING PROVIDER AND MODEL DISPLAY");
 
             // Update provider display
-            var providerName = _currentAI?.GetProviderName() ?? _settings.SelectedAI;
+            var providerName = GetCurrentDisplayProvider();
             AIProviderText.Text = providerName;
             Log.WriteLine($"  Provider display: {providerName}");
             
             // Update model display
-            var currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
+            var runtimeProvider = GetCurrentRuntimeProviderId();
+            var currentModel = _currentAI is HostedManagedAiService
+                ? GetManagedRuntimeModelId(runtimeProvider)
+                : (_rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "");
             Log.WriteLine($"  Current model ID: {currentModel}");
             
             // ✅ USE REGISTRY - Get display name
-            var displayModel = GetModelDisplayName(_settings.SelectedAI, currentModel);
+            var displayModel = GetModelDisplayName(runtimeProvider, currentModel);
             Log.WriteLine($"  Display name: {displayModel}");
             
             ModelText.Text = GetCompactModelDisplayName(displayModel);
-            ModelSelectorBorder.ToolTip = displayModel;
-            ProviderSelectorBorder.ToolTip = providerName;
+            ModelSelectorBorder.ToolTip = null;
+            ProviderSelectorBorder.ToolTip = null;
             
             Log.WriteLine($"✓ Title bar updated: {providerName} | {displayModel}");
             Log.WriteLine("═══════════════════════════════════════════════════════");

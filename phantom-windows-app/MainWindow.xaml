@@ -83,53 +83,53 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <WrapPanel Grid.Column="0" Margin="-4,0,6,0" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="-4,0,6,0" VerticalAlignment="Center">
                         <Border Background="#14253B52" BorderBrush="#334A6484" BorderThickness="1"
-                                CornerRadius="12" Padding="5" Margin="0,0,6,0">
+                                CornerRadius="12" Padding="4" Margin="0,0,6,0" VerticalAlignment="Center">
                             <Image Source="phantom-logo-512.png"
-                                   Width="32"
-                                   Height="32"
+                                   Width="28"
+                                   Height="28"
                                    Stretch="Uniform"/>
                         </Border>
                         
                         <!-- API Key Indicator -->
                         <Border x:Name="APIKeyIndicator" Background="#5000FF00" CornerRadius="4" 
-                                Padding="6,3" Margin="4,0,0,0" Visibility="Collapsed">
-                            <TextBlock x:Name="APIKeyText" Text="K1" FontSize="10" 
+                                Padding="6,2" Margin="4,0,0,0" Visibility="Collapsed" VerticalAlignment="Center">
+                            <TextBlock x:Name="APIKeyText" Text="K1" FontSize="9" 
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
-                        <Border x:Name="CreditIndicatorBorder" Background="#506A4C1F" CornerRadius="4" Padding="7,3" Margin="4,0,0,0">
-                            <TextBlock x:Name="CreditIndicatorText" Text="Cr --" FontSize="10"
+                        <Border x:Name="CreditIndicatorBorder" Background="#506A4C1F" CornerRadius="4" Padding="6,2" Margin="4,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="CreditIndicatorText" Text="Cr --" FontSize="9"
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
-                        <Border x:Name="SessionTimerBorder" Background="#503A245D" CornerRadius="4" Padding="7,3" Margin="4,0,0,0"
-                                Visibility="Collapsed">
-                            <TextBlock x:Name="SessionTimerText" Text="T 00:00:00" FontSize="10"
+                        <Border x:Name="SessionTimerBorder" Background="#503A245D" CornerRadius="4" Padding="6,2" Margin="4,0,0,0"
+                                Visibility="Collapsed" VerticalAlignment="Center">
+                            <TextBlock x:Name="SessionTimerText" Text="T 00:00:00" FontSize="9"
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
-                        <Border x:Name="TokenCounterBorder" Background="#5000AAFF" CornerRadius="4" Padding="7,3" Margin="8,0,0,0"
-                                Visibility="Collapsed">
-                            <TextBlock x:Name="TokenCounterText" Text="0k/8k" FontSize="10" 
+                        <Border x:Name="TokenCounterBorder" Background="#5000AAFF" CornerRadius="4" Padding="6,2" Margin="6,0,0,0"
+                                Visibility="Collapsed" VerticalAlignment="Center">
+                            <TextBlock x:Name="TokenCounterText" Text="0k/8k" FontSize="9" 
                                     FontWeight="Bold" Foreground="White" Effect="{StaticResource Shadow}"/>
                         </Border>
 
-                        <Border Background="#30404A58" CornerRadius="6" Padding="8,5" Margin="8,0,0,0">
+                        <Border Background="#30404A58" CornerRadius="6" Padding="7,4" Margin="6,0,0,0" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Opacity" FontSize="11" Foreground="White"
-                                           VerticalAlignment="Center" Margin="0,0,6,0"
+                                <TextBlock Text="Opacity" FontSize="10" Foreground="White"
+                                           VerticalAlignment="Center" Margin="0,0,5,0"
                                            Effect="{StaticResource Shadow}"/>
                                 <Slider x:Name="HeaderOpacitySlider"
-                                        Width="84"
+                                        Width="76"
                                         Minimum="0.30"
                                         Maximum="1.20"
                                         Value="0.92"
                                         ValueChanged="HeaderOpacitySlider_ValueChanged"/>
                             </StackPanel>
                         </Border>
-                    </WrapPanel>
+                    </StackPanel>
                     
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button x:Name="CollapsedHeaderMicButton" Content="🎤" Width="40" Height="32" Click="VoiceButton_Click"

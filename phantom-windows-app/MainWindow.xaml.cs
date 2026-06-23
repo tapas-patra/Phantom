@@ -478,17 +478,7 @@ namespace SecureOverlay
                 return false;
             }
 
-            if (PreferByoCreditsFirst())
-            {
-                return true;
-            }
-
-            if (!HasPremiumManagedEntitlement() || !PremiumCreditsCanStillCoverCurrentSession())
-            {
-                return true;
-            }
-
-            return _currentAI is not HostedManagedAiService;
+            return IsByoLaneActiveNow();
         }
 
         private void UpdateCreditIndicator()
@@ -1050,6 +1040,26 @@ namespace SecureOverlay
             return _settings.PreferByoCreditsFirst && HasByoEntitlement() && HasPremiumManagedEntitlement();
         }
 
+        private bool IsByoLaneActiveNow()
+        {
+            if (IsFreeTrialAccount() || !HasByoEntitlement() || !HasAnyConfiguredByoProvider())
+            {
+                return false;
+            }
+
+            if (PreferByoCreditsFirst())
+            {
+                return ByoCreditsCanStillCoverCurrentSession() || !HasPremiumManagedEntitlement();
+            }
+
+            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private string GetManagedRuntimeProviderId()
         {
             return _settings.ManagedAiCatalogCache?.Providers?
@@ -1086,7 +1096,7 @@ namespace SecureOverlay
                 return;
             }
 
-            var shouldUseByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
+            var shouldUseByoRuntime = IsByoLaneActiveNow();
             var isUsingByoRuntime = _currentAI is not HostedManagedAiService;
             if (shouldUseByoRuntime != isUsingByoRuntime)
             {
@@ -1113,35 +1123,7 @@ namespace SecureOverlay
                 return true;
             }
 
-            if (PreferByoCreditsFirst())
-            {
-                if (HasAnyConfiguredByoProvider() && ByoCreditsCanStillCoverCurrentSession())
-                {
-                    return true;
-                }
-
-                if (HasPremiumManagedEntitlement())
-                {
-                    return false;
-                }
-            }
-
-            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
-            {
-                return false;
-            }
-
-            if (HasAnyConfiguredByoProvider())
-            {
-                return true;
-            }
-
-            if (_settings.AllowByoSessionExtension)
-            {
-                return false;
-            }
-
-            return true;
+            return IsByoLaneActiveNow();
         }
 
         private bool CanUseManagedExtensionFallbackForProvider(string provider)

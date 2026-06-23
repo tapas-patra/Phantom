@@ -363,7 +363,7 @@ public sealed class HostedKnowledgeBaseService
             try
             {
                 var queryVector = await _embeddingService.GenerateEmbeddingAsync(normalizedQuery, cancellationToken);
-                if (queryVector.Length == HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions)
+                if (queryVector.Length == _embeddingService.ActiveProfile.Dimensions)
                 {
                     queryVectorLiteral = ToVectorLiteral(queryVector);
                 }
@@ -383,6 +383,7 @@ public sealed class HostedKnowledgeBaseService
             normalizedQuery,
             queryVectorLiteral,
             _embeddingService.ActiveProfile.ModelId,
+            _embeddingService.ActiveProfile.Dimensions,
             _embeddingService.ActiveProfile.Version,
             lexicalLimit: candidateLimit,
             semanticLimit: candidateLimit,

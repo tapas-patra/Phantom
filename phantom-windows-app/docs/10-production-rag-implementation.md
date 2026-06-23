@@ -36,7 +36,7 @@ The interview answer model and the retrieval embedding model are separate system
 - `section_title`
 - `content_sha256`
 - `metadata_json`
-- `embedding vector(1536)`
+- `embedding vector`
 - `embedding_model`
 - `embedding_version`
 - `indexed_at_utc`
@@ -65,7 +65,7 @@ If embedding price or provider changes:
 
 This avoids code rework when chat models change and limits operational work when embedding models change.
 
-Current storage is optimized for `1536`-dimension vectors, so provider/model switches should stay on compatible embedding models and always be paired with a version bump plus reindex.
+Current storage supports variable embedding dimensions, so provider/model switches no longer need a fixed-width vector schema. They should still always be paired with a version bump plus reindex.
 
 ## Ingestion Pipeline
 

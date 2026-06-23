@@ -73,6 +73,7 @@ ORDER BY document_id ASC, chunk_index ASC;";
         string query,
         string? queryEmbeddingVector,
         string embeddingModel,
+        int embeddingDimensions,
         int embeddingVersion,
         int lexicalLimit,
         int semanticLimit,
@@ -124,7 +125,7 @@ LIMIT @finalLimit;";
         }
         else
         {
-            command.CommandText = $@"
+            command.CommandText = @"
 WITH lexical AS (
     SELECT
         chunk_id,
@@ -160,9 +161,9 @@ semantic AS (
         section_title,
         text,
         search_text,
-        1 - (embedding <=> CAST(@queryEmbedding AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions}))) AS semantic_similarity,
+        1 - (embedding <=> CAST(@queryEmbedding AS vector)) AS semantic_similarity,
         row_number() OVER (
-            ORDER BY embedding <=> CAST(@queryEmbedding AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions})),
+            ORDER BY embedding <=> CAST(@queryEmbedding AS vector),
             document_id ASC,
             chunk_index ASC
         ) AS semantic_rank
@@ -171,8 +172,9 @@ semantic AS (
       AND indexed_at_utc IS NOT NULL
       AND embedding IS NOT NULL
       AND embedding_model = @embeddingModel
+      AND vector_dims(embedding) = @embeddingDimensions
       AND embedding_version = @embeddingVersion
-    ORDER BY embedding <=> CAST(@queryEmbedding AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions})),
+    ORDER BY embedding <=> CAST(@queryEmbedding AS vector),
         document_id ASC,
         chunk_index ASC
     LIMIT @semanticLimit
@@ -227,6 +229,7 @@ LIMIT @finalLimit;";
         {
             command.Parameters.AddWithValue("queryEmbedding", queryEmbeddingVector);
             command.Parameters.AddWithValue("embeddingModel", embeddingModel ?? string.Empty);
+            command.Parameters.AddWithValue("embeddingDimensions", embeddingDimensions);
             command.Parameters.AddWithValue("embeddingVersion", embeddingVersion);
         }
 
@@ -356,11 +359,11 @@ INSERT INTO hosted_kb_documents (
         {
             using var insertChunk = connection.CreateCommand();
             insertChunk.Transaction = transaction;
-            insertChunk.CommandText = $@"
+            insertChunk.CommandText = @"
 INSERT INTO hosted_kb_chunks (
     chunk_id, knowledge_base_id, document_id, user_id, chunk_index, document_title, section_title, text, search_text, embedding_json, content_sha256, metadata_json, embedding_model, embedding_version, embedding, token_count, created_at_utc, indexed_at_utc
 ) VALUES (
-    @chunkId, @knowledgeBaseId, @documentId, @userId, @chunkIndex, @documentTitle, @sectionTitle, @text, @searchText, '[]'::jsonb, @contentSha256, CAST(@metadataJson AS jsonb), @embeddingModel, @embeddingVersion, CAST(NULLIF(@embedding, '') AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions})), @tokenCount, @createdAtUtc, @indexedAtUtc
+    @chunkId, @knowledgeBaseId, @documentId, @userId, @chunkIndex, @documentTitle, @sectionTitle, @text, @searchText, '[]'::jsonb, @contentSha256, CAST(@metadataJson AS jsonb), @embeddingModel, @embeddingVersion, CAST(NULLIF(@embedding, '') AS vector), @tokenCount, @createdAtUtc, @indexedAtUtc
 );";
             insertChunk.Parameters.AddWithValue("chunkId", chunk.ChunkId);
             insertChunk.Parameters.AddWithValue("knowledgeBaseId", chunk.KnowledgeBaseId);

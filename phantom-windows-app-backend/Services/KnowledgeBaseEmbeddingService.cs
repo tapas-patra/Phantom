@@ -10,7 +10,6 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingService
 {
-    private static readonly string[] SupportedProviders = ["openai", "openai-compatible"];
     private const int MaxTransientRetries = 3;
     private static readonly HttpClient HttpClient = new()
     {
@@ -271,9 +270,10 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
     {
         return isEnabled
             && hasApiKey
+            && !string.IsNullOrWhiteSpace(providerId)
             && !string.IsNullOrWhiteSpace(modelId)
-            && dimensions == HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions
-            && SupportedProviders.Contains(providerId, StringComparer.OrdinalIgnoreCase);
+            && dimensions > 0
+            && dimensions <= HostedKnowledgeBaseEmbeddingDefaults.MaxDimensions;
     }
 
     private static void ValidateRequest(HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto request)
@@ -281,11 +281,6 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         if (string.IsNullOrWhiteSpace(request.ProviderId))
         {
             throw new BackendValidationException("Embedding provider is required.");
-        }
-
-        if (!SupportedProviders.Contains(request.ProviderId.Trim(), StringComparer.OrdinalIgnoreCase))
-        {
-            throw new BackendValidationException("Embedding provider must be openai or openai-compatible.");
         }
 
         if (string.IsNullOrWhiteSpace(request.BaseUrl))
@@ -303,10 +298,10 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             throw new BackendValidationException("Embedding model is required.");
         }
 
-        if (request.Dimensions != HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions)
+        if (request.Dimensions <= 0 || request.Dimensions > HostedKnowledgeBaseEmbeddingDefaults.MaxDimensions)
         {
             throw new BackendValidationException(
-                $"Embedding dimensions must stay at {HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions} for the current indexed storage layout.");
+                $"Embedding dimensions must be between 1 and {HostedKnowledgeBaseEmbeddingDefaults.MaxDimensions}.");
         }
 
         if (request.Version <= 0)
@@ -383,8 +378,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             ["input"] = inputs
         };
 
-        if (profile.ProviderId.Equals("openai", StringComparison.OrdinalIgnoreCase)
-            && profile.Dimensions > 0)
+        if (SupportsDimensionsOverride(profile.ProviderId) && profile.Dimensions > 0)
         {
             payload["dimensions"] = profile.Dimensions;
         }
@@ -464,5 +458,11 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
 
         var seconds = Math.Min(Math.Pow(2, Math.Max(0, attempt - 1)), 8);
         return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static bool SupportsDimensionsOverride(string providerId)
+    {
+        return providerId.Equals("openai", StringComparison.OrdinalIgnoreCase)
+            || providerId.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase);
     }
 }

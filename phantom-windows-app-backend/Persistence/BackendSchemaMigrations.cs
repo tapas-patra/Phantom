@@ -15,7 +15,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("007_hosted_kb_search_index", HostedKnowledgeBaseSearchIndexSql),
         new SchemaMigration("008_hosted_kb_vector_upgrade", HostedKnowledgeBaseVectorUpgradeSql),
         new SchemaMigration("009_hosted_kb_embedding_admin_config", HostedKnowledgeBaseEmbeddingAdminConfigSql),
-        new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql)
+        new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql),
+        new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -400,7 +401,7 @@ CREATE TABLE IF NOT EXISTS hosted_kb_chunks (
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     embedding_model TEXT NOT NULL DEFAULT '',
     embedding_version INTEGER NOT NULL DEFAULT 0,
-    embedding vector(1536) NULL,
+    embedding vector NULL,
     token_count INTEGER NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL,
     indexed_at_utc TIMESTAMPTZ NULL
@@ -1106,9 +1107,8 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_status
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_indexed
     ON hosted_kb_chunks(knowledge_base_id, indexed_at_utc, document_id, chunk_index);
 
-CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw
-    ON hosted_kb_chunks
-    USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_profile
+    ON hosted_kb_chunks(knowledge_base_id, embedding_model, embedding_version, indexed_at_utc, document_id, chunk_index);
 ";
 
     private const string HostedKnowledgeBaseEmbeddingAdminConfigSql = @"
@@ -1152,6 +1152,17 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_reindex_jobs_status_requested
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hosted_kb_reindex_jobs_active_kb
     ON hosted_kb_reindex_jobs(knowledge_base_id)
     WHERE status IN ('queued', 'running');
+";
+
+    private const string HostedKnowledgeBaseVariableEmbeddingDimensionsSql = @"
+DROP INDEX IF EXISTS idx_hosted_kb_chunks_embedding_hnsw;
+
+ALTER TABLE hosted_kb_chunks
+    ALTER COLUMN embedding TYPE vector
+    USING embedding::vector;
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_profile
+    ON hosted_kb_chunks(knowledge_base_id, embedding_model, embedding_version, indexed_at_utc, document_id, chunk_index);
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

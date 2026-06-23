@@ -3084,10 +3084,11 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
         <div className="admin-form-inline">
           <label>
             Provider
-            <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
-              <option value="openai">openai</option>
-              <option value="openai-compatible">openai-compatible</option>
-            </select>
+            <input
+              value={providerId}
+              onChange={(event) => setProviderId(event.target.value)}
+              placeholder="openai, mistral, openai-compatible"
+            />
           </label>
           <label>
             Base URL
@@ -3101,7 +3102,7 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
           </label>
           <label>
             Dimensions
-            <input value={dimensions} onChange={(event) => setDimensions(event.target.value)} inputMode="numeric" disabled />
+            <input value={dimensions} onChange={(event) => setDimensions(event.target.value)} inputMode="numeric" />
           </label>
         </div>
         <div className="admin-form-inline">
@@ -3128,8 +3129,9 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
         </button>
       </form>
       <p>
-        Storage is currently indexed for 1536-dimension embeddings. Change provider, base URL, model, or API key here,
-        then bump the version and trigger KB reindexing when you switch embedding models.
+        Storage now supports variable embedding dimensions. Set the provider, model, and exact output dimensions for that
+        model, then bump the version and trigger KB reindexing when you switch embedding profiles. The endpoint still
+        needs to expose an OpenAI-compatible `/embeddings` API.
       </p>
       <div className="stack-list">
         <InfoRow label="Status" value={kbEmbedding?.isConfigured ? "Configured" : kbEmbedding?.isEnabled ? "Missing key or invalid profile" : "Disabled"} />

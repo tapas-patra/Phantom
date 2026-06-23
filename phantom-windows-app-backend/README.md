@@ -144,7 +144,7 @@ These env vars are now bootstrap defaults. After the first admin save through th
 
 Changing chat providers does not require KB reindexing. Changing the KB embedding model should happen through the admin embedding panel with a version bump and `/api/desktop/kb/reindex`.
 
-Current storage is indexed for `1536`-dimension vectors, so provider/model swaps should stay on compatible 1536-dimension embedding models until the storage layout is upgraded.
+Current storage supports variable embedding dimensions. Configure the exact output dimension for the selected model and keep the endpoint OpenAI-compatible at `/embeddings`.
 
 Browser admin auth uses the `/api/admin/auth/*` session endpoints.
 Backend-to-backend calls may still use the `X-Phantom-Admin-Key` header.

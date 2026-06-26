@@ -13,7 +13,7 @@ namespace SecureOverlay.Infrastructure.Context
     public sealed class HostedKnowledgeRetrievalService : IKnowledgeRetrievalService
     {
         private static readonly TimeSpan HostedKnowledgeRefreshTimeout = TimeSpan.FromMilliseconds(500);
-        private static readonly TimeSpan HostedKnowledgeSearchTimeout = TimeSpan.FromMilliseconds(1500);
+        private static readonly TimeSpan HostedKnowledgeSearchTimeout = TimeSpan.FromMilliseconds(4000);
 
         private readonly IKnowledgeRetrievalService _localFallback;
         private readonly IAuthSessionRepository _sessions;

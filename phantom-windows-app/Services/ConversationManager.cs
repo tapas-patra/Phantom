@@ -529,9 +529,17 @@ namespace SecureOverlay.Services
                 ClearRetrievedKnowledgeSnippets();
             }
 
+            var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
+            if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
+            {
+                RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true");
+                return CompleteAssistantResponse(retrievalMissResponse);
+            }
+
             if (plannerDecision.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
             {
+                RagTraceLogger.WriteLine("planner:direct_answer_used=true");
                 return CompleteAssistantResponse(plannerDecision.DirectAnswer);
             }
 
@@ -621,9 +629,18 @@ namespace SecureOverlay.Services
                 ClearRetrievedKnowledgeSnippets();
             }
 
+            var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
+            if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
+            {
+                RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true [streaming]");
+                onChunkReceived?.Invoke(retrievalMissResponse);
+                return CompleteAssistantResponse(retrievalMissResponse);
+            }
+
             if (plannerDecision.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
             {
+                RagTraceLogger.WriteLine("planner:direct_answer_used=true [streaming]");
                 onChunkReceived?.Invoke(plannerDecision.DirectAnswer);
                 return CompleteAssistantResponse(plannerDecision.DirectAnswer);
             }
@@ -767,16 +784,21 @@ namespace SecureOverlay.Services
             string? imageBase64,
             CancellationToken cancellationToken)
         {
+            RagTraceLogger.WriteLine(
+                $"planner:start question='{TrimForLog(userMessage, 240)}' image_attached={imageBase64 != null} prior_turns={Math.Max(0, _fullConversation.Count - 2)} previous_snippets={_retrievedKnowledgeSnippets.Count}");
             if (!_aiService.IsConfigured())
             {
+                RagTraceLogger.WriteLine("planner:ai_not_configured fallback=retrieve");
                 return ResponsePlan.Retrieve(userMessage, "ai-not-configured");
             }
 
             var plannerMessages = BuildPlannerMessages(userMessage);
             var plannerResponse = await SendPlannerRequestAsync(plannerMessages, imageBase64, cancellationToken);
+            RagTraceLogger.WriteLine($"planner:raw_response {TrimForLog(plannerResponse, 1200)}");
             if (plannerResponse.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
             {
                 Log.WriteLine($"⚠️ Planner failed, falling back to retrieval: {plannerResponse}");
+                RagTraceLogger.WriteLine("planner:error fallback=retrieve");
                 return ResponsePlan.Retrieve(userMessage, "planner-error");
             }
 
@@ -784,10 +806,13 @@ namespace SecureOverlay.Services
             {
                 Log.WriteLine(
                     $"Planner decision: Type={plan.Type}, Confidence={plan.Confidence:0.00}, RagQuery='{plan.RagQuery}'");
+                RagTraceLogger.WriteLine(
+                    $"planner:decision type={plan.Type} scope={plan.Scope} confidence={plan.Confidence:0.00} direct_answer='{TrimForLog(plan.DirectAnswer, 240)}' rag_query='{TrimForLog(plan.RagQuery, 240)}'");
                 return plan;
             }
 
             Log.WriteLine("⚠️ Planner returned invalid JSON. Falling back to retrieval.");
+            RagTraceLogger.WriteLine("planner:invalid_json fallback=retrieve");
             return ResponsePlan.Retrieve(userMessage, "planner-parse-fallback");
         }
 
@@ -836,7 +861,10 @@ Return strict JSON only with this shape:
 Rules:
 - type=direct when the user can be answered from general knowledge or recent generic conversation.
 - type=retrieve when the answer should be grounded in the user's resume, projects, documents, knowledge base, or a follow-up that depends on prior project-specific context.
+- In interview context, prompts like ""introduce yourself"", ""tell me about yourself"", ""walk me through your background"", ""tell me about any of your projects"", ""tell me about a recent project"", and ""what did you build"" are about the USER, so use type=retrieve.
+- Never answer resume, project, or background questions as the assistant's own identity or invented experience.
 - For follow-ups like ""this"", ""that"", ""it"", rewrite rag_query to the specific project/topic from recent conversation.
+- For follow-ups like ""explain the architecture of this"" after a project discussion, use type=retrieve and rewrite rag_query to the exact project/topic from recent conversation.
 - Use scope=""previous_docs"" only when the request clearly continues the same retrieved project/topic.
 - Use scope=""global"" when the user is switching topics, naming a different project, or asking a fresh question.
 - For generic follow-ups like ""give me an example"" after a conceptual question, use type=direct.
@@ -931,12 +959,38 @@ Rules:
                 : string.Empty;
         }
 
+        private static string FormatDocumentIds(IReadOnlyList<string>? documentIds)
+        {
+            if (documentIds == null || documentIds.Count == 0)
+            {
+                return "(none)";
+            }
+
+            return string.Join(", ", documentIds.Where(id => !string.IsNullOrWhiteSpace(id)).Take(6));
+        }
+
+        private static string TrimForLog(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = Regex.Replace(value, "\\s+", " ").Trim();
+            return normalized.Length <= maxLength
+                ? normalized
+                : normalized.Substring(0, maxLength) + "...";
+        }
+
         private async Task RefreshRetrievedKnowledgeSnippetsAsync(
             string retrievalQuery,
             IReadOnlyList<string>? preferredDocumentIds,
             CancellationToken cancellationToken)
         {
             var previousSnippets = _retrievedKnowledgeSnippets;
+            var canReusePreviousSnippets = preferredDocumentIds != null && preferredDocumentIds.Count > 0;
+            RagTraceLogger.WriteLine(
+                $"retrieval:start query='{TrimForLog(retrievalQuery, 240)}' preferred_docs={FormatDocumentIds(preferredDocumentIds)} previous_snippet_count={previousSnippets.Count}");
             var retrievedSnippets = _knowledgeRetriever == null
                 ? Array.Empty<RetrievedContextSnippet>()
                 : await _knowledgeRetriever(retrievalQuery, preferredDocumentIds, cancellationToken);
@@ -949,15 +1003,19 @@ Rules:
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.Ordinal)
                     .ToArray();
+                RagTraceLogger.WriteLine(
+                    $"retrieval:success count={retrievedSnippets.Count} docs={string.Join(", ", retrievedSnippets.Select(snippet => TrimForLog(snippet.DocumentTitle, 80)))}");
             }
-            else if (previousSnippets.Count > 0)
+            else if (canReusePreviousSnippets && previousSnippets.Count > 0)
             {
                 _retrievedKnowledgeSnippets = previousSnippets;
                 Log.WriteLine("✓ Preserving previous retrieved knowledge snippets after empty retrieval");
+                RagTraceLogger.WriteLine("retrieval:empty preserving_previous_snippets=true");
             }
             else
             {
                 _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+                RagTraceLogger.WriteLine("retrieval:empty preserving_previous_snippets=false");
             }
 
             UpdateSystemPromptWithContext();
@@ -971,7 +1029,18 @@ Rules:
             }
 
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            RagTraceLogger.WriteLine("retrieval:clear");
             UpdateSystemPromptWithContext();
+        }
+
+        private string? BuildRetrievalMissResponse(ResponsePlan plannerDecision)
+        {
+            if (plannerDecision.Type != ResponsePlanType.Retrieve || _retrievedKnowledgeSnippets.Count > 0)
+            {
+                return null;
+            }
+
+            return "I couldn't find relevant information for that in your selected knowledge base or context. Please mention the exact project or topic, or verify that the document is indexed and interview-usable.";
         }
 
 

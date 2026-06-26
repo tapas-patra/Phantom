@@ -140,6 +140,10 @@ namespace SecureOverlay
 
             _debugLogger = DebugLogger.Instance;
             Log.WriteLine($"Debug logger instance obtained ({_debugLogger.LogMessages.Count} messages already captured)");
+            if (RagTraceLogger.IsEnabled)
+            {
+                Log.WriteLine($"RAG trace logging enabled: {RagTraceLogger.GetLogPath()}");
+            }
             
             DebugLogsList.ItemsSource = _debugLogger.LogMessages;
             Log.WriteLine("Debug logs bound to UI");

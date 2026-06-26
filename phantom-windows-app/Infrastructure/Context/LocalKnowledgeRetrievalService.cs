@@ -20,6 +20,8 @@ namespace SecureOverlay.Infrastructure.Context
         {
             if (pack == null || pack.Documents.Count == 0 || string.IsNullOrWhiteSpace(query))
             {
+                RagTraceLogger.WriteLine(
+                    $"local_retrieval:skip query='{TrimForLog(query, 180)}' doc_count={pack?.Documents?.Count ?? 0}");
                 return Task.FromResult<IReadOnlyList<RetrievedContextSnippet>>(Array.Empty<RetrievedContextSnippet>());
             }
 
@@ -44,6 +46,9 @@ namespace SecureOverlay.Infrastructure.Context
                 .Take(Math.Max(1, maxSnippets))
                 .ToList();
 
+            RagTraceLogger.WriteLine(
+                $"local_retrieval:result query='{TrimForLog(query, 180)}' terms={terms.Count} doc_count={pack.Documents.Count} hits={snippets.Count} docs={string.Join(", ", snippets.Select(snippet => TrimForLog(snippet.DocumentTitle, 80)))}");
+
             return Task.FromResult(snippets);
         }
 
@@ -65,6 +70,19 @@ namespace SecureOverlay.Infrastructure.Context
         {
             return Regex.Split(value.ToLowerInvariant(), @"[^a-z0-9+#.]+" )
                 .Where(token => token.Length >= 3);
+        }
+
+        private static string TrimForLog(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = Regex.Replace(value, "\\s+", " ").Trim();
+            return normalized.Length <= maxLength
+                ? normalized
+                : normalized.Substring(0, maxLength) + "...";
         }
     }
 }

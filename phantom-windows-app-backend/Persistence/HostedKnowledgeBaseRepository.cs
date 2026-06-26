@@ -501,7 +501,7 @@ INSERT INTO hosted_kb_chunks (
             insertProfile.Transaction = transaction;
             insertProfile.CommandText = @"
 INSERT INTO hosted_kb_profile_cards (
-    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
+    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role_text, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
 ) VALUES (
     @profileCardId, @knowledgeBaseId, @userId, @fullName, @resumeText, @shortIntro, @currentRole, @yearsOfExperience, CAST(@strengthsJson AS jsonb), CAST(@skillsJson AS jsonb), CAST(@domainsJson AS jsonb), CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
 );";
@@ -532,7 +532,7 @@ INSERT INTO hosted_kb_project_cards (
         using var command = connection.CreateCommand();
         command.CommandText = @"
 INSERT INTO hosted_kb_profile_cards (
-    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
+    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role_text, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
 ) VALUES (
     @profileCardId, @knowledgeBaseId, @userId, @fullName, @resumeText, @shortIntro, @currentRole, @yearsOfExperience, CAST(@strengthsJson AS jsonb), CAST(@skillsJson AS jsonb), CAST(@domainsJson AS jsonb), CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
 )
@@ -540,7 +540,7 @@ ON CONFLICT (profile_card_id) DO UPDATE SET
     full_name = EXCLUDED.full_name,
     resume_text = EXCLUDED.resume_text,
     short_intro = EXCLUDED.short_intro,
-    current_role = EXCLUDED.current_role,
+    current_role_text = EXCLUDED.current_role_text,
     years_of_experience = EXCLUDED.years_of_experience,
     strengths_json = EXCLUDED.strengths_json,
     skills_json = EXCLUDED.skills_json,
@@ -692,7 +692,7 @@ ON CONFLICT (project_card_id) DO UPDATE SET
             FullName = ReadString(reader, "full_name"),
             ResumeText = ReadString(reader, "resume_text"),
             ShortIntro = ReadString(reader, "short_intro"),
-            CurrentRole = ReadString(reader, "current_role"),
+            CurrentRole = ReadString(reader, "current_role_text"),
             YearsOfExperience = ReadInt(reader, "years_of_experience"),
             StrengthsJson = ReadString(reader, "strengths_json"),
             SkillsJson = ReadString(reader, "skills_json"),

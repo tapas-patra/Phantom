@@ -1017,9 +1017,10 @@ Rules:
                 return;
             }
 
-            _structuredKnowledgeContext = BuildProfileGrounding(profileCard);
+            var groundedProfile = profileCard!;
+            _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile);
             RagTraceLogger.WriteLine(
-                $"profile_grounding:ready full_name='{TrimForLog(profileCard.FullName, 80)}' skills={profileCard.Skills.Count} strengths={profileCard.Strengths.Count}");
+                $"profile_grounding:ready full_name='{TrimForLog(groundedProfile.FullName, 80)}' skills={groundedProfile.Skills.Count} strengths={groundedProfile.Strengths.Count}");
             UpdateSystemPromptWithContext();
         }
 
@@ -1041,17 +1042,18 @@ Rules:
                 return;
             }
 
-            _activeProjectCardId = selectedProject.ProjectCardId;
-            _structuredKnowledgeContext = BuildProjectGrounding(selectedProject);
+            var groundedProject = selectedProject!;
+            _activeProjectCardId = groundedProject.ProjectCardId;
+            _structuredKnowledgeContext = BuildProjectGrounding(groundedProject);
             RagTraceLogger.WriteLine(
-                $"project_grounding:selected project='{TrimForLog(selectedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}'");
+                $"project_grounding:selected project='{TrimForLog(groundedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}'");
             UpdateSystemPromptWithContext();
 
-            if (selectedProject.SourceDocumentIds.Count > 0)
+            if (groundedProject.SourceDocumentIds.Count > 0)
             {
                 await RefreshRetrievedKnowledgeSnippetsAsync(
                     plannerDecision.KnowledgeQuery,
-                    selectedProject.SourceDocumentIds,
+                    groundedProject.SourceDocumentIds,
                     cancellationToken);
             }
             else

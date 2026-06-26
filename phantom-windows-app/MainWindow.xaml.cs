@@ -1392,15 +1392,16 @@ namespace SecureOverlay
             }
 
             // Initialize rotation manager
-            _rotationManager = new APIRotationManager(_settings);
+            var rotationManager = new APIRotationManager(_settings);
+            _rotationManager = rotationManager;
             
             Log.WriteLine($"✓ Rotation manager initialized");
             Log.WriteLine($"  Auto-switch keys: {_settings.AutoSwitchKeysOnError}");
             Log.WriteLine($"  Auto-switch models: {_settings.AutoSwitchModelsOnError}");
             
             // Log key counts for current provider
-            var keyCount = _rotationManager.GetTotalKeyCount(_settings.SelectedAI);
-            var availableKeys = _rotationManager.GetAvailableKeyCount(_settings.SelectedAI);
+            var keyCount = rotationManager.GetTotalKeyCount(_settings.SelectedAI);
+            var availableKeys = rotationManager.GetAvailableKeyCount(_settings.SelectedAI);
             Log.WriteLine($"  {_settings.SelectedAI} keys: {keyCount} total, {availableKeys} available");
 
             var allowedProviders = GetAvailableProvidersForCurrentTier();
@@ -1412,7 +1413,7 @@ namespace SecureOverlay
             }
             
             // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
-            var currentModel = _rotationManager.GetCurrentModel(_settings.SelectedAI);
+            var currentModel = rotationManager.GetCurrentModel(_settings.SelectedAI);
             var allowedModels = GetAvailableModelsForSelectedProvider();
             if (!allowedModels.Contains(currentModel))
             {
@@ -1433,7 +1434,7 @@ namespace SecureOverlay
             }
 
             currentModel = useByoRuntime
-                ? (_rotationManager?.GetCurrentModel(runtimeProvider) ?? currentModel)
+                ? (rotationManager.GetCurrentModel(runtimeProvider) ?? currentModel)
                 : GetManagedRuntimeModelId(runtimeProvider);
 
             Log.WriteLine($"✓ Loading model from settings: {currentModel}");
@@ -1441,7 +1442,7 @@ namespace SecureOverlay
             
             // Create AI service with rotation
             IAIService newAI = useByoRuntime
-                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, _rotationManager)
+                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, rotationManager)
                 : new HostedManagedAiService(
                     _authSessionRepository,
                     _hostedRuntimeOptions,
@@ -1459,7 +1460,7 @@ namespace SecureOverlay
                 _conversationManager.UpdateAIService(newAI);
                 _conversationManager.UpdateModelConfig(modelConfig);
                 _conversationManager.UpdateSystemPrompt(_settings.SystemPrompt);
-                _conversationManager.SetRotationManager(_rotationManager);
+                _conversationManager.SetRotationManager(rotationManager);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;

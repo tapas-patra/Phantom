@@ -40,6 +40,7 @@ namespace SecureOverlay.Infrastructure.Context
             CancellationToken cancellationToken = default)
         {
             // ponytail: planner owns the routing decision; retrieval just executes the rewritten query.
+            pack ??= new ContextPack();
             var scopedHostedRequest = preferredDocumentIds != null && preferredDocumentIds.Count > 0;
             var accountSnapshot = _accounts.Load();
             var session = _sessions.Load();

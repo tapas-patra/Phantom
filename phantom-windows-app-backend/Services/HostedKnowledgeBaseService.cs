@@ -276,12 +276,14 @@ public sealed class HostedKnowledgeBaseService
 
             var documentId = $"kb-doc-{Guid.NewGuid():N}";
             var contentSha = ComputeSha256(extractedText);
-            var sourceLabel = Path.GetFileNameWithoutExtension(file.FileName ?? string.Empty);
+            var uploadFileName = string.IsNullOrWhiteSpace(file.FileName) ? "document" : file.FileName;
+            var sourceLabel = Path.GetFileNameWithoutExtension(uploadFileName);
+            var documentTitle = string.IsNullOrWhiteSpace(sourceLabel) ? uploadFileName : sourceLabel;
             var documentChunks = BuildChunks(
                 knowledgeBase,
                 account,
                 documentId,
-                string.IsNullOrWhiteSpace(sourceLabel) ? file.FileName : sourceLabel,
+                documentTitle,
                 extraction.SourceType,
                 extractedText,
                 now);
@@ -296,12 +298,12 @@ public sealed class HostedKnowledgeBaseService
                 DocumentId = documentId,
                 KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
                 UserId = account.UserId,
-                FileName = file.FileName,
+                FileName = uploadFileName,
                 ContentType = file.ContentType ?? string.Empty,
                 SourceType = extraction.SourceType,
                 Section = normalizedSection,
                 SourceKind = "upload",
-                SourceLabel = string.IsNullOrWhiteSpace(sourceLabel) ? file.FileName : sourceLabel,
+                SourceLabel = documentTitle,
                 ExtractedText = extractedText,
                 ContentSha256 = contentSha,
                 CharacterCount = extractedText.Length,

@@ -1194,7 +1194,7 @@ CREATE TABLE IF NOT EXISTS hosted_kb_profile_cards (
     full_name TEXT NOT NULL DEFAULT '',
     resume_text TEXT NOT NULL DEFAULT '',
     short_intro TEXT NOT NULL DEFAULT '',
-    current_role TEXT NOT NULL DEFAULT '',
+    current_role_text TEXT NOT NULL DEFAULT '',
     years_of_experience INTEGER NOT NULL DEFAULT 0,
     strengths_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     skills_json JSONB NOT NULL DEFAULT '[]'::jsonb,

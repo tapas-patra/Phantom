@@ -34,7 +34,15 @@ namespace SecureOverlay
             }
         }
 
-        public static string GetLogPath() => LogFilePath;
+        public static string GetLogPath()
+        {
+            if (Enabled)
+            {
+                EnsureInitialized();
+            }
+
+            return LogFilePath;
+        }
 
         private static void EnsureInitialized()
         {

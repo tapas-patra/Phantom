@@ -863,6 +863,8 @@ Rules:
 - type=retrieve when the answer should be grounded in the user's resume, projects, documents, knowledge base, or a follow-up that depends on prior project-specific context.
 - In interview context, prompts like ""introduce yourself"", ""tell me about yourself"", ""walk me through your background"", ""tell me about any of your projects"", ""tell me about a recent project"", and ""what did you build"" are about the USER, so use type=retrieve.
 - Never answer resume, project, or background questions as the assistant's own identity or invented experience.
+- For broad self-introduction prompts, rewrite rag_query to something semantically rich like ""candidate background summary experience skills"" instead of copying the raw wording.
+- For broad project prompts, rewrite rag_query to something semantically rich like ""recent project architecture technologies impact role"" instead of copying the raw wording.
 - For follow-ups like ""this"", ""that"", ""it"", rewrite rag_query to the specific project/topic from recent conversation.
 - For follow-ups like ""explain the architecture of this"" after a project discussion, use type=retrieve and rewrite rag_query to the exact project/topic from recent conversation.
 - Use scope=""previous_docs"" only when the request clearly continues the same retrieved project/topic.

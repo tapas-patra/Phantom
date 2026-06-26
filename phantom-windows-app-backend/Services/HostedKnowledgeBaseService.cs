@@ -33,6 +33,7 @@ public sealed class HostedKnowledgeBaseService
     private const int MaxSearchCacheEntries = 256;
     private const double MinSnippetScore = 0.18d;
     private const double MinSemanticSimilarity = 0.45d;
+    private const int FallbackSnippetCount = 2;
     private const int MaxSnippetLength = 480;
     private const int MaxSnippetsPerDocument = 2;
     private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(3);
@@ -1146,6 +1147,29 @@ public sealed class HostedKnowledgeBaseService
             {
                 break;
             }
+        }
+
+        if (snippets.Count > 0 || candidates.Count == 0)
+        {
+            return snippets;
+        }
+
+        // ponytail: broad prompts like "introduce yourself" can have weak term overlap; use the best semantic candidates instead of returning nothing.
+        foreach (var candidate in candidates.Take(Math.Min(snippetLimit, FallbackSnippetCount)))
+        {
+            var snippetText = TrimSnippetText(candidate.Text, terms);
+            if (string.IsNullOrWhiteSpace(snippetText))
+            {
+                continue;
+            }
+
+            snippets.Add(new HostedKnowledgeBaseSnippetDto
+            {
+                DocumentId = candidate.DocumentId,
+                DocumentTitle = candidate.DocumentTitle,
+                Text = snippetText,
+                Score = Math.Max(candidate.FusedScore, candidate.SemanticSimilarity)
+            });
         }
 
         return snippets;

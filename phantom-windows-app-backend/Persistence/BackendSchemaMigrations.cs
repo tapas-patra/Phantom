@@ -4,7 +4,7 @@ namespace Phantom.WindowsApp.Backend.Persistence;
 
 public static class BackendSchemaMigrations
 {
-    public static IReadOnlyList<SchemaMigration> All { get; } = new[]
+    public static IReadOnlyList<SchemaMigration> All => new[]
     {
         new SchemaMigration("001_backend_core_schema", CoreSchemaSql),
         new SchemaMigration("002_dashboard_projection_schema", DashboardProjectionSchemaSql),
@@ -1166,7 +1166,7 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_profile
     ON hosted_kb_chunks(knowledge_base_id, embedding_model, embedding_version, indexed_at_utc, document_id, chunk_index);
 ";
 
-    private const string HostedKnowledgeBaseOnlineHnswIndexSql = @"
+    private static readonly string HostedKnowledgeBaseOnlineHnswIndexSql = @"
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw_default
     ON hosted_kb_chunks
     USING hnsw ((CAST(embedding AS vector(" + HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions + @"))) vector_cosine_ops)

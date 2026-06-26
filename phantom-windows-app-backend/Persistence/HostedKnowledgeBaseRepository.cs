@@ -60,6 +60,53 @@ LIMIT 1;";
         return reader.Read() ? MapDocument(reader) : null;
     }
 
+    public HostedKnowledgeBaseProfileCardRecord? FindProfileCard(string knowledgeBaseId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_profile_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+LIMIT 1;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? MapProfileCard(reader) : null;
+    }
+
+    public IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> ListProjectCards(string knowledgeBaseId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_project_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+ORDER BY is_recent DESC, sort_order ASC, updated_at_utc DESC;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        using var reader = command.ExecuteReader();
+        var items = new List<HostedKnowledgeBaseProjectCardRecord>();
+        while (reader.Read())
+        {
+            items.Add(MapProjectCard(reader));
+        }
+
+        return items;
+    }
+
+    public HostedKnowledgeBaseProjectCardRecord? FindProjectCard(string knowledgeBaseId, string projectCardId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_project_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND project_card_id = @projectCardId
+LIMIT 1;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        command.Parameters.AddWithValue("projectCardId", projectCardId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? MapProjectCard(reader) : null;
+    }
+
     public IReadOnlyList<HostedKnowledgeBaseChunkRecord> ListChunks(string knowledgeBaseId)
     {
         using var connection = _store.OpenConnection();
@@ -323,7 +370,9 @@ ON CONFLICT (knowledge_base_id) DO UPDATE SET
     public void ReplaceDocumentsAndChunks(
         HostedKnowledgeBaseRecord knowledgeBase,
         IReadOnlyList<HostedKnowledgeBaseDocumentRecord> documents,
-        IReadOnlyList<HostedKnowledgeBaseChunkRecord> chunks)
+        IReadOnlyList<HostedKnowledgeBaseChunkRecord> chunks,
+        HostedKnowledgeBaseProfileCardRecord? profileCard,
+        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards)
     {
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -342,6 +391,22 @@ ON CONFLICT (knowledge_base_id) DO UPDATE SET
             deleteDocs.CommandText = "DELETE FROM hosted_kb_documents WHERE knowledge_base_id = @knowledgeBaseId;";
             deleteDocs.Parameters.AddWithValue("knowledgeBaseId", knowledgeBase.KnowledgeBaseId);
             deleteDocs.ExecuteNonQuery();
+        }
+
+        using (var deleteProfile = connection.CreateCommand())
+        {
+            deleteProfile.Transaction = transaction;
+            deleteProfile.CommandText = "DELETE FROM hosted_kb_profile_cards WHERE knowledge_base_id = @knowledgeBaseId;";
+            deleteProfile.Parameters.AddWithValue("knowledgeBaseId", knowledgeBase.KnowledgeBaseId);
+            deleteProfile.ExecuteNonQuery();
+        }
+
+        using (var deleteProjects = connection.CreateCommand())
+        {
+            deleteProjects.Transaction = transaction;
+            deleteProjects.CommandText = "DELETE FROM hosted_kb_project_cards WHERE knowledge_base_id = @knowledgeBaseId;";
+            deleteProjects.Parameters.AddWithValue("knowledgeBaseId", knowledgeBase.KnowledgeBaseId);
+            deleteProjects.ExecuteNonQuery();
         }
 
         using (var upsertKnowledgeBase = connection.CreateCommand())
@@ -373,9 +438,9 @@ ON CONFLICT (knowledge_base_id) DO UPDATE SET
             insertDocument.Transaction = transaction;
             insertDocument.CommandText = @"
 INSERT INTO hosted_kb_documents (
-    document_id, knowledge_base_id, user_id, file_name, content_type, source_type, extracted_text, content_sha256, embedding_model, embedding_version, character_count, chunk_count, status, error, uploaded_at_utc, processed_at_utc, indexed_at_utc
+    document_id, knowledge_base_id, user_id, file_name, content_type, source_type, section, source_kind, source_label, extracted_text, content_sha256, embedding_model, embedding_version, character_count, chunk_count, status, error, uploaded_at_utc, processed_at_utc, indexed_at_utc
 ) VALUES (
-    @documentId, @knowledgeBaseId, @userId, @fileName, @contentType, @sourceType, @extractedText, @contentSha256, @embeddingModel, @embeddingVersion, @characterCount, @chunkCount, @status, @error, @uploadedAtUtc, @processedAtUtc, @indexedAtUtc
+    @documentId, @knowledgeBaseId, @userId, @fileName, @contentType, @sourceType, @section, @sourceKind, @sourceLabel, @extractedText, @contentSha256, @embeddingModel, @embeddingVersion, @characterCount, @chunkCount, @status, @error, @uploadedAtUtc, @processedAtUtc, @indexedAtUtc
 );";
             insertDocument.Parameters.AddWithValue("documentId", document.DocumentId);
             insertDocument.Parameters.AddWithValue("knowledgeBaseId", document.KnowledgeBaseId);
@@ -383,6 +448,9 @@ INSERT INTO hosted_kb_documents (
             insertDocument.Parameters.AddWithValue("fileName", document.FileName);
             insertDocument.Parameters.AddWithValue("contentType", document.ContentType);
             insertDocument.Parameters.AddWithValue("sourceType", document.SourceType);
+            insertDocument.Parameters.AddWithValue("section", document.Section);
+            insertDocument.Parameters.AddWithValue("sourceKind", document.SourceKind);
+            insertDocument.Parameters.AddWithValue("sourceLabel", document.SourceLabel);
             insertDocument.Parameters.AddWithValue("extractedText", document.ExtractedText);
             insertDocument.Parameters.AddWithValue("contentSha256", document.ContentSha256);
             insertDocument.Parameters.AddWithValue("embeddingModel", document.EmbeddingModel);
@@ -427,7 +495,87 @@ INSERT INTO hosted_kb_chunks (
             insertChunk.ExecuteNonQuery();
         }
 
+        if (profileCard != null)
+        {
+            using var insertProfile = connection.CreateCommand();
+            insertProfile.Transaction = transaction;
+            insertProfile.CommandText = @"
+INSERT INTO hosted_kb_profile_cards (
+    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
+) VALUES (
+    @profileCardId, @knowledgeBaseId, @userId, @fullName, @resumeText, @shortIntro, @currentRole, @yearsOfExperience, CAST(@strengthsJson AS jsonb), CAST(@skillsJson AS jsonb), CAST(@domainsJson AS jsonb), CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
+);";
+            BindProfileCard(insertProfile, profileCard);
+            insertProfile.ExecuteNonQuery();
+        }
+
+        foreach (var projectCard in projectCards)
+        {
+            using var insertProject = connection.CreateCommand();
+            insertProject.Transaction = transaction;
+            insertProject.CommandText = @"
+INSERT INTO hosted_kb_project_cards (
+    project_card_id, knowledge_base_id, user_id, title, slug, is_recent, sort_order, role, summary, stack_json, architecture, challenges, impact, source_document_ids_json, created_at_utc, updated_at_utc
+) VALUES (
+    @projectCardId, @knowledgeBaseId, @userId, @title, @slug, @isRecent, @sortOrder, @role, @summary, CAST(@stackJson AS jsonb), @architecture, @challenges, @impact, CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
+);";
+            BindProjectCard(insertProject, projectCard);
+            insertProject.ExecuteNonQuery();
+        }
+
         transaction.Commit();
+    }
+
+    public void SaveProfileCard(HostedKnowledgeBaseProfileCardRecord record)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+INSERT INTO hosted_kb_profile_cards (
+    profile_card_id, knowledge_base_id, user_id, full_name, resume_text, short_intro, current_role, years_of_experience, strengths_json, skills_json, domains_json, source_document_ids_json, created_at_utc, updated_at_utc
+) VALUES (
+    @profileCardId, @knowledgeBaseId, @userId, @fullName, @resumeText, @shortIntro, @currentRole, @yearsOfExperience, CAST(@strengthsJson AS jsonb), CAST(@skillsJson AS jsonb), CAST(@domainsJson AS jsonb), CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
+)
+ON CONFLICT (profile_card_id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    resume_text = EXCLUDED.resume_text,
+    short_intro = EXCLUDED.short_intro,
+    current_role = EXCLUDED.current_role,
+    years_of_experience = EXCLUDED.years_of_experience,
+    strengths_json = EXCLUDED.strengths_json,
+    skills_json = EXCLUDED.skills_json,
+    domains_json = EXCLUDED.domains_json,
+    source_document_ids_json = EXCLUDED.source_document_ids_json,
+    updated_at_utc = EXCLUDED.updated_at_utc;";
+        BindProfileCard(command, record);
+        command.ExecuteNonQuery();
+    }
+
+    public void SaveProjectCard(HostedKnowledgeBaseProjectCardRecord record)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+INSERT INTO hosted_kb_project_cards (
+    project_card_id, knowledge_base_id, user_id, title, slug, is_recent, sort_order, role, summary, stack_json, architecture, challenges, impact, source_document_ids_json, created_at_utc, updated_at_utc
+) VALUES (
+    @projectCardId, @knowledgeBaseId, @userId, @title, @slug, @isRecent, @sortOrder, @role, @summary, CAST(@stackJson AS jsonb), @architecture, @challenges, @impact, CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
+)
+ON CONFLICT (project_card_id) DO UPDATE SET
+    title = EXCLUDED.title,
+    slug = EXCLUDED.slug,
+    is_recent = EXCLUDED.is_recent,
+    sort_order = EXCLUDED.sort_order,
+    role = EXCLUDED.role,
+    summary = EXCLUDED.summary,
+    stack_json = EXCLUDED.stack_json,
+    architecture = EXCLUDED.architecture,
+    challenges = EXCLUDED.challenges,
+    impact = EXCLUDED.impact,
+    source_document_ids_json = EXCLUDED.source_document_ids_json,
+    updated_at_utc = EXCLUDED.updated_at_utc;";
+        BindProjectCard(command, record);
+        command.ExecuteNonQuery();
     }
 
     private static void BindKnowledgeBase(NpgsqlCommand command, HostedKnowledgeBaseRecord record)
@@ -442,6 +590,44 @@ INSERT INTO hosted_kb_chunks (
         command.Parameters.AddWithValue("documentCount", record.DocumentCount);
         command.Parameters.AddWithValue("chunkCount", record.ChunkCount);
         command.Parameters.AddWithValue("lastProcessedAtUtc", (object?)record.LastProcessedAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
+        command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
+    }
+
+    private static void BindProfileCard(NpgsqlCommand command, HostedKnowledgeBaseProfileCardRecord record)
+    {
+        command.Parameters.AddWithValue("profileCardId", record.ProfileCardId);
+        command.Parameters.AddWithValue("knowledgeBaseId", record.KnowledgeBaseId);
+        command.Parameters.AddWithValue("userId", record.UserId);
+        command.Parameters.AddWithValue("fullName", record.FullName);
+        command.Parameters.AddWithValue("resumeText", record.ResumeText);
+        command.Parameters.AddWithValue("shortIntro", record.ShortIntro);
+        command.Parameters.AddWithValue("currentRole", record.CurrentRole);
+        command.Parameters.AddWithValue("yearsOfExperience", record.YearsOfExperience);
+        command.Parameters.AddWithValue("strengthsJson", record.StrengthsJson);
+        command.Parameters.AddWithValue("skillsJson", record.SkillsJson);
+        command.Parameters.AddWithValue("domainsJson", record.DomainsJson);
+        command.Parameters.AddWithValue("sourceDocumentIdsJson", record.SourceDocumentIdsJson);
+        command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
+        command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
+    }
+
+    private static void BindProjectCard(NpgsqlCommand command, HostedKnowledgeBaseProjectCardRecord record)
+    {
+        command.Parameters.AddWithValue("projectCardId", record.ProjectCardId);
+        command.Parameters.AddWithValue("knowledgeBaseId", record.KnowledgeBaseId);
+        command.Parameters.AddWithValue("userId", record.UserId);
+        command.Parameters.AddWithValue("title", record.Title);
+        command.Parameters.AddWithValue("slug", record.Slug);
+        command.Parameters.AddWithValue("isRecent", record.IsRecent);
+        command.Parameters.AddWithValue("sortOrder", record.SortOrder);
+        command.Parameters.AddWithValue("role", record.Role);
+        command.Parameters.AddWithValue("summary", record.Summary);
+        command.Parameters.AddWithValue("stackJson", record.StackJson);
+        command.Parameters.AddWithValue("architecture", record.Architecture);
+        command.Parameters.AddWithValue("challenges", record.Challenges);
+        command.Parameters.AddWithValue("impact", record.Impact);
+        command.Parameters.AddWithValue("sourceDocumentIdsJson", record.SourceDocumentIdsJson);
         command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
         command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
     }
@@ -477,6 +663,9 @@ INSERT INTO hosted_kb_chunks (
             FileName = reader.GetString(reader.GetOrdinal("file_name")),
             ContentType = reader.GetString(reader.GetOrdinal("content_type")),
             SourceType = reader.GetString(reader.GetOrdinal("source_type")),
+            Section = ReadString(reader, "section"),
+            SourceKind = ReadString(reader, "source_kind"),
+            SourceLabel = ReadString(reader, "source_label"),
             ExtractedText = ReadString(reader, "extracted_text"),
             ContentSha256 = ReadString(reader, "content_sha256"),
             EmbeddingModel = ReadString(reader, "embedding_model"),
@@ -490,6 +679,50 @@ INSERT INTO hosted_kb_chunks (
                 ? null
                 : reader.GetDateTime(reader.GetOrdinal("processed_at_utc")),
             IndexedAtUtc = ReadDateTime(reader, "indexed_at_utc")
+        };
+    }
+
+    private static HostedKnowledgeBaseProfileCardRecord MapProfileCard(NpgsqlDataReader reader)
+    {
+        return new HostedKnowledgeBaseProfileCardRecord
+        {
+            ProfileCardId = reader.GetString(reader.GetOrdinal("profile_card_id")),
+            KnowledgeBaseId = reader.GetString(reader.GetOrdinal("knowledge_base_id")),
+            UserId = reader.GetString(reader.GetOrdinal("user_id")),
+            FullName = ReadString(reader, "full_name"),
+            ResumeText = ReadString(reader, "resume_text"),
+            ShortIntro = ReadString(reader, "short_intro"),
+            CurrentRole = ReadString(reader, "current_role"),
+            YearsOfExperience = ReadInt(reader, "years_of_experience"),
+            StrengthsJson = ReadString(reader, "strengths_json"),
+            SkillsJson = ReadString(reader, "skills_json"),
+            DomainsJson = ReadString(reader, "domains_json"),
+            SourceDocumentIdsJson = ReadString(reader, "source_document_ids_json"),
+            CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+            UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
+        };
+    }
+
+    private static HostedKnowledgeBaseProjectCardRecord MapProjectCard(NpgsqlDataReader reader)
+    {
+        return new HostedKnowledgeBaseProjectCardRecord
+        {
+            ProjectCardId = reader.GetString(reader.GetOrdinal("project_card_id")),
+            KnowledgeBaseId = reader.GetString(reader.GetOrdinal("knowledge_base_id")),
+            UserId = reader.GetString(reader.GetOrdinal("user_id")),
+            Title = ReadString(reader, "title"),
+            Slug = ReadString(reader, "slug"),
+            IsRecent = reader.GetBoolean(reader.GetOrdinal("is_recent")),
+            SortOrder = ReadInt(reader, "sort_order"),
+            Role = ReadString(reader, "role"),
+            Summary = ReadString(reader, "summary"),
+            StackJson = ReadString(reader, "stack_json"),
+            Architecture = ReadString(reader, "architecture"),
+            Challenges = ReadString(reader, "challenges"),
+            Impact = ReadString(reader, "impact"),
+            SourceDocumentIdsJson = ReadString(reader, "source_document_ids_json"),
+            CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+            UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
         };
     }
 

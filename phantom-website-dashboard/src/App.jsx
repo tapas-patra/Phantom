@@ -23,6 +23,8 @@ import {
   fetchGmailOAuthStatus,
   fetchHostedKnowledgeBase,
   fetchHostedKnowledgeBaseDocument,
+  markHostedKnowledgeBaseProjectRecent,
+  pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
   fetchPaymentCatalog,
   fetchSupportOverview,
@@ -46,6 +48,8 @@ import {
   triggerManagedAiCatalogRefresh,
   updateAdminUser,
   updateAdminSupportTicket,
+  updateHostedKnowledgeBaseProfile,
+  updateHostedKnowledgeBaseProject,
   updateKnowledgeBaseEmbeddingConfig,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
@@ -1848,11 +1852,73 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [documentLoadingId, setDocumentLoadingId] = useState("");
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
+  const [selectedSection, setSelectedSection] = useState("profile");
+  const [pasteTitle, setPasteTitle] = useState("");
+  const [pasteContent, setPasteContent] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [profileDraft, setProfileDraft] = useState({
+    fullName: "",
+    resumeText: "",
+    shortIntro: "",
+    currentRole: "",
+    yearsOfExperience: 0,
+    strengths: "",
+    skills: "",
+    domains: ""
+  });
+  const [projectDraft, setProjectDraft] = useState({
+    projectCardId: "",
+    title: "",
+    isRecent: false,
+    sortOrder: 0,
+    role: "",
+    summary: "",
+    stack: "",
+    architecture: "",
+    challenges: "",
+    impact: ""
+  });
 
   useEffect(() => {
     setName(knowledgeBase?.name || "My Premium Knowledge Base");
     setDescription(knowledgeBase?.description || "");
   }, [knowledgeBase?.description, knowledgeBase?.name]);
+
+  useEffect(() => {
+    const profile = knowledgeBase?.profileCard;
+    setProfileDraft({
+      fullName: profile?.fullName || "",
+      resumeText: profile?.resumeText || "",
+      shortIntro: profile?.shortIntro || "",
+      currentRole: profile?.currentRole || "",
+      yearsOfExperience: profile?.yearsOfExperience || 0,
+      strengths: (profile?.strengths || []).join(", "),
+      skills: (profile?.skills || []).join(", "),
+      domains: (profile?.domains || []).join(", ")
+    });
+  }, [knowledgeBase?.profileCard]);
+
+  useEffect(() => {
+    const projects = knowledgeBase?.projectCards || [];
+    const fallbackProjectId = projects[0]?.projectCardId || "";
+    const nextProjectId = projects.some((project) => project.projectCardId === selectedProjectId)
+      ? selectedProjectId
+      : fallbackProjectId;
+    setSelectedProjectId(nextProjectId);
+    const selectedProject = projects.find((project) => project.projectCardId === nextProjectId);
+    setProjectDraft({
+      projectCardId: selectedProject?.projectCardId || "",
+      title: selectedProject?.title || "",
+      isRecent: selectedProject?.isRecent || false,
+      sortOrder: selectedProject?.sortOrder || 0,
+      role: selectedProject?.role || "",
+      summary: selectedProject?.summary || "",
+      stack: (selectedProject?.stack || []).join(", "),
+      architecture: selectedProject?.architecture || "",
+      challenges: selectedProject?.challenges || "",
+      impact: selectedProject?.impact || ""
+    });
+  }, [knowledgeBase?.projectCards, selectedProjectId]);
 
   const isPremiumBlocked = !knowledgeBase?.canManage;
   const blockedMessage =
@@ -1869,6 +1935,12 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       setSelectedDocument(null);
     }
   }, [knowledgeBase?.documents, selectedDocument?.documentId]);
+
+  async function reloadKnowledgeBase() {
+    const nextKnowledgeBase = await fetchHostedKnowledgeBase(accessToken);
+    onKnowledgeBaseChanged(nextKnowledgeBase);
+    return nextKnowledgeBase;
+  }
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -1899,7 +1971,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         throw new Error("Combined upload exceeds the 8 MB per-request limit.");
       }
 
-      const result = await uploadHostedKnowledgeBaseDocuments(accessToken, files);
+      const result = await uploadHostedKnowledgeBaseDocuments(accessToken, files, selectedSection);
       onKnowledgeBaseChanged(result.knowledgeBase);
       setStatus(`Processed ${result.addedDocuments.length} document${result.addedDocuments.length === 1 ? "" : "s"}.`);
     } catch (error) {
@@ -1907,6 +1979,31 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } finally {
       setSubmitting(false);
       event.target.value = "";
+    }
+  }
+
+  async function handlePaste(event) {
+    event.preventDefault();
+    if (!pasteContent.trim()) {
+      return;
+    }
+
+    setSubmitting(true);
+    setStatus("");
+    try {
+      const result = await pasteHostedKnowledgeBaseDocument(accessToken, {
+        section: selectedSection,
+        title: pasteTitle,
+        content: pasteContent
+      });
+      onKnowledgeBaseChanged(result.knowledgeBase);
+      setPasteTitle("");
+      setPasteContent("");
+      setStatus("Pasted content processed into the hosted knowledge base.");
+    } catch (error) {
+      setStatus(error.message || "Could not process pasted content.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -1947,6 +2044,73 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       setStatus(error.message || "Could not delete that document.");
     } finally {
       setDeletingDocumentId("");
+    }
+  }
+
+  async function handleSaveProfile(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await updateHostedKnowledgeBaseProfile(accessToken, {
+        fullName: profileDraft.fullName,
+        resumeText: profileDraft.resumeText,
+        shortIntro: profileDraft.shortIntro,
+        currentRole: profileDraft.currentRole,
+        yearsOfExperience: Number(profileDraft.yearsOfExperience) || 0,
+        strengths: parseListInput(profileDraft.strengths),
+        skills: parseListInput(profileDraft.skills),
+        domains: parseListInput(profileDraft.domains)
+      });
+      await reloadKnowledgeBase();
+      setStatus("Profile card updated.");
+    } catch (error) {
+      setStatus(error.message || "Could not update the profile card.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleSaveProject(event) {
+    event.preventDefault();
+    if (!projectDraft.projectCardId) {
+      return;
+    }
+
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await updateHostedKnowledgeBaseProject(accessToken, projectDraft.projectCardId, {
+        title: projectDraft.title,
+        isRecent: projectDraft.isRecent,
+        sortOrder: Number(projectDraft.sortOrder) || 0,
+        role: projectDraft.role,
+        summary: projectDraft.summary,
+        stack: parseListInput(projectDraft.stack),
+        architecture: projectDraft.architecture,
+        challenges: projectDraft.challenges,
+        impact: projectDraft.impact
+      });
+      await reloadKnowledgeBase();
+      setStatus("Project card updated.");
+    } catch (error) {
+      setStatus(error.message || "Could not update the project card.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleMarkRecent(projectCardId) {
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await markHostedKnowledgeBaseProjectRecent(accessToken, projectCardId);
+      await reloadKnowledgeBase();
+      setStatus("Recent project updated.");
+    } catch (error) {
+      setStatus(error.message || "Could not update the recent project.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -2001,12 +2165,20 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       </form>
 
       <article className="glass-panel upload-panel">
-        <p className="eyebrow">Upload documents</p>
+        <p className="eyebrow">Sectioned memory</p>
         <h3>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h3>
         <p>
-          Premium upload limits are enforced on the backend. Keep the website strict and honest about request
-          size, file count, and processing limits.
+          Choose where this content belongs first. The backend extracts structured interview memory immediately,
+          then keeps the raw source for edits and deep retrieval.
         </p>
+        <label>
+          <span>Section</span>
+          <select value={selectedSection} onChange={(event) => setSelectedSection(event.target.value)} disabled={isPremiumBlocked || submitting}>
+            <option value="profile">Profile</option>
+            <option value="project">Project</option>
+            <option value="general_reference">General reference</option>
+          </select>
+        </label>
         <label className={`button button-secondary button-file ${isPremiumBlocked || submitting ? "button-disabled" : ""}`}>
           Upload Documents
           <input
@@ -2017,7 +2189,115 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             accept=".txt,.md,.json,.csv,.log,.docx"
           />
         </label>
+        <form className="auth-form" onSubmit={handlePaste}>
+          <label>
+            <span>Paste title</span>
+            <input value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} disabled={isPremiumBlocked || submitting} placeholder="Senior backend profile / PocketPad project" />
+          </label>
+          <label>
+            <span>Paste content</span>
+            <textarea
+              rows={8}
+              value={pasteContent}
+              onChange={(event) => setPasteContent(event.target.value)}
+              disabled={isPremiumBlocked || submitting}
+              placeholder="Paste resume, project note, or interview context here."
+            />
+          </label>
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !pasteContent.trim()}>
+            {submitting ? "Processing..." : "Process Pasted Content"}
+          </button>
+        </form>
       </article>
+
+      <form className="glass-panel auth-form" onSubmit={handleSaveProfile}>
+        <p className="eyebrow">Profile card</p>
+        <label>
+          <span>Full name</span>
+          <input value={profileDraft.fullName} onChange={(event) => setProfileDraft((current) => ({ ...current, fullName: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Current role</span>
+          <input value={profileDraft.currentRole} onChange={(event) => setProfileDraft((current) => ({ ...current, currentRole: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Years of experience</span>
+          <input type="number" min="0" value={profileDraft.yearsOfExperience} onChange={(event) => setProfileDraft((current) => ({ ...current, yearsOfExperience: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Short intro</span>
+          <textarea rows={5} value={profileDraft.shortIntro} onChange={(event) => setProfileDraft((current) => ({ ...current, shortIntro: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Strengths</span>
+          <input value={profileDraft.strengths} onChange={(event) => setProfileDraft((current) => ({ ...current, strengths: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Distributed systems, ownership, debugging" />
+        </label>
+        <label>
+          <span>Skills</span>
+          <input value={profileDraft.skills} onChange={(event) => setProfileDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="C#, .NET, PostgreSQL, Redis" />
+        </label>
+        <label>
+          <span>Domains</span>
+          <input value={profileDraft.domains} onChange={(event) => setProfileDraft((current) => ({ ...current, domains: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Fintech, SaaS, AI" />
+        </label>
+        <label>
+          <span>Resume source text</span>
+          <textarea rows={8} value={profileDraft.resumeText} onChange={(event) => setProfileDraft((current) => ({ ...current, resumeText: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !knowledgeBase?.profileCard}>
+          {submitting ? "Saving..." : "Save Profile Card"}
+        </button>
+      </form>
+
+      <form className="glass-panel auth-form" onSubmit={handleSaveProject}>
+        <p className="eyebrow">Project card</p>
+        <label>
+          <span>Selected project</span>
+          <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} disabled={isPremiumBlocked || submitting || !(knowledgeBase?.projectCards || []).length}>
+            {(knowledgeBase?.projectCards || []).map((project) => (
+              <option key={project.projectCardId} value={project.projectCardId}>
+                {project.isRecent ? "Recent · " : ""}{project.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Title</span>
+          <input value={projectDraft.title} onChange={(event) => setProjectDraft((current) => ({ ...current, title: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Role</span>
+          <input value={projectDraft.role} onChange={(event) => setProjectDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Summary</span>
+          <textarea rows={4} value={projectDraft.summary} onChange={(event) => setProjectDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Stack</span>
+          <input value={projectDraft.stack} onChange={(event) => setProjectDraft((current) => ({ ...current, stack: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="React, Node.js, Redis, PostgreSQL" />
+        </label>
+        <label>
+          <span>Architecture</span>
+          <textarea rows={4} value={projectDraft.architecture} onChange={(event) => setProjectDraft((current) => ({ ...current, architecture: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Challenges</span>
+          <textarea rows={4} value={projectDraft.challenges} onChange={(event) => setProjectDraft((current) => ({ ...current, challenges: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Impact</span>
+          <textarea rows={4} value={projectDraft.impact} onChange={(event) => setProjectDraft((current) => ({ ...current, impact: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <div className="table-actions">
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !projectDraft.projectCardId}>
+            {submitting ? "Saving..." : "Save Project Card"}
+          </button>
+          <button className="button button-secondary" type="button" disabled={isPremiumBlocked || submitting || !projectDraft.projectCardId} onClick={() => handleMarkRecent(projectDraft.projectCardId)}>
+            Mark as Recent
+          </button>
+        </div>
+      </form>
 
       <div className="glass-panel table-panel table-span-full">
         <div className="table-header">
@@ -2031,6 +2311,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Section</th>
                 <th>Type</th>
                 <th>Chars</th>
                 <th>Chunks</th>
@@ -2041,12 +2322,13 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             <tbody>
               {(knowledgeBase?.documents || []).length === 0 ? (
                 <tr>
-                  <td colSpan="6">No hosted documents processed yet.</td>
+                  <td colSpan="7">No hosted documents processed yet.</td>
                 </tr>
               ) : (
                 knowledgeBase.documents.map((document) => (
                   <tr key={document.documentId}>
                     <td>{document.fileName}</td>
+                    <td>{document.section || "general_reference"}</td>
                     <td>{document.sourceType || document.contentType || "file"}</td>
                     <td>{document.characterCount}</td>
                     <td>{document.chunkCount}</td>
@@ -2096,7 +2378,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             </button>
           </div>
           <p>
-            {selectedDocument.sourceType || selectedDocument.contentType || "file"} · {selectedDocument.characterCount} chars ·{" "}
+            {selectedDocument.section || "general_reference"} · {selectedDocument.sourceType || selectedDocument.contentType || "file"} · {selectedDocument.characterCount} chars ·{" "}
             {selectedDocument.chunkCount} chunks
           </p>
           <div className="document-preview">
@@ -2106,6 +2388,13 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       ) : null}
     </div>
   );
+}
+
+function parseListInput(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function WalletPanel({ accessToken, summary, onSummaryChanged }) {

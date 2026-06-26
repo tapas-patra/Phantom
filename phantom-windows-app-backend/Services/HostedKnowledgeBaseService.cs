@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -43,6 +44,7 @@ public sealed class HostedKnowledgeBaseService
     private readonly AccountRepository _accounts;
     private readonly TokenService _tokens;
     private readonly IKnowledgeBaseEmbeddingService _embeddingService;
+    private readonly HostedKnowledgeBaseStructuredExtractionService _structuredExtraction;
     private readonly HostedKnowledgeBaseReindexJobRepository _reindexJobs;
     private readonly ConcurrentDictionary<string, CachedSearchEntry> _searchCache = new(StringComparer.Ordinal);
     private readonly ILogger<HostedKnowledgeBaseService> _logger;
@@ -54,6 +56,7 @@ public sealed class HostedKnowledgeBaseService
         AccountRepository accounts,
         TokenService tokens,
         IKnowledgeBaseEmbeddingService embeddingService,
+        HostedKnowledgeBaseStructuredExtractionService structuredExtraction,
         ILogger<HostedKnowledgeBaseService> logger)
     {
         _knowledgeBases = knowledgeBases;
@@ -62,6 +65,7 @@ public sealed class HostedKnowledgeBaseService
         _accounts = accounts;
         _tokens = tokens;
         _embeddingService = embeddingService;
+        _structuredExtraction = structuredExtraction;
         _logger = logger;
     }
 
@@ -97,6 +101,45 @@ public sealed class HostedKnowledgeBaseService
         return MapSummary(account, knowledgeBase);
     }
 
+    public HostedKnowledgeBaseProfileCardDto GetProfileCard(DesktopAccountRecord account)
+    {
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId);
+        if (knowledgeBase == null)
+        {
+            return new HostedKnowledgeBaseProfileCardDto();
+        }
+
+        var profileCard = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
+        return profileCard == null ? new HostedKnowledgeBaseProfileCardDto() : MapProfileCard(profileCard);
+    }
+
+    public IReadOnlyList<HostedKnowledgeBaseProjectCardDto> ListProjectCards(DesktopAccountRecord account)
+    {
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId);
+        if (knowledgeBase == null)
+        {
+            return Array.Empty<HostedKnowledgeBaseProjectCardDto>();
+        }
+
+        return _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId)
+            .Select(MapProjectCard)
+            .ToArray();
+    }
+
+    public HostedKnowledgeBaseProjectCardDto GetProjectCard(DesktopAccountRecord account, string projectCardId)
+    {
+        if (string.IsNullOrWhiteSpace(projectCardId))
+        {
+            throw new BackendValidationException("Project card ID is required.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var projectCard = _knowledgeBases.FindProjectCard(knowledgeBase.KnowledgeBaseId, projectCardId.Trim())
+            ?? throw new BackendValidationException("Hosted knowledge-base project card not found.");
+        return MapProjectCard(projectCard);
+    }
+
     public HostedKnowledgeBaseDocumentContentDto GetDocumentContent(
         DesktopAccountRecord account,
         string documentId)
@@ -119,6 +162,9 @@ public sealed class HostedKnowledgeBaseService
             FileName = document.FileName,
             ContentType = document.ContentType,
             SourceType = document.SourceType,
+            Section = document.Section,
+            SourceKind = document.SourceKind,
+            SourceLabel = document.SourceLabel,
             ExtractedText = document.ExtractedText,
             CharacterCount = document.CharacterCount,
             ChunkCount = document.ChunkCount,
@@ -162,10 +208,12 @@ public sealed class HostedKnowledgeBaseService
     public async Task<HostedKnowledgeBaseUploadResultDto> UploadDocumentsAsync(
         DesktopAccountRecord account,
         IFormFileCollection files,
+        string section,
         CancellationToken cancellationToken)
     {
         EnsureCanManage(account);
         EnsureEmbeddingsConfigured();
+        var normalizedSection = NormalizeSection(section);
 
         if (files.Count == 0)
         {
@@ -228,7 +276,15 @@ public sealed class HostedKnowledgeBaseService
 
             var documentId = $"kb-doc-{Guid.NewGuid():N}";
             var contentSha = ComputeSha256(extractedText);
-            var documentChunks = BuildChunks(knowledgeBase, account, documentId, file.FileName, extraction.SourceType, extractedText, now);
+            var sourceLabel = Path.GetFileNameWithoutExtension(file.FileName ?? string.Empty);
+            var documentChunks = BuildChunks(
+                knowledgeBase,
+                account,
+                documentId,
+                string.IsNullOrWhiteSpace(sourceLabel) ? file.FileName : sourceLabel,
+                extraction.SourceType,
+                extractedText,
+                now);
             if (documentChunks.Count > MaxChunksPerDocument)
             {
                 throw new BackendValidationException(
@@ -243,6 +299,9 @@ public sealed class HostedKnowledgeBaseService
                 FileName = file.FileName,
                 ContentType = file.ContentType ?? string.Empty,
                 SourceType = extraction.SourceType,
+                Section = normalizedSection,
+                SourceKind = "upload",
+                SourceLabel = string.IsNullOrWhiteSpace(sourceLabel) ? file.FileName : sourceLabel,
                 ExtractedText = extractedText,
                 ContentSha256 = contentSha,
                 CharacterCount = extractedText.Length,
@@ -270,13 +329,122 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.Status = mergedChunks.Count > 0 ? "ready" : "empty";
         knowledgeBase.UpdatedAtUtc = now;
 
-        _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, mergedDocuments, mergedChunks);
+        var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            mergedDocuments,
+            mergedChunks,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
 
         return new HostedKnowledgeBaseUploadResultDto
         {
-            KnowledgeBase = MapSummary(account, knowledgeBase, mergedDocuments),
+            KnowledgeBase = MapSummary(
+                account,
+                knowledgeBase,
+                mergedDocuments,
+                structuredMemory.ProfileCard,
+                structuredMemory.ProjectCards),
             AddedDocuments = nextDocuments.Select(MapDocument).ToArray()
+        };
+    }
+
+    public async Task<HostedKnowledgeBaseUploadResultDto> PasteDocumentAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseDocumentPasteRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        EnsureCanManage(account);
+        EnsureEmbeddingsConfigured();
+
+        var normalizedSection = NormalizeSection(request.Section);
+        var extractedText = NormalizeSourceText(request.Content);
+        if (string.IsNullOrWhiteSpace(extractedText))
+        {
+            throw new BackendValidationException("Pasted content is required.");
+        }
+
+        if (extractedText.Length > MaxCharactersPerDocument)
+        {
+            throw new BackendValidationException(
+                $"Pasted content exceeds the {MaxCharactersPerDocument:N0} character extraction limit.");
+        }
+
+        var now = DateTime.UtcNow;
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId) ?? new HostedKnowledgeBaseRecord
+        {
+            KnowledgeBaseId = $"kb-{Guid.NewGuid():N}",
+            UserId = account.UserId,
+            Name = "Premium Knowledge Base",
+            Description = "Hosted interview knowledge base",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+
+        var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
+        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
+        var title = string.IsNullOrWhiteSpace(request.Title) ? $"Pasted {normalizedSection}" : request.Title.Trim();
+        var documentId = $"kb-doc-{Guid.NewGuid():N}";
+        var chunks = BuildChunks(knowledgeBase, account, documentId, title, "text", extractedText, now);
+        if (chunks.Count > MaxChunksPerDocument)
+        {
+            throw new BackendValidationException(
+                $"The pasted content exceeds the per-document chunk limit of {MaxChunksPerDocument}.");
+        }
+
+        var document = new HostedKnowledgeBaseDocumentRecord
+        {
+            DocumentId = documentId,
+            KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
+            UserId = account.UserId,
+            FileName = $"{title}.txt",
+            ContentType = "text/plain",
+            SourceType = "text",
+            Section = normalizedSection,
+            SourceKind = "paste",
+            SourceLabel = title,
+            ExtractedText = extractedText,
+            ContentSha256 = ComputeSha256(extractedText),
+            CharacterCount = extractedText.Length,
+            ChunkCount = chunks.Count,
+            Status = "processing",
+            Error = string.Empty,
+            UploadedAtUtc = now
+        };
+
+        var mergedDocuments = existingDocuments.Append(document).ToList();
+        var mergedChunks = existingChunks.Concat(chunks).ToList();
+        EnsureKnowledgeBaseLimits(mergedDocuments, mergedChunks);
+
+        await IndexChunksAsync(new[] { document }, chunks, cancellationToken);
+
+        knowledgeBase.DocumentCount = mergedDocuments.Count;
+        knowledgeBase.ChunkCount = mergedChunks.Count;
+        knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
+        knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
+        knowledgeBase.LastProcessedAtUtc = now;
+        knowledgeBase.Status = mergedChunks.Count > 0 ? "ready" : "empty";
+        knowledgeBase.UpdatedAtUtc = now;
+
+        var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            mergedDocuments,
+            mergedChunks,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
+
+        return new HostedKnowledgeBaseUploadResultDto
+        {
+            KnowledgeBase = MapSummary(
+                account,
+                knowledgeBase,
+                mergedDocuments,
+                structuredMemory.ProfileCard,
+                structuredMemory.ProjectCards),
+            AddedDocuments = new[] { MapDocument(document) }
         };
     }
 
@@ -364,9 +532,117 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
         }
 
-        _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, remainingDocuments, remainingChunks);
+        var structuredMemory = _structuredExtraction.ExtractAsync(account, knowledgeBase, remainingDocuments, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            remainingDocuments,
+            remainingChunks,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
-        return MapSummary(account, knowledgeBase, remainingDocuments);
+        return MapSummary(
+            account,
+            knowledgeBase,
+            remainingDocuments,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards);
+    }
+
+    public HostedKnowledgeBaseProfileCardDto UpdateProfileCard(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseProfileCardUpdateRequestDto request)
+    {
+        EnsureCanManage(account);
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var existing = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId)
+            ?? throw new BackendValidationException("No hosted profile card exists for this account.");
+        var now = DateTime.UtcNow;
+        existing.FullName = request.FullName?.Trim() ?? string.Empty;
+        existing.ResumeText = request.ResumeText?.Trim() ?? string.Empty;
+        existing.ShortIntro = request.ShortIntro?.Trim() ?? string.Empty;
+        existing.CurrentRole = request.CurrentRole?.Trim() ?? string.Empty;
+        existing.YearsOfExperience = Math.Max(0, request.YearsOfExperience);
+        existing.StrengthsJson = JsonSerializer.Serialize(request.Strengths ?? Array.Empty<string>());
+        existing.SkillsJson = JsonSerializer.Serialize(request.Skills ?? Array.Empty<string>());
+        existing.DomainsJson = JsonSerializer.Serialize(request.Domains ?? Array.Empty<string>());
+        existing.UpdatedAtUtc = now;
+        _knowledgeBases.SaveProfileCard(existing);
+        return MapProfileCard(existing);
+    }
+
+    public HostedKnowledgeBaseProjectCardDto UpdateProjectCard(
+        DesktopAccountRecord account,
+        string projectCardId,
+        HostedKnowledgeBaseProjectCardUpdateRequestDto request)
+    {
+        EnsureCanManage(account);
+        if (string.IsNullOrWhiteSpace(projectCardId))
+        {
+            throw new BackendValidationException("Project card ID is required.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var existing = _knowledgeBases.FindProjectCard(knowledgeBase.KnowledgeBaseId, projectCardId.Trim())
+            ?? throw new BackendValidationException("Hosted knowledge-base project card not found.");
+        var now = DateTime.UtcNow;
+        var title = request.Title?.Trim() ?? string.Empty;
+        existing.Title = title;
+        existing.Slug = Slugify(title);
+        existing.IsRecent = request.IsRecent;
+        existing.SortOrder = Math.Max(0, request.SortOrder);
+        existing.Role = request.Role?.Trim() ?? string.Empty;
+        existing.Summary = request.Summary?.Trim() ?? string.Empty;
+        existing.StackJson = JsonSerializer.Serialize(request.Stack ?? Array.Empty<string>());
+        existing.Architecture = request.Architecture?.Trim() ?? string.Empty;
+        existing.Challenges = request.Challenges?.Trim() ?? string.Empty;
+        existing.Impact = request.Impact?.Trim() ?? string.Empty;
+        existing.UpdatedAtUtc = now;
+        _knowledgeBases.SaveProjectCard(existing);
+        return MapProjectCard(existing);
+    }
+
+    public IReadOnlyList<HostedKnowledgeBaseProjectCardDto> SetRecentProject(
+        DesktopAccountRecord account,
+        string projectCardId)
+    {
+        EnsureCanManage(account);
+        if (string.IsNullOrWhiteSpace(projectCardId))
+        {
+            throw new BackendValidationException("Project card ID is required.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var projectCards = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
+        if (projectCards.Count == 0)
+        {
+            throw new BackendValidationException("No project cards exist for this account.");
+        }
+
+        var now = DateTime.UtcNow;
+        var matched = false;
+        foreach (var card in projectCards)
+        {
+            card.IsRecent = string.Equals(card.ProjectCardId, projectCardId.Trim(), StringComparison.Ordinal);
+            card.UpdatedAtUtc = now;
+            matched |= card.IsRecent;
+            _knowledgeBases.SaveProjectCard(card);
+        }
+
+        if (!matched)
+        {
+            throw new BackendValidationException("Hosted knowledge-base project card not found.");
+        }
+
+        return projectCards
+            .OrderByDescending(card => card.IsRecent)
+            .ThenBy(card => card.SortOrder)
+            .Select(MapProjectCard)
+            .ToArray();
     }
 
     public HostedKnowledgeBaseReindexJobDto? GetLatestReindexJob(DesktopAccountRecord account, string? jobId = null)
@@ -581,11 +857,17 @@ public sealed class HostedKnowledgeBaseService
     private HostedKnowledgeBaseSummaryDto MapSummary(
         DesktopAccountRecord account,
         HostedKnowledgeBaseRecord? knowledgeBase,
-        IReadOnlyList<HostedKnowledgeBaseDocumentRecord>? documents = null)
+        IReadOnlyList<HostedKnowledgeBaseDocumentRecord>? documents = null,
+        HostedKnowledgeBaseProfileCardRecord? profileCard = null,
+        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord>? projectCards = null)
     {
         var canManage = HasPremiumKnowledgeBaseEntitlement(account, out var blockedReason);
         var documentList = documents
             ?? (knowledgeBase == null ? Array.Empty<HostedKnowledgeBaseDocumentRecord>() : _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId));
+        var profile = profileCard
+            ?? (knowledgeBase == null ? null : _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId));
+        var projects = projectCards
+            ?? (knowledgeBase == null ? Array.Empty<HostedKnowledgeBaseProjectCardRecord>() : _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId));
 
         if (knowledgeBase == null)
         {
@@ -597,6 +879,8 @@ public sealed class HostedKnowledgeBaseService
                 CanManage = canManage,
                 CanUseInInterview = false,
                 BlockedReason = blockedReason,
+                ProfileCard = new HostedKnowledgeBaseProfileCardDto(),
+                ProjectCards = Array.Empty<HostedKnowledgeBaseProjectCardDto>(),
                 Documents = Array.Empty<HostedKnowledgeBaseDocumentDto>()
             };
         }
@@ -618,6 +902,8 @@ public sealed class HostedKnowledgeBaseService
             BlockedReason = blockedReason,
             LastProcessedAtUtc = knowledgeBase.LastProcessedAtUtc,
             LatestReindexJob = MapReindexJob(_reindexJobs.FindLatestForKnowledgeBase(knowledgeBase.KnowledgeBaseId)),
+            ProfileCard = profile == null ? new HostedKnowledgeBaseProfileCardDto() : MapProfileCard(profile),
+            ProjectCards = projects.Select(MapProjectCard).ToArray(),
             Documents = documentList.Select(MapDocument).ToArray()
         };
     }
@@ -654,6 +940,9 @@ public sealed class HostedKnowledgeBaseService
             FileName = document.FileName,
             ContentType = document.ContentType,
             SourceType = document.SourceType,
+            Section = document.Section,
+            SourceKind = document.SourceKind,
+            SourceLabel = document.SourceLabel,
             EmbeddingModel = document.EmbeddingModel,
             EmbeddingVersion = document.EmbeddingVersion,
             CharacterCount = document.CharacterCount,
@@ -663,6 +952,44 @@ public sealed class HostedKnowledgeBaseService
             UploadedAtUtc = document.UploadedAtUtc,
             ProcessedAtUtc = document.ProcessedAtUtc,
             IndexedAtUtc = document.IndexedAtUtc
+        };
+    }
+
+    private static HostedKnowledgeBaseProfileCardDto MapProfileCard(HostedKnowledgeBaseProfileCardRecord card)
+    {
+        return new HostedKnowledgeBaseProfileCardDto
+        {
+            ProfileCardId = card.ProfileCardId,
+            FullName = card.FullName,
+            ResumeText = card.ResumeText,
+            ShortIntro = card.ShortIntro,
+            CurrentRole = card.CurrentRole,
+            YearsOfExperience = card.YearsOfExperience,
+            Strengths = DeserializeStringList(card.StrengthsJson),
+            Skills = DeserializeStringList(card.SkillsJson),
+            Domains = DeserializeStringList(card.DomainsJson),
+            SourceDocumentIds = DeserializeStringList(card.SourceDocumentIdsJson),
+            UpdatedAtUtc = card.UpdatedAtUtc
+        };
+    }
+
+    private static HostedKnowledgeBaseProjectCardDto MapProjectCard(HostedKnowledgeBaseProjectCardRecord card)
+    {
+        return new HostedKnowledgeBaseProjectCardDto
+        {
+            ProjectCardId = card.ProjectCardId,
+            Title = card.Title,
+            Slug = card.Slug,
+            IsRecent = card.IsRecent,
+            SortOrder = card.SortOrder,
+            Role = card.Role,
+            Summary = card.Summary,
+            Stack = DeserializeStringList(card.StackJson),
+            Architecture = card.Architecture,
+            Challenges = card.Challenges,
+            Impact = card.Impact,
+            SourceDocumentIds = DeserializeStringList(card.SourceDocumentIdsJson),
+            UpdatedAtUtc = card.UpdatedAtUtc
         };
     }
 
@@ -726,6 +1053,40 @@ public sealed class HostedKnowledgeBaseService
             throw new BackendValidationException(
                 $"'{oversizedDocument.FileName}' exceeds the per-document chunk limit of {MaxChunksPerDocument}.");
         }
+    }
+
+    private static string NormalizeSection(string? section)
+    {
+        var normalized = (section ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            HostedKnowledgeBaseStructuredExtractionService.ProfileSection => HostedKnowledgeBaseStructuredExtractionService.ProfileSection,
+            HostedKnowledgeBaseStructuredExtractionService.ProjectSection => HostedKnowledgeBaseStructuredExtractionService.ProjectSection,
+            _ => HostedKnowledgeBaseStructuredExtractionService.GeneralReferenceSection
+        };
+    }
+
+    private static IReadOnlyList<string> DeserializeStringList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string Slugify(string value)
+    {
+        var normalized = Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
+        return string.IsNullOrWhiteSpace(normalized) ? "project" : normalized;
     }
 
     private void EnsureEmbeddingsConfigured()
@@ -848,7 +1209,13 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.Status = rebuiltChunks.Count > 0 ? "ready" : "empty";
         knowledgeBase.UpdatedAtUtc = now;
 
-        _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, rebuiltDocuments, rebuiltChunks);
+        var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, rebuiltDocuments, cancellationToken);
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            rebuiltDocuments,
+            rebuiltChunks,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         _reindexJobs.MarkCompleted(job.JobId);
     }

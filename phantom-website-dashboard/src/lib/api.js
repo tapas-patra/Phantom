@@ -436,8 +436,9 @@ export async function createHostedKnowledgeBase(accessToken, payload) {
   });
 }
 
-export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
+export async function uploadHostedKnowledgeBaseDocuments(accessToken, files, section) {
   const formData = new FormData();
+  formData.append("section", section || "general_reference");
   Array.from(files || []).forEach((file) => {
     formData.append("files", file);
   });
@@ -451,6 +452,55 @@ export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
 
 export async function fetchHostedKnowledgeBaseDocument(accessToken, documentId) {
   return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/documents/${encodeURIComponent(documentId)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function pasteHostedKnowledgeBaseDocument(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/paste", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProfile(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/profile", {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateHostedKnowledgeBaseProfile(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/profile", {
+    method: "PUT",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProjects(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/projects", {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProject(accessToken, projectCardId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateHostedKnowledgeBaseProject(accessToken, projectCardId, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}`, {
+    method: "PUT",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function markHostedKnowledgeBaseProjectRecent(accessToken, projectCardId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}/recent`, {
+    method: "POST",
     headers: authHeaders(accessToken)
   });
 }

@@ -15,5 +15,7 @@ public sealed class HostedKnowledgeBaseSummaryDto
     public string BlockedReason { get; set; } = string.Empty;
     public DateTime? LastProcessedAtUtc { get; set; }
     public HostedKnowledgeBaseReindexJobDto? LatestReindexJob { get; set; }
+    public HostedKnowledgeBaseProfileCardDto? ProfileCard { get; set; }
+    public IReadOnlyList<HostedKnowledgeBaseProjectCardDto> ProjectCards { get; set; } = Array.Empty<HostedKnowledgeBaseProjectCardDto>();
     public IReadOnlyList<HostedKnowledgeBaseDocumentDto> Documents { get; set; } = Array.Empty<HostedKnowledgeBaseDocumentDto>();
 }

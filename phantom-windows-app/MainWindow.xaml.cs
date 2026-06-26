@@ -1477,7 +1477,19 @@ namespace SecureOverlay
                         _contextPackService.GetSelectedPack(),
                         query,
                         preferredDocumentIds,
-                        cancellationToken: cancellationToken));
+                        cancellationToken: cancellationToken),
+                    async cancellationToken =>
+                    {
+                        var session = _authSessionRepository.Load();
+                        if (session == null
+                            || !session.IsAuthenticated
+                            || string.IsNullOrWhiteSpace(session.AccessToken))
+                        {
+                            return new HostedKnowledgeBaseSummaryDto();
+                        }
+
+                        return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
+                    });
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;

@@ -50,6 +50,7 @@ builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
 builder.Services.AddSingleton<IKnowledgeBaseEmbeddingService, KnowledgeBaseEmbeddingService>();
+builder.Services.AddSingleton<HostedKnowledgeBaseStructuredExtractionService>();
 builder.Services.AddSingleton<PaymentCatalog>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
@@ -745,6 +746,59 @@ app.MapGet("/api/desktop/kb", (
     return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/kb/profile", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetProfileCard(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPut("/api/desktop/kb/profile", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseProfileCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.UpdateProfileCard(account, request));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/projects", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.ListProjectCards(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/projects/{projectCardId}", (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetProjectCard(account, projectCardId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPut("/api/desktop/kb/projects/{projectCardId}", (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseProjectCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.UpdateProjectCard(account, projectCardId, request));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/kb/projects/{projectCardId}/recent", (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.SetRecentProject(account, projectCardId));
+}).RequireRateLimiting("desktop-api");
+
 app.MapGet("/api/desktop/support/tickets", (
     HttpContext httpContext,
     int? page,
@@ -787,7 +841,21 @@ app.MapPost("/api/desktop/kb/documents", async (
 
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     var form = await httpContext.Request.ReadFormAsync(cancellationToken);
-    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
+    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(
+        account,
+        form.Files,
+        form["section"].FirstOrDefault() ?? string.Empty,
+        cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/kb/paste", async (
+    HttpContext httpContext,
+    HostedKnowledgeBaseDocumentPasteRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.PasteDocumentAsync(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb/documents/{documentId}", (

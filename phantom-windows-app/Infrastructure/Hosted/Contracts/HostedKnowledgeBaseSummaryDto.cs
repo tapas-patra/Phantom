@@ -16,6 +16,10 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public bool CanUseInInterview { get; set; }
         public string BlockedReason { get; set; } = string.Empty;
         public DateTime? LastProcessedAtUtc { get; set; }
-        public HostedKnowledgeBaseReindexJobDto LatestReindexJob { get; set; }
+        public HostedKnowledgeBaseReindexJobDto? LatestReindexJob { get; set; }
+        public HostedKnowledgeBaseProfileCardDto ProfileCard { get; set; }
+            = new HostedKnowledgeBaseProfileCardDto();
+        public System.Collections.Generic.IReadOnlyList<HostedKnowledgeBaseProjectCardDto> ProjectCards { get; set; }
+            = System.Array.Empty<HostedKnowledgeBaseProjectCardDto>();
     }
 }

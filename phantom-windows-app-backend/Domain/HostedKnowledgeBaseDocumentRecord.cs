@@ -8,6 +8,9 @@ public sealed class HostedKnowledgeBaseDocumentRecord
     public string FileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
     public string SourceType { get; set; } = string.Empty;
+    public string Section { get; set; } = string.Empty;
+    public string SourceKind { get; set; } = string.Empty;
+    public string SourceLabel { get; set; } = string.Empty;
     public string ExtractedText { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
     public string EmbeddingModel { get; set; } = string.Empty;

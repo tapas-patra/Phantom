@@ -44,6 +44,41 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJsonAsync<HostedKnowledgeBaseSummaryDto>("/api/desktop/kb", accessToken, cancellationToken);
         }
 
+        public HostedKnowledgeBaseProfileCardDto GetKnowledgeBaseProfile(string accessToken)
+        {
+            return GetJson<HostedKnowledgeBaseProfileCardDto>("/api/desktop/kb/profile", accessToken);
+        }
+
+        public Task<HostedKnowledgeBaseProfileCardDto> GetKnowledgeBaseProfileAsync(string accessToken, CancellationToken cancellationToken = default)
+        {
+            return GetJsonAsync<HostedKnowledgeBaseProfileCardDto>("/api/desktop/kb/profile", accessToken, cancellationToken);
+        }
+
+        public HostedKnowledgeBaseProjectCardDto[] GetKnowledgeBaseProjects(string accessToken)
+        {
+            return GetJson<HostedKnowledgeBaseProjectCardDto[]>("/api/desktop/kb/projects", accessToken);
+        }
+
+        public Task<HostedKnowledgeBaseProjectCardDto[]> GetKnowledgeBaseProjectsAsync(string accessToken, CancellationToken cancellationToken = default)
+        {
+            return GetJsonAsync<HostedKnowledgeBaseProjectCardDto[]>("/api/desktop/kb/projects", accessToken, cancellationToken);
+        }
+
+        public HostedKnowledgeBaseProjectCardDto GetKnowledgeBaseProject(string accessToken, string projectCardId)
+        {
+            return GetJson<HostedKnowledgeBaseProjectCardDto>(
+                $"/api/desktop/kb/projects/{Uri.EscapeDataString(projectCardId ?? string.Empty)}",
+                accessToken);
+        }
+
+        public Task<HostedKnowledgeBaseProjectCardDto> GetKnowledgeBaseProjectAsync(string accessToken, string projectCardId, CancellationToken cancellationToken = default)
+        {
+            return GetJsonAsync<HostedKnowledgeBaseProjectCardDto>(
+                $"/api/desktop/kb/projects/{Uri.EscapeDataString(projectCardId ?? string.Empty)}",
+                accessToken,
+                cancellationToken);
+        }
+
         public HostedKnowledgeBaseSearchResultDto SearchKnowledgeBase(
             string accessToken,
             string query,

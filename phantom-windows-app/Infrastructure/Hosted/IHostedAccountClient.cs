@@ -16,6 +16,9 @@ namespace SecureOverlay.Infrastructure.Hosted
             string query,
             IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3);
+        HostedKnowledgeBaseProfileCardDto GetKnowledgeBaseProfile(string accessToken);
+        HostedKnowledgeBaseProjectCardDto[] GetKnowledgeBaseProjects(string accessToken);
+        HostedKnowledgeBaseProjectCardDto GetKnowledgeBaseProject(string accessToken, string projectCardId);
         Task<HostedKnowledgeBaseSummaryDto> GetKnowledgeBaseAsync(string accessToken, CancellationToken cancellationToken = default);
         Task<HostedKnowledgeBaseSearchResultDto> SearchKnowledgeBaseAsync(
             string accessToken,
@@ -23,6 +26,9 @@ namespace SecureOverlay.Infrastructure.Hosted
             IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3,
             CancellationToken cancellationToken = default);
+        Task<HostedKnowledgeBaseProfileCardDto> GetKnowledgeBaseProfileAsync(string accessToken, CancellationToken cancellationToken = default);
+        Task<HostedKnowledgeBaseProjectCardDto[]> GetKnowledgeBaseProjectsAsync(string accessToken, CancellationToken cancellationToken = default);
+        Task<HostedKnowledgeBaseProjectCardDto> GetKnowledgeBaseProjectAsync(string accessToken, string projectCardId, CancellationToken cancellationToken = default);
         DesktopContextPackDto[] GetContextPacks(string accessToken);
         DesktopContextPackDto SaveContextPack(string accessToken, DesktopContextPackUpsertRequestDto request);
         void DeleteContextPack(string accessToken, string packId);

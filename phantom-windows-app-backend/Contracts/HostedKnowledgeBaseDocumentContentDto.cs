@@ -6,6 +6,9 @@ public sealed class HostedKnowledgeBaseDocumentContentDto
     public string FileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
     public string SourceType { get; set; } = string.Empty;
+    public string Section { get; set; } = string.Empty;
+    public string SourceKind { get; set; } = string.Empty;
+    public string SourceLabel { get; set; } = string.Empty;
     public string ExtractedText { get; set; } = string.Empty;
     public int CharacterCount { get; set; }
     public int ChunkCount { get; set; }

@@ -17,7 +17,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("009_hosted_kb_embedding_admin_config", HostedKnowledgeBaseEmbeddingAdminConfigSql),
         new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql),
         new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql),
-        new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql)
+        new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql),
+        new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1173,6 +1174,60 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw_default
     WHERE indexed_at_utc IS NOT NULL
       AND embedding IS NOT NULL
       AND vector_dims(embedding) = " + HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions + @";
+";
+
+    private const string HostedKnowledgeBaseTypedMemorySql = @"
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'general_reference';
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'upload';
+ALTER TABLE hosted_kb_documents
+    ADD COLUMN IF NOT EXISTS source_label TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_documents_section_uploaded
+    ON hosted_kb_documents(knowledge_base_id, section, uploaded_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS hosted_kb_profile_cards (
+    profile_card_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    full_name TEXT NOT NULL DEFAULT '',
+    resume_text TEXT NOT NULL DEFAULT '',
+    short_intro TEXT NOT NULL DEFAULT '',
+    current_role TEXT NOT NULL DEFAULT '',
+    years_of_experience INTEGER NOT NULL DEFAULT 0,
+    strengths_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    skills_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    domains_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_document_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hosted_kb_profile_cards_kb
+    ON hosted_kb_profile_cards(knowledge_base_id);
+
+CREATE TABLE IF NOT EXISTS hosted_kb_project_cards (
+    project_card_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    slug TEXT NOT NULL DEFAULT '',
+    is_recent BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    stack_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    architecture TEXT NOT NULL DEFAULT '',
+    challenges TEXT NOT NULL DEFAULT '',
+    impact TEXT NOT NULL DEFAULT '',
+    source_document_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_project_cards_kb_recent_order
+    ON hosted_kb_project_cards(knowledge_base_id, is_recent DESC, sort_order ASC, updated_at_utc DESC);
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

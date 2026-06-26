@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SecureOverlay.Domain.Entities;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Services
 {
@@ -21,9 +22,15 @@ namespace SecureOverlay.Services
         private string _jobDescriptionText = string.Empty;
         private string _jobDescriptionSummary = string.Empty;
         private bool _jobDescriptionSummarized = false;
+        private string _structuredKnowledgeContext = string.Empty;
+        private string _activeProjectCardId = string.Empty;
         private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
         private IReadOnlyList<string> _lastRetrievedDocumentIds = Array.Empty<string>();
         private readonly Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
+        private readonly Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? _knowledgeBaseLoader;
+        private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
+        private DateTime _knowledgeBaseSummaryCachedAtUtc = DateTime.MinValue;
+        private static readonly TimeSpan KnowledgeBaseSummaryCacheTtl = TimeSpan.FromSeconds(2);
 
         
         private ModelConfig _modelConfig;
@@ -40,7 +47,8 @@ namespace SecureOverlay.Services
             string systemPrompt,
             ModelConfig modelConfig,
             APIRotationManager? rotationManager = null,
-            Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null)
+            Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null,
+            Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? knowledgeBaseLoader = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
@@ -48,6 +56,7 @@ namespace SecureOverlay.Services
             _rotationManager = rotationManager;
             _currentProvider = aiService.GetProviderName();
             _knowledgeRetriever = knowledgeRetriever;
+            _knowledgeBaseLoader = knowledgeBaseLoader;
 
             _fullConversation.Add(new ConversationMessage
             {
@@ -431,6 +440,13 @@ namespace SecureOverlay.Services
                 Log.WriteLine($"   _jobDescriptionSummarized: {_jobDescriptionSummarized}");
             }
 
+            if (!string.IsNullOrWhiteSpace(_structuredKnowledgeContext))
+            {
+                Log.WriteLine($"✓ Adding structured KB grounding ({_structuredKnowledgeContext.Length} chars)");
+                contextParts.Append("\n\nInterview Grounding:\n");
+                contextParts.Append(_structuredKnowledgeContext);
+            }
+
             if (_retrievedKnowledgeSnippets.Count > 0)
             {
                 Log.WriteLine($"✓ Adding {_retrievedKnowledgeSnippets.Count} retrieved knowledge snippet(s)");
@@ -517,17 +533,7 @@ namespace SecureOverlay.Services
 
             // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
             var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, CancellationToken.None);
-            if (plannerDecision.Type == ResponsePlanType.Retrieve)
-            {
-                await RefreshRetrievedKnowledgeSnippetsAsync(
-                    plannerDecision.RagQuery,
-                    plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
-                    CancellationToken.None);
-            }
-            else
-            {
-                ClearRetrievedKnowledgeSnippets();
-            }
+            await ApplyPlannerDecisionAsync(plannerDecision, userMessage, CancellationToken.None);
 
             var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
             if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
@@ -617,17 +623,7 @@ namespace SecureOverlay.Services
 
             // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
             var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, cancellationToken);
-            if (plannerDecision.Type == ResponsePlanType.Retrieve)
-            {
-                await RefreshRetrievedKnowledgeSnippetsAsync(
-                    plannerDecision.RagQuery,
-                    plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
-                    cancellationToken);
-            }
-            else
-            {
-                ClearRetrievedKnowledgeSnippets();
-            }
+            await ApplyPlannerDecisionAsync(plannerDecision, userMessage, cancellationToken);
 
             var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
             if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
@@ -805,9 +801,9 @@ namespace SecureOverlay.Services
             if (TryParseResponsePlan(plannerResponse, userMessage, out var plan))
             {
                 Log.WriteLine(
-                    $"Planner decision: Type={plan.Type}, Confidence={plan.Confidence:0.00}, RagQuery='{plan.RagQuery}'");
+                    $"Planner decision: Type={plan.Type}, Confidence={plan.Confidence:0.00}, KnowledgeQuery='{plan.KnowledgeQuery}'");
                 RagTraceLogger.WriteLine(
-                    $"planner:decision type={plan.Type} scope={plan.Scope} confidence={plan.Confidence:0.00} direct_answer='{TrimForLog(plan.DirectAnswer, 240)}' rag_query='{TrimForLog(plan.RagQuery, 240)}'");
+                    $"planner:decision type={plan.Type} scope={plan.Scope} confidence={plan.Confidence:0.00} target='{TrimForLog(plan.Target, 120)}' direct_answer='{TrimForLog(plan.DirectAnswer, 240)}' knowledge_query='{TrimForLog(plan.KnowledgeQuery, 240)}'");
                 return plan;
             }
 
@@ -846,7 +842,8 @@ namespace SecureOverlay.Services
             {
                 $"Current question: {userMessage}",
                 $"Recent conversation:\n{(priorTurns.Length == 0 ? "(none)" : string.Join("\n", priorTurns))}",
-                $"Previous retrieval context:\n{(previousRetrieval.Length == 0 ? "(none)" : string.Join("\n", previousRetrieval))}"
+                $"Previous retrieval context:\n{(previousRetrieval.Length == 0 ? "(none)" : string.Join("\n", previousRetrieval))}",
+                $"Structured KB snapshot:\n{BuildPlannerKnowledgeBaseHint()}"
             };
 
             return new List<ConversationMessage>
@@ -856,23 +853,27 @@ namespace SecureOverlay.Services
                     Role = "system",
                     Content = @"You are a routing planner for an interview assistant.
 Return strict JSON only with this shape:
-{""type"":""direct|retrieve"",""direct_answer"":""..."",""rag_query"":""..."",""scope"":""global|previous_docs"",""confidence"":0.0}
+{""type"":""direct|profile|project|retrieve"",""direct_answer"":""..."",""knowledge_query"":""..."",""scope"":""global|previous_docs|active_project"",""target"":""..."",""confidence"":0.0}
 
 Rules:
 - type=direct when the user can be answered from general knowledge or recent generic conversation.
-- type=retrieve when the answer should be grounded in the user's resume, projects, documents, knowledge base, or a follow-up that depends on prior project-specific context.
-- In interview context, prompts like ""introduce yourself"", ""tell me about yourself"", ""walk me through your background"", ""tell me about any of your projects"", ""tell me about a recent project"", and ""what did you build"" are about the USER, so use type=retrieve.
+- type=profile when the answer should come from the user's background, intro, resume, strengths, skills, current role, or experience summary.
+- type=project when the answer should come from one of the user's projects, including project overview, architecture, tech stack, role, challenges, or impact.
+- type=retrieve when the answer should be grounded in uploaded knowledge-base content that is not primarily the structured profile/project material.
+- In interview context, prompts like ""introduce yourself"", ""tell me about yourself"", ""walk me through your background"", and ""summarize your experience"" are about the USER, so use type=profile.
+- In interview context, prompts like ""tell me about any of your projects"", ""tell me about a recent project"", ""what did you build"", ""explain the architecture of this"", and ""what challenges did you face"" after a project discussion should use type=project.
 - Never answer resume, project, or background questions as the assistant's own identity or invented experience.
-- For broad self-introduction prompts, rewrite rag_query to something semantically rich like ""candidate background summary experience skills"" instead of copying the raw wording.
-- For broad project prompts, rewrite rag_query to something semantically rich like ""recent project architecture technologies impact role"" instead of copying the raw wording.
-- For follow-ups like ""this"", ""that"", ""it"", rewrite rag_query to the specific project/topic from recent conversation.
-- For follow-ups like ""explain the architecture of this"" after a project discussion, use type=retrieve and rewrite rag_query to the exact project/topic from recent conversation.
-- Use scope=""previous_docs"" only when the request clearly continues the same retrieved project/topic.
+- For broad self-introduction prompts, rewrite knowledge_query to something semantically rich like ""candidate background summary experience skills"" instead of copying the raw wording.
+- For broad project prompts, rewrite knowledge_query to something semantically rich like ""recent project architecture technologies impact role"" instead of copying the raw wording.
+- For follow-ups like ""this"", ""that"", ""it"", or ""that project"", rewrite knowledge_query to the specific project/topic from recent conversation.
+- Use scope=""active_project"" only when the request clearly continues the same project already in discussion.
+- Use scope=""previous_docs"" only when the request clearly continues the same retrieved document/topic outside the project route.
 - Use scope=""global"" when the user is switching topics, naming a different project, or asking a fresh question.
+- When a specific project name is clear, put that project name into target.
 - For generic follow-ups like ""give me an example"" after a conceptual question, use type=direct.
-- If type=direct, include a complete direct_answer and leave rag_query empty.
-- If type=retrieve, include a short, specific rag_query, leave direct_answer empty, and set scope appropriately.
-- If unsure, prefer retrieve.
+- If type=direct, include a complete direct_answer and leave knowledge_query empty.
+- If type=profile, project, or retrieve, leave direct_answer empty and include a short, specific knowledge_query.
+- If unsure between direct and a grounded route, prefer the grounded route.
 - Do not include markdown fences or extra text."
                 },
                 new ConversationMessage
@@ -902,17 +903,31 @@ Rules:
                 var directAnswer = root.TryGetProperty("direct_answer", out var answerElement)
                     ? (answerElement.GetString() ?? string.Empty).Trim()
                     : string.Empty;
-                var ragQuery = root.TryGetProperty("rag_query", out var ragQueryElement)
-                    ? (ragQueryElement.GetString() ?? string.Empty).Trim()
+                var knowledgeQuery = root.TryGetProperty("knowledge_query", out var queryElement)
+                    ? (queryElement.GetString() ?? string.Empty).Trim()
                     : string.Empty;
+                if (string.IsNullOrWhiteSpace(knowledgeQuery)
+                    && root.TryGetProperty("rag_query", out var ragQueryElement))
+                {
+                    knowledgeQuery = (ragQueryElement.GetString() ?? string.Empty).Trim();
+                }
                 var scope = root.TryGetProperty("scope", out var scopeElement)
                     ? (scopeElement.GetString() ?? string.Empty).Trim().ToLowerInvariant()
+                    : string.Empty;
+                var target = root.TryGetProperty("target", out var targetElement)
+                    ? (targetElement.GetString() ?? string.Empty).Trim()
                     : string.Empty;
                 var confidence = root.TryGetProperty("confidence", out var confidenceElement)
                     && confidenceElement.ValueKind == JsonValueKind.Number
                     && confidenceElement.TryGetDouble(out var parsedConfidence)
                     ? parsedConfidence
                     : 0d;
+                var retrievalScope = scope switch
+                {
+                    "previous_docs" => RetrievalScope.PreviousDocuments,
+                    "active_project" => RetrievalScope.ActiveProject,
+                    _ => RetrievalScope.Global
+                };
 
                 if (type == "direct")
                 {
@@ -920,12 +935,33 @@ Rules:
                     return true;
                 }
 
+                if (type == "profile")
+                {
+                    plan = ResponsePlan.Profile(
+                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
+                        target,
+                        retrievalScope,
+                        confidence);
+                    return true;
+                }
+
+                if (type == "project")
+                {
+                    plan = ResponsePlan.Project(
+                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
+                        target,
+                        retrievalScope,
+                        confidence);
+                    return true;
+                }
+
                 if (type == "retrieve")
                 {
                     plan = ResponsePlan.Retrieve(
-                        string.IsNullOrWhiteSpace(ragQuery) ? userMessage : ragQuery,
+                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
                         "planner",
-                        scope == "previous_docs" ? RetrievalScope.PreviousDocuments : RetrievalScope.Global,
+                        retrievalScope,
+                        target,
                         confidence);
                     return true;
                 }
@@ -936,6 +972,356 @@ Rules:
             {
                 return false;
             }
+        }
+
+        private async Task ApplyPlannerDecisionAsync(
+            ResponsePlan plannerDecision,
+            string userMessage,
+            CancellationToken cancellationToken)
+        {
+            switch (plannerDecision.Type)
+            {
+                case ResponsePlanType.Direct:
+                    ClearStructuredKnowledgeContext();
+                    ClearRetrievedKnowledgeSnippets();
+                    return;
+
+                case ResponsePlanType.Profile:
+                    ClearRetrievedKnowledgeSnippets();
+                    await PrepareProfileGroundingAsync(cancellationToken);
+                    return;
+
+                case ResponsePlanType.Project:
+                    await PrepareProjectGroundingAsync(plannerDecision, userMessage, cancellationToken);
+                    return;
+
+                case ResponsePlanType.Retrieve:
+                default:
+                    ClearStructuredKnowledgeContext();
+                    await RefreshRetrievedKnowledgeSnippetsAsync(
+                        plannerDecision.KnowledgeQuery,
+                        plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
+                        cancellationToken);
+                    return;
+            }
+        }
+
+        private async Task PrepareProfileGroundingAsync(CancellationToken cancellationToken)
+        {
+            var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
+            var profileCard = knowledgeBase?.ProfileCard;
+            if (!HasProfileGrounding(profileCard))
+            {
+                ClearStructuredKnowledgeContext();
+                RagTraceLogger.WriteLine("profile_grounding:missing");
+                return;
+            }
+
+            _structuredKnowledgeContext = BuildProfileGrounding(profileCard);
+            RagTraceLogger.WriteLine(
+                $"profile_grounding:ready full_name='{TrimForLog(profileCard.FullName, 80)}' skills={profileCard.Skills.Count} strengths={profileCard.Strengths.Count}");
+            UpdateSystemPromptWithContext();
+        }
+
+        private async Task PrepareProjectGroundingAsync(
+            ResponsePlan plannerDecision,
+            string userMessage,
+            CancellationToken cancellationToken)
+        {
+            var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
+            var selectedProject = SelectProjectCard(
+                knowledgeBase?.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>(),
+                plannerDecision,
+                userMessage);
+            if (!HasProjectGrounding(selectedProject))
+            {
+                ClearStructuredKnowledgeContext();
+                ClearRetrievedKnowledgeSnippets();
+                RagTraceLogger.WriteLine("project_grounding:missing");
+                return;
+            }
+
+            _activeProjectCardId = selectedProject.ProjectCardId;
+            _structuredKnowledgeContext = BuildProjectGrounding(selectedProject);
+            RagTraceLogger.WriteLine(
+                $"project_grounding:selected project='{TrimForLog(selectedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}'");
+            UpdateSystemPromptWithContext();
+
+            if (selectedProject.SourceDocumentIds.Count > 0)
+            {
+                await RefreshRetrievedKnowledgeSnippetsAsync(
+                    plannerDecision.KnowledgeQuery,
+                    selectedProject.SourceDocumentIds,
+                    cancellationToken);
+            }
+            else
+            {
+                ClearRetrievedKnowledgeSnippets();
+            }
+        }
+
+        private async Task<HostedKnowledgeBaseSummaryDto?> LoadKnowledgeBaseSummaryAsync(CancellationToken cancellationToken)
+        {
+            if (_knowledgeBaseLoader == null)
+            {
+                return _knowledgeBaseSummaryCache;
+            }
+
+            var hasFreshCache = _knowledgeBaseSummaryCache != null
+                && DateTime.UtcNow - _knowledgeBaseSummaryCachedAtUtc <= KnowledgeBaseSummaryCacheTtl;
+            if (hasFreshCache)
+            {
+                return _knowledgeBaseSummaryCache;
+            }
+
+            try
+            {
+                _knowledgeBaseSummaryCache = await _knowledgeBaseLoader(cancellationToken);
+                _knowledgeBaseSummaryCachedAtUtc = DateTime.UtcNow;
+                RagTraceLogger.WriteLine(
+                    $"kb_summary:refresh_success status='{_knowledgeBaseSummaryCache?.Status ?? "(null)"}' projects={_knowledgeBaseSummaryCache?.ProjectCards?.Count ?? 0}");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"⚠️ Hosted KB summary refresh failed: {ex.Message}");
+                RagTraceLogger.WriteLine($"kb_summary:refresh_error message='{TrimForLog(ex.Message, 240)}'");
+            }
+
+            return _knowledgeBaseSummaryCache;
+        }
+
+        private HostedKnowledgeBaseProjectCardDto? SelectProjectCard(
+            IReadOnlyList<HostedKnowledgeBaseProjectCardDto> projectCards,
+            ResponsePlan plannerDecision,
+            string userMessage)
+        {
+            if (projectCards == null || projectCards.Count == 0)
+            {
+                return null;
+            }
+
+            if (plannerDecision.Scope == RetrievalScope.ActiveProject
+                && !string.IsNullOrWhiteSpace(_activeProjectCardId))
+            {
+                var activeProject = projectCards.FirstOrDefault(card =>
+                    string.Equals(card.ProjectCardId, _activeProjectCardId, StringComparison.Ordinal));
+                if (activeProject != null)
+                {
+                    return activeProject;
+                }
+            }
+
+            var scoredProjects = projectCards
+                .Select(card => new
+                {
+                    Card = card,
+                    Score = ScoreProjectCard(card, plannerDecision.Target, plannerDecision.KnowledgeQuery, userMessage)
+                })
+                .OrderByDescending(item => item.Score)
+                .ThenByDescending(item => item.Card.IsRecent)
+                .ThenBy(item => item.Card.SortOrder)
+                .ToArray();
+
+            if (scoredProjects.Length > 0 && scoredProjects[0].Score > 0)
+            {
+                return scoredProjects[0].Card;
+            }
+
+            return projectCards
+                .OrderByDescending(card => card.IsRecent)
+                .ThenBy(card => card.SortOrder)
+                .FirstOrDefault();
+        }
+
+        private static int ScoreProjectCard(
+            HostedKnowledgeBaseProjectCardDto projectCard,
+            string target,
+            string knowledgeQuery,
+            string userMessage)
+        {
+            var score = 0;
+            var title = NormalizeText(projectCard.Title);
+            var slug = NormalizeText(projectCard.Slug);
+            var haystack = NormalizeText(string.Join(
+                " ",
+                new[]
+                {
+                    projectCard.Title,
+                    projectCard.Slug,
+                    projectCard.Role,
+                    projectCard.Summary,
+                    projectCard.Architecture,
+                    projectCard.Challenges,
+                    projectCard.Impact,
+                    string.Join(" ", projectCard.Stack ?? Array.Empty<string>())
+                }));
+
+            var targetNormalized = NormalizeText(target);
+            if (!string.IsNullOrWhiteSpace(targetNormalized))
+            {
+                if (title.Contains(targetNormalized, StringComparison.Ordinal)
+                    || slug.Contains(targetNormalized, StringComparison.Ordinal))
+                {
+                    score += 100;
+                }
+                else if (haystack.Contains(targetNormalized, StringComparison.Ordinal))
+                {
+                    score += 35;
+                }
+            }
+
+            foreach (var token in ExtractMeaningfulTokens($"{knowledgeQuery} {userMessage}"))
+            {
+                if (title.Contains(token, StringComparison.Ordinal) || slug.Contains(token, StringComparison.Ordinal))
+                {
+                    score += 8;
+                }
+                else if (haystack.Contains(token, StringComparison.Ordinal))
+                {
+                    score += 2;
+                }
+            }
+
+            if (projectCard.IsRecent)
+            {
+                score += 5;
+            }
+
+            return score;
+        }
+
+        private static IEnumerable<string> ExtractMeaningfulTokens(string value)
+        {
+            var tokens = NormalizeText(value)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(token => token.Length >= 3)
+                .Distinct(StringComparer.Ordinal);
+
+            foreach (var token in tokens)
+            {
+                yield return token;
+            }
+        }
+
+        private static string NormalizeText(string? value)
+        {
+            return Regex.Replace((value ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+        }
+
+        private static bool HasProfileGrounding(HostedKnowledgeBaseProfileCardDto? profileCard)
+        {
+            if (profileCard == null)
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(profileCard.ShortIntro)
+                || !string.IsNullOrWhiteSpace(profileCard.ResumeText)
+                || !string.IsNullOrWhiteSpace(profileCard.FullName)
+                || !string.IsNullOrWhiteSpace(profileCard.CurrentRole)
+                || profileCard.Skills.Count > 0
+                || profileCard.Strengths.Count > 0
+                || profileCard.Domains.Count > 0;
+        }
+
+        private static bool HasProjectGrounding(HostedKnowledgeBaseProjectCardDto? projectCard)
+        {
+            if (projectCard == null)
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(projectCard.Title)
+                || !string.IsNullOrWhiteSpace(projectCard.Summary)
+                || !string.IsNullOrWhiteSpace(projectCard.Architecture)
+                || !string.IsNullOrWhiteSpace(projectCard.Impact)
+                || projectCard.Stack.Count > 0;
+        }
+
+        private static string BuildProfileGrounding(HostedKnowledgeBaseProfileCardDto profileCard)
+        {
+            var lines = new List<string>
+            {
+                "Use only this candidate profile for personal/background questions. If a detail is missing here, say so instead of inventing it."
+            };
+
+            AppendGroundingLine(lines, "Full name", profileCard.FullName);
+            AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
+            AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
+            if (profileCard.YearsOfExperience > 0)
+            {
+                lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+            }
+            AppendGroundingList(lines, "Strengths", profileCard.Strengths);
+            AppendGroundingList(lines, "Skills", profileCard.Skills);
+            AppendGroundingList(lines, "Domains", profileCard.Domains);
+            AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 1200));
+            return string.Join("\n", lines);
+        }
+
+        private static string BuildProjectGrounding(HostedKnowledgeBaseProjectCardDto projectCard)
+        {
+            var lines = new List<string>
+            {
+                "Use only this project for the current answer. If the requested detail is missing, say so briefly instead of inventing it."
+            };
+
+            AppendGroundingLine(lines, "Project", projectCard.Title);
+            AppendGroundingLine(lines, "Role", projectCard.Role);
+            AppendGroundingLine(lines, "Summary", projectCard.Summary);
+            AppendGroundingList(lines, "Stack", projectCard.Stack);
+            AppendGroundingLine(lines, "Architecture", projectCard.Architecture);
+            AppendGroundingLine(lines, "Challenges", projectCard.Challenges);
+            AppendGroundingLine(lines, "Impact", projectCard.Impact);
+            return string.Join("\n", lines);
+        }
+
+        private static void AppendGroundingLine(ICollection<string> lines, string label, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                lines.Add($"{label}: {value.Trim()}");
+            }
+        }
+
+        private static void AppendGroundingList(ICollection<string> lines, string label, IReadOnlyList<string>? values)
+        {
+            if (values == null || values.Count == 0)
+            {
+                return;
+            }
+
+            var cleaned = values.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+            if (cleaned.Length > 0)
+            {
+                lines.Add($"{label}: {string.Join(", ", cleaned)}");
+            }
+        }
+
+        private static string TruncateMessageStatic(string? text, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            return text.Length <= maxChars ? text : text.Substring(0, maxChars) + "...";
+        }
+
+        private void ClearStructuredKnowledgeContext()
+        {
+            if (string.IsNullOrWhiteSpace(_structuredKnowledgeContext))
+            {
+                return;
+            }
+
+            _structuredKnowledgeContext = string.Empty;
+            RagTraceLogger.WriteLine("structured_grounding:clear");
+            UpdateSystemPromptWithContext();
         }
 
         private static string ExtractJsonObject(string value)
@@ -982,6 +1368,34 @@ Rules:
             return normalized.Length <= maxLength
                 ? normalized
                 : normalized.Substring(0, maxLength) + "...";
+        }
+
+        private string BuildPlannerKnowledgeBaseHint()
+        {
+            if (_knowledgeBaseSummaryCache == null)
+            {
+                return "not_loaded";
+            }
+
+            var projectTitles = (_knowledgeBaseSummaryCache.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
+                .Take(5)
+                .Select(card => card.IsRecent ? $"{card.Title} (recent)" : card.Title)
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .ToArray();
+            var activeProjectTitle = (_knowledgeBaseSummaryCache.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
+                .FirstOrDefault(card => string.Equals(card.ProjectCardId, _activeProjectCardId, StringComparison.Ordinal))
+                ?.Title;
+
+            return string.Join(
+                "\n",
+                new[]
+                {
+                    $"status={_knowledgeBaseSummaryCache.Status}",
+                    $"profile_available={HasProfileGrounding(_knowledgeBaseSummaryCache.ProfileCard)}",
+                    $"project_count={_knowledgeBaseSummaryCache.ProjectCards?.Count ?? 0}",
+                    $"active_project={(string.IsNullOrWhiteSpace(activeProjectTitle) ? "(none)" : activeProjectTitle)}",
+                    $"project_titles={(projectTitles.Length == 0 ? "(none)" : string.Join(", ", projectTitles))}"
+                });
         }
 
         private async Task RefreshRetrievedKnowledgeSnippetsAsync(
@@ -1037,7 +1451,26 @@ Rules:
 
         private string? BuildRetrievalMissResponse(ResponsePlan plannerDecision)
         {
-            if (plannerDecision.Type != ResponsePlanType.Retrieve || _retrievedKnowledgeSnippets.Count > 0)
+            if (plannerDecision.Type == ResponsePlanType.Direct)
+            {
+                return null;
+            }
+
+            if (plannerDecision.Type == ResponsePlanType.Profile)
+            {
+                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
+                    ? "I couldn't find your profile details in the selected knowledge base. Add or review your profile section so I can answer personal interview questions accurately."
+                    : null;
+            }
+
+            if (plannerDecision.Type == ResponsePlanType.Project)
+            {
+                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
+                    ? "I couldn't find a grounded project match in the selected knowledge base. Add a project section, mark the right project as recent, or ask with the exact project name."
+                    : null;
+            }
+
+            if (_retrievedKnowledgeSnippets.Count > 0)
             {
                 return null;
             }
@@ -1073,22 +1506,26 @@ Rules:
         private enum ResponsePlanType
         {
             Direct,
+            Profile,
+            Project,
             Retrieve
         }
 
         private enum RetrievalScope
         {
             Global,
-            PreviousDocuments
+            PreviousDocuments,
+            ActiveProject
         }
 
         private sealed class ResponsePlan
         {
             public ResponsePlanType Type { get; init; }
             public string DirectAnswer { get; init; } = string.Empty;
-            public string RagQuery { get; init; } = string.Empty;
+            public string KnowledgeQuery { get; init; } = string.Empty;
             public string Source { get; init; } = string.Empty;
             public RetrievalScope Scope { get; init; }
+            public string Target { get; init; } = string.Empty;
             public double Confidence { get; init; }
 
             public static ResponsePlan Direct(string directAnswer, double confidence)
@@ -1102,18 +1539,54 @@ Rules:
                 };
             }
 
+            public static ResponsePlan Profile(
+                string knowledgeQuery,
+                string target,
+                RetrievalScope scope,
+                double confidence)
+            {
+                return new ResponsePlan
+                {
+                    Type = ResponsePlanType.Profile,
+                    KnowledgeQuery = knowledgeQuery ?? string.Empty,
+                    Target = target ?? string.Empty,
+                    Scope = scope,
+                    Confidence = confidence,
+                    Source = "planner"
+                };
+            }
+
+            public static ResponsePlan Project(
+                string knowledgeQuery,
+                string target,
+                RetrievalScope scope,
+                double confidence)
+            {
+                return new ResponsePlan
+                {
+                    Type = ResponsePlanType.Project,
+                    KnowledgeQuery = knowledgeQuery ?? string.Empty,
+                    Target = target ?? string.Empty,
+                    Scope = scope,
+                    Confidence = confidence,
+                    Source = "planner"
+                };
+            }
+
             public static ResponsePlan Retrieve(
-                string ragQuery,
+                string knowledgeQuery,
                 string source,
                 RetrievalScope scope = RetrievalScope.Global,
+                string target = "",
                 double confidence = 0d)
             {
                 return new ResponsePlan
                 {
                     Type = ResponsePlanType.Retrieve,
-                    RagQuery = ragQuery ?? string.Empty,
+                    KnowledgeQuery = knowledgeQuery ?? string.Empty,
                     Source = source ?? string.Empty,
                     Scope = scope,
+                    Target = target ?? string.Empty,
                     Confidence = confidence
                 };
             }
@@ -1773,8 +2246,10 @@ Rules:
             _fullConversation.Clear();
             _resumeSummarized = false;
             _jobDescriptionSummarized = false;
+            _structuredKnowledgeContext = string.Empty;
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
+            _activeProjectCardId = string.Empty;
             
             UpdateSystemPromptWithContext();
             
@@ -1802,8 +2277,10 @@ Rules:
             
             // Clear conversation history (but keep summarization flags)
             _fullConversation.Clear();
+            _structuredKnowledgeContext = string.Empty;
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
+            _activeProjectCardId = string.Empty;
             
             // ✅ CRITICAL FIX: Re-add system prompt with resume context
             UpdateSystemPromptWithContext();
@@ -1901,8 +2378,10 @@ Rules:
 
             // IMPORTANT: Clear current conversation first
             _fullConversation.Clear();
+            _structuredKnowledgeContext = string.Empty;
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
+            _activeProjectCardId = string.Empty;
 
             // Import all messages (including system prompt with resume/JD)
             foreach (var msg in messages)

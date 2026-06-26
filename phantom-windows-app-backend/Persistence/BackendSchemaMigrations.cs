@@ -1166,7 +1166,7 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_profile
     ON hosted_kb_chunks(knowledge_base_id, embedding_model, embedding_version, indexed_at_utc, document_id, chunk_index);
 ";
 
-    private static readonly string HostedKnowledgeBaseOnlineHnswIndexSql = @"
+    private const string HostedKnowledgeBaseOnlineHnswIndexSql = @"
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw_default
     ON hosted_kb_chunks
     USING hnsw ((CAST(embedding AS vector(" + HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions + @"))) vector_cosine_ops)

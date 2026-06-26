@@ -178,9 +178,8 @@ Rules:
         HostedKnowledgeBaseDocumentRecord document,
         CancellationToken cancellationToken)
     {
-        var prompt = $"""
-Return strict JSON only with this shape:
-{{"title":"","role":"","summary":"","stack":[""],"architecture":"","challenges":"","impact":"","is_recent":false}}
+        var prompt = $@"Return strict JSON only with this shape:
+{{""title"":"""",""role"":"""",""summary"":"""",""stack"":[""""],""architecture"":"""",""challenges"":"""",""impact"":"""",""is_recent"":false}}
 
 Extract a grounded project card from the source text.
 Rules:
@@ -190,8 +189,7 @@ Rules:
 - If the source does not explicitly say it is recent, set is_recent false.
 - If unknown, use empty string, empty array, or false.
 
-Source label: {document.SourceLabelOrFileName()}
-""";
+Source label: {document.SourceLabelOrFileName()}";
 
         var json = await TryCompleteJsonAsync(account, prompt, document.ExtractedText, cancellationToken);
         return TryDeserialize<ProjectExtractionResult>(json);

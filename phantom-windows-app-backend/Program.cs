@@ -754,13 +754,14 @@ app.MapGet("/api/desktop/kb/profile", (
     return Results.Ok(knowledgeBases.GetProfileCard(account));
 }).RequireRateLimiting("desktop-api");
 
-app.MapPut("/api/desktop/kb/profile", (
+app.MapPut("/api/desktop/kb/profile", async (
     HttpContext httpContext,
     HostedKnowledgeBaseProfileCardUpdateRequestDto request,
-    HostedKnowledgeBaseService knowledgeBases) =>
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(knowledgeBases.UpdateProfileCard(account, request));
+    return Results.Ok(await knowledgeBases.UpdateProfileCard(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb/projects", (
@@ -780,14 +781,15 @@ app.MapGet("/api/desktop/kb/projects/{projectCardId}", (
     return Results.Ok(knowledgeBases.GetProjectCard(account, projectCardId));
 }).RequireRateLimiting("desktop-api");
 
-app.MapPut("/api/desktop/kb/projects/{projectCardId}", (
+app.MapPut("/api/desktop/kb/projects/{projectCardId}", async (
     HttpContext httpContext,
     string projectCardId,
     HostedKnowledgeBaseProjectCardUpdateRequestDto request,
-    HostedKnowledgeBaseService knowledgeBases) =>
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(knowledgeBases.UpdateProjectCard(account, projectCardId, request));
+    return Results.Ok(await knowledgeBases.UpdateProjectCard(account, projectCardId, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/kb/projects/{projectCardId}/recent", (

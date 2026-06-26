@@ -37,6 +37,7 @@ public sealed class HostedKnowledgeBaseService
     private const int FallbackSnippetCount = 2;
     private const int MaxSnippetLength = 480;
     private const int MaxSnippetsPerDocument = 2;
+    private const string CardSyncDocumentIdPrefix = "kb-card-sync-";
     private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(3);
 
     private readonly HostedKnowledgeBaseRepository _knowledgeBases;
@@ -243,7 +244,9 @@ public sealed class HostedKnowledgeBaseService
         };
 
         var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
-        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
+        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+            .Where(chunk => !IsCardSyncDocumentId(chunk.DocumentId))
+            .ToList();
         var nextDocuments = new List<HostedKnowledgeBaseDocumentRecord>();
         var nextChunks = new List<HostedKnowledgeBaseChunkRecord>();
 
@@ -324,18 +327,25 @@ public sealed class HostedKnowledgeBaseService
         await IndexChunksAsync(nextDocuments, nextChunks, cancellationToken);
 
         knowledgeBase.DocumentCount = mergedDocuments.Count;
-        knowledgeBase.ChunkCount = mergedChunks.Count;
         knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
         knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
         knowledgeBase.LastProcessedAtUtc = now;
-        knowledgeBase.Status = mergedChunks.Count > 0 ? "ready" : "empty";
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
+            account,
+            knowledgeBase,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards,
+            cancellationToken);
+        var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
         _knowledgeBases.ReplaceDocumentsAndChunks(
             knowledgeBase,
             mergedDocuments,
-            mergedChunks,
+            persistedChunks,
             structuredMemory.ProfileCard,
             structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
@@ -385,7 +395,9 @@ public sealed class HostedKnowledgeBaseService
         };
 
         var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
-        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
+        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+            .Where(chunk => !IsCardSyncDocumentId(chunk.DocumentId))
+            .ToList();
         var title = string.IsNullOrWhiteSpace(request.Title) ? $"Pasted {normalizedSection}" : request.Title.Trim();
         var documentId = $"kb-doc-{Guid.NewGuid():N}";
         var chunks = BuildChunks(knowledgeBase, account, documentId, title, "text", extractedText, now);
@@ -422,18 +434,25 @@ public sealed class HostedKnowledgeBaseService
         await IndexChunksAsync(new[] { document }, chunks, cancellationToken);
 
         knowledgeBase.DocumentCount = mergedDocuments.Count;
-        knowledgeBase.ChunkCount = mergedChunks.Count;
         knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
         knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
         knowledgeBase.LastProcessedAtUtc = now;
-        knowledgeBase.Status = mergedChunks.Count > 0 ? "ready" : "empty";
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
+            account,
+            knowledgeBase,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards,
+            cancellationToken);
+        var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
         _knowledgeBases.ReplaceDocumentsAndChunks(
             knowledgeBase,
             mergedDocuments,
-            mergedChunks,
+            persistedChunks,
             structuredMemory.ProfileCard,
             structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
@@ -520,14 +539,14 @@ public sealed class HostedKnowledgeBaseService
             .Where(item => !string.Equals(item.DocumentId, document.DocumentId, StringComparison.Ordinal))
             .ToList();
         var remainingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
-            .Where(chunk => !string.Equals(chunk.DocumentId, document.DocumentId, StringComparison.Ordinal))
+            .Where(chunk =>
+                !IsCardSyncDocumentId(chunk.DocumentId)
+                && !string.Equals(chunk.DocumentId, document.DocumentId, StringComparison.Ordinal))
             .ToList();
-
+        var now = DateTime.UtcNow;
         knowledgeBase.DocumentCount = remainingDocuments.Count;
-        knowledgeBase.ChunkCount = remainingChunks.Count;
-        knowledgeBase.Status = remainingChunks.Count > 0 ? "ready" : "empty";
-        knowledgeBase.LastProcessedAtUtc = DateTime.UtcNow;
-        knowledgeBase.UpdatedAtUtc = DateTime.UtcNow;
+        knowledgeBase.LastProcessedAtUtc = now;
+        knowledgeBase.UpdatedAtUtc = now;
         if (remainingDocuments.Count == 0)
         {
             knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
@@ -537,10 +556,21 @@ public sealed class HostedKnowledgeBaseService
         var structuredMemory = _structuredExtraction.ExtractAsync(account, knowledgeBase, remainingDocuments, CancellationToken.None)
             .GetAwaiter()
             .GetResult();
+        var cardSyncChunks = BuildStructuredCardSyncChunksAsync(
+                account,
+                knowledgeBase,
+                structuredMemory.ProfileCard,
+                structuredMemory.ProjectCards,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        var persistedChunks = remainingChunks.Concat(cardSyncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
         _knowledgeBases.ReplaceDocumentsAndChunks(
             knowledgeBase,
             remainingDocuments,
-            remainingChunks,
+            persistedChunks,
             structuredMemory.ProfileCard,
             structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
@@ -552,15 +582,20 @@ public sealed class HostedKnowledgeBaseService
             structuredMemory.ProjectCards);
     }
 
-    public HostedKnowledgeBaseProfileCardDto UpdateProfileCard(
+    public async Task<HostedKnowledgeBaseProfileCardDto> UpdateProfileCard(
         DesktopAccountRecord account,
-        HostedKnowledgeBaseProfileCardUpdateRequestDto request)
+        HostedKnowledgeBaseProfileCardUpdateRequestDto request,
+        CancellationToken cancellationToken)
     {
         EnsureCanManage(account);
+        EnsureEmbeddingsConfigured();
         var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
             ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
         var existing = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId)
             ?? throw new BackendValidationException("No hosted profile card exists for this account.");
+        var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
+        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
+        var projectCards = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
         var now = DateTime.UtcNow;
         existing.FullName = request.FullName?.Trim() ?? string.Empty;
         existing.ResumeText = request.ResumeText?.Trim() ?? string.Empty;
@@ -571,16 +606,35 @@ public sealed class HostedKnowledgeBaseService
         existing.SkillsJson = JsonSerializer.Serialize(request.Skills ?? Array.Empty<string>());
         existing.DomainsJson = JsonSerializer.Serialize(request.Domains ?? Array.Empty<string>());
         existing.UpdatedAtUtc = now;
-        _knowledgeBases.SaveProfileCard(existing);
+        var retainedChunks = existingChunks
+            .Where(chunk => !string.Equals(chunk.DocumentId, BuildProfileCardSyncDocumentId(knowledgeBase), StringComparison.Ordinal))
+            .ToList();
+        var syncChunks = await BuildProfileCardSyncChunksAsync(account, knowledgeBase, existing, cancellationToken);
+        var persistedChunks = retainedChunks.Concat(syncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
+        knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
+        knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
+        knowledgeBase.LastProcessedAtUtc = now;
+        knowledgeBase.UpdatedAtUtc = now;
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            existingDocuments,
+            persistedChunks,
+            existing,
+            projectCards);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         return MapProfileCard(existing);
     }
 
-    public HostedKnowledgeBaseProjectCardDto UpdateProjectCard(
+    public async Task<HostedKnowledgeBaseProjectCardDto> UpdateProjectCard(
         DesktopAccountRecord account,
         string projectCardId,
-        HostedKnowledgeBaseProjectCardUpdateRequestDto request)
+        HostedKnowledgeBaseProjectCardUpdateRequestDto request,
+        CancellationToken cancellationToken)
     {
         EnsureCanManage(account);
+        EnsureEmbeddingsConfigured();
         if (string.IsNullOrWhiteSpace(projectCardId))
         {
             throw new BackendValidationException("Project card ID is required.");
@@ -590,6 +644,10 @@ public sealed class HostedKnowledgeBaseService
             ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
         var existing = _knowledgeBases.FindProjectCard(knowledgeBase.KnowledgeBaseId, projectCardId.Trim())
             ?? throw new BackendValidationException("Hosted knowledge-base project card not found.");
+        var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
+        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
+        var profileCard = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
+        var projectCards = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
         var now = DateTime.UtcNow;
         var title = request.Title?.Trim() ?? string.Empty;
         existing.Title = title;
@@ -603,7 +661,30 @@ public sealed class HostedKnowledgeBaseService
         existing.Challenges = request.Challenges?.Trim() ?? string.Empty;
         existing.Impact = request.Impact?.Trim() ?? string.Empty;
         existing.UpdatedAtUtc = now;
-        _knowledgeBases.SaveProjectCard(existing);
+        var projectCardIndex = projectCards.FindIndex(card =>
+            string.Equals(card.ProjectCardId, existing.ProjectCardId, StringComparison.Ordinal));
+        if (projectCardIndex >= 0)
+        {
+            projectCards[projectCardIndex] = existing;
+        }
+        var retainedChunks = existingChunks
+            .Where(chunk => !string.Equals(chunk.DocumentId, BuildProjectCardSyncDocumentId(existing), StringComparison.Ordinal))
+            .ToList();
+        var syncChunks = await BuildProjectCardSyncChunksAsync(account, knowledgeBase, existing, cancellationToken);
+        var persistedChunks = retainedChunks.Concat(syncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
+        knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
+        knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
+        knowledgeBase.LastProcessedAtUtc = now;
+        knowledgeBase.UpdatedAtUtc = now;
+        _knowledgeBases.ReplaceDocumentsAndChunks(
+            knowledgeBase,
+            existingDocuments,
+            persistedChunks,
+            profileCard,
+            projectCards);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         return MapProjectCard(existing);
     }
 
@@ -1091,6 +1172,167 @@ public sealed class HostedKnowledgeBaseService
         return string.IsNullOrWhiteSpace(normalized) ? "project" : normalized;
     }
 
+    private static bool IsCardSyncDocumentId(string? documentId)
+    {
+        return !string.IsNullOrWhiteSpace(documentId)
+            && documentId.StartsWith(CardSyncDocumentIdPrefix, StringComparison.Ordinal);
+    }
+
+    private static string BuildProfileCardSyncDocumentId(HostedKnowledgeBaseRecord knowledgeBase)
+    {
+        return $"{CardSyncDocumentIdPrefix}profile-{knowledgeBase.KnowledgeBaseId}";
+    }
+
+    private static string BuildProjectCardSyncDocumentId(HostedKnowledgeBaseProjectCardRecord projectCard)
+    {
+        return $"{CardSyncDocumentIdPrefix}project-{projectCard.ProjectCardId}";
+    }
+
+    private static string ResolveDocumentTitle(HostedKnowledgeBaseDocumentRecord document)
+    {
+        if (!string.IsNullOrWhiteSpace(document.SourceLabel))
+        {
+            return document.SourceLabel.Trim();
+        }
+
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(document.FileName ?? string.Empty);
+        return string.IsNullOrWhiteSpace(fileNameWithoutExtension)
+            ? (string.IsNullOrWhiteSpace(document.FileName) ? "Document" : document.FileName.Trim())
+            : fileNameWithoutExtension.Trim();
+    }
+
+    private static IReadOnlyList<string> MergeSourceDocumentIds(string? existingJson, string? syntheticDocumentId)
+    {
+        var merged = DeserializeStringList(existingJson)
+            .Where(id => !string.IsNullOrWhiteSpace(id) && !IsCardSyncDocumentId(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(syntheticDocumentId))
+        {
+            merged.Add(syntheticDocumentId);
+        }
+
+        return merged
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string BuildProfileCardSyncText(HostedKnowledgeBaseProfileCardRecord profileCard)
+    {
+        var lines = new List<string>
+        {
+            "Candidate profile"
+        };
+        AppendStructuredLine(lines, "Full name", profileCard.FullName);
+        AppendStructuredLine(lines, "Short intro", profileCard.ShortIntro);
+        AppendStructuredLine(lines, "Current role", profileCard.CurrentRole);
+        if (profileCard.YearsOfExperience > 0)
+        {
+            lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+        }
+
+        AppendStructuredList(lines, "Strengths", DeserializeStringList(profileCard.StrengthsJson));
+        AppendStructuredList(lines, "Skills", DeserializeStringList(profileCard.SkillsJson));
+        AppendStructuredList(lines, "Domains", DeserializeStringList(profileCard.DomainsJson));
+        AppendStructuredLine(lines, "Resume details", profileCard.ResumeText);
+        return string.Join("\n\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+    }
+
+    private static string BuildProjectCardSyncText(HostedKnowledgeBaseProjectCardRecord projectCard)
+    {
+        var lines = new List<string>
+        {
+            "Project profile"
+        };
+        AppendStructuredLine(lines, "Project", projectCard.Title);
+        AppendStructuredLine(lines, "Role", projectCard.Role);
+        AppendStructuredLine(lines, "Summary", projectCard.Summary);
+        AppendStructuredList(lines, "Tech stack", DeserializeStringList(projectCard.StackJson));
+        AppendStructuredLine(lines, "Architecture", projectCard.Architecture);
+        AppendStructuredLine(lines, "Challenges", projectCard.Challenges);
+        AppendStructuredLine(lines, "Impact", projectCard.Impact);
+        return string.Join("\n\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+    }
+
+    private static void AppendStructuredLine(ICollection<string> lines, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            lines.Add($"{label}: {NormalizeSourceText(value)}");
+        }
+    }
+
+    private static void AppendStructuredList(ICollection<string> lines, string label, IReadOnlyList<string> values)
+    {
+        var cleaned = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToArray();
+        if (cleaned.Length > 0)
+        {
+            lines.Add($"{label}: {string.Join(", ", cleaned)}");
+        }
+    }
+
+    private async Task<IReadOnlyList<HostedKnowledgeBaseChunkRecord>> BuildStructuredCardSyncChunksAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        HostedKnowledgeBaseProfileCardRecord? profileCard,
+        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards,
+        CancellationToken cancellationToken)
+    {
+        var chunks = new List<HostedKnowledgeBaseChunkRecord>();
+        if (profileCard != null)
+        {
+            chunks.AddRange(await BuildProfileCardSyncChunksAsync(account, knowledgeBase, profileCard, cancellationToken));
+        }
+
+        foreach (var projectCard in projectCards)
+        {
+            chunks.AddRange(await BuildProjectCardSyncChunksAsync(account, knowledgeBase, projectCard, cancellationToken));
+        }
+
+        return chunks;
+    }
+
+    private async Task<IReadOnlyList<HostedKnowledgeBaseChunkRecord>> BuildProfileCardSyncChunksAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        HostedKnowledgeBaseProfileCardRecord profileCard,
+        CancellationToken cancellationToken)
+    {
+        var documentId = BuildProfileCardSyncDocumentId(knowledgeBase);
+        var chunkText = NormalizeSourceText(BuildProfileCardSyncText(profileCard));
+        var chunks = string.IsNullOrWhiteSpace(chunkText)
+            ? new List<HostedKnowledgeBaseChunkRecord>()
+            : BuildChunks(knowledgeBase, account, documentId, "Candidate Profile", "card_profile", chunkText, DateTime.UtcNow);
+        profileCard.SourceDocumentIdsJson = JsonSerializer.Serialize(MergeSourceDocumentIds(
+            profileCard.SourceDocumentIdsJson,
+            chunks.Count > 0 ? documentId : null));
+        await IndexChunksAsync(Array.Empty<HostedKnowledgeBaseDocumentRecord>(), chunks, cancellationToken);
+        return chunks;
+    }
+
+    private async Task<IReadOnlyList<HostedKnowledgeBaseChunkRecord>> BuildProjectCardSyncChunksAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        HostedKnowledgeBaseProjectCardRecord projectCard,
+        CancellationToken cancellationToken)
+    {
+        var documentId = BuildProjectCardSyncDocumentId(projectCard);
+        var documentTitle = string.IsNullOrWhiteSpace(projectCard.Title) ? "Project" : projectCard.Title.Trim();
+        var chunkText = NormalizeSourceText(BuildProjectCardSyncText(projectCard));
+        var chunks = string.IsNullOrWhiteSpace(chunkText)
+            ? new List<HostedKnowledgeBaseChunkRecord>()
+            : BuildChunks(knowledgeBase, account, documentId, documentTitle, "card_project", chunkText, DateTime.UtcNow);
+        projectCard.SourceDocumentIdsJson = JsonSerializer.Serialize(MergeSourceDocumentIds(
+            projectCard.SourceDocumentIdsJson,
+            chunks.Count > 0 ? documentId : null));
+        await IndexChunksAsync(Array.Empty<HostedKnowledgeBaseDocumentRecord>(), chunks, cancellationToken);
+        return chunks;
+    }
+
     private void EnsureEmbeddingsConfigured()
     {
         if (!_embeddingService.IsConfigured)
@@ -1105,19 +1347,22 @@ public sealed class HostedKnowledgeBaseService
         CancellationToken cancellationToken)
     {
         var profile = _embeddingService.ActiveProfile;
-        var embeddings = await _embeddingService.GenerateEmbeddingsAsync(chunks.Select(chunk => chunk.Text).ToArray(), cancellationToken);
-        if (embeddings.Count != chunks.Count)
-        {
-            throw new BackendValidationException("Knowledge-base embedding count mismatch during indexing.");
-        }
-
         var now = DateTime.UtcNow;
-        for (var index = 0; index < chunks.Count; index++)
+        if (chunks.Count > 0)
         {
-            chunks[index].EmbeddingVector = ToVectorLiteral(embeddings[index]);
-            chunks[index].EmbeddingModel = profile.ModelId;
-            chunks[index].EmbeddingVersion = profile.Version;
-            chunks[index].IndexedAtUtc = now;
+            var embeddings = await _embeddingService.GenerateEmbeddingsAsync(chunks.Select(chunk => chunk.Text).ToArray(), cancellationToken);
+            if (embeddings.Count != chunks.Count)
+            {
+                throw new BackendValidationException("Knowledge-base embedding count mismatch during indexing.");
+            }
+
+            for (var index = 0; index < chunks.Count; index++)
+            {
+                chunks[index].EmbeddingVector = ToVectorLiteral(embeddings[index]);
+                chunks[index].EmbeddingModel = profile.ModelId;
+                chunks[index].EmbeddingVersion = profile.Version;
+                chunks[index].IndexedAtUtc = now;
+            }
         }
 
         foreach (var document in documents)
@@ -1172,7 +1417,7 @@ public sealed class HostedKnowledgeBaseService
                 knowledgeBase,
                 account,
                 document.DocumentId,
-                document.FileName,
+                ResolveDocumentTitle(document),
                 document.SourceType,
                 extractedText,
                 now);
@@ -1185,6 +1430,9 @@ public sealed class HostedKnowledgeBaseService
                 FileName = document.FileName,
                 ContentType = document.ContentType,
                 SourceType = document.SourceType,
+                Section = document.Section,
+                SourceKind = document.SourceKind,
+                SourceLabel = document.SourceLabel,
                 ExtractedText = extractedText,
                 ContentSha256 = contentSha,
                 CharacterCount = extractedText.Length,
@@ -1204,18 +1452,25 @@ public sealed class HostedKnowledgeBaseService
         await IndexChunksAsync(rebuiltDocuments, rebuiltChunks, cancellationToken);
 
         knowledgeBase.DocumentCount = rebuiltDocuments.Count;
-        knowledgeBase.ChunkCount = rebuiltChunks.Count;
         knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
         knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
         knowledgeBase.LastProcessedAtUtc = now;
-        knowledgeBase.Status = rebuiltChunks.Count > 0 ? "ready" : "empty";
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, rebuiltDocuments, cancellationToken);
+        var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
+            account,
+            knowledgeBase,
+            structuredMemory.ProfileCard,
+            structuredMemory.ProjectCards,
+            cancellationToken);
+        var persistedChunks = rebuiltChunks.Concat(cardSyncChunks).ToList();
+        knowledgeBase.ChunkCount = persistedChunks.Count;
+        knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
         _knowledgeBases.ReplaceDocumentsAndChunks(
             knowledgeBase,
             rebuiltDocuments,
-            rebuiltChunks,
+            persistedChunks,
             structuredMemory.ProfileCard,
             structuredMemory.ProjectCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);

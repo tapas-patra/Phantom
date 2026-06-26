@@ -94,8 +94,10 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         var combinedText = string.Join(
             "\n\n",
             documents.Select(document => $"[Source: {document.SourceLabelOrFileName()}]\n{document.ExtractedText}".Trim()));
-        var extracted = await TryExtractProfileWithLlmAsync(account, combinedText, cancellationToken)
-            ?? ExtractProfileFallback(combinedText);
+        var cleanedText = NormalizeProfileSourceText(combinedText);
+        var fallback = ExtractProfileFallback(cleanedText);
+        var llm = await TryExtractProfileWithLlmAsync(account, cleanedText, cancellationToken);
+        var extracted = MergeProfileExtraction(llm, fallback);
         var now = DateTime.UtcNow;
 
         return new HostedKnowledgeBaseProfileCardRecord
@@ -418,12 +420,17 @@ Source label: {document.SourceLabelOrFileName()}";
     private static ProfileExtractionResult ExtractProfileFallback(string sourceText)
     {
         var lines = NormalizeLines(sourceText);
-        var fullName = lines.FirstOrDefault(line => line.Length > 2 && line.Length <= 60 && !line.Contains('@') && !Regex.IsMatch(line, @"\d"));
-        var currentRole = lines.Skip(1).FirstOrDefault(line => line.Length > 2 && line.Length <= 90 && !line.Contains('@'));
-        var yearsMatch = Regex.Match(sourceText, @"(\d{1,2})\+?\s+years", RegexOptions.IgnoreCase);
+        var meaningfulLines = lines
+            .Where(line => !IsContactOrNoiseLine(line))
+            .ToArray();
+        var fullName = meaningfulLines.FirstOrDefault(IsLikelyPersonName);
+        var currentRole = meaningfulLines
+            .SkipWhile(line => string.Equals(line, fullName, StringComparison.Ordinal))
+            .FirstOrDefault(IsLikelyRoleLine);
+        var yearsMatch = Regex.Match(sourceText, @"(\d{1,2})\s*\+?\s*(?:years?|yrs?)", RegexOptions.IgnoreCase);
         var skills = ExtractKeywords(sourceText, SkillKeywords, 10);
         var domains = ExtractKeywords(sourceText, DomainKeywords, 5);
-        var intro = SummarizeText(sourceText, 420);
+        var intro = BuildProfileIntro(fullName, currentRole, yearsMatch, skills, domains, meaningfulLines);
 
         return new ProfileExtractionResult
         {
@@ -435,6 +442,28 @@ Source label: {document.SourceLabelOrFileName()}";
             Strengths = ExtractBulletLikeLines(sourceText, 5),
             Skills = skills,
             Domains = domains
+        };
+    }
+
+    private static ProfileExtractionResult MergeProfileExtraction(
+        ProfileExtractionResult? llm,
+        ProfileExtractionResult fallback)
+    {
+        if (llm == null)
+        {
+            return fallback;
+        }
+
+        return new ProfileExtractionResult
+        {
+            FullName = FirstNonEmpty(llm.FullName, fallback.FullName),
+            ResumeText = FirstNonEmpty(llm.ResumeText, fallback.ResumeText),
+            ShortIntro = FirstNonEmpty(llm.ShortIntro, fallback.ShortIntro),
+            CurrentRole = FirstNonEmpty(llm.CurrentRole, fallback.CurrentRole),
+            YearsOfExperience = llm.YearsOfExperience > 0 ? llm.YearsOfExperience : fallback.YearsOfExperience,
+            Strengths = MergeNonEmpty(llm.Strengths, fallback.Strengths),
+            Skills = MergeNonEmpty(llm.Skills, fallback.Skills),
+            Domains = MergeNonEmpty(llm.Domains, fallback.Domains)
         };
     }
 
@@ -462,6 +491,15 @@ Source label: {document.SourceLabelOrFileName()}";
             .Select(line => Regex.Replace(line ?? string.Empty, "\\s+", " ").Trim())
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .ToArray();
+    }
+
+    private static string NormalizeProfileSourceText(string value)
+    {
+        return string.Join(
+            "\n",
+            value.Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => !line.StartsWith("[Source:", StringComparison.OrdinalIgnoreCase)));
     }
 
     private static List<string> ExtractKeywords(string sourceText, IEnumerable<string> candidates, int limit)
@@ -519,6 +557,106 @@ Source label: {document.SourceLabelOrFileName()}";
         var slice = normalized[..maxLength];
         var lastPeriod = slice.LastIndexOf('.');
         return lastPeriod > 80 ? slice[..(lastPeriod + 1)].Trim() : slice.Trim() + "...";
+    }
+
+    private static string BuildProfileIntro(
+        string? fullName,
+        string? currentRole,
+        Match yearsMatch,
+        IReadOnlyList<string> skills,
+        IReadOnlyList<string> domains,
+        IReadOnlyList<string> meaningfulLines)
+    {
+        var yearsText = yearsMatch.Success ? yearsMatch.Groups[1].Value.Trim() : string.Empty;
+        if (!string.IsNullOrWhiteSpace(currentRole))
+        {
+            var intro = new StringBuilder();
+            intro.Append(string.IsNullOrWhiteSpace(fullName) ? "Candidate" : fullName);
+            intro.Append(" is ");
+            intro.Append(currentRole.Trim());
+            if (!string.IsNullOrWhiteSpace(yearsText))
+            {
+                intro.Append($" with {yearsText}+ years of experience");
+            }
+
+            if (skills.Count > 0)
+            {
+                intro.Append($". Core skills include {string.Join(", ", skills.Take(5))}");
+            }
+
+            if (domains.Count > 0)
+            {
+                intro.Append($". Domain experience includes {string.Join(", ", domains.Take(3))}");
+            }
+
+            return intro.ToString().Trim();
+        }
+
+        return meaningfulLines.Count > 0
+            ? SummarizeText(string.Join(" ", meaningfulLines.Take(6)), 320)
+            : string.Empty;
+    }
+
+    private static bool IsLikelyPersonName(string line)
+    {
+        if (line.Length < 4 || line.Length > 60 || line.Contains('@') || Regex.IsMatch(line, @"\d"))
+        {
+            return false;
+        }
+
+        if (line.Contains("resume", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("summary", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("experience", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("skills", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length is >= 2 and <= 5;
+    }
+
+    private static bool IsLikelyRoleLine(string line)
+    {
+        if (line.Length < 4 || line.Length > 120 || IsContactOrNoiseLine(line))
+        {
+            return false;
+        }
+
+        return line.Contains("engineer", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("developer", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("qa", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("automation", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("architect", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("lead", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("manager", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("analyst", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("specialist", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsContactOrNoiseLine(string line)
+    {
+        return line.Contains('@')
+            || line.Contains("linkedin", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("github", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("http", StringComparison.OrdinalIgnoreCase)
+            || Regex.IsMatch(line, @"^\+?[\d\-\(\)\s]{7,}$");
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+    }
+
+    private static IReadOnlyList<string> MergeNonEmpty(IReadOnlyList<string>? primary, IReadOnlyList<string>? fallback)
+    {
+        var merged = (primary ?? Array.Empty<string>())
+            .Concat(fallback ?? Array.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return merged;
     }
 
     private static string SerializeStringList(IEnumerable<string> items)

@@ -29,8 +29,9 @@ namespace SecureOverlay.Services
         private readonly Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
         private readonly Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? _knowledgeBaseLoader;
         private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
+        private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
         private DateTime _knowledgeBaseSummaryCachedAtUtc = DateTime.MinValue;
-        private static readonly TimeSpan KnowledgeBaseSummaryCacheTtl = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan KnowledgeBaseSummaryCacheTtl = TimeSpan.FromSeconds(30);
 
         
         private ModelConfig _modelConfig;
@@ -621,6 +622,8 @@ namespace SecureOverlay.Services
                 }
             }
 
+            PrimeKnowledgeBaseSummaryLoad(cancellationToken);
+
             // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
             var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, cancellationToken);
             await ApplyPlannerDecisionAsync(plannerDecision, userMessage, cancellationToken);
@@ -1049,7 +1052,7 @@ Rules:
                 $"project_grounding:selected project='{TrimForLog(groundedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}'");
             UpdateSystemPromptWithContext();
 
-            if (groundedProject.SourceDocumentIds.Count > 0)
+            if (ShouldRetrieveProjectSnippets(plannerDecision, groundedProject))
             {
                 await RefreshRetrievedKnowledgeSnippetsAsync(
                     plannerDecision.KnowledgeQuery,
@@ -1058,8 +1061,28 @@ Rules:
             }
             else
             {
+                RagTraceLogger.WriteLine("project_grounding:structured_only=true");
                 ClearRetrievedKnowledgeSnippets();
             }
+        }
+
+        private void PrimeKnowledgeBaseSummaryLoad(CancellationToken cancellationToken)
+        {
+            if (_knowledgeBaseLoader == null || HasFreshKnowledgeBaseSummaryCache())
+            {
+                return;
+            }
+
+            if (_knowledgeBaseSummaryLoadTask == null || _knowledgeBaseSummaryLoadTask.IsCompleted)
+            {
+                _knowledgeBaseSummaryLoadTask = RefreshKnowledgeBaseSummaryAsync(cancellationToken);
+            }
+        }
+
+        private bool HasFreshKnowledgeBaseSummaryCache()
+        {
+            return _knowledgeBaseSummaryCache != null
+                && DateTime.UtcNow - _knowledgeBaseSummaryCachedAtUtc <= KnowledgeBaseSummaryCacheTtl;
         }
 
         private async Task<HostedKnowledgeBaseSummaryDto?> LoadKnowledgeBaseSummaryAsync(CancellationToken cancellationToken)
@@ -1069,16 +1092,34 @@ Rules:
                 return _knowledgeBaseSummaryCache;
             }
 
-            var hasFreshCache = _knowledgeBaseSummaryCache != null
-                && DateTime.UtcNow - _knowledgeBaseSummaryCachedAtUtc <= KnowledgeBaseSummaryCacheTtl;
-            if (hasFreshCache)
+            if (HasFreshKnowledgeBaseSummaryCache())
             {
                 return _knowledgeBaseSummaryCache;
             }
 
+            if (_knowledgeBaseSummaryLoadTask == null || _knowledgeBaseSummaryLoadTask.IsCompleted)
+            {
+                _knowledgeBaseSummaryLoadTask = RefreshKnowledgeBaseSummaryAsync(cancellationToken);
+            }
+
             try
             {
-                _knowledgeBaseSummaryCache = await _knowledgeBaseLoader(cancellationToken);
+                return await _knowledgeBaseSummaryLoadTask;
+            }
+            finally
+            {
+                if (_knowledgeBaseSummaryLoadTask != null && _knowledgeBaseSummaryLoadTask.IsCompleted)
+                {
+                    _knowledgeBaseSummaryLoadTask = null;
+                }
+            }
+        }
+
+        private async Task<HostedKnowledgeBaseSummaryDto?> RefreshKnowledgeBaseSummaryAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                _knowledgeBaseSummaryCache = await _knowledgeBaseLoader!(cancellationToken);
                 _knowledgeBaseSummaryCachedAtUtc = DateTime.UtcNow;
                 RagTraceLogger.WriteLine(
                     $"kb_summary:refresh_success status='{_knowledgeBaseSummaryCache?.Status ?? "(null)"}' projects={_knowledgeBaseSummaryCache?.ProjectCards?.Count ?? 0}");
@@ -1242,6 +1283,58 @@ Rules:
                 || !string.IsNullOrWhiteSpace(projectCard.Architecture)
                 || !string.IsNullOrWhiteSpace(projectCard.Impact)
                 || projectCard.Stack.Count > 0;
+        }
+
+        private static bool HasRichProjectGrounding(HostedKnowledgeBaseProjectCardDto projectCard)
+        {
+            return !string.IsNullOrWhiteSpace(projectCard.Title)
+                && !string.IsNullOrWhiteSpace(projectCard.Summary)
+                && !string.IsNullOrWhiteSpace(projectCard.Architecture)
+                && !string.IsNullOrWhiteSpace(projectCard.Impact)
+                && projectCard.Stack.Count > 0;
+        }
+
+        private static bool ShouldRetrieveProjectSnippets(
+            ResponsePlan plannerDecision,
+            HostedKnowledgeBaseProjectCardDto projectCard)
+        {
+            if (projectCard.SourceDocumentIds.Count == 0)
+            {
+                return false;
+            }
+
+            if (!HasRichProjectGrounding(projectCard))
+            {
+                return true;
+            }
+
+            var query = NormalizeText($"{plannerDecision.KnowledgeQuery} {plannerDecision.Target}");
+            return ContainsAnyToken(
+                query,
+                "api",
+                "authentication",
+                "auth",
+                "code",
+                "database",
+                "deployment",
+                "implementation",
+                "implemented",
+                "deep dive",
+                "details",
+                "specific",
+                "exact",
+                "performance",
+                "scalability",
+                "security",
+                "snippet",
+                "tradeoff",
+                "flow",
+                "internals");
+        }
+
+        private static bool ContainsAnyToken(string value, params string[] terms)
+        {
+            return terms.Any(term => value.Contains(NormalizeText(term), StringComparison.Ordinal));
         }
 
         private static string BuildProfileGrounding(HostedKnowledgeBaseProfileCardDto profileCard)

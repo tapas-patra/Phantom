@@ -16,7 +16,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("008_hosted_kb_vector_upgrade", HostedKnowledgeBaseVectorUpgradeSql),
         new SchemaMigration("009_hosted_kb_embedding_admin_config", HostedKnowledgeBaseEmbeddingAdminConfigSql),
         new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql),
-        new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql)
+        new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql),
+        new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1163,6 +1164,15 @@ ALTER TABLE hosted_kb_chunks
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_profile
     ON hosted_kb_chunks(knowledge_base_id, embedding_model, embedding_version, indexed_at_utc, document_id, chunk_index);
+";
+
+    private static readonly string HostedKnowledgeBaseOnlineHnswIndexSql = @"
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_chunks_embedding_hnsw_default
+    ON hosted_kb_chunks
+    USING hnsw ((CAST(embedding AS vector(" + HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions + @"))) vector_cosine_ops)
+    WHERE indexed_at_utc IS NOT NULL
+      AND embedding IS NOT NULL
+      AND vector_dims(embedding) = " + HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions + @";
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

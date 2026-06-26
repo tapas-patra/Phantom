@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -26,10 +27,14 @@ public sealed class HostedKnowledgeBaseService
     private const int ChunkTargetSize = 900;
     private const int ChunkMaxSize = 1200;
     private const int ChunkOverlapChars = 160;
-    private const int SearchCandidateMultiplier = 12;
-    private const int MinSearchCandidateCount = 24;
-    private const int MaxSearchCandidateCount = 72;
+    private const int SearchCandidateMultiplier = 8;
+    private const int MinSearchCandidateCount = 12;
+    private const int MaxSearchCandidateCount = 36;
     private const int MaxSearchCacheEntries = 256;
+    private const double MinSnippetScore = 0.18d;
+    private const double MinSemanticSimilarity = 0.45d;
+    private const int MaxSnippetLength = 480;
+    private const int MaxSnippetsPerDocument = 2;
     private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(3);
 
     private readonly HostedKnowledgeBaseRepository _knowledgeBases;
@@ -39,6 +44,7 @@ public sealed class HostedKnowledgeBaseService
     private readonly IKnowledgeBaseEmbeddingService _embeddingService;
     private readonly HostedKnowledgeBaseReindexJobRepository _reindexJobs;
     private readonly ConcurrentDictionary<string, CachedSearchEntry> _searchCache = new(StringComparer.Ordinal);
+    private readonly ILogger<HostedKnowledgeBaseService> _logger;
 
     public HostedKnowledgeBaseService(
         HostedKnowledgeBaseRepository knowledgeBases,
@@ -46,7 +52,8 @@ public sealed class HostedKnowledgeBaseService
         AuthSessionRepository sessions,
         AccountRepository accounts,
         TokenService tokens,
-        IKnowledgeBaseEmbeddingService embeddingService)
+        IKnowledgeBaseEmbeddingService embeddingService,
+        ILogger<HostedKnowledgeBaseService> logger)
     {
         _knowledgeBases = knowledgeBases;
         _reindexJobs = reindexJobs;
@@ -54,6 +61,7 @@ public sealed class HostedKnowledgeBaseService
         _accounts = accounts;
         _tokens = tokens;
         _embeddingService = embeddingService;
+        _logger = logger;
     }
 
     public DesktopAccountRecord RequireAccountFromAccessToken(string? authorizationHeader)
@@ -404,6 +412,7 @@ public sealed class HostedKnowledgeBaseService
         int maxSnippets,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         EnsureCanUseInInterview(account);
 
         if (string.IsNullOrWhiteSpace(query))
@@ -419,10 +428,17 @@ public sealed class HostedKnowledgeBaseService
 
         var normalizedQuery = NormalizeChunkText(query);
         var snippetLimit = Math.Clamp(maxSnippets, 1, 6);
-        var activeEmbeddingProfile = $"{_embeddingService.ActiveProfile.ModelId}:{_embeddingService.ActiveProfile.Version}";
+        var profile = _embeddingService.ActiveProfile;
+        var activeEmbeddingProfile = $"{profile.ModelId}:{profile.Version}:{profile.Dimensions}";
         var cacheKey = BuildSearchCacheKey(knowledgeBase.KnowledgeBaseId, activeEmbeddingProfile, normalizedQuery, snippetLimit);
         if (TryGetCachedSearch(cacheKey, out var cachedSnippets))
         {
+            _logger.LogInformation(
+                "Hosted KB search cache hit for knowledgeBaseId={KnowledgeBaseId} queryLength={QueryLength} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
+                knowledgeBase.KnowledgeBaseId,
+                normalizedQuery.Length,
+                cachedSnippets.Count,
+                stopwatch.ElapsedMilliseconds);
             return new HostedKnowledgeBaseSearchResultDto
             {
                 KnowledgeBase = MapSummary(account, knowledgeBase),
@@ -435,11 +451,23 @@ public sealed class HostedKnowledgeBaseService
         {
             try
             {
-                var queryVector = await _embeddingService.GenerateEmbeddingAsync(normalizedQuery, cancellationToken);
-                if (queryVector.Length == _embeddingService.ActiveProfile.Dimensions)
+                var queryVector = await _embeddingService.GenerateQueryEmbeddingAsync(normalizedQuery, cancellationToken);
+                if (queryVector.Length == profile.Dimensions)
                 {
                     queryVectorLiteral = ToVectorLiteral(queryVector);
                 }
+            }
+            catch (EmbeddingProviderException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Hosted KB query embedding failed for knowledgeBaseId={KnowledgeBaseId}. Falling back to the non-vector search path.",
+                    knowledgeBase.KnowledgeBaseId);
+                queryVectorLiteral = null;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
@@ -455,26 +483,15 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase.KnowledgeBaseId,
             normalizedQuery,
             queryVectorLiteral,
-            _embeddingService.ActiveProfile.ModelId,
-            _embeddingService.ActiveProfile.Dimensions,
-            _embeddingService.ActiveProfile.Version,
+            profile.ModelId,
+            profile.Dimensions,
+            profile.Version,
             lexicalLimit: candidateLimit,
             semanticLimit: candidateLimit,
             finalLimit: candidateLimit);
         var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
-        var snippets = candidates
-            .Select(candidate => new HostedKnowledgeBaseSnippetDto
-            {
-                DocumentId = candidate.DocumentId,
-                DocumentTitle = candidate.DocumentTitle,
-                Text = candidate.Text,
-                Score = ScoreCandidate(candidate, terms)
-            })
-            .Where(item => item.Score > 0d)
-            .OrderByDescending(item => item.Score)
-            .Take(snippetLimit)
-            .ToArray();
+        var snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
 
         _searchCache[cacheKey] = new CachedSearchEntry
         {
@@ -482,6 +499,15 @@ public sealed class HostedKnowledgeBaseService
             Snippets = snippets
         };
         TrimSearchCacheIfNeeded();
+
+        _logger.LogInformation(
+            "Hosted KB search completed for knowledgeBaseId={KnowledgeBaseId} queryLength={QueryLength} usedSemantic={UsedSemantic} candidates={CandidateCount} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
+            knowledgeBase.KnowledgeBaseId,
+            normalizedQuery.Length,
+            !string.IsNullOrWhiteSpace(queryVectorLiteral),
+            candidates.Count,
+            snippets.Count,
+            stopwatch.ElapsedMilliseconds);
 
         return new HostedKnowledgeBaseSearchResultDto
         {
@@ -991,10 +1017,119 @@ public sealed class HostedKnowledgeBaseService
             : terms.Count(term => candidate.SearchText.Contains(term, StringComparison.OrdinalIgnoreCase)) / (double)terms.Length;
         var sectionBoost = terms.Any(term => candidate.SectionTitle.Contains(term, StringComparison.OrdinalIgnoreCase)) ? 0.05d : 0d;
         return candidate.FusedScore
-            + (candidate.SemanticSimilarity * 0.35d)
-            + (candidate.LexicalScore * 0.10d)
-            + (keywordHits * 0.20d)
+            + (candidate.SemanticSimilarity * 0.50d)
+            + (candidate.LexicalScore * 0.05d)
+            + (keywordHits * 0.10d)
             + sectionBoost;
+    }
+
+    private static IReadOnlyList<HostedKnowledgeBaseSnippetDto> BuildSearchSnippets(
+        IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> candidates,
+        string[] terms,
+        int snippetLimit,
+        bool usedSemanticSearch)
+    {
+        var seenTextFingerprints = new HashSet<string>(StringComparer.Ordinal);
+        var snippetsPerDocument = new Dictionary<string, int>(StringComparer.Ordinal);
+        var snippets = new List<HostedKnowledgeBaseSnippetDto>(snippetLimit);
+
+        foreach (var candidate in candidates
+                     .Select(item => new
+                     {
+                         Candidate = item,
+                         Score = ScoreCandidate(item, terms)
+                     })
+                     .Where(item => item.Score > 0d)
+                     .OrderByDescending(item => item.Score))
+        {
+            if (candidate.Score < MinSnippetScore)
+            {
+                continue;
+            }
+
+            if (usedSemanticSearch
+                && candidate.Candidate.SemanticSimilarity > 0d
+                && candidate.Candidate.SemanticSimilarity < MinSemanticSimilarity
+                && candidate.Score < (MinSnippetScore + 0.08d))
+            {
+                continue;
+            }
+
+            var documentSnippetCount = snippetsPerDocument.TryGetValue(candidate.Candidate.DocumentId, out var count)
+                ? count
+                : 0;
+            if (documentSnippetCount >= MaxSnippetsPerDocument)
+            {
+                continue;
+            }
+
+            var snippetText = TrimSnippetText(candidate.Candidate.Text, terms);
+            var fingerprint = snippetText.Length <= 180
+                ? snippetText
+                : snippetText[..180];
+            if (!seenTextFingerprints.Add(fingerprint))
+            {
+                continue;
+            }
+
+            snippets.Add(new HostedKnowledgeBaseSnippetDto
+            {
+                DocumentId = candidate.Candidate.DocumentId,
+                DocumentTitle = candidate.Candidate.DocumentTitle,
+                Text = snippetText,
+                Score = candidate.Score
+            });
+            snippetsPerDocument[candidate.Candidate.DocumentId] = documentSnippetCount + 1;
+
+            if (snippets.Count >= snippetLimit)
+            {
+                break;
+            }
+        }
+
+        return snippets;
+    }
+
+    private static string TrimSnippetText(string text, string[] terms)
+    {
+        var normalized = NormalizeChunkText(text);
+        if (normalized.Length <= MaxSnippetLength)
+        {
+            return normalized;
+        }
+
+        var anchorIndex = -1;
+        foreach (var term in terms)
+        {
+            anchorIndex = normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+            if (anchorIndex >= 0)
+            {
+                break;
+            }
+        }
+
+        var start = anchorIndex <= 0
+            ? 0
+            : Math.Max(0, anchorIndex - (MaxSnippetLength / 4));
+        if (start + MaxSnippetLength > normalized.Length)
+        {
+            start = Math.Max(0, normalized.Length - MaxSnippetLength);
+        }
+
+        var rawLength = Math.Min(MaxSnippetLength, normalized.Length - start);
+        var end = start + rawLength;
+        var slice = normalized.Substring(start, rawLength).Trim();
+        if (start > 0)
+        {
+            slice = $"...{slice}";
+        }
+
+        if (end < normalized.Length)
+        {
+            slice = $"{slice.TrimEnd('.')}...";
+        }
+
+        return slice;
     }
 
     private static string NormalizeSourceText(string value)

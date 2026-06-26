@@ -21,7 +21,7 @@ namespace SecureOverlay.Services
         private string _jobDescriptionSummary = string.Empty;
         private bool _jobDescriptionSummarized = false;
         private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
-        private readonly Func<string, IReadOnlyList<RetrievedContextSnippet>>? _knowledgeRetriever;
+        private readonly Func<string, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
 
         
         private ModelConfig _modelConfig;
@@ -38,7 +38,7 @@ namespace SecureOverlay.Services
             string systemPrompt,
             ModelConfig modelConfig,
             APIRotationManager? rotationManager = null,
-            Func<string, IReadOnlyList<RetrievedContextSnippet>>? knowledgeRetriever = null)
+            Func<string, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
@@ -513,8 +513,7 @@ namespace SecureOverlay.Services
                 }
             }
 
-            _retrievedKnowledgeSnippets = _knowledgeRetriever?.Invoke(userMessage) ?? Array.Empty<RetrievedContextSnippet>();
-            UpdateSystemPromptWithContext();
+            await RefreshRetrievedKnowledgeSnippetsAsync(userMessage, CancellationToken.None);
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
@@ -603,8 +602,7 @@ namespace SecureOverlay.Services
                 }
             }
 
-            _retrievedKnowledgeSnippets = _knowledgeRetriever?.Invoke(userMessage) ?? Array.Empty<RetrievedContextSnippet>();
-            UpdateSystemPromptWithContext();
+            await RefreshRetrievedKnowledgeSnippetsAsync(userMessage, cancellationToken);
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
@@ -736,6 +734,50 @@ namespace SecureOverlay.Services
 
             var validatedContext = ValidateAndCleanMessages(context);
             return validatedContext;
+        }
+
+        private async Task RefreshRetrievedKnowledgeSnippetsAsync(string userMessage, CancellationToken cancellationToken)
+        {
+            var previousSnippets = _retrievedKnowledgeSnippets;
+            var retrievedSnippets = _knowledgeRetriever == null
+                ? Array.Empty<RetrievedContextSnippet>()
+                : await _knowledgeRetriever(userMessage, cancellationToken);
+
+            if (retrievedSnippets.Count > 0)
+            {
+                _retrievedKnowledgeSnippets = retrievedSnippets;
+            }
+            else if (previousSnippets.Count > 0 && ShouldPreserveRetrievedContext(userMessage))
+            {
+                _retrievedKnowledgeSnippets = previousSnippets;
+                Log.WriteLine("✓ Preserving retrieved knowledge snippets for a follow-up prompt");
+            }
+            else
+            {
+                _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            }
+
+            UpdateSystemPromptWithContext();
+        }
+
+        private static bool ShouldPreserveRetrievedContext(string userMessage)
+        {
+            if (string.IsNullOrWhiteSpace(userMessage))
+            {
+                return false;
+            }
+
+            var normalized = $" {Regex.Replace(userMessage.ToLowerInvariant(), @"\s+", " ").Trim()} ";
+            return normalized.Contains(" expand ", StringComparison.Ordinal)
+                || normalized.Contains(" shorten ", StringComparison.Ordinal)
+                || normalized.Contains(" simplify ", StringComparison.Ordinal)
+                || normalized.Contains(" rephrase ", StringComparison.Ordinal)
+                || normalized.Contains(" another version ", StringComparison.Ordinal)
+                || normalized.Contains(" make it stronger ", StringComparison.Ordinal)
+                || normalized.Contains(" make it better ", StringComparison.Ordinal)
+                || normalized.Contains(" say it differently ", StringComparison.Ordinal)
+                || normalized.Contains(" bullet points ", StringComparison.Ordinal)
+                || normalized.Contains(" tell me more ", StringComparison.Ordinal);
         }
 
 

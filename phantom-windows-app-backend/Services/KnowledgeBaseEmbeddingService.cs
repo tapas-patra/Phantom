@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Phantom.WindowsApp.Backend.Contracts;
@@ -10,7 +12,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingService
 {
-    private const int MaxTransientRetries = 3;
+    private const int MaxIndexingTransientRetries = 3;
     private static readonly HttpClient HttpClient = new()
     {
         Timeout = TimeSpan.FromMinutes(2)
@@ -20,6 +22,12 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
     private readonly HostedKnowledgeBaseEmbeddingConfigRepository _repository;
     private readonly SecretProtector _protector;
     private readonly ILogger<KnowledgeBaseEmbeddingService> _logger;
+    private readonly ConcurrentDictionary<string, CachedQueryEmbeddingEntry> _queryEmbeddingCache = new(StringComparer.Ordinal);
+    private readonly TimeSpan _queryTimeout;
+    private readonly int _queryMaxRetries;
+    private readonly TimeSpan _queryRetryDelay;
+    private readonly int _queryCacheMaxEntries;
+    private readonly TimeSpan _queryCacheTtl;
 
     public KnowledgeBaseEmbeddingService(
         BackendOptions options,
@@ -31,6 +39,11 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         _repository = repository;
         _protector = protector;
         _logger = logger;
+        _queryTimeout = TimeSpan.FromMilliseconds(Math.Clamp(options.KnowledgeBaseQueryEmbeddingTimeoutMs, 100, 2000));
+        _queryMaxRetries = Math.Clamp(options.KnowledgeBaseQueryEmbeddingRetries, 0, 3);
+        _queryRetryDelay = TimeSpan.FromMilliseconds(Math.Clamp(options.KnowledgeBaseQueryEmbeddingRetryDelayMs, 0, 1000));
+        _queryCacheMaxEntries = Math.Clamp(options.KnowledgeBaseQueryEmbeddingCacheEntries, 32, 4096);
+        _queryCacheTtl = TimeSpan.FromMinutes(Math.Clamp(options.KnowledgeBaseQueryEmbeddingCacheTtlMinutes, 1, 240));
     }
 
     public bool IsConfigured => ResolveConfiguration().IsConfigured;
@@ -84,6 +97,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         };
 
         _repository.Save(record);
+        _queryEmbeddingCache.Clear();
         return Map(record, hasApiKey: !string.IsNullOrWhiteSpace(record.EncryptedApiKey), "admin-dashboard");
     }
 
@@ -100,19 +114,20 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             return Array.Empty<float[]>();
         }
 
-        var profile = new KnowledgeBaseEmbeddingProfile
-        {
-            ProviderId = configuration.ProviderId,
-            BaseUrl = configuration.BaseUrl,
-            ModelId = configuration.ModelId,
-            Dimensions = configuration.Dimensions,
-            Version = configuration.Version
-        };
-
+        var profile = ToProfile(configuration);
         var results = new List<float[]>(inputs.Count);
         foreach (var batch in Batch(inputs, Math.Max(1, configuration.BatchSize)))
         {
-            results.AddRange(await GenerateBatchAsync(profile, configuration.ApiKey, batch, cancellationToken));
+            results.AddRange(await GenerateBatchAsync(
+                profile,
+                configuration.ApiKey,
+                batch,
+                cancellationToken,
+                new EmbeddingRequestPolicy(
+                    operationName: "batch",
+                    maxRetries: MaxIndexingTransientRetries,
+                    timeout: null,
+                    retryDelay: TimeSpan.FromSeconds(1))));
         }
 
         return results;
@@ -122,6 +137,52 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
     {
         var embeddings = await GenerateEmbeddingsAsync(new[] { input ?? string.Empty }, cancellationToken);
         return embeddings.Count == 0 ? Array.Empty<float>() : embeddings[0];
+    }
+
+    public async Task<float[]> GenerateQueryEmbeddingAsync(string input, CancellationToken cancellationToken)
+    {
+        var configuration = ResolveConfiguration(includeApiKey: true);
+        if (!configuration.IsConfigured)
+        {
+            throw new BackendValidationException("Knowledge-base embeddings are not configured.");
+        }
+
+        var normalizedInput = NormalizeInput(input);
+        if (normalizedInput.Length == 0)
+        {
+            return Array.Empty<float>();
+        }
+
+        var cacheKey = BuildQueryCacheKey(configuration, normalizedInput);
+        if (TryGetCachedQueryEmbedding(cacheKey, out var cachedEmbedding))
+        {
+            _logger.LogDebug("KB query embedding cache hit for profile {Profile}.", cacheKey[..Math.Min(cacheKey.Length, 80)]);
+            return cachedEmbedding;
+        }
+
+        var profile = ToProfile(configuration);
+        var vectors = await GenerateBatchAsync(
+            profile,
+            configuration.ApiKey,
+            new[] { normalizedInput },
+            cancellationToken,
+            new EmbeddingRequestPolicy(
+                operationName: "query",
+                maxRetries: _queryMaxRetries,
+                timeout: _queryTimeout,
+                retryDelay: _queryRetryDelay));
+        var result = vectors.Count == 0 ? Array.Empty<float>() : vectors[0];
+        if (result.Length == profile.Dimensions)
+        {
+            _queryEmbeddingCache[cacheKey] = new CachedQueryEmbeddingEntry
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                Values = result.ToArray()
+            };
+            TrimQueryEmbeddingCacheIfNeeded();
+        }
+
+        return result;
     }
 
     private HostedKnowledgeBaseEmbeddingResolvedConfig ResolveConfiguration(bool includeApiKey = false)
@@ -177,16 +238,23 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         KnowledgeBaseEmbeddingProfile profile,
         string apiKey,
         IReadOnlyList<string> inputs,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        EmbeddingRequestPolicy policy)
     {
         var attempt = 0;
         while (true)
         {
             attempt++;
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (policy.Timeout.HasValue)
+            {
+                attemptCts.CancelAfter(policy.Timeout.Value);
+            }
+
             try
             {
-                using var response = await SendEmbeddingRequestAsync(profile, apiKey, inputs, cancellationToken);
-                var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var response = await SendEmbeddingRequestAsync(profile, apiKey, inputs, attemptCts.Token);
+                var responseText = await response.Content.ReadAsStringAsync(attemptCts.Token);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw CreateProviderException(response.StatusCode, response.Headers.RetryAfter?.Delta, responseText);
@@ -194,38 +262,53 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
 
                 return ParseEmbeddingResponse(profile, responseText);
             }
-            catch (EmbeddingProviderException ex) when (ex.IsTransient && attempt <= MaxTransientRetries)
+            catch (EmbeddingProviderException ex) when (ex.IsTransient && attempt <= policy.MaxRetries)
             {
-                var delay = GetRetryDelay(attempt, ex.RetryAfterSeconds);
+                var delay = GetRetryDelay(attempt, ex.RetryAfterSeconds, policy.RetryDelay, maxDelaySeconds: 8);
                 _logger.LogWarning(
-                    "Transient KB embedding error from provider. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelaySeconds}s. Status {StatusCode}.",
+                    "Transient KB {Operation} embedding error. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelayMs}ms. Status {StatusCode}.",
+                    policy.OperationName,
                     attempt,
-                    MaxTransientRetries + 1,
-                    delay.TotalSeconds,
+                    policy.MaxRetries + 1,
+                    delay.TotalMilliseconds,
                     ex.ProviderStatusCode);
-                await Task.Delay(delay, cancellationToken);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
             }
-            catch (HttpRequestException ex) when (attempt <= MaxTransientRetries)
+            catch (HttpRequestException ex) when (attempt <= policy.MaxRetries)
             {
-                var delay = GetRetryDelay(attempt, null);
+                var delay = GetRetryDelay(attempt, null, policy.RetryDelay, maxDelaySeconds: 8);
                 _logger.LogWarning(
                     ex,
-                    "Network failure during KB embedding request. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelaySeconds}s.",
+                    "Network failure during KB {Operation} embedding request. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelayMs}ms.",
+                    policy.OperationName,
                     attempt,
-                    MaxTransientRetries + 1,
-                    delay.TotalSeconds);
-                await Task.Delay(delay, cancellationToken);
+                    policy.MaxRetries + 1,
+                    delay.TotalMilliseconds);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
             }
-            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested && attempt <= MaxTransientRetries)
+            catch (OperationCanceledException ex)
+                when (!cancellationToken.IsCancellationRequested
+                    && attemptCts.IsCancellationRequested
+                    && attempt <= policy.MaxRetries)
             {
-                var delay = GetRetryDelay(attempt, null);
+                var delay = GetRetryDelay(attempt, null, policy.RetryDelay, maxDelaySeconds: 8);
                 _logger.LogWarning(
                     ex,
-                    "Timed out during KB embedding request. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelaySeconds}s.",
+                    "Timed out during KB {Operation} embedding request. Attempt {Attempt}/{MaxAttempts}. Retrying in {DelayMs}ms.",
+                    policy.OperationName,
                     attempt,
-                    MaxTransientRetries + 1,
-                    delay.TotalSeconds);
-                await Task.Delay(delay, cancellationToken);
+                    policy.MaxRetries + 1,
+                    delay.TotalMilliseconds);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
             }
             catch (HttpRequestException ex)
             {
@@ -234,7 +317,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
                     isTransient: true,
                     innerException: ex);
             }
-            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && attemptCts.IsCancellationRequested)
             {
                 throw new EmbeddingProviderException(
                     "Knowledge-base embedding request timed out.",
@@ -242,6 +325,59 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
                     innerException: ex);
             }
         }
+    }
+
+    private bool TryGetCachedQueryEmbedding(string cacheKey, out float[] embedding)
+    {
+        if (_queryEmbeddingCache.TryGetValue(cacheKey, out var cached)
+            && DateTime.UtcNow - cached.CachedAtUtc <= _queryCacheTtl)
+        {
+            embedding = cached.Values.ToArray();
+            return true;
+        }
+
+        _queryEmbeddingCache.TryRemove(cacheKey, out _);
+        embedding = Array.Empty<float>();
+        return false;
+    }
+
+    private void TrimQueryEmbeddingCacheIfNeeded()
+    {
+        if (_queryEmbeddingCache.Count <= _queryCacheMaxEntries)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var entry in _queryEmbeddingCache)
+        {
+            if (now - entry.Value.CachedAtUtc > _queryCacheTtl)
+            {
+                _queryEmbeddingCache.TryRemove(entry.Key, out _);
+            }
+        }
+
+        if (_queryEmbeddingCache.Count <= _queryCacheMaxEntries)
+        {
+            return;
+        }
+
+        foreach (var entry in _queryEmbeddingCache.OrderBy(item => item.Value.CachedAtUtc).Take(_queryEmbeddingCache.Count - _queryCacheMaxEntries))
+        {
+            _queryEmbeddingCache.TryRemove(entry.Key, out _);
+        }
+    }
+
+    private static KnowledgeBaseEmbeddingProfile ToProfile(HostedKnowledgeBaseEmbeddingResolvedConfig configuration)
+    {
+        return new KnowledgeBaseEmbeddingProfile
+        {
+            ProviderId = configuration.ProviderId,
+            BaseUrl = configuration.BaseUrl,
+            ModelId = configuration.ModelId,
+            Dimensions = configuration.Dimensions,
+            Version = configuration.Version
+        };
     }
 
     private static HostedKnowledgeBaseEmbeddingConfigDto Map(
@@ -363,6 +499,28 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         public string ApiKey { get; init; } = string.Empty;
     }
 
+    private sealed class EmbeddingRequestPolicy
+    {
+        public EmbeddingRequestPolicy(string operationName, int maxRetries, TimeSpan? timeout, TimeSpan retryDelay)
+        {
+            OperationName = operationName;
+            MaxRetries = Math.Max(0, maxRetries);
+            Timeout = timeout;
+            RetryDelay = retryDelay < TimeSpan.Zero ? TimeSpan.Zero : retryDelay;
+        }
+
+        public string OperationName { get; }
+        public int MaxRetries { get; }
+        public TimeSpan? Timeout { get; }
+        public TimeSpan RetryDelay { get; }
+    }
+
+    private sealed class CachedQueryEmbeddingEntry
+    {
+        public DateTime CachedAtUtc { get; init; }
+        public float[] Values { get; init; } = Array.Empty<float>();
+    }
+
     private static HttpRequestMessage BuildEmbeddingRequest(
         KnowledgeBaseEmbeddingProfile profile,
         string apiKey,
@@ -471,15 +629,37 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             retryAfterSeconds);
     }
 
-    private static TimeSpan GetRetryDelay(int attempt, int? retryAfterSeconds)
+    private static TimeSpan GetRetryDelay(int attempt, int? retryAfterSeconds, TimeSpan fallbackDelay, int maxDelaySeconds)
     {
         if (retryAfterSeconds.HasValue && retryAfterSeconds.Value > 0)
         {
-            return TimeSpan.FromSeconds(Math.Min(retryAfterSeconds.Value, 30));
+            return TimeSpan.FromSeconds(Math.Min(retryAfterSeconds.Value, maxDelaySeconds));
         }
 
-        var seconds = Math.Min(Math.Pow(2, Math.Max(0, attempt - 1)), 8);
+        if (fallbackDelay > TimeSpan.Zero)
+        {
+            return fallbackDelay;
+        }
+
+        var seconds = Math.Min(Math.Pow(2, Math.Max(0, attempt - 1)), maxDelaySeconds);
         return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static string NormalizeInput(string value)
+    {
+        return string.Join(" ", (value ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+    }
+
+    private static string BuildQueryCacheKey(HostedKnowledgeBaseEmbeddingResolvedConfig configuration, string normalizedInput)
+    {
+        var queryHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedInput)));
+        return string.Join(
+            ":",
+            configuration.ProviderId,
+            configuration.ModelId,
+            configuration.Version.ToString(),
+            configuration.Dimensions.ToString(),
+            queryHash);
     }
 
     private static bool SupportsDimensionsOverride(string providerId)

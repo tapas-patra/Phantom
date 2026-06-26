@@ -1468,7 +1468,10 @@ namespace SecureOverlay
                     _settings.SystemPrompt,
                     modelConfig,
                     _rotationManager,
-                    query => _knowledgeRetrievalService.RetrieveForPrompt(_contextPackService.GetSelectedPack(), query));
+                    (query, cancellationToken) => _knowledgeRetrievalService.RetrieveForPromptAsync(
+                        _contextPackService.GetSelectedPack(),
+                        query,
+                        cancellationToken: cancellationToken));
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;

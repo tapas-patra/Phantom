@@ -101,6 +101,9 @@ ORDER BY document_id ASC, chunk_index ASC;";
 
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
+        var semanticDistanceExpression = embeddingDimensions == HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions
+            ? $"CAST(embedding AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions})) <=> CAST(@queryEmbedding AS vector({HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions}))"
+            : "embedding <=> CAST(@queryEmbedding AS vector)";
 
         if (string.IsNullOrWhiteSpace(queryEmbeddingVector))
         {
@@ -176,9 +179,9 @@ semantic AS (
         section_title,
         text,
         search_text,
-        1 - (embedding <=> CAST(@queryEmbedding AS vector)) AS semantic_similarity,
+        1 - (" + semanticDistanceExpression + @") AS semantic_similarity,
         row_number() OVER (
-            ORDER BY embedding <=> CAST(@queryEmbedding AS vector),
+            ORDER BY " + semanticDistanceExpression + @",
             document_id ASC,
             chunk_index ASC
         ) AS semantic_rank
@@ -189,7 +192,7 @@ semantic AS (
       AND embedding_model = @embeddingModel
       AND vector_dims(embedding) = @embeddingDimensions
       AND embedding_version = @embeddingVersion
-    ORDER BY embedding <=> CAST(@queryEmbedding AS vector),
+    ORDER BY " + semanticDistanceExpression + @",
         document_id ASC,
         chunk_index ASC
     LIMIT @semanticLimit

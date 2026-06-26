@@ -2,8 +2,10 @@ using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
-using Newtonsoft.Json.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace SecureOverlay.Infrastructure.Hosted
 {
@@ -42,6 +44,28 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             try
             {
+                return PostJsonAsync<TRequest, TResponse>(relativePath, request, bearerToken).GetAwaiter().GetResult();
+            }
+            catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HostedServiceException(
+                    $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
+                    ex);
+            }
+        }
+
+        protected async Task<TResponse> PostJsonAsync<TRequest, TResponse>(
+            string relativePath,
+            TRequest request,
+            string? bearerToken = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
                 using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}{relativePath}")
                 {
                     Content = new StringContent(
@@ -55,8 +79,8 @@ namespace SecureOverlay.Infrastructure.Hosted
                     message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
                 }
 
-                var response = HttpClient.SendAsync(message).GetAwaiter().GetResult();
-                var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                using var response = await HttpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorMessage = TryExtractErrorMessage(body);
@@ -78,6 +102,10 @@ namespace SecureOverlay.Infrastructure.Hosted
             {
                 throw;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 throw new HostedServiceException(
@@ -90,14 +118,35 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             try
             {
+                return GetJsonAsync<TResponse>(relativePath, bearerToken).GetAwaiter().GetResult();
+            }
+            catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HostedServiceException(
+                    $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
+                    ex);
+            }
+        }
+
+        protected async Task<TResponse> GetJsonAsync<TResponse>(
+            string relativePath,
+            string? bearerToken = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{relativePath}");
                 if (!string.IsNullOrWhiteSpace(bearerToken))
                 {
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
                 }
 
-                var response = HttpClient.SendAsync(request).GetAwaiter().GetResult();
-                var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorMessage = TryExtractErrorMessage(body);
@@ -116,6 +165,10 @@ namespace SecureOverlay.Infrastructure.Hosted
                 return result;
             }
             catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }

@@ -55,6 +55,11 @@ public sealed class BackendOptions
     public int KnowledgeBaseEmbeddingDimensions { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions;
     public int KnowledgeBaseEmbeddingVersion { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion;
     public int KnowledgeBaseEmbeddingBatchSize { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize;
+    public int KnowledgeBaseQueryEmbeddingTimeoutMs { get; init; } = 350;
+    public int KnowledgeBaseQueryEmbeddingRetries { get; init; } = 1;
+    public int KnowledgeBaseQueryEmbeddingRetryDelayMs { get; init; } = 75;
+    public int KnowledgeBaseQueryEmbeddingCacheEntries { get; init; } = 512;
+    public int KnowledgeBaseQueryEmbeddingCacheTtlMinutes { get; init; } = 30;
     public bool AllowImplicitLocalAdminBootstrap { get; init; }
     public bool AllowSeedTestUsers { get; init; }
 
@@ -288,6 +293,26 @@ public sealed class BackendOptions
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BATCH_SIZE"),
                 section["KnowledgeBaseEmbeddingBatchSize"],
                 HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize),
+            KnowledgeBaseQueryEmbeddingTimeoutMs = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_TIMEOUT_MS"),
+                section["KnowledgeBaseQueryEmbeddingTimeoutMs"],
+                350),
+            KnowledgeBaseQueryEmbeddingRetries = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_RETRIES"),
+                section["KnowledgeBaseQueryEmbeddingRetries"],
+                1),
+            KnowledgeBaseQueryEmbeddingRetryDelayMs = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_RETRY_DELAY_MS"),
+                section["KnowledgeBaseQueryEmbeddingRetryDelayMs"],
+                75),
+            KnowledgeBaseQueryEmbeddingCacheEntries = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_CACHE_ENTRIES"),
+                section["KnowledgeBaseQueryEmbeddingCacheEntries"],
+                512),
+            KnowledgeBaseQueryEmbeddingCacheTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_CACHE_TTL_MINUTES"),
+                section["KnowledgeBaseQueryEmbeddingCacheTtlMinutes"],
+                30),
             AllowImplicitLocalAdminBootstrap = ParseBool(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP"),
                 section["AllowImplicitLocalAdminBootstrap"],

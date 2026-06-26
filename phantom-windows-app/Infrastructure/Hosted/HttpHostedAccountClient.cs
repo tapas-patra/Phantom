@@ -1,5 +1,7 @@
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SecureOverlay.Infrastructure.Hosted
 {
@@ -35,12 +37,30 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJson<HostedKnowledgeBaseSummaryDto>("/api/desktop/kb", accessToken);
         }
 
+        public Task<HostedKnowledgeBaseSummaryDto> GetKnowledgeBaseAsync(string accessToken, CancellationToken cancellationToken = default)
+        {
+            return GetJsonAsync<HostedKnowledgeBaseSummaryDto>("/api/desktop/kb", accessToken, cancellationToken);
+        }
+
         public HostedKnowledgeBaseSearchResultDto SearchKnowledgeBase(string accessToken, string query, int maxSnippets = 3)
         {
             var encodedQuery = Uri.EscapeDataString(query ?? string.Empty);
             return GetJson<HostedKnowledgeBaseSearchResultDto>(
                 $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}",
                 accessToken);
+        }
+
+        public Task<HostedKnowledgeBaseSearchResultDto> SearchKnowledgeBaseAsync(
+            string accessToken,
+            string query,
+            int maxSnippets = 3,
+            CancellationToken cancellationToken = default)
+        {
+            var encodedQuery = Uri.EscapeDataString(query ?? string.Empty);
+            return GetJsonAsync<HostedKnowledgeBaseSearchResultDto>(
+                $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}",
+                accessToken,
+                cancellationToken);
         }
 
         public DesktopContextPackDto[] GetContextPacks(string accessToken)

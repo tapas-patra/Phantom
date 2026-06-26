@@ -140,6 +140,7 @@ namespace SecureOverlay
 
             _debugLogger = DebugLogger.Instance;
             Log.WriteLine($"Debug logger instance obtained ({_debugLogger.LogMessages.Count} messages already captured)");
+            Log.WriteLine($"RAG trace logging config: {RagTraceLogger.GetConfigurationSummary()}");
             if (RagTraceLogger.IsEnabled)
             {
                 Log.WriteLine($"RAG trace logging enabled: {RagTraceLogger.GetLogPath()}");

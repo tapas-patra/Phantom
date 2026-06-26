@@ -828,12 +828,21 @@ app.MapGet("/api/desktop/kb/reindex", (
 app.MapGet("/api/desktop/kb/search", async (
     HttpContext httpContext,
     string query,
+    string? preferredDocumentIds,
     int? maxSnippets,
     HostedKnowledgeBaseService knowledgeBases,
     CancellationToken cancellationToken) =>
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(await knowledgeBases.SearchAsync(account, query, maxSnippets ?? 3, cancellationToken));
+    var preferredDocs = string.IsNullOrWhiteSpace(preferredDocumentIds)
+        ? Array.Empty<string>()
+        : preferredDocumentIds
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Take(8)
+            .ToArray();
+    return Results.Ok(await knowledgeBases.SearchAsync(account, query, preferredDocs, maxSnippets ?? 3, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/context-packs", (

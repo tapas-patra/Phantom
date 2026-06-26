@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SecureOverlay.Domain.Entities;
@@ -21,7 +22,8 @@ namespace SecureOverlay.Services
         private string _jobDescriptionSummary = string.Empty;
         private bool _jobDescriptionSummarized = false;
         private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
-        private readonly Func<string, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
+        private IReadOnlyList<string> _lastRetrievedDocumentIds = Array.Empty<string>();
+        private readonly Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
 
         
         private ModelConfig _modelConfig;
@@ -38,7 +40,7 @@ namespace SecureOverlay.Services
             string systemPrompt,
             ModelConfig modelConfig,
             APIRotationManager? rotationManager = null,
-            Func<string, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null)
+            Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
@@ -513,7 +515,25 @@ namespace SecureOverlay.Services
                 }
             }
 
-            await RefreshRetrievedKnowledgeSnippetsAsync(userMessage, CancellationToken.None);
+            // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
+            var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, CancellationToken.None);
+            if (plannerDecision.Type == ResponsePlanType.Retrieve)
+            {
+                await RefreshRetrievedKnowledgeSnippetsAsync(
+                    plannerDecision.RagQuery,
+                    plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
+                    CancellationToken.None);
+            }
+            else
+            {
+                ClearRetrievedKnowledgeSnippets();
+            }
+
+            if (plannerDecision.Type == ResponsePlanType.Direct
+                && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
+            {
+                return CompleteAssistantResponse(plannerDecision.DirectAnswer);
+            }
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
@@ -534,22 +554,7 @@ namespace SecureOverlay.Services
             }
 
             // Extract summary from response
-            var (fullResponse, summary, hasCode) = ParseAIResponse(response);
-
-            // Add AI response to full conversation
-            var aiMsg = new ConversationMessage
-            {
-                Role = "assistant",
-                Content = fullResponse,
-                Summary = summary,
-                HasCode = hasCode,
-                EstimatedTokens = EstimateTokens(fullResponse)
-            };
-            _fullConversation.Add(aiMsg);
-
-            Log.WriteLine($"✓ Response added to conversation ({_fullConversation.Count} total messages)");
-
-            return (fullResponse, "");
+            return CompleteAssistantResponse(response);
         }
 
 
@@ -602,7 +607,26 @@ namespace SecureOverlay.Services
                 }
             }
 
-            await RefreshRetrievedKnowledgeSnippetsAsync(userMessage, cancellationToken);
+            // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
+            var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, cancellationToken);
+            if (plannerDecision.Type == ResponsePlanType.Retrieve)
+            {
+                await RefreshRetrievedKnowledgeSnippetsAsync(
+                    plannerDecision.RagQuery,
+                    plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
+                    cancellationToken);
+            }
+            else
+            {
+                ClearRetrievedKnowledgeSnippets();
+            }
+
+            if (plannerDecision.Type == ResponsePlanType.Direct
+                && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
+            {
+                onChunkReceived?.Invoke(plannerDecision.DirectAnswer);
+                return CompleteAssistantResponse(plannerDecision.DirectAnswer);
+            }
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
@@ -624,21 +648,7 @@ namespace SecureOverlay.Services
                 return ("", error);
             }
 
-            var (fullResponse, summary, hasCode) = ParseAIResponse(response);
-
-            var aiMsg = new ConversationMessage
-            {
-                Role = "assistant",
-                Content = fullResponse,
-                Summary = summary,
-                HasCode = hasCode,
-                EstimatedTokens = EstimateTokens(fullResponse)
-            };
-            _fullConversation.Add(aiMsg);
-
-            Log.WriteLine($"✓ Response added to conversation ({_fullConversation.Count} total messages)");
-
-            return (fullResponse, "");
+            return CompleteAssistantResponse(response);
         }
 
 
@@ -736,21 +746,214 @@ namespace SecureOverlay.Services
             return validatedContext;
         }
 
-        private async Task RefreshRetrievedKnowledgeSnippetsAsync(string userMessage, CancellationToken cancellationToken)
+        private (string response, string error) CompleteAssistantResponse(string response)
+        {
+            var (fullResponse, summary, hasCode) = ParseAIResponse(response);
+            _fullConversation.Add(new ConversationMessage
+            {
+                Role = "assistant",
+                Content = fullResponse,
+                Summary = summary,
+                HasCode = hasCode,
+                EstimatedTokens = EstimateTokens(fullResponse)
+            });
+
+            Log.WriteLine($"✓ Response added to conversation ({_fullConversation.Count} total messages)");
+            return (fullResponse, "");
+        }
+
+        private async Task<ResponsePlan> PlanResponseAsync(
+            string userMessage,
+            string? imageBase64,
+            CancellationToken cancellationToken)
+        {
+            if (!_aiService.IsConfigured())
+            {
+                return ResponsePlan.Retrieve(userMessage, "ai-not-configured");
+            }
+
+            var plannerMessages = BuildPlannerMessages(userMessage);
+            var plannerResponse = await SendPlannerRequestAsync(plannerMessages, imageBase64, cancellationToken);
+            if (plannerResponse.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.WriteLine($"⚠️ Planner failed, falling back to retrieval: {plannerResponse}");
+                return ResponsePlan.Retrieve(userMessage, "planner-error");
+            }
+
+            if (TryParseResponsePlan(plannerResponse, userMessage, out var plan))
+            {
+                Log.WriteLine(
+                    $"Planner decision: Type={plan.Type}, Confidence={plan.Confidence:0.00}, RagQuery='{plan.RagQuery}'");
+                return plan;
+            }
+
+            Log.WriteLine("⚠️ Planner returned invalid JSON. Falling back to retrieval.");
+            return ResponsePlan.Retrieve(userMessage, "planner-parse-fallback");
+        }
+
+        private async Task<string> SendPlannerRequestAsync(
+            List<ConversationMessage> messages,
+            string? imageBase64,
+            CancellationToken cancellationToken)
+        {
+            var builder = new System.Text.StringBuilder();
+            return await _aiService.SendMessageStreamAsync(
+                messages,
+                chunk => builder.Append(chunk),
+                cancellationToken,
+                imageBase64);
+        }
+
+        private List<ConversationMessage> BuildPlannerMessages(string userMessage)
+        {
+            var priorTurns = _fullConversation
+                .Skip(1)
+                .Take(Math.Max(0, _fullConversation.Count - 2))
+                .TakeLast(4)
+                .Select(message => $"{message.Role}: {TruncateMessage(message.Content, 280)}")
+                .ToArray();
+            var previousRetrieval = _retrievedKnowledgeSnippets
+                .Take(2)
+                .Select(snippet => $"{snippet.DocumentTitle}: {TruncateMessage(snippet.Text, 180)}")
+                .ToArray();
+
+            var plannerContext = new List<string>
+            {
+                $"Current question: {userMessage}",
+                $"Recent conversation:\n{(priorTurns.Length == 0 ? "(none)" : string.Join("\n", priorTurns))}",
+                $"Previous retrieval context:\n{(previousRetrieval.Length == 0 ? "(none)" : string.Join("\n", previousRetrieval))}"
+            };
+
+            return new List<ConversationMessage>
+            {
+                new ConversationMessage
+                {
+                    Role = "system",
+                    Content = @"You are a routing planner for an interview assistant.
+Return strict JSON only with this shape:
+{""type"":""direct|retrieve"",""direct_answer"":""..."",""rag_query"":""..."",""scope"":""global|previous_docs"",""confidence"":0.0}
+
+Rules:
+- type=direct when the user can be answered from general knowledge or recent generic conversation.
+- type=retrieve when the answer should be grounded in the user's resume, projects, documents, knowledge base, or a follow-up that depends on prior project-specific context.
+- For follow-ups like ""this"", ""that"", ""it"", rewrite rag_query to the specific project/topic from recent conversation.
+- Use scope=""previous_docs"" only when the request clearly continues the same retrieved project/topic.
+- Use scope=""global"" when the user is switching topics, naming a different project, or asking a fresh question.
+- For generic follow-ups like ""give me an example"" after a conceptual question, use type=direct.
+- If type=direct, include a complete direct_answer and leave rag_query empty.
+- If type=retrieve, include a short, specific rag_query, leave direct_answer empty, and set scope appropriately.
+- If unsure, prefer retrieve.
+- Do not include markdown fences or extra text."
+                },
+                new ConversationMessage
+                {
+                    Role = "user",
+                    Content = string.Join("\n\n", plannerContext)
+                }
+            };
+        }
+
+        private static bool TryParseResponsePlan(string plannerResponse, string userMessage, out ResponsePlan plan)
+        {
+            plan = ResponsePlan.Retrieve(userMessage, "default");
+            var json = ExtractJsonObject(plannerResponse);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                var type = root.TryGetProperty("type", out var typeElement)
+                    ? (typeElement.GetString() ?? string.Empty).Trim().ToLowerInvariant()
+                    : string.Empty;
+                var directAnswer = root.TryGetProperty("direct_answer", out var answerElement)
+                    ? (answerElement.GetString() ?? string.Empty).Trim()
+                    : string.Empty;
+                var ragQuery = root.TryGetProperty("rag_query", out var ragQueryElement)
+                    ? (ragQueryElement.GetString() ?? string.Empty).Trim()
+                    : string.Empty;
+                var scope = root.TryGetProperty("scope", out var scopeElement)
+                    ? (scopeElement.GetString() ?? string.Empty).Trim().ToLowerInvariant()
+                    : string.Empty;
+                var confidence = root.TryGetProperty("confidence", out var confidenceElement)
+                    && confidenceElement.ValueKind == JsonValueKind.Number
+                    && confidenceElement.TryGetDouble(out var parsedConfidence)
+                    ? parsedConfidence
+                    : 0d;
+
+                if (type == "direct")
+                {
+                    plan = ResponsePlan.Direct(directAnswer, confidence);
+                    return true;
+                }
+
+                if (type == "retrieve")
+                {
+                    plan = ResponsePlan.Retrieve(
+                        string.IsNullOrWhiteSpace(ragQuery) ? userMessage : ragQuery,
+                        "planner",
+                        scope == "previous_docs" ? RetrievalScope.PreviousDocuments : RetrievalScope.Global,
+                        confidence);
+                    return true;
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string ExtractJsonObject(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var fencedMatch = Regex.Match(
+                value,
+                "```(?:json)?\\s*(\\{.*\\})\\s*```",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (fencedMatch.Success)
+            {
+                return fencedMatch.Groups[1].Value.Trim();
+            }
+
+            var firstBrace = value.IndexOf('{');
+            var lastBrace = value.LastIndexOf('}');
+            return firstBrace >= 0 && lastBrace > firstBrace
+                ? value.Substring(firstBrace, lastBrace - firstBrace + 1).Trim()
+                : string.Empty;
+        }
+
+        private async Task RefreshRetrievedKnowledgeSnippetsAsync(
+            string retrievalQuery,
+            IReadOnlyList<string>? preferredDocumentIds,
+            CancellationToken cancellationToken)
         {
             var previousSnippets = _retrievedKnowledgeSnippets;
             var retrievedSnippets = _knowledgeRetriever == null
                 ? Array.Empty<RetrievedContextSnippet>()
-                : await _knowledgeRetriever(userMessage, cancellationToken);
+                : await _knowledgeRetriever(retrievalQuery, preferredDocumentIds, cancellationToken);
 
             if (retrievedSnippets.Count > 0)
             {
                 _retrievedKnowledgeSnippets = retrievedSnippets;
+                _lastRetrievedDocumentIds = retrievedSnippets
+                    .Select(snippet => snippet.DocumentId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
             }
-            else if (previousSnippets.Count > 0 && ShouldPreserveRetrievedContext(userMessage))
+            else if (previousSnippets.Count > 0)
             {
                 _retrievedKnowledgeSnippets = previousSnippets;
-                Log.WriteLine("✓ Preserving retrieved knowledge snippets for a follow-up prompt");
+                Log.WriteLine("✓ Preserving previous retrieved knowledge snippets after empty retrieval");
             }
             else
             {
@@ -760,24 +963,15 @@ namespace SecureOverlay.Services
             UpdateSystemPromptWithContext();
         }
 
-        private static bool ShouldPreserveRetrievedContext(string userMessage)
+        private void ClearRetrievedKnowledgeSnippets()
         {
-            if (string.IsNullOrWhiteSpace(userMessage))
+            if (_retrievedKnowledgeSnippets.Count == 0)
             {
-                return false;
+                return;
             }
 
-            var normalized = $" {Regex.Replace(userMessage.ToLowerInvariant(), @"\s+", " ").Trim()} ";
-            return normalized.Contains(" expand ", StringComparison.Ordinal)
-                || normalized.Contains(" shorten ", StringComparison.Ordinal)
-                || normalized.Contains(" simplify ", StringComparison.Ordinal)
-                || normalized.Contains(" rephrase ", StringComparison.Ordinal)
-                || normalized.Contains(" another version ", StringComparison.Ordinal)
-                || normalized.Contains(" make it stronger ", StringComparison.Ordinal)
-                || normalized.Contains(" make it better ", StringComparison.Ordinal)
-                || normalized.Contains(" say it differently ", StringComparison.Ordinal)
-                || normalized.Contains(" bullet points ", StringComparison.Ordinal)
-                || normalized.Contains(" tell me more ", StringComparison.Ordinal);
+            _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            UpdateSystemPromptWithContext();
         }
 
 
@@ -803,6 +997,55 @@ namespace SecureOverlay.Services
             }
 
             return (response, summary, hasCode);
+        }
+
+        private enum ResponsePlanType
+        {
+            Direct,
+            Retrieve
+        }
+
+        private enum RetrievalScope
+        {
+            Global,
+            PreviousDocuments
+        }
+
+        private sealed class ResponsePlan
+        {
+            public ResponsePlanType Type { get; init; }
+            public string DirectAnswer { get; init; } = string.Empty;
+            public string RagQuery { get; init; } = string.Empty;
+            public string Source { get; init; } = string.Empty;
+            public RetrievalScope Scope { get; init; }
+            public double Confidence { get; init; }
+
+            public static ResponsePlan Direct(string directAnswer, double confidence)
+            {
+                return new ResponsePlan
+                {
+                    Type = ResponsePlanType.Direct,
+                    DirectAnswer = directAnswer ?? string.Empty,
+                    Confidence = confidence,
+                    Source = "planner"
+                };
+            }
+
+            public static ResponsePlan Retrieve(
+                string ragQuery,
+                string source,
+                RetrievalScope scope = RetrievalScope.Global,
+                double confidence = 0d)
+            {
+                return new ResponsePlan
+                {
+                    Type = ResponsePlanType.Retrieve,
+                    RagQuery = ragQuery ?? string.Empty,
+                    Source = source ?? string.Empty,
+                    Scope = scope,
+                    Confidence = confidence
+                };
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -1459,6 +1702,8 @@ namespace SecureOverlay.Services
             _fullConversation.Clear();
             _resumeSummarized = false;
             _jobDescriptionSummarized = false;
+            _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            _lastRetrievedDocumentIds = Array.Empty<string>();
             
             UpdateSystemPromptWithContext();
             
@@ -1486,6 +1731,8 @@ namespace SecureOverlay.Services
             
             // Clear conversation history (but keep summarization flags)
             _fullConversation.Clear();
+            _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            _lastRetrievedDocumentIds = Array.Empty<string>();
             
             // ✅ CRITICAL FIX: Re-add system prompt with resume context
             UpdateSystemPromptWithContext();
@@ -1583,6 +1830,8 @@ namespace SecureOverlay.Services
 
             // IMPORTANT: Clear current conversation first
             _fullConversation.Clear();
+            _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            _lastRetrievedDocumentIds = Array.Empty<string>();
 
             // Import all messages (including system prompt with resume/JD)
             foreach (var msg in messages)

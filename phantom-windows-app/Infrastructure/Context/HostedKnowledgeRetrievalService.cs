@@ -34,15 +34,11 @@ namespace SecureOverlay.Infrastructure.Context
         public async Task<System.Collections.Generic.IReadOnlyList<RetrievedContextSnippet>> RetrieveForPromptAsync(
             ContextPack pack,
             string query,
+            System.Collections.Generic.IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3,
             CancellationToken cancellationToken = default)
         {
-            if (!KnowledgeRetrievalQueryRouter.ShouldRetrieve(pack, query, out var routingReason))
-            {
-                Log.WriteLine($"Skipping knowledge retrieval for query. Reason={routingReason}");
-                return Array.Empty<RetrievedContextSnippet>();
-            }
-
+            // ponytail: planner owns the routing decision; retrieval just executes the rewritten query.
             var accountSnapshot = _accounts.Load();
             var session = _sessions.Load();
             var hostedKnowledgeBase = accountSnapshot?.HostedKnowledgeBase;
@@ -81,23 +77,24 @@ namespace SecureOverlay.Infrastructure.Context
                 || !hostedKnowledgeBase.CanUseInInterview
                 || string.IsNullOrWhiteSpace(session?.AccessToken))
             {
-                return await _localFallback.RetrieveForPromptAsync(pack, query, maxSnippets, cancellationToken);
+                return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
             }
 
             try
             {
                 var result = await RunWithDeadlineAsync(
-                    ct => _hostedAccountClient.SearchKnowledgeBaseAsync(session.AccessToken, query, maxSnippets, ct),
+                    ct => _hostedAccountClient.SearchKnowledgeBaseAsync(session.AccessToken, query, preferredDocumentIds, maxSnippets, ct),
                     HostedKnowledgeSearchTimeout,
                     cancellationToken);
                 if (result.Snippets == null || result.Snippets.Count == 0)
                 {
-                    return await _localFallback.RetrieveForPromptAsync(pack, query, maxSnippets, cancellationToken);
+                    return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
                 }
 
                 return result.Snippets
                     .Select(item => new RetrievedContextSnippet
                     {
+                        DocumentId = item.DocumentId,
                         DocumentTitle = item.DocumentTitle,
                         SourceType = "hosted_kb",
                         Text = item.Text,
@@ -112,12 +109,12 @@ namespace SecureOverlay.Infrastructure.Context
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 Log.WriteLine("Hosted KB retrieval hit the live-search deadline. Falling back to local context.");
-                return await _localFallback.RetrieveForPromptAsync(pack, query, maxSnippets, cancellationToken);
+                return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
             }
             catch (HostedServiceException ex)
             {
                 Log.WriteLine($"Hosted KB retrieval failed, using local fallback: {ex.Message}");
-                return await _localFallback.RetrieveForPromptAsync(pack, query, maxSnippets, cancellationToken);
+                return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
             }
         }
 

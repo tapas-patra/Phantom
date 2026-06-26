@@ -14,6 +14,7 @@ namespace SecureOverlay.Infrastructure.Context
         public Task<IReadOnlyList<RetrievedContextSnippet>> RetrieveForPromptAsync(
             ContextPack pack,
             string query,
+            IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3,
             CancellationToken cancellationToken = default)
         {
@@ -31,6 +32,7 @@ namespace SecureOverlay.Infrastructure.Context
             IReadOnlyList<RetrievedContextSnippet> snippets = pack.Documents
                 .SelectMany(document => document.Chunks.Select(chunk => new RetrievedContextSnippet
                 {
+                    DocumentId = document.DocumentId,
                     DocumentTitle = document.Title,
                     SourceType = document.SourceType,
                     Text = chunk.Text,

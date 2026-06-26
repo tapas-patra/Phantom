@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Npgsql;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -83,9 +85,12 @@ ORDER BY document_id ASC, chunk_index ASC;";
         return items;
     }
 
+    // ponytail: soft doc boost only; never hard-pin previous docs, because topic switches are real.
     public IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> SearchHybridCandidates(
         string knowledgeBaseId,
         string query,
+        IReadOnlyList<string>? preferredDocumentIds,
+        bool restrictToPreferredDocuments,
         string? queryEmbeddingVector,
         string embeddingModel,
         int embeddingDimensions,
@@ -122,6 +127,7 @@ WITH lexical AS (
         ) AS lexical_score
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
           @@ plainto_tsquery('simple', @query)
     ORDER BY lexical_score DESC, document_id ASC, chunk_index ASC
@@ -136,7 +142,11 @@ SELECT
     search_text,
     lexical_score,
     0::double precision AS semantic_similarity,
-    lexical_score AS fused_score
+    lexical_score
+        + CASE
+            WHEN @hasPreferredDocuments AND document_id = ANY(@preferredDocumentIds) THEN 0.12
+            ELSE 0
+        END AS fused_score
 FROM lexical
 ORDER BY fused_score DESC, lexical_score DESC
 LIMIT @finalLimit;";
@@ -166,6 +176,7 @@ WITH lexical AS (
         ) AS lexical_rank
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
           @@ plainto_tsquery('simple', @query)
     ORDER BY lexical_score DESC, document_id ASC, chunk_index ASC
@@ -187,6 +198,7 @@ semantic AS (
         ) AS semantic_rank
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND indexed_at_utc IS NOT NULL
       AND embedding IS NOT NULL
       AND embedding_model = @embeddingModel
@@ -231,7 +243,11 @@ SELECT
     search_text,
     max(lexical_score) AS lexical_score,
     max(semantic_similarity) AS semantic_similarity,
-    sum(fused_component) AS fused_score
+    sum(fused_component)
+        + CASE
+            WHEN @hasPreferredDocuments AND document_id = ANY(@preferredDocumentIds) THEN 0.12
+            ELSE 0
+        END AS fused_score
 FROM combined
 GROUP BY chunk_id, document_id, document_title, section_title, text, search_text
 ORDER BY fused_score DESC, semantic_similarity DESC, lexical_score DESC
@@ -243,6 +259,14 @@ LIMIT @finalLimit;";
         command.Parameters.AddWithValue("lexicalLimit", lexicalLimit);
         command.Parameters.AddWithValue("semanticLimit", semanticLimit);
         command.Parameters.AddWithValue("finalLimit", finalLimit);
+        var preferredDocuments = preferredDocumentIds?
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray()
+            ?? Array.Empty<string>();
+        command.Parameters.AddWithValue("restrictToPreferredDocuments", restrictToPreferredDocuments);
+        command.Parameters.AddWithValue("hasPreferredDocuments", preferredDocuments.Length > 0);
+        command.Parameters.AddWithValue("preferredDocumentIds", preferredDocuments);
         if (!string.IsNullOrWhiteSpace(queryEmbeddingVector))
         {
             command.Parameters.AddWithValue("queryEmbedding", queryEmbeddingVector);

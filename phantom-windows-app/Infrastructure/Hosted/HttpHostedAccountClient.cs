@@ -1,5 +1,7 @@
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -42,23 +44,30 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJsonAsync<HostedKnowledgeBaseSummaryDto>("/api/desktop/kb", accessToken, cancellationToken);
         }
 
-        public HostedKnowledgeBaseSearchResultDto SearchKnowledgeBase(string accessToken, string query, int maxSnippets = 3)
+        public HostedKnowledgeBaseSearchResultDto SearchKnowledgeBase(
+            string accessToken,
+            string query,
+            IReadOnlyList<string>? preferredDocumentIds = null,
+            int maxSnippets = 3)
         {
             var encodedQuery = Uri.EscapeDataString(query ?? string.Empty);
+            var preferredDocs = BuildPreferredDocumentQuery(preferredDocumentIds);
             return GetJson<HostedKnowledgeBaseSearchResultDto>(
-                $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}",
+                $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}{preferredDocs}",
                 accessToken);
         }
 
         public Task<HostedKnowledgeBaseSearchResultDto> SearchKnowledgeBaseAsync(
             string accessToken,
             string query,
+            IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3,
             CancellationToken cancellationToken = default)
         {
             var encodedQuery = Uri.EscapeDataString(query ?? string.Empty);
+            var preferredDocs = BuildPreferredDocumentQuery(preferredDocumentIds);
             return GetJsonAsync<HostedKnowledgeBaseSearchResultDto>(
-                $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}",
+                $"/api/desktop/kb/search?query={encodedQuery}&maxSnippets={Math.Max(1, maxSnippets)}{preferredDocs}",
                 accessToken,
                 cancellationToken);
         }
@@ -87,6 +96,23 @@ namespace SecureOverlay.Infrastructure.Hosted
         private sealed class DeleteResult
         {
             public bool Deleted { get; set; }
+        }
+
+        private static string BuildPreferredDocumentQuery(IReadOnlyList<string>? preferredDocumentIds)
+        {
+            if (preferredDocumentIds == null || preferredDocumentIds.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var joined = string.Join(
+                ",",
+                preferredDocumentIds
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(Uri.EscapeDataString));
+            return string.IsNullOrWhiteSpace(joined)
+                ? string.Empty
+                : $"&preferredDocumentIds={joined}";
         }
     }
 }

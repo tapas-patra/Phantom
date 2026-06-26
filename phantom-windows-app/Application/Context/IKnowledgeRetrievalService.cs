@@ -10,6 +10,7 @@ namespace SecureOverlay.Application.Context
         Task<IReadOnlyList<RetrievedContextSnippet>> RetrieveForPromptAsync(
             ContextPack pack,
             string query,
+            IReadOnlyList<string>? preferredDocumentIds = null,
             int maxSnippets = 3,
             CancellationToken cancellationToken = default);
     }

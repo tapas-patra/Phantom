@@ -27,9 +27,10 @@ namespace SecureOverlay
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Lazy<Task<CoreWebView2Environment>> MermaidEnvironment = new(
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
-        private const string MermaidAssetHost = "phantom-assets.local";
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
         private static readonly string MermaidScriptPath = Path.Combine(MermaidAssetFolder, "mermaid.min.js");
+        private static readonly Lazy<string> MermaidScriptContent = new(
+            () => File.ReadAllText(MermaidScriptPath).Replace("</script>", "<\\/script>", StringComparison.OrdinalIgnoreCase));
 
         public static void AppendMarkdown(FlowDocument document, string markdown, bool isUser = false)
         {
@@ -121,8 +122,7 @@ namespace SecureOverlay
             var container = new StackPanel
             {
                 Orientation = Orientation.Vertical,
-                Margin = new Thickness(0, 12, 0, 12),
-                MaxWidth = 700
+                Margin = new Thickness(0, 8, 0, 8)
             };
             container.Children.Add(new TextBlock
             {
@@ -135,32 +135,29 @@ namespace SecureOverlay
 
             var webView = new WebView2
             {
-                Width = 680,
+                Width = 720,
                 Height = diagramHeight,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(0)
+                HorizontalAlignment = HorizontalAlignment.Left
             };
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(210, 14, 18, 24)),
+                Background = Brushes.Transparent,
                 BorderBrush = new SolidColorBrush(Color.FromRgb(72, 78, 92)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(0),
-                Margin = new Thickness(0, 0, 0, 6),
                 Child = webView
             };
             container.Children.Add(border);
 
             document.Blocks.Add(new BlockUIContainer(container));
-            _ = InitializeMermaidBlockAsync(webView, mermaidCode, diagramHeight, border, container);
+            _ = InitializeMermaidBlockAsync(webView, mermaidCode, diagramHeight, container);
         }
 
         private static async Task InitializeMermaidBlockAsync(
             WebView2 webView,
             string mermaidCode,
             double fallbackHeight,
-            Border border,
             Panel container)
         {
             try
@@ -176,17 +173,17 @@ namespace SecureOverlay
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-                webView.DefaultBackgroundColor = DrawingColor.FromArgb(1, 14, 18, 24);
-                webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                    MermaidAssetHost,
-                    MermaidAssetFolder,
-                    CoreWebView2HostResourceAccessKind.Allow);
+                webView.DefaultBackgroundColor = DrawingColor.Transparent;
+                webView.CoreWebView2.WebMessageReceived += (_, args) =>
+                {
+                    Log.WriteLine($"Mermaid WebView: {args.TryGetWebMessageAsString()}");
+                };
                 webView.NavigateToString(BuildMermaidHtml(mermaidCode));
 
                 void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args)
                 {
                     webView.NavigationCompleted -= OnNavigationCompleted;
-                    _ = ResizeMermaidBlockAsync(webView, fallbackHeight, border, container);
+                    _ = ResizeMermaidBlockAsync(webView, fallbackHeight);
                 }
 
                 webView.NavigationCompleted += OnNavigationCompleted;
@@ -207,35 +204,22 @@ namespace SecureOverlay
             }
         }
 
-        private static async Task ResizeMermaidBlockAsync(
-            WebView2 webView,
-            double fallbackHeight,
-            Border border,
-            Panel container)
+        private static async Task ResizeMermaidBlockAsync(WebView2 webView, double fallbackHeight)
         {
-            double targetHeight = fallbackHeight;
             try
             {
-                var rawHeight = await webView.ExecuteScriptAsync("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('diagram').getBoundingClientRect().height).toString()");
+                var rawHeight = await webView.ExecuteScriptAsync("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight).toString()");
                 if (double.TryParse(rawHeight.Trim('"'), out var measuredHeight))
                 {
-                    targetHeight = Math.Clamp(measuredHeight + 28d, 260d, 960d);
+                    webView.Height = Math.Clamp(measuredHeight + 16d, 220d, 720d);
+                    return;
                 }
             }
             catch
             {
             }
 
-            await webView.Dispatcher.InvokeAsync(() =>
-            {
-                webView.Height = targetHeight;
-                border.Height = targetHeight;
-                container.Height = targetHeight + 32d;
-                webView.InvalidateMeasure();
-                border.InvalidateMeasure();
-                container.InvalidateMeasure();
-                container.UpdateLayout();
-            });
+            webView.Height = fallbackHeight;
         }
 
         private static FrameworkElement BuildMermaidFallback(string mermaidCode)
@@ -261,53 +245,56 @@ namespace SecureOverlay
         private static string BuildMermaidHtml(string mermaidCode)
         {
             var mermaidJson = JsonSerializer.Serialize(mermaidCode);
+            var mermaidScript = MermaidScriptContent.Value;
             return """
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-    <style>
+  <style>
     html, body {
       margin: 0;
       padding: 0;
-      background: rgba(14, 18, 24, 0.96);
+      background: transparent;
       color: #ffffff;
-      overflow: hidden;
+      overflow: auto;
       font-family: "Segoe UI", sans-serif;
     }
     #diagram {
       padding: 12px;
-      display: inline-block;
-      min-width: 100%;
-      box-sizing: border-box;
     }
     svg {
       max-width: 100%;
       height: auto;
-      display: block;
     }
   </style>
 </head>
 <body>
   <div id="diagram"></div>
-  <script src="__MERMAID_SRC__"></script>
+  <script>
+__MERMAID_SCRIPT__
+  </script>
   <script>
     const graphDefinition = __MERMAID_JSON__;
     const target = document.getElementById('diagram');
+    const postToHost = (payload) => {
+      try {
+        if (window.chrome && window.chrome.webview) {
+          window.chrome.webview.postMessage(payload);
+        }
+      } catch {}
+    };
     (async function () {
       try {
-        const mermaidLib =
-          window.mermaid ||
-          (window.__esbuild_esm_mermaid_nm &&
-           window.__esbuild_esm_mermaid_nm.mermaid &&
-           (window.__esbuild_esm_mermaid_nm.mermaid.default || window.__esbuild_esm_mermaid_nm.mermaid));
-        if (!mermaidLib) {
+        if (!window.mermaid) {
           throw new Error('Mermaid runtime not available');
         }
-        mermaidLib.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
-        const { svg } = await mermaidLib.render('phantom-mermaid-diagram', graphDefinition);
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+        const { svg } = await window.mermaid.render('phantom-mermaid-diagram', graphDefinition);
         target.innerHTML = svg;
+        postToHost(`mermaid:rendered:${document.body.scrollHeight}`);
       } catch (err) {
+        postToHost(`mermaid:error:${err && err.message ? err.message : err}`);
         target.innerHTML = `<pre style="white-space: pre-wrap; color: #00ff7f;">${graphDefinition.replace(/</g, '&lt;')}</pre>`;
       }
     })();
@@ -315,7 +302,7 @@ namespace SecureOverlay
 </body>
 </html>
 """
-                .Replace("__MERMAID_SRC__", $"https://{MermaidAssetHost}/mermaid.min.js", StringComparison.Ordinal)
+                .Replace("__MERMAID_SCRIPT__", mermaidScript, StringComparison.Ordinal)
                 .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
         }
 

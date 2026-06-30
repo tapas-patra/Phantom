@@ -296,8 +296,16 @@ namespace SecureOverlay
     const target = document.getElementById('diagram');
     (async function () {
       try {
-        mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
-        const { svg } = await mermaid.render('phantom-mermaid-diagram', graphDefinition);
+        const mermaidLib =
+          window.mermaid ||
+          (window.__esbuild_esm_mermaid_nm &&
+           window.__esbuild_esm_mermaid_nm.mermaid &&
+           (window.__esbuild_esm_mermaid_nm.mermaid.default || window.__esbuild_esm_mermaid_nm.mermaid));
+        if (!mermaidLib) {
+          throw new Error('Mermaid runtime not available');
+        }
+        mermaidLib.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+        const { svg } = await mermaidLib.render('phantom-mermaid-diagram', graphDefinition);
         target.innerHTML = svg;
       } catch (err) {
         target.innerHTML = `<pre style="white-space: pre-wrap; color: #00ff7f;">${graphDefinition.replace(/</g, '&lt;')}</pre>`;

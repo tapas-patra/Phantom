@@ -261,7 +261,7 @@ namespace SecureOverlay
         private static string BuildMermaidHtml(string mermaidCode)
         {
             var mermaidJson = JsonSerializer.Serialize(mermaidCode);
-            return $$"""
+            return """
 <!DOCTYPE html>
 <html>
 <head>
@@ -290,9 +290,9 @@ namespace SecureOverlay
 </head>
 <body>
   <div id="diagram"></div>
-  <script src="https://{{MermaidAssetHost}}/mermaid.min.js"></script>
+  <script src="__MERMAID_SRC__"></script>
   <script>
-    const graphDefinition = {{mermaidJson}};
+    const graphDefinition = __MERMAID_JSON__;
     const target = document.getElementById('diagram');
     (async function () {
       try {
@@ -306,7 +306,9 @@ namespace SecureOverlay
   </script>
 </body>
 </html>
-""";
+"""
+                .Replace("__MERMAID_SRC__", $"https://{MermaidAssetHost}/mermaid.min.js", StringComparison.Ordinal)
+                .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
         }
 
         private static double CalculateDiagramHeight(string mermaidCode)

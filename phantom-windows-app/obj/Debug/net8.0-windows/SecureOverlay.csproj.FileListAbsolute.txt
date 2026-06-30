@@ -70,3 +70,4 @@
 /Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/obj/Debug/net8.0-windows/svchost-shell.pdb
 /Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/obj/Debug/net8.0-windows/SecureOverlay.genruntimeconfig.cache
 /Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/obj/Debug/net8.0-windows/ref/svchost-shell.dll
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/bin/Debug/net8.0-windows/assets/mermaid/mermaid.min.js

@@ -54,4 +54,10 @@
     </Resource>
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="assets\mermaid\mermaid.min.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

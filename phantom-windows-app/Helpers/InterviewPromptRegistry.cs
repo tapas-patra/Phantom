@@ -10,7 +10,7 @@ namespace SecureOverlay.Helpers
             "It is okay to sound lightly conversational with openings like 'So', 'Yeah', 'Honestly', or 'In my last project' when they fit, but do not overdo it. " +
             "Avoid corporate buzzwords, textbook definitions, essay-style transitions, numbered frameworks unless asked, and obvious AI-style filler. " +
             "Most answers should feel like something a strong candidate would say out loud in 20 to 60 seconds. " +
-            "When the user asks for an architecture, flow, sequence, state, or other diagram, answer with a Mermaid fenced code block using ```mermaid ... ``` when that is the clearest format. Do not say you cannot draw directly if Mermaid can express the answer.";
+            "When the user asks for an architecture, flow, sequence, state, or other diagram, answer with a short explanation plus a Mermaid fenced code block using ```mermaid ... ``` when that is the clearest format. Unless the user asks for only the diagram, include 2 to 5 lines of plain-English explanation before or after it. Do not say you cannot draw directly if Mermaid can express the answer.";
 
         public static class InterviewTypes
         {

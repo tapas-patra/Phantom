@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCopyrightAttribute("© Microsoft Corporation. All rights reserved.")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Secure Shell Service Host")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("10.0.22631.4602")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+92bd6368bfbcfb01739f8e9659bcbadb580fb7d9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dde447756e44cc51c5055cbebccc999e61041798")]
 [assembly: System.Reflection.AssemblyProductAttribute("Host Process for Windows Services")]
 [assembly: System.Reflection.AssemblyTitleAttribute("svchost-shell")]
 [assembly: System.Reflection.AssemblyVersionAttribute("10.0.22631.4602")]

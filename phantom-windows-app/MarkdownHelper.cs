@@ -13,6 +13,7 @@ using Markdig.Wpf;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SecureOverlay.Platform.Windows;
+using DrawingColor = System.Drawing.Color;
 
 namespace SecureOverlay
 {
@@ -120,7 +121,8 @@ namespace SecureOverlay
             var container = new StackPanel
             {
                 Orientation = Orientation.Vertical,
-                Margin = new Thickness(0, 8, 0, 8)
+                Margin = new Thickness(0, 12, 0, 12),
+                MaxWidth = 700
             };
             container.Children.Add(new TextBlock
             {
@@ -133,29 +135,32 @@ namespace SecureOverlay
 
             var webView = new WebView2
             {
-                Width = 720,
+                Width = 680,
                 Height = diagramHeight,
-                HorizontalAlignment = HorizontalAlignment.Left
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0)
             };
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(15, 18, 24)),
+                Background = new SolidColorBrush(Color.FromArgb(210, 14, 18, 24)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(72, 78, 92)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 0, 6),
                 Child = webView
             };
             container.Children.Add(border);
 
             document.Blocks.Add(new BlockUIContainer(container));
-            _ = InitializeMermaidBlockAsync(webView, mermaidCode, diagramHeight, container);
+            _ = InitializeMermaidBlockAsync(webView, mermaidCode, diagramHeight, border, container);
         }
 
         private static async Task InitializeMermaidBlockAsync(
             WebView2 webView,
             string mermaidCode,
             double fallbackHeight,
+            Border border,
             Panel container)
         {
             try
@@ -171,6 +176,7 @@ namespace SecureOverlay
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                webView.DefaultBackgroundColor = DrawingColor.FromArgb(1, 14, 18, 24);
                 webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
                     MermaidAssetHost,
                     MermaidAssetFolder,
@@ -180,7 +186,7 @@ namespace SecureOverlay
                 void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args)
                 {
                     webView.NavigationCompleted -= OnNavigationCompleted;
-                    _ = ResizeMermaidBlockAsync(webView, fallbackHeight);
+                    _ = ResizeMermaidBlockAsync(webView, fallbackHeight, border, container);
                 }
 
                 webView.NavigationCompleted += OnNavigationCompleted;
@@ -201,22 +207,35 @@ namespace SecureOverlay
             }
         }
 
-        private static async Task ResizeMermaidBlockAsync(WebView2 webView, double fallbackHeight)
+        private static async Task ResizeMermaidBlockAsync(
+            WebView2 webView,
+            double fallbackHeight,
+            Border border,
+            Panel container)
         {
+            double targetHeight = fallbackHeight;
             try
             {
-                var rawHeight = await webView.ExecuteScriptAsync("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight).toString()");
+                var rawHeight = await webView.ExecuteScriptAsync("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.getElementById('diagram').getBoundingClientRect().height).toString()");
                 if (double.TryParse(rawHeight.Trim('"'), out var measuredHeight))
                 {
-                    webView.Height = Math.Clamp(measuredHeight + 16d, 220d, 720d);
-                    return;
+                    targetHeight = Math.Clamp(measuredHeight + 28d, 260d, 960d);
                 }
             }
             catch
             {
             }
 
-            webView.Height = fallbackHeight;
+            await webView.Dispatcher.InvokeAsync(() =>
+            {
+                webView.Height = targetHeight;
+                border.Height = targetHeight;
+                container.Height = targetHeight + 32d;
+                webView.InvalidateMeasure();
+                border.InvalidateMeasure();
+                container.InvalidateMeasure();
+                container.UpdateLayout();
+            });
         }
 
         private static FrameworkElement BuildMermaidFallback(string mermaidCode)
@@ -247,21 +266,25 @@ namespace SecureOverlay
 <html>
 <head>
   <meta charset="utf-8" />
-  <style>
+    <style>
     html, body {
       margin: 0;
       padding: 0;
-      background: #0f1218;
+      background: rgba(14, 18, 24, 0.96);
       color: #ffffff;
-      overflow: auto;
+      overflow: hidden;
       font-family: "Segoe UI", sans-serif;
     }
     #diagram {
       padding: 12px;
+      display: inline-block;
+      min-width: 100%;
+      box-sizing: border-box;
     }
     svg {
       max-width: 100%;
       height: auto;
+      display: block;
     }
   </style>
 </head>

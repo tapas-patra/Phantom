@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Phantom.WindowsApp.Backend")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3accba3d3f8d749f048068fc7708e8107fba8c32")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0762ec244938d19917481fa858e8e073e8c8a4b0")]
 [assembly: System.Reflection.AssemblyProductAttribute("Phantom.WindowsApp.Backend")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Phantom.WindowsApp.Backend")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

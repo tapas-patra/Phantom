@@ -30,8 +30,13 @@ namespace SecureOverlay.Services
         private readonly Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? _knowledgeBaseLoader;
         private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
         private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
+        private Task? _interviewContextPackWarmupTask;
         private DateTime _knowledgeBaseSummaryCachedAtUtc = DateTime.MinValue;
         private static readonly TimeSpan KnowledgeBaseSummaryCacheTtl = TimeSpan.FromSeconds(30);
+        private readonly Dictionary<string, CachedInterviewContextPack> _interviewContextPacks = new(StringComparer.Ordinal);
+        private static readonly TimeSpan InterviewContextPackTtl = TimeSpan.FromMinutes(5);
+        private string _stablePromptPrefix = string.Empty;
+        private string _stablePromptPrefixKey = string.Empty;
 
         
         private ModelConfig _modelConfig;
@@ -409,79 +414,78 @@ namespace SecureOverlay.Services
 
         private void UpdateSystemPromptWithContext()
         {
-            Log.WriteLine("═══════════════════════════════════════════════════════");
-            Log.WriteLine("UpdateSystemPromptWithContext() CALLED");
-            Log.WriteLine("═══════════════════════════════════════════════════════");
-            
-            var contextParts = new System.Text.StringBuilder();
-            contextParts.Append(_systemPrompt);
-            
-            Log.WriteLine($"Base system prompt length: {_systemPrompt.Length} chars");
-            
-            if (!string.IsNullOrWhiteSpace(_resumeSummary))
-            {
-                Log.WriteLine($"✓ Adding resume summary ({_resumeSummary.Length} chars)");
-                contextParts.Append($"\n\nUser Profile: {_resumeSummary}");
-            }
-            else
-            {
-                Log.WriteLine("✗ Resume summary is empty - NOT adding");
-            }
-            
-            if (!string.IsNullOrWhiteSpace(_jobDescriptionSummary))
-            {
-                Log.WriteLine($"✓ Adding JD summary ({_jobDescriptionSummary.Length} chars)");
-                Log.WriteLine($"JD Summary Preview: {_jobDescriptionSummary.Substring(0, Math.Min(100, _jobDescriptionSummary.Length))}...");
-                contextParts.Append($"\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n{_jobDescriptionSummary}");
-            }
-            else
-            {
-                Log.WriteLine("✗ JD summary is empty - NOT adding");
-                Log.WriteLine($"   _jobDescriptionText is empty: {string.IsNullOrWhiteSpace(_jobDescriptionText ?? string.Empty)}");
-                Log.WriteLine($"   _jobDescriptionSummarized: {_jobDescriptionSummarized}");
-            }
+            var contextParts = new System.Text.StringBuilder(GetStablePromptPrefix());
 
             if (!string.IsNullOrWhiteSpace(_structuredKnowledgeContext))
             {
-                Log.WriteLine($"✓ Adding structured KB grounding ({_structuredKnowledgeContext.Length} chars)");
                 contextParts.Append("\n\nInterview Grounding:\n");
                 contextParts.Append(_structuredKnowledgeContext);
             }
 
             if (_retrievedKnowledgeSnippets.Count > 0)
             {
-                Log.WriteLine($"✓ Adding {_retrievedKnowledgeSnippets.Count} retrieved knowledge snippet(s)");
                 contextParts.Append("\n\nRelevant Local Context:");
                 foreach (var snippet in _retrievedKnowledgeSnippets)
                 {
                     contextParts.Append($"\n- [{snippet.SourceType}] {snippet.DocumentTitle}: {snippet.Text}");
                 }
             }
-            
+
             var finalContent = contextParts.ToString();
-            
-            // ✅ FIX: Check if list is empty (happens after ClearConversation)
+
             if (_fullConversation.Count == 0)
             {
-                // Add new system message
                 _fullConversation.Add(new ConversationMessage
                 {
                     Role = "system",
                     Content = finalContent,
                     EstimatedTokens = EstimateTokens(finalContent)
                 });
-                Log.WriteLine($"✓ Created NEW system message ({finalContent.Length} chars, {EstimateTokens(finalContent)} tokens)");
             }
             else
             {
-                // Update existing system message at index 0
+                if (string.Equals(_fullConversation[0].Content, finalContent, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
                 _fullConversation[0].Content = finalContent;
                 _fullConversation[0].EstimatedTokens = EstimateTokens(finalContent);
-                Log.WriteLine($"✓ Updated EXISTING system message ({finalContent.Length} chars, {EstimateTokens(finalContent)} tokens)");
             }
-            
-            Log.WriteLine($"Messages in conversation: {_fullConversation.Count}");
-            Log.WriteLine("═══════════════════════════════════════════════════════");
+        }
+
+        private string GetStablePromptPrefix()
+        {
+            var stablePromptKey = string.Join(
+                "\u001f",
+                new[]
+                {
+                    _systemPrompt,
+                    _resumeSummary,
+                    _jobDescriptionSummary
+                });
+            if (string.Equals(_stablePromptPrefixKey, stablePromptKey, StringComparison.Ordinal))
+            {
+                return _stablePromptPrefix;
+            }
+
+            var contextParts = new System.Text.StringBuilder();
+            contextParts.Append(_systemPrompt);
+
+            if (!string.IsNullOrWhiteSpace(_resumeSummary))
+            {
+                contextParts.Append($"\n\nUser Profile: {_resumeSummary}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_jobDescriptionSummary))
+            {
+                contextParts.Append("\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n");
+                contextParts.Append(_jobDescriptionSummary);
+            }
+
+            _stablePromptPrefix = contextParts.ToString();
+            _stablePromptPrefixKey = stablePromptKey;
+            return _stablePromptPrefix;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -532,7 +536,9 @@ namespace SecureOverlay.Services
                 }
             }
 
-            // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
+            PrimeKnowledgeBaseSummaryLoad(CancellationToken.None);
+
+            // ponytail: cheap local routing handles obvious interview asks; model planner stays for ambiguous turns.
             var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, CancellationToken.None);
             await ApplyPlannerDecisionAsync(plannerDecision, userMessage, CancellationToken.None);
 
@@ -785,6 +791,13 @@ namespace SecureOverlay.Services
         {
             RagTraceLogger.WriteLine(
                 $"planner:start question='{TrimForLog(userMessage, 240)}' image_attached={imageBase64 != null} prior_turns={Math.Max(0, _fullConversation.Count - 2)} previous_snippets={_retrievedKnowledgeSnippets.Count}");
+            if (TryBuildHeuristicResponsePlan(userMessage, out var heuristicPlan))
+            {
+                RagTraceLogger.WriteLine(
+                    $"planner:heuristic type={heuristicPlan.Type} scope={heuristicPlan.Scope} target='{TrimForLog(heuristicPlan.Target, 120)}' knowledge_query='{TrimForLog(heuristicPlan.KnowledgeQuery, 240)}'");
+                return heuristicPlan;
+            }
+
             if (!_aiService.IsConfigured())
             {
                 RagTraceLogger.WriteLine("planner:ai_not_configured fallback=retrieve");
@@ -884,7 +897,168 @@ Rules:
                     Role = "user",
                     Content = string.Join("\n\n", plannerContext)
                 }
-            };
+                };
+        }
+
+        private bool TryBuildHeuristicResponsePlan(string userMessage, out ResponsePlan plan)
+        {
+            plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
+            var normalized = NormalizeText(userMessage);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return false;
+            }
+
+            if (TryBuildHeuristicProjectPlan(userMessage, normalized, out plan))
+            {
+                return true;
+            }
+
+            if (TryBuildHeuristicProfilePlan(userMessage, normalized, out plan))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryBuildHeuristicProfilePlan(
+            string userMessage,
+            string normalizedUserMessage,
+            out ResponsePlan plan)
+        {
+            plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
+            if (!LooksLikeProfileQuestion(normalizedUserMessage))
+            {
+                return false;
+            }
+
+            var knowledgeQuery =
+                ContainsAnyToken(normalizedUserMessage, "strength", "strengths")
+                    ? "candidate strengths skills experience examples"
+                    : ContainsAnyToken(normalizedUserMessage, "weakness", "weaknesses", "improve", "improvement")
+                        ? "candidate weaknesses growth areas examples"
+                        : ContainsAnyToken(normalizedUserMessage, "current role", "current position", "responsibilities", "responsibility")
+                            ? "candidate current role responsibilities experience summary"
+                            : "candidate background summary experience skills current role";
+            plan = ResponsePlan.Profile(
+                knowledgeQuery,
+                target: string.Empty,
+                scope: RetrievalScope.Global,
+                confidence: 1d,
+                source: "heuristic-profile");
+            return true;
+        }
+
+        private bool TryBuildHeuristicProjectPlan(
+            string userMessage,
+            string normalizedUserMessage,
+            out ResponsePlan plan)
+        {
+            plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
+            var hasActiveProject = !string.IsNullOrWhiteSpace(_activeProjectCardId);
+            var explicitProjectAsk =
+                ContainsAnyToken(
+                    normalizedUserMessage,
+                    "project",
+                    "projects",
+                    "recent project",
+                    "what did you build",
+                    "what have you built",
+                    "what did you work on",
+                    "worked on",
+                    "tell me about a project",
+                    "tell me about your project");
+            var projectDetailAsk =
+                ContainsAnyToken(normalizedUserMessage, "architecture", "system design", "tech stack", "stack", "challenge", "challenges", "impact", "role")
+                && (ContainsAnyToken(normalizedUserMessage, "project", "projects", "this", "that", "it", "built", "worked on") || hasActiveProject);
+            var activeProjectFollowUp =
+                hasActiveProject
+                && ContainsAnyToken(normalizedUserMessage, "this", "that", "it", "the project", "architecture", "design", "stack", "challenge", "impact", "role")
+                && !ContainsAnyToken(normalizedUserMessage, "yourself", "background", "resume", "strength", "weakness", "current role");
+            if (!explicitProjectAsk && !projectDetailAsk && !activeProjectFollowUp)
+            {
+                return false;
+            }
+
+            var scope = activeProjectFollowUp ? RetrievalScope.ActiveProject : RetrievalScope.Global;
+            var knowledgeQuery =
+                ContainsAnyToken(normalizedUserMessage, "challenge", "challenges", "difficult", "problem", "tradeoff")
+                    ? "project challenges tradeoffs impact role"
+                    : ContainsAnyToken(normalizedUserMessage, "architecture", "design", "system design", "scalability", "performance", "security")
+                        ? "project architecture technologies design tradeoffs impact"
+                        : ContainsAnyToken(normalizedUserMessage, "stack", "tech stack", "technology", "tools", "framework")
+                            ? "project technologies stack architecture role"
+                            : "recent project architecture technologies impact role";
+            plan = ResponsePlan.Project(
+                knowledgeQuery,
+                target: ExtractLikelyProjectTarget(normalizedUserMessage),
+                scope: scope,
+                confidence: 1d,
+                source: "heuristic-project");
+            return true;
+        }
+
+        private bool LooksLikeProfileQuestion(string normalizedUserMessage)
+        {
+            if (ContainsAnyToken(
+                    normalizedUserMessage,
+                    "introduce yourself",
+                    "tell me about yourself",
+                    "walk me through your background",
+                    "summarize your experience",
+                    "your background",
+                    "your experience",
+                    "your resume",
+                    "current role",
+                    "current position",
+                    "your strength",
+                    "your strengths",
+                    "your weakness",
+                    "your weaknesses",
+                    "biggest strength",
+                    "biggest weakness",
+                    "your skills",
+                    "why should we hire you"))
+            {
+                return true;
+            }
+
+            return normalizedUserMessage.StartsWith("who are you", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("walk me through", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("tell me about your background", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("tell me about your experience", StringComparison.Ordinal);
+        }
+
+        private string ExtractLikelyProjectTarget(string normalizedUserMessage)
+        {
+            var projectCards = _knowledgeBaseSummaryCache?.ProjectCards;
+            if (projectCards == null || projectCards.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            foreach (var card in projectCards)
+            {
+                var title = NormalizeText(card.Title);
+                if (string.IsNullOrWhiteSpace(title))
+                {
+                    continue;
+                }
+
+                if (normalizedUserMessage.Contains(title, StringComparison.Ordinal))
+                {
+                    return card.Title;
+                }
+
+                var titleTokens = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (titleTokens.Length >= 2 && titleTokens.All(token => normalizedUserMessage.Contains(token, StringComparison.Ordinal)))
+                {
+                    return card.Title;
+                }
+            }
+
+            return string.Empty;
         }
 
         private static bool TryParseResponsePlan(string plannerResponse, string userMessage, out ResponsePlan plan)
@@ -991,7 +1165,7 @@ Rules:
 
                 case ResponsePlanType.Profile:
                     ClearRetrievedKnowledgeSnippets();
-                    await PrepareProfileGroundingAsync(cancellationToken);
+                    await PrepareProfileGroundingAsync(plannerDecision, userMessage, cancellationToken);
                     return;
 
                 case ResponsePlanType.Project:
@@ -1009,7 +1183,10 @@ Rules:
             }
         }
 
-        private async Task PrepareProfileGroundingAsync(CancellationToken cancellationToken)
+        private async Task PrepareProfileGroundingAsync(
+            ResponsePlan plannerDecision,
+            string userMessage,
+            CancellationToken cancellationToken)
         {
             var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
             var profileCard = knowledgeBase?.ProfileCard;
@@ -1021,9 +1198,16 @@ Rules:
             }
 
             var groundedProfile = profileCard!;
-            _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile);
+            var packKind = DetermineProfilePackKind(plannerDecision, userMessage);
+            if (TryApplyInterviewContextPack(BuildProfilePackCacheKey(packKind), out _))
+            {
+                RagTraceLogger.WriteLine($"profile_grounding:pack_used kind={packKind}");
+                return;
+            }
+
+            _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile, packKind);
             RagTraceLogger.WriteLine(
-                $"profile_grounding:ready full_name='{TrimForLog(groundedProfile.FullName, 80)}' skills={groundedProfile.Skills.Count} strengths={groundedProfile.Strengths.Count}");
+                $"profile_grounding:ready full_name='{TrimForLog(groundedProfile.FullName, 80)}' skills={groundedProfile.Skills.Count} strengths={groundedProfile.Strengths.Count} pack={packKind}");
             UpdateSystemPromptWithContext();
         }
 
@@ -1047,12 +1231,21 @@ Rules:
 
             var groundedProject = selectedProject!;
             _activeProjectCardId = groundedProject.ProjectCardId;
-            _structuredKnowledgeContext = BuildProjectGrounding(groundedProject);
+            var packKind = DetermineProjectPackKind(plannerDecision, userMessage);
+            if (TryApplyInterviewContextPack(BuildProjectPackCacheKey(groundedProject.ProjectCardId, packKind), out var cachedPack))
+            {
+                _activeProjectCardId = groundedProject.ProjectCardId;
+                RagTraceLogger.WriteLine(
+                    $"project_grounding:pack_used project='{TrimForLog(groundedProject.Title, 120)}' kind={packKind} snippets={cachedPack.Snippets.Count}");
+                return;
+            }
+
+            _structuredKnowledgeContext = BuildProjectGrounding(groundedProject, packKind);
             RagTraceLogger.WriteLine(
-                $"project_grounding:selected project='{TrimForLog(groundedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}'");
+                $"project_grounding:selected project='{TrimForLog(groundedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}' pack={packKind}");
             UpdateSystemPromptWithContext();
 
-            if (ShouldRetrieveProjectSnippets(plannerDecision, groundedProject))
+            if (ShouldRetrieveProjectSnippets(plannerDecision, groundedProject, packKind))
             {
                 await RefreshRetrievedKnowledgeSnippetsAsync(
                     plannerDecision.KnowledgeQuery,
@@ -1068,8 +1261,14 @@ Rules:
 
         private void PrimeKnowledgeBaseSummaryLoad(CancellationToken cancellationToken)
         {
-            if (_knowledgeBaseLoader == null || HasFreshKnowledgeBaseSummaryCache())
+            if (_knowledgeBaseLoader == null)
             {
+                return;
+            }
+
+            if (HasFreshKnowledgeBaseSummaryCache())
+            {
+                PrimeInterviewContextPackWarmup();
                 return;
             }
 
@@ -1094,6 +1293,7 @@ Rules:
 
             if (HasFreshKnowledgeBaseSummaryCache())
             {
+                PrimeInterviewContextPackWarmup();
                 return _knowledgeBaseSummaryCache;
             }
 
@@ -1104,7 +1304,9 @@ Rules:
 
             try
             {
-                return await _knowledgeBaseSummaryLoadTask;
+                var summary = await _knowledgeBaseSummaryLoadTask;
+                PrimeInterviewContextPackWarmup();
+                return summary;
             }
             finally
             {
@@ -1121,8 +1323,10 @@ Rules:
             {
                 _knowledgeBaseSummaryCache = await _knowledgeBaseLoader!(cancellationToken);
                 _knowledgeBaseSummaryCachedAtUtc = DateTime.UtcNow;
+                _interviewContextPacks.Clear();
                 RagTraceLogger.WriteLine(
                     $"kb_summary:refresh_success status='{_knowledgeBaseSummaryCache?.Status ?? "(null)"}' projects={_knowledgeBaseSummaryCache?.ProjectCards?.Count ?? 0}");
+                PrimeInterviewContextPackWarmup();
             }
             catch (OperationCanceledException)
             {
@@ -1135,6 +1339,158 @@ Rules:
             }
 
             return _knowledgeBaseSummaryCache;
+        }
+
+        private void PrimeInterviewContextPackWarmup()
+        {
+            if (_knowledgeRetriever == null
+                || _knowledgeBaseSummaryCache == null
+                || !HasFreshKnowledgeBaseSummaryCache())
+            {
+                return;
+            }
+
+            if (_interviewContextPackWarmupTask == null || _interviewContextPackWarmupTask.IsCompleted)
+            {
+                _interviewContextPackWarmupTask = WarmInterviewContextPacksAsync(_knowledgeBaseSummaryCache, CancellationToken.None);
+            }
+        }
+
+        private async Task WarmInterviewContextPacksAsync(
+            HostedKnowledgeBaseSummaryDto knowledgeBase,
+            CancellationToken cancellationToken)
+        {
+            if (!HasProfileGrounding(knowledgeBase.ProfileCard)
+                && (knowledgeBase.ProjectCards == null || knowledgeBase.ProjectCards.Count == 0))
+            {
+                return;
+            }
+
+            try
+            {
+                if (HasProfileGrounding(knowledgeBase.ProfileCard))
+                {
+                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileGeneral, cancellationToken);
+                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileIntro, cancellationToken);
+                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileStrengths, cancellationToken);
+                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileRole, cancellationToken);
+                }
+
+                var primaryProject = (knowledgeBase.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
+                    .OrderByDescending(card => card.IsRecent)
+                    .ThenBy(card => card.SortOrder)
+                    .FirstOrDefault();
+                if (HasProjectGrounding(primaryProject))
+                {
+                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectOverview, cancellationToken);
+                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectArchitecture, cancellationToken);
+                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectChallenges, cancellationToken);
+                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectStack, cancellationToken);
+                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectImpact, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"⚠️ Interview context pack warmup failed: {ex.Message}");
+            }
+        }
+
+        private async Task CacheProfilePackAsync(
+            HostedKnowledgeBaseProfileCardDto profileCard,
+            InterviewPackKind packKind,
+            CancellationToken cancellationToken)
+        {
+            var packKey = BuildProfilePackCacheKey(packKind);
+            if (TryGetCachedInterviewContextPack(packKey, out _))
+            {
+                return;
+            }
+
+            await Task.Yield();
+            _interviewContextPacks[packKey] = new CachedInterviewContextPack
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                StructuredContext = BuildProfileGrounding(profileCard, packKind),
+                Snippets = Array.Empty<RetrievedContextSnippet>()
+            };
+        }
+
+        private async Task CacheProjectPackAsync(
+            HostedKnowledgeBaseProjectCardDto projectCard,
+            InterviewPackKind packKind,
+            CancellationToken cancellationToken)
+        {
+            var packKey = BuildProjectPackCacheKey(projectCard.ProjectCardId, packKind);
+            if (TryGetCachedInterviewContextPack(packKey, out _))
+            {
+                return;
+            }
+
+            IReadOnlyList<RetrievedContextSnippet> snippets = Array.Empty<RetrievedContextSnippet>();
+            if (_knowledgeRetriever != null
+                && projectCard.SourceDocumentIds.Count > 0
+                && (packKind == InterviewPackKind.ProjectArchitecture || packKind == InterviewPackKind.ProjectChallenges))
+            {
+                try
+                {
+                    snippets = await _knowledgeRetriever(
+                        packKind == InterviewPackKind.ProjectArchitecture
+                            ? "project architecture technologies design tradeoffs impact"
+                            : "project challenges tradeoffs problem solving impact",
+                        projectCard.SourceDocumentIds,
+                        cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"⚠️ Project pack retrieval warmup failed: {ex.Message}");
+                    snippets = Array.Empty<RetrievedContextSnippet>();
+                }
+            }
+
+            _interviewContextPacks[packKey] = new CachedInterviewContextPack
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                StructuredContext = BuildProjectGrounding(projectCard, packKind),
+                Snippets = snippets
+            };
+        }
+
+        private bool TryApplyInterviewContextPack(string packKey, out CachedInterviewContextPack pack)
+        {
+            if (!TryGetCachedInterviewContextPack(packKey, out pack))
+            {
+                return false;
+            }
+
+            _structuredKnowledgeContext = pack.StructuredContext;
+            _retrievedKnowledgeSnippets = pack.Snippets;
+            _lastRetrievedDocumentIds = pack.Snippets
+                .Select(snippet => snippet.DocumentId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            UpdateSystemPromptWithContext();
+            return true;
+        }
+
+        private bool TryGetCachedInterviewContextPack(string packKey, out CachedInterviewContextPack pack)
+        {
+            if (_interviewContextPacks.TryGetValue(packKey, out pack!)
+                && DateTime.UtcNow - pack.CachedAtUtc <= InterviewContextPackTtl)
+            {
+                return true;
+            }
+
+            _interviewContextPacks.Remove(packKey);
+            pack = new CachedInterviewContextPack();
+            return false;
         }
 
         private HostedKnowledgeBaseProjectCardDto? SelectProjectCard(
@@ -1296,11 +1652,32 @@ Rules:
 
         private static bool ShouldRetrieveProjectSnippets(
             ResponsePlan plannerDecision,
-            HostedKnowledgeBaseProjectCardDto projectCard)
+            HostedKnowledgeBaseProjectCardDto projectCard,
+            InterviewPackKind packKind)
         {
             if (projectCard.SourceDocumentIds.Count == 0)
             {
                 return false;
+            }
+
+            if (packKind == InterviewPackKind.ProjectArchitecture)
+            {
+                return string.IsNullOrWhiteSpace(projectCard.Architecture);
+            }
+
+            if (packKind == InterviewPackKind.ProjectChallenges)
+            {
+                return string.IsNullOrWhiteSpace(projectCard.Challenges);
+            }
+
+            if (packKind == InterviewPackKind.ProjectStack)
+            {
+                return projectCard.Stack.Count == 0;
+            }
+
+            if (packKind == InterviewPackKind.ProjectImpact)
+            {
+                return string.IsNullOrWhiteSpace(projectCard.Impact);
             }
 
             if (!HasRichProjectGrounding(projectCard))
@@ -1337,7 +1714,66 @@ Rules:
             return terms.Any(term => value.Contains(NormalizeText(term), StringComparison.Ordinal));
         }
 
-        private static string BuildProfileGrounding(HostedKnowledgeBaseProfileCardDto profileCard)
+        private InterviewPackKind DetermineProfilePackKind(ResponsePlan plannerDecision, string userMessage)
+        {
+            var query = NormalizeText($"{plannerDecision.KnowledgeQuery} {userMessage}");
+            if (ContainsAnyToken(query, "strength", "strengths", "strong", "skills", "why should we hire you"))
+            {
+                return InterviewPackKind.ProfileStrengths;
+            }
+
+            if (ContainsAnyToken(query, "current role", "current position", "responsibilities", "responsibility"))
+            {
+                return InterviewPackKind.ProfileRole;
+            }
+
+            if (ContainsAnyToken(query, "introduce yourself", "tell me about yourself", "background", "experience", "resume"))
+            {
+                return InterviewPackKind.ProfileIntro;
+            }
+
+            return InterviewPackKind.ProfileGeneral;
+        }
+
+        private InterviewPackKind DetermineProjectPackKind(ResponsePlan plannerDecision, string userMessage)
+        {
+            var query = NormalizeText($"{plannerDecision.KnowledgeQuery} {plannerDecision.Target} {userMessage}");
+            if (ContainsAnyToken(query, "architecture", "design", "system design", "performance", "security", "scalability"))
+            {
+                return InterviewPackKind.ProjectArchitecture;
+            }
+
+            if (ContainsAnyToken(query, "challenge", "challenges", "tradeoff", "tradeoffs", "problem", "difficult"))
+            {
+                return InterviewPackKind.ProjectChallenges;
+            }
+
+            if (ContainsAnyToken(query, "stack", "tech stack", "technology", "technologies", "tools", "framework"))
+            {
+                return InterviewPackKind.ProjectStack;
+            }
+
+            if (ContainsAnyToken(query, "impact", "outcome", "result", "results", "achievement", "achievements"))
+            {
+                return InterviewPackKind.ProjectImpact;
+            }
+
+            return InterviewPackKind.ProjectOverview;
+        }
+
+        private static string BuildProfilePackCacheKey(InterviewPackKind packKind)
+        {
+            return $"profile:{packKind}";
+        }
+
+        private static string BuildProjectPackCacheKey(string projectCardId, InterviewPackKind packKind)
+        {
+            return $"project:{projectCardId}:{packKind}";
+        }
+
+        private static string BuildProfileGrounding(
+            HostedKnowledgeBaseProfileCardDto profileCard,
+            InterviewPackKind packKind)
         {
             var lines = new List<string>
             {
@@ -1345,20 +1781,57 @@ Rules:
             };
 
             AppendGroundingLine(lines, "Full name", profileCard.FullName);
-            AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
-            AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
-            if (profileCard.YearsOfExperience > 0)
+
+            switch (packKind)
             {
-                lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+                case InterviewPackKind.ProfileIntro:
+                    AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
+                    AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
+                    if (profileCard.YearsOfExperience > 0)
+                    {
+                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+                    }
+                    AppendGroundingList(lines, "Domains", profileCard.Domains);
+                    AppendGroundingList(lines, "Skills", profileCard.Skills.Take(6).ToArray());
+                    break;
+
+                case InterviewPackKind.ProfileStrengths:
+                    AppendGroundingList(lines, "Strengths", profileCard.Strengths);
+                    AppendGroundingList(lines, "Skills", profileCard.Skills);
+                    AppendGroundingList(lines, "Domains", profileCard.Domains);
+                    AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 600));
+                    break;
+
+                case InterviewPackKind.ProfileRole:
+                    AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
+                    if (profileCard.YearsOfExperience > 0)
+                    {
+                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+                    }
+                    AppendGroundingList(lines, "Domains", profileCard.Domains);
+                    AppendGroundingList(lines, "Skills", profileCard.Skills.Take(8).ToArray());
+                    break;
+
+                default:
+                    AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
+                    AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
+                    if (profileCard.YearsOfExperience > 0)
+                    {
+                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+                    }
+                    AppendGroundingList(lines, "Strengths", profileCard.Strengths);
+                    AppendGroundingList(lines, "Skills", profileCard.Skills);
+                    AppendGroundingList(lines, "Domains", profileCard.Domains);
+                    AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 1200));
+                    break;
             }
-            AppendGroundingList(lines, "Strengths", profileCard.Strengths);
-            AppendGroundingList(lines, "Skills", profileCard.Skills);
-            AppendGroundingList(lines, "Domains", profileCard.Domains);
-            AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 1200));
+
             return string.Join("\n", lines);
         }
 
-        private static string BuildProjectGrounding(HostedKnowledgeBaseProjectCardDto projectCard)
+        private static string BuildProjectGrounding(
+            HostedKnowledgeBaseProjectCardDto projectCard,
+            InterviewPackKind packKind)
         {
             var lines = new List<string>
             {
@@ -1367,11 +1840,43 @@ Rules:
 
             AppendGroundingLine(lines, "Project", projectCard.Title);
             AppendGroundingLine(lines, "Role", projectCard.Role);
-            AppendGroundingLine(lines, "Summary", projectCard.Summary);
-            AppendGroundingList(lines, "Stack", projectCard.Stack);
-            AppendGroundingLine(lines, "Architecture", projectCard.Architecture);
-            AppendGroundingLine(lines, "Challenges", projectCard.Challenges);
-            AppendGroundingLine(lines, "Impact", projectCard.Impact);
+
+            switch (packKind)
+            {
+                case InterviewPackKind.ProjectArchitecture:
+                    AppendGroundingLine(lines, "Summary", projectCard.Summary);
+                    AppendGroundingList(lines, "Stack", projectCard.Stack);
+                    AppendGroundingLine(lines, "Architecture", projectCard.Architecture);
+                    AppendGroundingLine(lines, "Impact", projectCard.Impact);
+                    break;
+
+                case InterviewPackKind.ProjectChallenges:
+                    AppendGroundingLine(lines, "Summary", projectCard.Summary);
+                    AppendGroundingLine(lines, "Challenges", projectCard.Challenges);
+                    AppendGroundingLine(lines, "Impact", projectCard.Impact);
+                    break;
+
+                case InterviewPackKind.ProjectStack:
+                    AppendGroundingLine(lines, "Summary", projectCard.Summary);
+                    AppendGroundingList(lines, "Stack", projectCard.Stack);
+                    AppendGroundingLine(lines, "Architecture", projectCard.Architecture);
+                    break;
+
+                case InterviewPackKind.ProjectImpact:
+                    AppendGroundingLine(lines, "Summary", projectCard.Summary);
+                    AppendGroundingLine(lines, "Impact", projectCard.Impact);
+                    AppendGroundingLine(lines, "Challenges", projectCard.Challenges);
+                    break;
+
+                default:
+                    AppendGroundingLine(lines, "Summary", projectCard.Summary);
+                    AppendGroundingList(lines, "Stack", projectCard.Stack);
+                    AppendGroundingLine(lines, "Architecture", projectCard.Architecture);
+                    AppendGroundingLine(lines, "Challenges", projectCard.Challenges);
+                    AppendGroundingLine(lines, "Impact", projectCard.Impact);
+                    break;
+            }
+
             return string.Join("\n", lines);
         }
 
@@ -1613,6 +2118,19 @@ Rules:
             ActiveProject
         }
 
+        private enum InterviewPackKind
+        {
+            ProfileGeneral,
+            ProfileIntro,
+            ProfileStrengths,
+            ProfileRole,
+            ProjectOverview,
+            ProjectArchitecture,
+            ProjectChallenges,
+            ProjectStack,
+            ProjectImpact
+        }
+
         private sealed class ResponsePlan
         {
             public ResponsePlanType Type { get; init; }
@@ -1638,7 +2156,8 @@ Rules:
                 string knowledgeQuery,
                 string target,
                 RetrievalScope scope,
-                double confidence)
+                double confidence,
+                string source = "planner")
             {
                 return new ResponsePlan
                 {
@@ -1647,7 +2166,7 @@ Rules:
                     Target = target ?? string.Empty,
                     Scope = scope,
                     Confidence = confidence,
-                    Source = "planner"
+                    Source = source
                 };
             }
 
@@ -1655,7 +2174,8 @@ Rules:
                 string knowledgeQuery,
                 string target,
                 RetrievalScope scope,
-                double confidence)
+                double confidence,
+                string source = "planner")
             {
                 return new ResponsePlan
                 {
@@ -1664,7 +2184,7 @@ Rules:
                     Target = target ?? string.Empty,
                     Scope = scope,
                     Confidence = confidence,
-                    Source = "planner"
+                    Source = source
                 };
             }
 
@@ -1685,6 +2205,13 @@ Rules:
                     Confidence = confidence
                 };
             }
+        }
+
+        private sealed class CachedInterviewContextPack
+        {
+            public DateTime CachedAtUtc { get; init; }
+            public string StructuredContext { get; init; } = string.Empty;
+            public IReadOnlyList<RetrievedContextSnippet> Snippets { get; init; } = Array.Empty<RetrievedContextSnippet>();
         }
 
         // ═══════════════════════════════════════════════════════════════

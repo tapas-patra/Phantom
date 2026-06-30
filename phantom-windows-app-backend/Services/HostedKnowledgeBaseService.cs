@@ -852,67 +852,19 @@ public sealed class HostedKnowledgeBaseService
             MinSearchCandidateCount,
             MaxSearchCandidateCount);
         var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> candidates;
-        IReadOnlyList<HostedKnowledgeBaseSnippetDto> snippets;
-
-        if (normalizedPreferredDocumentIds.Length > 0)
-        {
-            var preferredCandidates = _knowledgeBases.SearchHybridCandidates(
-                knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
-                query: normalizedQuery,
-                preferredDocumentIds: normalizedPreferredDocumentIds,
-                restrictToPreferredDocuments: true,
-                queryEmbeddingVector: queryVectorLiteral,
-                embeddingModel: profile.ModelId,
-                embeddingDimensions: profile.Dimensions,
-                embeddingVersion: profile.Version,
-                lexicalLimit: candidateLimit,
-                semanticLimit: candidateLimit,
-                finalLimit: candidateLimit);
-            var preferredSnippets = BuildSearchSnippets(preferredCandidates, terms, snippetLimit, queryVectorLiteral != null);
-            if (ShouldUseScopedSnippets(preferredSnippets, snippetLimit))
-            {
-                candidates = preferredCandidates;
-                snippets = preferredSnippets;
-            }
-            else
-            {
-                _logger.LogInformation(
-                    "Hosted KB scoped search fell back to global search for knowledgeBaseId={KnowledgeBaseId} queryLength={QueryLength} preferredDocuments={PreferredDocumentCount}.",
-                    knowledgeBase.KnowledgeBaseId,
-                    normalizedQuery.Length,
-                    normalizedPreferredDocumentIds.Length);
-                candidates = _knowledgeBases.SearchHybridCandidates(
-                    knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
-                    query: normalizedQuery,
-                    preferredDocumentIds: Array.Empty<string>(),
-                    restrictToPreferredDocuments: false,
-                    queryEmbeddingVector: queryVectorLiteral,
-                    embeddingModel: profile.ModelId,
-                    embeddingDimensions: profile.Dimensions,
-                    embeddingVersion: profile.Version,
-                    lexicalLimit: candidateLimit,
-                    semanticLimit: candidateLimit,
-                    finalLimit: candidateLimit);
-                snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
-            }
-        }
-        else
-        {
-            candidates = _knowledgeBases.SearchHybridCandidates(
-                knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
-                query: normalizedQuery,
-                preferredDocumentIds: normalizedPreferredDocumentIds,
-                restrictToPreferredDocuments: false,
-                queryEmbeddingVector: queryVectorLiteral,
-                embeddingModel: profile.ModelId,
-                embeddingDimensions: profile.Dimensions,
-                embeddingVersion: profile.Version,
-                lexicalLimit: candidateLimit,
-                semanticLimit: candidateLimit,
-                finalLimit: candidateLimit);
-            snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
-        }
+        var candidates = _knowledgeBases.SearchHybridCandidates(
+            knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
+            query: normalizedQuery,
+            preferredDocumentIds: normalizedPreferredDocumentIds,
+            restrictToPreferredDocuments: false,
+            queryEmbeddingVector: queryVectorLiteral,
+            embeddingModel: profile.ModelId,
+            embeddingDimensions: profile.Dimensions,
+            embeddingVersion: profile.Version,
+            lexicalLimit: candidateLimit,
+            semanticLimit: candidateLimit,
+            finalLimit: candidateLimit);
+        var snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
 
         _searchCache[cacheKey] = new CachedSearchEntry
         {
@@ -1797,23 +1749,6 @@ public sealed class HostedKnowledgeBaseService
         }
 
         return snippets;
-    }
-
-    private static bool ShouldUseScopedSnippets(
-        IReadOnlyList<HostedKnowledgeBaseSnippetDto> snippets,
-        int snippetLimit)
-    {
-        if (snippets.Count == 0)
-        {
-            return false;
-        }
-
-        if (snippets.Count >= Math.Min(2, snippetLimit))
-        {
-            return true;
-        }
-
-        return snippets[0].Score >= (MinSnippetScore + 0.10d);
     }
 
     private static string TrimSnippetText(string text, string[] terms)

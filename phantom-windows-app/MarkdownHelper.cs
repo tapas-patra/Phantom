@@ -29,8 +29,6 @@ namespace SecureOverlay
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
         private static readonly string MermaidScriptPath = Path.Combine(MermaidAssetFolder, "mermaid.min.js");
-        private static readonly Lazy<string> MermaidScriptContent = new(
-            () => File.ReadAllText(MermaidScriptPath).Replace("</script>", "<\\/script>", StringComparison.OrdinalIgnoreCase));
 
         public static void AppendMarkdown(FlowDocument document, string markdown, bool isUser = false)
         {
@@ -163,6 +161,7 @@ namespace SecureOverlay
             try
             {
                 Directory.CreateDirectory(WindowsAppPaths.WebView2CachePath);
+                Directory.CreateDirectory(WindowsAppPaths.TempRoot);
                 if (!File.Exists(MermaidScriptPath))
                 {
                     throw new FileNotFoundException("Local Mermaid bundle not found.", MermaidScriptPath);
@@ -178,7 +177,9 @@ namespace SecureOverlay
                 {
                     Log.WriteLine($"Mermaid WebView: {args.TryGetWebMessageAsString()}");
                 };
-                webView.NavigateToString(BuildMermaidHtml(mermaidCode));
+                var htmlFilePath = Path.Combine(WindowsAppPaths.TempRoot, $"mermaid_{Guid.NewGuid():N}.html");
+                File.WriteAllText(htmlFilePath, BuildMermaidHtml(mermaidCode));
+                webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
 
                 void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args)
                 {
@@ -245,7 +246,7 @@ namespace SecureOverlay
         private static string BuildMermaidHtml(string mermaidCode)
         {
             var mermaidJson = JsonSerializer.Serialize(mermaidCode);
-            var mermaidScript = MermaidScriptContent.Value;
+            var mermaidScriptUri = new Uri(MermaidScriptPath).AbsoluteUri;
             return """
 <!DOCTYPE html>
 <html>
@@ -271,9 +272,7 @@ namespace SecureOverlay
 </head>
 <body>
   <div id="diagram"></div>
-  <script>
-__MERMAID_SCRIPT__
-  </script>
+  <script src="__MERMAID_SRC__"></script>
   <script>
     const graphDefinition = __MERMAID_JSON__;
     const target = document.getElementById('diagram');
@@ -302,7 +301,7 @@ __MERMAID_SCRIPT__
 </body>
 </html>
 """
-                .Replace("__MERMAID_SCRIPT__", mermaidScript, StringComparison.Ordinal)
+                .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal)
                 .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
         }
 

@@ -46,7 +46,10 @@
     <Grid>
         <!-- Hidden WebView2 Container (for voice recognition) -->
         <Grid x:Name="WebView2Container" 
-              Visibility="Collapsed" 
+              Visibility="Visible"
+              Opacity="0"
+              IsHitTestVisible="False"
+              ClipToBounds="False"
               Width="1" 
               Height="1"/>
         

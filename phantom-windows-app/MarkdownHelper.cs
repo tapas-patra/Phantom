@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Markdig;
 using Markdig.Wpf;
 using Microsoft.Web.WebView2.Core;
@@ -23,6 +24,10 @@ namespace SecureOverlay
     {
         private const double MermaidViewportWidth = 640d;
         private const double MermaidViewportHeight = 320d;
+        private const int MermaidCaptureMinWidth = 900;
+        private const int MermaidCaptureMinHeight = 320;
+        private const int MermaidCaptureMaxWidth = 1600;
+        private const int MermaidCaptureMaxHeight = 2200;
 
         static MarkdownHelper()
         {
@@ -47,6 +52,12 @@ namespace SecureOverlay
         private static readonly Regex MermaidEdgeBoundaryRegex = new(
             @"(?<left>(?:\b[A-Za-z][A-Za-z0-9_-]*|[\]\)\}]))\s+(?<right>[A-Za-z][A-Za-z0-9_-]*\s*[-.=ox<>]{2,})",
             RegexOptions.Compiled);
+        private static readonly Regex MermaidSubgraphBoundaryRegex = new(
+            @"(?<left>[\]\)\}]|""|\bend\b)\s+(?<right>subgraph\b)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MermaidEndBoundaryRegex = new(
+            @"(?<left>[\]\)\}""])\s+(?<right>end\b)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Lazy<Task<CoreWebView2Environment>> MermaidEnvironment = new(
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
@@ -153,12 +164,6 @@ namespace SecureOverlay
                 Margin = new Thickness(0, 0, 0, 6)
             });
 
-            var webView = new WebView2
-            {
-                Width = MermaidViewportWidth,
-                Height = MermaidViewportHeight,
-                HorizontalAlignment = HorizontalAlignment.Left
-            };
             var border = new Border
             {
                 Background = Brushes.Transparent,
@@ -169,57 +174,73 @@ namespace SecureOverlay
                 Width = MermaidViewportWidth,
                 Height = MermaidViewportHeight,
                 ClipToBounds = true,
-                Child = webView
+                Child = BuildMermaidLoadingState()
             };
             container.Children.Add(border);
 
             document.Blocks.Add(new BlockUIContainer(container));
-            _ = InitializeMermaidBlockAsync(webView, mermaidCode, container);
+            _ = InitializeMermaidBlockAsync(border, mermaidCode);
         }
 
-        private static async Task InitializeMermaidBlockAsync(
-            WebView2 webView,
-            string mermaidCode,
-            Panel container)
+        private static async Task InitializeMermaidBlockAsync(Border hostBorder, string mermaidCode)
         {
             try
             {
-                Directory.CreateDirectory(WindowsAppPaths.WebView2CachePath);
-                Directory.CreateDirectory(WindowsAppPaths.TempRoot);
-                if (!File.Exists(MermaidScriptPath))
+                var renderResult = await RenderMermaidToBitmapAsync(mermaidCode);
+                if (renderResult.Image != null)
                 {
-                    throw new FileNotFoundException("Local Mermaid bundle not found.", MermaidScriptPath);
+                    hostBorder.Child = BuildMermaidImageViewport(renderResult.Image);
+                    return;
                 }
 
-                var env = await MermaidEnvironment.Value;
-                await webView.EnsureCoreWebView2Async(env);
-                webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-                webView.DefaultBackgroundColor = DrawingColor.Transparent;
-                webView.CoreWebView2.WebMessageReceived += (_, args) =>
-                {
-                    Log.WriteLine($"Mermaid WebView: {args.TryGetWebMessageAsString()}");
-                };
-                var htmlFilePath = Path.Combine(WindowsAppPaths.TempRoot, $"mermaid_{Guid.NewGuid():N}.html");
-                Log.WriteLine($"Mermaid source: {FormatMermaidForLog(mermaidCode)}");
-                File.WriteAllText(htmlFilePath, BuildMermaidHtml(mermaidCode));
-                webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                Log.WriteLine($"Mermaid static render fallback: {renderResult.ErrorMessage}");
+                hostBorder.Child = BuildMermaidFallback(renderResult.Candidate ?? mermaidCode);
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"Mermaid rendering error: {ex.Message}");
-                container.Children.Clear();
-                container.Children.Add(new TextBlock
-                {
-                    Text = "Diagram",
-                    Foreground = new SolidColorBrush(Color.FromRgb(255, 215, 0)),
-                    FontFamily = new FontFamily("Segoe UI Semibold"),
-                    FontSize = 13,
-                    Margin = new Thickness(0, 0, 0, 6)
-                });
-                container.Children.Add(BuildMermaidFallback(mermaidCode));
+                hostBorder.Child = BuildMermaidFallback(mermaidCode);
             }
+        }
+
+        private static FrameworkElement BuildMermaidLoadingState()
+        {
+            return new Grid
+            {
+                Background = Brushes.Transparent,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Rendering diagram...",
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = new SolidColorBrush(Color.FromRgb(180, 190, 205)),
+                        FontFamily = new FontFamily("Segoe UI"),
+                        FontSize = 13
+                    }
+                }
+            };
+        }
+
+        private static FrameworkElement BuildMermaidImageViewport(BitmapSource image)
+        {
+            var imageControl = new System.Windows.Controls.Image
+            {
+                Source = image,
+                Stretch = Stretch.None,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            return new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Height = MermaidViewportHeight,
+                Width = MermaidViewportWidth,
+                Content = imageControl
+            };
         }
 
         private static FrameworkElement BuildMermaidFallback(string mermaidCode)
@@ -227,17 +248,25 @@ namespace SecureOverlay
             return new Border
             {
                 Background = Brushes.Transparent,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 78, 92)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(10),
-                Child = new TextBlock
+                BorderBrush = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(0),
+                Padding = new Thickness(0),
+                Child = new ScrollViewer
                 {
-                    Text = $"```mermaid\n{mermaidCode}\n```",
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0, 255, 127)),
-                    FontFamily = new FontFamily("Consolas"),
-                    FontSize = 13
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Height = MermaidViewportHeight,
+                    Width = MermaidViewportWidth,
+                    Content = new TextBlock
+                    {
+                        Text = $"```mermaid\n{mermaidCode}\n```",
+                        TextWrapping = TextWrapping.NoWrap,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0, 255, 127)),
+                        FontFamily = new FontFamily("Consolas"),
+                        FontSize = 13,
+                        Margin = new Thickness(10)
+                    }
                 }
             };
         }
@@ -258,31 +287,23 @@ namespace SecureOverlay
       padding: 0;
       background: transparent;
       color: #ffffff;
-      height: 100%;
       overflow: hidden;
       font-family: "Segoe UI", sans-serif;
-    }
-    #viewport {
-      height: 320px;
-      overflow: auto;
-      box-sizing: border-box;
     }
     #diagram {
       padding: 12px;
       box-sizing: border-box;
-      min-height: 100%;
+      display: inline-block;
     }
     svg {
-      max-width: 100%;
+      max-width: none;
       height: auto;
       display: block;
     }
   </style>
 </head>
 <body>
-  <div id="viewport">
-    <div id="diagram"></div>
-  </div>
+  <div id="diagram"></div>
   <script src="__MERMAID_SRC__"></script>
   <script>
     const graphDefinition = __MERMAID_JSON__;
@@ -309,7 +330,9 @@ namespace SecureOverlay
           try {
             const { svg } = await window.mermaid.render(`phantom-mermaid-diagram-${i}`, candidate);
             target.innerHTML = svg;
-            postToHost(`mermaid:rendered:${i}:${document.body.scrollHeight}`);
+            const width = Math.ceil(Math.max(document.body.scrollWidth, document.documentElement.scrollWidth));
+            const height = Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+            postToHost(JSON.stringify({ type: 'rendered', candidateIndex: i, candidate, width, height }));
             return;
           } catch (err) {
             lastError = err && err.message ? err.message : String(err);
@@ -318,9 +341,7 @@ namespace SecureOverlay
       } catch (err) {
         lastError = err && err.message ? err.message : String(err);
       }
-      postToHost(`mermaid:error:${lastError}`);
-      postToHost(`mermaid:candidate:${lastCandidate}`);
-      target.innerHTML = `<pre style="white-space: pre-wrap; color: #00ff7f;">${lastCandidate.replace(/</g, '&lt;')}</pre>`;
+      postToHost(JSON.stringify({ type: 'error', error: lastError, candidate: lastCandidate }));
     })();
   </script>
 </body>
@@ -329,6 +350,165 @@ namespace SecureOverlay
                 .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal)
                 .Replace("__MERMAID_CANDIDATES__", mermaidCandidatesJson, StringComparison.Ordinal)
                 .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
+        }
+
+        private static async Task<MermaidRenderResult> RenderMermaidToBitmapAsync(string mermaidCode)
+        {
+            Directory.CreateDirectory(WindowsAppPaths.WebView2CachePath);
+            Directory.CreateDirectory(WindowsAppPaths.TempRoot);
+            if (!File.Exists(MermaidScriptPath))
+            {
+                return MermaidRenderResult.Failure("Local Mermaid bundle not found.", mermaidCode);
+            }
+
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher == null)
+            {
+                return MermaidRenderResult.Failure("Application dispatcher unavailable.", mermaidCode);
+            }
+
+            return await dispatcher.InvokeAsync(async () =>
+            {
+                var mainWindow = System.Windows.Application.Current?.MainWindow as MainWindow;
+                var hostContainer = mainWindow?.FindName("WebView2Container") as Grid;
+                if (hostContainer == null)
+                {
+                    return MermaidRenderResult.Failure("WebView2Container not found.", mermaidCode);
+                }
+
+                var webView = new WebView2
+                {
+                    Width = MermaidCaptureMinWidth,
+                    Height = MermaidCaptureMinHeight,
+                    Visibility = Visibility.Visible,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    IsHitTestVisible = false
+                };
+
+                EventHandler<CoreWebView2WebMessageReceivedEventArgs>? webMessageHandler = null;
+                try
+                {
+                    hostContainer.Children.Add(webView);
+
+                    var env = await MermaidEnvironment.Value;
+                    await webView.EnsureCoreWebView2Async(env);
+                    webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                    webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                    webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                    webView.DefaultBackgroundColor = DrawingColor.Transparent;
+
+                    var messageSource = new TaskCompletionSource<MermaidBrowserMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    webMessageHandler = (_, args) =>
+                    {
+                        var message = args.TryGetWebMessageAsString();
+                        Log.WriteLine($"Mermaid WebView: {message}");
+                        if (TryParseMermaidBrowserMessage(message, out var parsed))
+                        {
+                            messageSource.TrySetResult(parsed);
+                        }
+                    };
+                    webView.CoreWebView2.WebMessageReceived += webMessageHandler;
+
+                    var htmlFilePath = Path.Combine(WindowsAppPaths.TempRoot, $"mermaid_{Guid.NewGuid():N}.html");
+                    Log.WriteLine($"Mermaid source: {FormatMermaidForLog(mermaidCode)}");
+                    File.WriteAllText(htmlFilePath, BuildMermaidHtml(mermaidCode));
+                    webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+
+                    var completedTask = await Task.WhenAny(messageSource.Task, Task.Delay(8000));
+                    if (completedTask != messageSource.Task)
+                    {
+                        return MermaidRenderResult.Failure("Timed out waiting for Mermaid render.", mermaidCode);
+                    }
+
+                    var browserMessage = await messageSource.Task;
+                    if (!browserMessage.IsSuccess)
+                    {
+                        return MermaidRenderResult.Failure(browserMessage.ErrorMessage ?? "Mermaid render failed.", browserMessage.Candidate ?? mermaidCode);
+                    }
+
+                    webView.Width = Math.Clamp(browserMessage.Width + 24, MermaidCaptureMinWidth, MermaidCaptureMaxWidth);
+                    webView.Height = Math.Clamp(browserMessage.Height + 24, MermaidCaptureMinHeight, MermaidCaptureMaxHeight);
+                    await Task.Delay(150);
+
+                    using var pngStream = new MemoryStream();
+                    await webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, pngStream);
+                    pngStream.Position = 0;
+
+                    var image = new BitmapImage();
+                    image.BeginInit();
+                    image.CacheOption = BitmapCacheOption.OnLoad;
+                    image.StreamSource = pngStream;
+                    image.EndInit();
+                    image.Freeze();
+
+                    return MermaidRenderResult.Success(image);
+                }
+                catch (Exception ex)
+                {
+                    return MermaidRenderResult.Failure(ex.Message, mermaidCode);
+                }
+                finally
+                {
+                    var coreWebView = webView.CoreWebView2;
+                    if (coreWebView != null && webMessageHandler != null)
+                    {
+                        coreWebView.WebMessageReceived -= webMessageHandler;
+                    }
+
+                    hostContainer.Children.Remove(webView);
+                    webView.Dispose();
+                }
+            }).Task.Unwrap();
+        }
+
+        private static bool TryParseMermaidBrowserMessage(string message, out MermaidBrowserMessage result)
+        {
+            result = MermaidBrowserMessage.Error("Unrecognized Mermaid browser message.", string.Empty);
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(message);
+                var root = document.RootElement;
+                var type = root.TryGetProperty("type", out var typeElement)
+                    ? typeElement.GetString()
+                    : string.Empty;
+                if (string.Equals(type, "rendered", StringComparison.OrdinalIgnoreCase))
+                {
+                    var width = root.TryGetProperty("width", out var widthElement) && widthElement.TryGetInt32(out var parsedWidth)
+                        ? parsedWidth
+                        : MermaidCaptureMinWidth;
+                    var height = root.TryGetProperty("height", out var heightElement) && heightElement.TryGetInt32(out var parsedHeight)
+                        ? parsedHeight
+                        : MermaidCaptureMinHeight;
+                    var candidate = root.TryGetProperty("candidate", out var candidateElement)
+                        ? candidateElement.GetString() ?? string.Empty
+                        : string.Empty;
+                    result = MermaidBrowserMessage.Success(width, height, candidate);
+                    return true;
+                }
+
+                if (string.Equals(type, "error", StringComparison.OrdinalIgnoreCase))
+                {
+                    var error = root.TryGetProperty("error", out var errorElement)
+                        ? errorElement.GetString() ?? "Mermaid render failed."
+                        : "Mermaid render failed.";
+                    var candidate = root.TryGetProperty("candidate", out var candidateElement)
+                        ? candidateElement.GetString() ?? string.Empty
+                        : string.Empty;
+                    result = MermaidBrowserMessage.Error(error, candidate);
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
 
         private static IReadOnlyList<string> BuildMermaidRenderCandidates(string mermaidCode)
@@ -427,6 +607,8 @@ namespace SecureOverlay
             for (var iteration = 0; iteration < 4; iteration++)
             {
                 var updated = normalized;
+                updated = MermaidSubgraphBoundaryRegex.Replace(updated, "${left}\n${right}");
+                updated = MermaidEndBoundaryRegex.Replace(updated, "${left}\n${right}");
                 updated = MermaidKeywordBoundaryRegex.Replace(updated, "${left}\n${right}");
                 updated = MermaidNodeBoundaryRegex.Replace(updated, "${left}\n${right}");
                 updated = MermaidEdgeBoundaryRegex.Replace(updated, "${left}\n${right}");
@@ -750,5 +932,56 @@ Ask me anything!";
         }
 
         private sealed record MarkdownSegment(string Content, bool IsMermaid);
+
+        private sealed class MermaidRenderResult
+        {
+            public BitmapSource? Image { get; init; }
+            public string? ErrorMessage { get; init; }
+            public string? Candidate { get; init; }
+
+            public static MermaidRenderResult Success(BitmapSource image)
+            {
+                return new MermaidRenderResult { Image = image };
+            }
+
+            public static MermaidRenderResult Failure(string errorMessage, string candidate)
+            {
+                return new MermaidRenderResult
+                {
+                    ErrorMessage = errorMessage,
+                    Candidate = candidate
+                };
+            }
+        }
+
+        private sealed class MermaidBrowserMessage
+        {
+            public bool IsSuccess { get; init; }
+            public int Width { get; init; }
+            public int Height { get; init; }
+            public string? Candidate { get; init; }
+            public string? ErrorMessage { get; init; }
+
+            public static MermaidBrowserMessage Success(int width, int height, string candidate)
+            {
+                return new MermaidBrowserMessage
+                {
+                    IsSuccess = true,
+                    Width = width,
+                    Height = height,
+                    Candidate = candidate
+                };
+            }
+
+            public static MermaidBrowserMessage Error(string errorMessage, string candidate)
+            {
+                return new MermaidBrowserMessage
+                {
+                    IsSuccess = false,
+                    ErrorMessage = errorMessage,
+                    Candidate = candidate
+                };
+            }
+        }
     }
 }

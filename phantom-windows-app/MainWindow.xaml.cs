@@ -3258,11 +3258,11 @@ namespace SecureOverlay
                 {
                     FileName = legacyFallbackAppPath,
                     UseShellExecute = true,
-                    WorkingDirectory = Path.GetDirectoryName(legacyFallbackAppPath) ?? Environment.CurrentDirectory
+                    WorkingDirectory = System.IO.Path.GetDirectoryName(legacyFallbackAppPath) ?? Environment.CurrentDirectory
                 });
 
                 Log.WriteLine("Legacy fallback app started. Closing hosted app.");
-                Application.Current.Shutdown();
+                System.Windows.Application.Current.Shutdown();
             }
             catch (Exception ex)
             {

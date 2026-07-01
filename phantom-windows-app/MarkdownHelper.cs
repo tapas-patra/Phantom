@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -19,6 +20,11 @@ namespace SecureOverlay
 {
     public static class MarkdownHelper
     {
+        static MarkdownHelper()
+        {
+            RunMermaidNormalizationSelfCheck();
+        }
+
         private static readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
             .UseSupportedExtensions()
             .Build();
@@ -245,7 +251,7 @@ namespace SecureOverlay
 
         private static string BuildMermaidHtml(string mermaidCode)
         {
-            var mermaidJson = JsonSerializer.Serialize(mermaidCode);
+            var mermaidJson = JsonSerializer.Serialize(NormalizeMermaidCode(mermaidCode));
             var mermaidScriptUri = new Uri(MermaidScriptPath).AbsoluteUri;
             return """
 <!DOCTYPE html>
@@ -303,6 +309,59 @@ namespace SecureOverlay
 """
                 .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal)
                 .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
+        }
+
+        private static string NormalizeMermaidCode(string mermaidCode)
+        {
+            var normalized = mermaidCode.Replace("\r\n", "\n").Trim();
+            if (normalized.Contains('\n'))
+            {
+                return normalized;
+            }
+
+            var directionalHeaderMatch = Regex.Match(
+                normalized,
+                @"^(?<header>(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR))\s+(?<body>.+)$",
+                RegexOptions.IgnoreCase);
+            if (directionalHeaderMatch.Success)
+            {
+                return $"{directionalHeaderMatch.Groups["header"].Value}\n{directionalHeaderMatch.Groups["body"].Value.Trim()}";
+            }
+
+            foreach (var header in new[]
+                     {
+                         "sequenceDiagram",
+                         "classDiagram",
+                         "stateDiagram-v2",
+                         "stateDiagram",
+                         "erDiagram",
+                         "journey",
+                         "gantt",
+                         "pie",
+                         "gitGraph",
+                         "mindmap",
+                         "timeline",
+                         "quadrantChart",
+                         "requirementDiagram",
+                         "xychart-beta"
+                     })
+            {
+                if (normalized.StartsWith(header + " ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return $"{header}\n{normalized[header.Length..].Trim()}";
+                }
+            }
+
+            return normalized;
+        }
+
+        [Conditional("DEBUG")]
+        private static void RunMermaidNormalizationSelfCheck()
+        {
+            Debug.Assert(
+                NormalizeMermaidCode("flowchart TD A[JAQ CLI] --> B[Start]") ==
+                "flowchart TD\nA[JAQ CLI] --> B[Start]",
+                "Mermaid one-line normalization regressed.");
         }
 
         private static double CalculateDiagramHeight(string mermaidCode)

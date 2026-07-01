@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -10,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Navigation;
+using Microsoft.Win32;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Services;
@@ -217,6 +219,7 @@ namespace SecureOverlay
             InterviewTypeComboBox.SelectedItem = _settings.InterviewPromptType;
             AutoPauseInactivityCheckBox.IsChecked = _settings.AutoPauseOnInactivityEnabled;
             AutoPauseMinutesTextBox.Text = Math.Max(10, _settings.AutoPauseOnInactivityMinutes).ToString();
+            LegacyFallbackAppPathTextBox.Text = _settings.LegacyFallbackAppPath ?? string.Empty;
 
             LoadContextPackEditors();
 
@@ -1332,6 +1335,17 @@ namespace SecureOverlay
                     _settings.AutoPauseOnInactivityMinutes = 10;
                 }
 
+                var legacyFallbackAppPath = LegacyFallbackAppPathTextBox.Text?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(legacyFallbackAppPath) && !File.Exists(legacyFallbackAppPath))
+                {
+                    InvisibleMessageBox.Show(
+                        "The selected legacy app path does not exist.\n\nChoose a valid executable or leave the field empty.",
+                        "Invalid Legacy App Path");
+                    return;
+                }
+
+                _settings.LegacyFallbackAppPath = legacyFallbackAppPath;
+
                 // debug mode:
                 _settings.DebugModeEnabled = HasByoEntitlement() && DebugModeCheckBox.IsChecked == true;
                 _settings.DebugErrorSimulation = _settings.DebugModeEnabled
@@ -1419,6 +1433,35 @@ namespace SecureOverlay
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             SettingsClosed?.Invoke(this, new SettingsCloseResult { Saved = false });
+        }
+
+        private void BrowseLegacyFallbackAppPathButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dialog = new OpenFileDialog
+                {
+                    Title = "Select Legacy Phantom App",
+                    Filter = "Applications (*.exe)|*.exe|All files (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+
+                if (!string.IsNullOrWhiteSpace(LegacyFallbackAppPathTextBox.Text))
+                {
+                    dialog.FileName = LegacyFallbackAppPathTextBox.Text.Trim();
+                }
+
+                if (dialog.ShowDialog() == true)
+                {
+                    LegacyFallbackAppPathTextBox.Text = dialog.FileName;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Error selecting legacy fallback app: {ex.Message}");
+                InvisibleMessageBox.Show($"Could not open file picker.\n\n{ex.Message}", "Legacy App Path");
+            }
         }
 
         private void PersistCurrentLocalDraftIfNeeded()

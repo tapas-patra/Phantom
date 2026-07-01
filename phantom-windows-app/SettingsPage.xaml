@@ -522,6 +522,41 @@
                             </StackPanel>
                         </Border>
 
+                        <TextBlock Text="Legacy Fallback App" FontSize="14" FontWeight="Bold"
+                                  Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15">
+                            <StackPanel>
+                                <TextBlock Text="Choose the legacy Phantom app executable. The main window can hand off to it if the hosted app fails."
+                                          FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap"
+                                          Effect="{StaticResource Shadow}"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="LegacyFallbackAppPathTextBox"
+                                             Grid.Column="0"
+                                             Height="35"
+                                             Background="#40FFFFFF"
+                                             Foreground="White"
+                                             BorderBrush="#70FFFFFF"
+                                             BorderThickness="1"
+                                             Padding="8,4"/>
+                                    <Button Grid.Column="1"
+                                            Content="Browse"
+                                            Width="90"
+                                            Height="35"
+                                            Click="BrowseLegacyFallbackAppPathButton_Click"
+                                            Margin="10,0,0,0"
+                                            Background="#50406080"
+                                            BorderBrush="#9071D9D7"
+                                            BorderThickness="1.5"
+                                            Foreground="White"
+                                            Style="{StaticResource ButtonStyle}"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
                         <Border x:Name="ContextPackSection" Background="#303A245D" CornerRadius="8"
                                Padding="15" Margin="0,0,0,15" Visibility="Collapsed"
                                BorderBrush="#9071D9D7" BorderThickness="1.5">

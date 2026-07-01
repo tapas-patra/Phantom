@@ -170,6 +170,7 @@ namespace SecureOverlay
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
             HeaderOpacitySlider.Value = _settings.WindowOpacity;
             ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
+            UpdateLegacyFallbackButtonState();
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -3075,6 +3076,7 @@ namespace SecureOverlay
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
+                UpdateLegacyFallbackButtonState();
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
@@ -3214,6 +3216,61 @@ namespace SecureOverlay
             }
 
             Log.WriteLine("✓ Resume and job description updated in conversation manager");
+        }
+
+        private void UpdateLegacyFallbackButtonState()
+        {
+            if (LegacyFallbackButton == null)
+            {
+                return;
+            }
+
+            var hasLegacyFallbackPath = !string.IsNullOrWhiteSpace(_settings.LegacyFallbackAppPath);
+            LegacyFallbackButton.Opacity = hasLegacyFallbackPath ? 1.0 : 0.55;
+            LegacyFallbackButton.ToolTip = hasLegacyFallbackPath
+                ? _settings.LegacyFallbackAppPath
+                : "Configure the legacy Phantom app path in Settings";
+        }
+
+        private void LegacyFallbackButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var legacyFallbackAppPath = _settings.LegacyFallbackAppPath?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(legacyFallbackAppPath))
+                {
+                    InvisibleMessageBox.Show(
+                        "Set the legacy app path in Settings first.",
+                        "Legacy App Not Configured");
+                    return;
+                }
+
+                if (!File.Exists(legacyFallbackAppPath))
+                {
+                    InvisibleMessageBox.Show(
+                        "The configured legacy app path no longer exists.\n\nUpdate it in Settings.",
+                        "Legacy App Missing");
+                    return;
+                }
+
+                Log.WriteLine($"Launching legacy fallback app: {legacyFallbackAppPath}");
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = legacyFallbackAppPath,
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(legacyFallbackAppPath) ?? Environment.CurrentDirectory
+                });
+
+                Log.WriteLine("Legacy fallback app started. Closing hosted app.");
+                Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Failed to launch legacy fallback app: {ex.Message}");
+                InvisibleMessageBox.Show(
+                    $"Could not launch the legacy app.\n\n{ex.Message}",
+                    "Legacy App Launch Failed");
+            }
         }
 
 

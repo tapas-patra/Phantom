@@ -1,27 +1,12 @@
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const HOSTED_DASHBOARD_API_BASE = "https://phantom-dashboard-backend.vercel.app";
 const HOSTED_WINDOWS_BACKEND_API_BASE = "https://phantom-ai-windows-app-backend.vercel.app";
+const DASHBOARD_API_BASE =
+  import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
+  HOSTED_DASHBOARD_API_BASE;
 
-function resolveApiBaseUrl(envValue, localBaseUrl, hostedBaseUrl) {
-  if (envValue?.trim()) {
-    return envValue.replace(/\/$/, "");
-  }
-
-  const hostname = window.location.hostname;
-  return (LOCAL_HOSTS.has(hostname) ? localBaseUrl : hostedBaseUrl).replace(/\/$/, "");
-}
-
-const DASHBOARD_API_BASE = resolveApiBaseUrl(
-  import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL,
-  "http://localhost:5067",
-  HOSTED_DASHBOARD_API_BASE
-);
-
-const WINDOWS_BACKEND_API_BASE = resolveApiBaseUrl(
-  import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL,
-  "http://localhost:5057",
-  HOSTED_WINDOWS_BACKEND_API_BASE
-);
+const WINDOWS_BACKEND_API_BASE =
+  import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
+  HOSTED_WINDOWS_BACKEND_API_BASE;
 
 const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 

@@ -30,8 +30,11 @@ builder.Services.AddCors(cors =>
         }
 
         origins.Add(DashboardOptions.DefaultPublicWebsiteBaseUrl);
-        origins.Add("http://localhost:4173");
-        origins.Add("https://localhost:4173");
+        if (builder.Environment.IsDevelopment())
+        {
+            origins.Add("http://localhost:4173");
+            origins.Add("https://localhost:4173");
+        }
 
         policy.WithOrigins(origins.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
             .AllowAnyHeader()

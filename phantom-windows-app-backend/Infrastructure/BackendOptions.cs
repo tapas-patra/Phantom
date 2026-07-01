@@ -4,6 +4,8 @@ namespace Phantom.WindowsApp.Backend.Infrastructure;
 
 public sealed class BackendOptions
 {
+    public const string DefaultPublicWebsiteBaseUrl = "https://phantom-website-dashboard.vercel.app";
+
     public string DatabaseUrl { get; init; } = string.Empty;
     public string DashboardProjectionDatabaseUrl { get; init; } = string.Empty;
     public int DefaultLeaseHours { get; init; } = 24;
@@ -47,6 +49,19 @@ public sealed class BackendOptions
     public string OtpSendUrlTemplate { get; init; } = string.Empty;
     public string OtpVerifyUrlTemplate { get; init; } = string.Empty;
     public string MockOtpCode { get; init; } = "111111";
+    public bool KnowledgeBaseEmbeddingEnabled { get; init; } = true;
+    public string KnowledgeBaseEmbeddingProvider { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultProvider;
+    public string KnowledgeBaseEmbeddingBaseUrl { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBaseUrl;
+    public string KnowledgeBaseEmbeddingApiKey { get; init; } = string.Empty;
+    public string KnowledgeBaseEmbeddingModel { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultModel;
+    public int KnowledgeBaseEmbeddingDimensions { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions;
+    public int KnowledgeBaseEmbeddingVersion { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion;
+    public int KnowledgeBaseEmbeddingBatchSize { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize;
+    public int KnowledgeBaseQueryEmbeddingTimeoutMs { get; init; } = 350;
+    public int KnowledgeBaseQueryEmbeddingRetries { get; init; } = 1;
+    public int KnowledgeBaseQueryEmbeddingRetryDelayMs { get; init; } = 75;
+    public int KnowledgeBaseQueryEmbeddingCacheEntries { get; init; } = 512;
+    public int KnowledgeBaseQueryEmbeddingCacheTtlMinutes { get; init; } = 30;
     public bool AllowImplicitLocalAdminBootstrap { get; init; }
     public bool AllowSeedTestUsers { get; init; }
 
@@ -163,7 +178,7 @@ public sealed class BackendOptions
             PublicWebsiteBaseUrl = ReadString(
                 "PHANTOM_PUBLIC_WEBSITE_BASE_URL",
                 section["PublicWebsiteBaseUrl"],
-                string.Empty),
+                DefaultPublicWebsiteBaseUrl),
             SmtpHost = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_SMTP_HOST",
                 section["SmtpHost"],
@@ -248,6 +263,58 @@ public sealed class BackendOptions
                 "PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE",
                 section["MockOtpCode"],
                 "111111"),
+            KnowledgeBaseEmbeddingEnabled = ParseBool(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_ENABLED"),
+                section["KnowledgeBaseEmbeddingEnabled"],
+                true),
+            KnowledgeBaseEmbeddingProvider = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_PROVIDER",
+                section["KnowledgeBaseEmbeddingProvider"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultProvider),
+            KnowledgeBaseEmbeddingBaseUrl = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BASE_URL",
+                section["KnowledgeBaseEmbeddingBaseUrl"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultBaseUrl),
+            KnowledgeBaseEmbeddingApiKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_API_KEY",
+                section["KnowledgeBaseEmbeddingApiKey"],
+                string.Empty),
+            KnowledgeBaseEmbeddingModel = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_MODEL",
+                section["KnowledgeBaseEmbeddingModel"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultModel),
+            KnowledgeBaseEmbeddingDimensions = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_DIMENSIONS"),
+                section["KnowledgeBaseEmbeddingDimensions"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions),
+            KnowledgeBaseEmbeddingVersion = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_VERSION"),
+                section["KnowledgeBaseEmbeddingVersion"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion),
+            KnowledgeBaseEmbeddingBatchSize = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BATCH_SIZE"),
+                section["KnowledgeBaseEmbeddingBatchSize"],
+                HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize),
+            KnowledgeBaseQueryEmbeddingTimeoutMs = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_TIMEOUT_MS"),
+                section["KnowledgeBaseQueryEmbeddingTimeoutMs"],
+                350),
+            KnowledgeBaseQueryEmbeddingRetries = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_RETRIES"),
+                section["KnowledgeBaseQueryEmbeddingRetries"],
+                1),
+            KnowledgeBaseQueryEmbeddingRetryDelayMs = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_RETRY_DELAY_MS"),
+                section["KnowledgeBaseQueryEmbeddingRetryDelayMs"],
+                75),
+            KnowledgeBaseQueryEmbeddingCacheEntries = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_CACHE_ENTRIES"),
+                section["KnowledgeBaseQueryEmbeddingCacheEntries"],
+                512),
+            KnowledgeBaseQueryEmbeddingCacheTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_CACHE_TTL_MINUTES"),
+                section["KnowledgeBaseQueryEmbeddingCacheTtlMinutes"],
+                30),
             AllowImplicitLocalAdminBootstrap = ParseBool(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP"),
                 section["AllowImplicitLocalAdminBootstrap"],

@@ -1,10 +1,12 @@
+const HOSTED_DASHBOARD_API_BASE = "https://phantom-dashboard-backend.vercel.app";
+const HOSTED_WINDOWS_BACKEND_API_BASE = "https://phantom-ai-windows-app-backend.vercel.app";
 const DASHBOARD_API_BASE =
   import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:5067";
+  HOSTED_DASHBOARD_API_BASE;
 
 const WINDOWS_BACKEND_API_BASE =
   import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:5057";
+  HOSTED_WINDOWS_BACKEND_API_BASE;
 
 const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
@@ -395,6 +397,14 @@ export async function updateManagedAiRuntimeSelection(accessToken, payload) {
   });
 }
 
+export async function updateKnowledgeBaseEmbeddingConfig(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/kb/embedding-config", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function deleteManagedAiCredential(accessToken, credentialId) {
   return request(
     DASHBOARD_API_BASE,
@@ -428,8 +438,9 @@ export async function createHostedKnowledgeBase(accessToken, payload) {
   });
 }
 
-export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
+export async function uploadHostedKnowledgeBaseDocuments(accessToken, files, section) {
   const formData = new FormData();
+  formData.append("section", section || "general_reference");
   Array.from(files || []).forEach((file) => {
     formData.append("files", file);
   });
@@ -438,6 +449,68 @@ export async function uploadHostedKnowledgeBaseDocuments(accessToken, files) {
     method: "POST",
     headers: authHeaders(accessToken),
     body: formData
+  });
+}
+
+export async function fetchHostedKnowledgeBaseDocument(accessToken, documentId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/documents/${encodeURIComponent(documentId)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function pasteHostedKnowledgeBaseDocument(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/paste", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProfile(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/profile", {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateHostedKnowledgeBaseProfile(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/profile", {
+    method: "PUT",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProjects(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/projects", {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function fetchHostedKnowledgeBaseProject(accessToken, projectCardId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateHostedKnowledgeBaseProject(accessToken, projectCardId, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}`, {
+    method: "PUT",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function markHostedKnowledgeBaseProjectRecent(accessToken, projectCardId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/projects/${encodeURIComponent(projectCardId)}/recent`, {
+    method: "POST",
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function deleteHostedKnowledgeBaseDocument(accessToken, documentId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/documents/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken)
   });
 }
 

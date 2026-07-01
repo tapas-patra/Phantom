@@ -11,9 +11,17 @@ public sealed class ManagedAiAdminService
 
     public async Task<object?> GetCredentialInventory(string authorizationHeader, CancellationToken cancellationToken)
     {
-        var credentials = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", authorizationHeader, null, cancellationToken);
-        var catalogs = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", authorizationHeader, null, cancellationToken);
-        var selection = await _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/selection", authorizationHeader, null, cancellationToken);
+        var credentialsTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/credentials", authorizationHeader, null, cancellationToken);
+        var catalogsTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/catalog", authorizationHeader, null, cancellationToken);
+        var selectionTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-ai/selection", authorizationHeader, null, cancellationToken);
+        var kbEmbeddingTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/kb/embedding-config", authorizationHeader, null, cancellationToken);
+
+        await Task.WhenAll(credentialsTask, catalogsTask, selectionTask, kbEmbeddingTask);
+
+        var credentials = await credentialsTask;
+        var catalogs = await catalogsTask;
+        var selection = await selectionTask;
+        var kbEmbedding = await kbEmbeddingTask;
         return new
         {
             managedProviders = new[]
@@ -26,6 +34,7 @@ public sealed class ManagedAiAdminService
                 new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" }
             },
             selection,
+            kbEmbedding,
             credentials,
             catalogs
         };
@@ -69,6 +78,11 @@ public sealed class ManagedAiAdminService
     public Task<object?> UpdateRuntimeSelection(string authorizationHeader, object payload, CancellationToken cancellationToken)
     {
         return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/selection", authorizationHeader, payload, cancellationToken);
+    }
+
+    public Task<object?> UpdateKnowledgeBaseEmbeddingConfig(string authorizationHeader, object payload, CancellationToken cancellationToken)
+    {
+        return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/kb/embedding-config", authorizationHeader, payload, cancellationToken);
     }
 
     public async Task DeleteCredential(string authorizationHeader, string credentialId, CancellationToken cancellationToken)

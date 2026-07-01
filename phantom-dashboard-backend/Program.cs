@@ -29,8 +29,12 @@ builder.Services.AddCors(cors =>
             origins.Add(options.PublicWebsiteBaseUrl);
         }
 
-        origins.Add("http://localhost:4173");
-        origins.Add("https://localhost:4173");
+        origins.Add(DashboardOptions.DefaultPublicWebsiteBaseUrl);
+        if (builder.Environment.IsDevelopment())
+        {
+            origins.Add("http://localhost:4173");
+            origins.Add("https://localhost:4173");
+        }
 
         policy.WithOrigins(origins.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
             .AllowAnyHeader()
@@ -330,6 +334,18 @@ adminGroup.MapPost("/managed-ai/selection", async (
     CancellationToken cancellationToken) =>
 {
     return Results.Ok(await managedAi.UpdateRuntimeSelection(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
+        payload,
+        cancellationToken));
+});
+adminGroup.MapPost("/kb/embedding-config", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpdateKnowledgeBaseEmbeddingConfig(
         cookies.GetAdminAuthorizationHeader(httpContext.Request),
         payload,
         cancellationToken));

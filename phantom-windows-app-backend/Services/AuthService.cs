@@ -2,6 +2,7 @@ using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
 using Phantom.WindowsApp.Backend.Persistence;
+using Npgsql;
 
 namespace Phantom.WindowsApp.Backend.Services;
 
@@ -16,6 +17,7 @@ public sealed class AuthService
     private readonly PasswordHasher _passwordHasher;
     private readonly TokenService _tokenService;
     private readonly TelemetryRepository _telemetry;
+    private readonly PostgresBackendStore _store;
 
     public AuthService(
         BackendOptions options,
@@ -26,7 +28,8 @@ public sealed class AuthService
         MagicLinkEmailService emailService,
         PasswordHasher passwordHasher,
         TokenService tokenService,
-        TelemetryRepository telemetry)
+        TelemetryRepository telemetry,
+        PostgresBackendStore store)
     {
         _options = options;
         _accounts = accounts;
@@ -37,6 +40,7 @@ public sealed class AuthService
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _telemetry = telemetry;
+        _store = store;
     }
 
     public AuthSessionDto CreateSession(DesktopAccountRecord account, string authMethod, string installId, string fingerprintHash)
@@ -65,8 +69,13 @@ public sealed class AuthService
 
     public AuthSessionDto RefreshSession(string refreshToken, string installId, string fingerprintHash)
     {
-        var existing = _sessions.FindByRefreshTokenHash(_tokenService.HashToken(refreshToken))
-            ?? throw new BackendValidationException("Refresh session not found.");
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var existing = _sessions.FindByRefreshTokenHash(
+            _tokenService.HashToken(refreshToken),
+            connection,
+            transaction,
+            forUpdate: true) ?? throw new BackendValidationException("Refresh session not found.");
 
         if (!existing.IsAuthenticated || existing.RevokedAtUtc.HasValue || existing.ExpiresAtUtc <= DateTime.UtcNow)
         {
@@ -78,12 +87,28 @@ public sealed class AuthService
             throw new BackendValidationException("Refresh token device mismatch.");
         }
 
-        _sessions.RevokeBySessionId(existing.SessionId);
-        return CreateSession(new DesktopAccountRecord
+        _sessions.RevokeBySessionId(existing.SessionId, connection, transaction);
+
+        var accessToken = _tokenService.GenerateOpaqueToken();
+        var newRefreshToken = _tokenService.GenerateOpaqueToken();
+        var session = new DesktopSessionRecord
         {
+            SessionId = $"session-{Guid.NewGuid():N}",
             UserId = existing.UserId,
-            Email = existing.Email
-        }, "refresh", installId, fingerprintHash);
+            Email = existing.Email,
+            AccessTokenHash = _tokenService.HashToken(accessToken),
+            RefreshTokenHash = _tokenService.HashToken(newRefreshToken),
+            AuthMethod = "refresh",
+            DeviceInstallId = installId,
+            DeviceFingerprintHash = fingerprintHash,
+            AuthenticatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(_options.SessionTtlHours),
+            IsAuthenticated = true
+        };
+        _sessions.Save(session, connection, transaction);
+        transaction.Commit();
+
+        return ToDto(session, accessToken, newRefreshToken);
     }
 
     public void RevokeSession(string refreshToken)

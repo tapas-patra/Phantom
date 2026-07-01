@@ -34,7 +34,6 @@ namespace SecureOverlay
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
         private bool _isUpdatingContextPackSelection;
-        private bool _isEditingSelectedHostedPack;
         private bool _lastAppliedSelectionWasLocalDraft = true;
         private bool _localDraftCacheInvalidated;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
@@ -364,7 +363,6 @@ namespace SecureOverlay
             var selection = SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem;
             if (selection == null || selection.IsBlank)
             {
-                _isEditingSelectedHostedPack = false;
                 _lastAppliedSelectionWasLocalDraft = true;
                 _localDraftCacheInvalidated = false;
                 ContextPackNameTextBox.Text = string.Empty;
@@ -384,7 +382,6 @@ namespace SecureOverlay
             }
 
             ContextPackNameTextBox.Text = pack.Name;
-            _isEditingSelectedHostedPack = false;
             _lastAppliedSelectionWasLocalDraft = false;
             _localDraftCacheInvalidated = false;
             DeleteContextPackButton.IsEnabled = true;
@@ -418,7 +415,6 @@ namespace SecureOverlay
                 return;
             }
 
-            _isEditingSelectedHostedPack = true;
             SetContextEditorsEditable(true);
             ResumeBox.Focus();
             ResumeBox.CaretIndex = ResumeBox.Text.Length;
@@ -494,7 +490,6 @@ namespace SecureOverlay
             {
                 _settings.SelectedHostedContextPackId = selectedPack?.PackId ?? string.Empty;
                 SettingsManager.Save(_settings);
-                _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(false);
                 ContextPackStatusText.Text = $"No changes to save for '{packName}'.";
 
@@ -523,7 +518,6 @@ namespace SecureOverlay
                     SaveEditorsToLocalDraft();
                 }
 
-                _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(false);
                 LoadHostedContextPacks(forceSelectedPackId: savedPack.PackId);
                 ContextPackStatusText.Text = $"Saved '{savedPack.Name}' to your Premium account. Click Save Settings to apply it to the interview.";
@@ -570,7 +564,6 @@ namespace SecureOverlay
                 _hostedAccountClient.DeleteContextPack(session.AccessToken, selection.PackId);
                 _settings.SelectedHostedContextPackId = string.Empty;
                 SettingsManager.Save(_settings);
-                _isEditingSelectedHostedPack = false;
                 SetContextEditorsEditable(true);
                 LoadHostedContextPacks();
                 ContextPackStatusText.Text = "Context pack deleted.";

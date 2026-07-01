@@ -15,6 +15,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using Microsoft.Web.WebView2.Wpf;
 using FormsScreen = System.Windows.Forms.Screen;
 using SecureOverlay.Application.Billing;
 using SecureOverlay.Application.Context;
@@ -33,6 +34,8 @@ using SecureOverlay.Infrastructure.Interviews;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Sync;
 using SecureOverlay.Infrastructure.Telemetry;
+using SecureOverlay.Platform.Windows.Device;
+using SecureOverlay.Platform.Windows.Secrets;
 using System.Windows.Media.Imaging;
 using System.IO; 
 
@@ -62,11 +65,15 @@ namespace SecureOverlay
         private bool _isDraggingWindow = false;
 
         // Streaming state
-        private Paragraph? _currentStreamingParagraph = null;
         private StringBuilder _streamBuffer = new StringBuilder();
         private System.Windows.Threading.DispatcherTimer? _streamUpdateTimer = null;
         private CancellationTokenSource? _currentRequestCancellation = null;
         private bool _isProcessingRequest = false;
+        private readonly List<MarkdownHelper.ChatRenderMessage> _chatMessages = new();
+        private string? _streamingChatMarkdown;
+        private bool _chatRenderInFlight;
+        private bool _chatRenderPending;
+        private bool _chatSurfaceInitialized;
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
@@ -138,6 +145,11 @@ namespace SecureOverlay
 
             _debugLogger = DebugLogger.Instance;
             Log.WriteLine($"Debug logger instance obtained ({_debugLogger.LogMessages.Count} messages already captured)");
+            Log.WriteLine($"RAG trace logging config: {RagTraceLogger.GetConfigurationSummary()}");
+            if (RagTraceLogger.IsEnabled)
+            {
+                Log.WriteLine($"RAG trace logging enabled: {RagTraceLogger.GetLogPath()}");
+            }
             
             DebugLogsList.ItemsSource = _debugLogger.LogMessages;
             Log.WriteLine("Debug logs bound to UI");
@@ -180,9 +192,16 @@ namespace SecureOverlay
                 _authSessionRepository,
                 _accountCacheRepository,
                 _hostedAccountClient);
-            _interviewLockService = new LocalInterviewLockService(
+            var deviceProfile = new WindowsDeviceIdentityService(
+                new SqliteDeviceProfileRepository(store),
+                new WindowsSecretVault(store))
+                .GetOrCreateProfile();
+            _interviewLockService = new HostedInterviewLockService(
                 interviewSessionRepository,
-                _accountCacheRepository);
+                _accountCacheRepository,
+                _authSessionRepository,
+                HostedClientFactory.CreateLockClient(_hostedRuntimeOptions),
+                deviceProfile.InstallId);
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
                 _authSessionRepository,
@@ -202,20 +221,7 @@ namespace SecureOverlay
                 _lastInterviewActivityUtc = DateTime.UtcNow;
             }
 
-            var reconciliationFlush = _usageReconciliationService.FlushPending();
-            if (reconciliationFlush.PendingBefore > 0)
-            {
-                Log.WriteLine(
-                    $"Usage reconciliation flush: pending={reconciliationFlush.PendingBefore}, " +
-                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
-                LogUsageQueueSnapshot();
-                _telemetryService.Track("sync", "usage_reconciliation_flush", new Dictionary<string, string>
-                {
-                    ["pending"] = reconciliationFlush.PendingBefore.ToString(),
-                    ["synced"] = reconciliationFlush.SyncedCount.ToString(),
-                    ["failed"] = reconciliationFlush.FailedCount.ToString()
-                });
-            }
+            _usageReconciliationService.FlushPendingInBackground();
             
             // ✅ UPDATED: Check for cached conversation in SEPARATE file
             bool hasRestoredConversation = false;
@@ -306,11 +312,12 @@ namespace SecureOverlay
             // ═══════════════════════════════════════════════════════════════
             // Rebuild chat UI from restored conversation
             // ═══════════════════════════════════════════════════════════════
-            this.Loaded += (s, e) =>
+            this.Loaded += async (s, e) =>
             {
                 // Update API key indicator AFTER window is loaded
                 Log.WriteLine("Window loaded - updating API key indicator...");
                 UpdateAPIKeyIndicator();
+                await EnsureChatSurfaceReadyAsync();
                 
                 if (hasRestoredConversation && 
                     _conversationManager != null && 
@@ -321,7 +328,7 @@ namespace SecureOverlay
                     
                     try
                     {
-                        MarkdownHelper.ClearDocument(ChatDocument);
+                        _chatMessages.Clear();
                         
                         var displayMessages = cachedConversation.Messages
                             .Where(m => m.Role != "system")
@@ -336,10 +343,10 @@ namespace SecureOverlay
                             var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
                             var fullText = prefix + msg.Content;
-                            
-                            MarkdownHelper.AppendMarkdown(ChatDocument, fullText, isUser);
+                            _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(isUser, fullText));
                             rebuilt++;
                         }
+                        await RefreshChatSurfaceAsync();
                         
                         Log.WriteLine($"✓ Rebuilt {rebuilt} messages in chat UI");
 
@@ -374,17 +381,16 @@ namespace SecureOverlay
                     {
                         Log.WriteLine($"✗ Error rebuilding chat UI: {ex.Message}");
                         Log.WriteLine($"Stack trace: {ex.StackTrace}");
-                        
-                        MarkdownHelper.ClearDocument(ChatDocument);
-                        MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                        _chatMessages.Clear();
+                        await RefreshChatSurfaceAsync();
                     }
                 }
                 else
                 {
-                    if (ChatDocument.Blocks.Count == 0)
+                    if (_chatMessages.Count == 0)
                     {
                         Log.WriteLine("No cached conversation - showing welcome message");
-                        MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                        await RefreshChatSurfaceAsync();
                     }
                 }
             };
@@ -815,7 +821,7 @@ namespace SecureOverlay
                     ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                     PremiumDebtAdded = completion.PremiumDebtAdded
                 });
-                var reconciliationFlush = _usageReconciliationService.FlushPending();
+                _usageReconciliationService.FlushPendingInBackground();
                 _interviewLockService.MarkLockReleased();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
@@ -841,8 +847,7 @@ namespace SecureOverlay
                     $"Boundary finalization complete: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
                     $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
                 Log.WriteLine(
-                    $"Boundary usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
-                    $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                    $"Boundary usage reconciliation queued for background flush: session={completion.SessionId}");
                 LogUsageQueueSnapshot();
                 _telemetryService.Track("billing", "interview_session_boundary_finalized", new Dictionary<string, string>
                 {
@@ -1392,15 +1397,16 @@ namespace SecureOverlay
             }
 
             // Initialize rotation manager
-            _rotationManager = new APIRotationManager(_settings);
+            var rotationManager = new APIRotationManager(_settings);
+            _rotationManager = rotationManager;
             
             Log.WriteLine($"✓ Rotation manager initialized");
             Log.WriteLine($"  Auto-switch keys: {_settings.AutoSwitchKeysOnError}");
             Log.WriteLine($"  Auto-switch models: {_settings.AutoSwitchModelsOnError}");
             
             // Log key counts for current provider
-            var keyCount = _rotationManager.GetTotalKeyCount(_settings.SelectedAI);
-            var availableKeys = _rotationManager.GetAvailableKeyCount(_settings.SelectedAI);
+            var keyCount = rotationManager.GetTotalKeyCount(_settings.SelectedAI);
+            var availableKeys = rotationManager.GetAvailableKeyCount(_settings.SelectedAI);
             Log.WriteLine($"  {_settings.SelectedAI} keys: {keyCount} total, {availableKeys} available");
 
             var allowedProviders = GetAvailableProvidersForCurrentTier();
@@ -1412,7 +1418,7 @@ namespace SecureOverlay
             }
             
             // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
-            var currentModel = _rotationManager.GetCurrentModel(_settings.SelectedAI);
+            var currentModel = rotationManager.GetCurrentModel(_settings.SelectedAI);
             var allowedModels = GetAvailableModelsForSelectedProvider();
             if (!allowedModels.Contains(currentModel))
             {
@@ -1433,7 +1439,7 @@ namespace SecureOverlay
             }
 
             currentModel = useByoRuntime
-                ? (_rotationManager?.GetCurrentModel(runtimeProvider) ?? currentModel)
+                ? (rotationManager.GetCurrentModel(runtimeProvider) ?? currentModel)
                 : GetManagedRuntimeModelId(runtimeProvider);
 
             Log.WriteLine($"✓ Loading model from settings: {currentModel}");
@@ -1441,7 +1447,7 @@ namespace SecureOverlay
             
             // Create AI service with rotation
             IAIService newAI = useByoRuntime
-                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, _rotationManager)
+                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, rotationManager)
                 : new HostedManagedAiService(
                     _authSessionRepository,
                     _hostedRuntimeOptions,
@@ -1459,7 +1465,7 @@ namespace SecureOverlay
                 _conversationManager.UpdateAIService(newAI);
                 _conversationManager.UpdateModelConfig(modelConfig);
                 _conversationManager.UpdateSystemPrompt(_settings.SystemPrompt);
-                _conversationManager.SetRotationManager(_rotationManager);
+                _conversationManager.SetRotationManager(rotationManager);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
@@ -1473,7 +1479,23 @@ namespace SecureOverlay
                     _settings.SystemPrompt,
                     modelConfig,
                     _rotationManager,
-                    query => _knowledgeRetrievalService.RetrieveForPrompt(_contextPackService.GetSelectedPack(), query));
+                    (query, preferredDocumentIds, cancellationToken) => _knowledgeRetrievalService.RetrieveForPromptAsync(
+                        _contextPackService.GetSelectedPack(),
+                        query,
+                        preferredDocumentIds,
+                        cancellationToken: cancellationToken),
+                    async cancellationToken =>
+                    {
+                        var session = _authSessionRepository.Load();
+                        if (session == null
+                            || !session.IsAuthenticated
+                            || string.IsNullOrWhiteSpace(session.AccessToken))
+                        {
+                            return new HostedKnowledgeBaseSummaryDto();
+                        }
+
+                        return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
+                    });
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
@@ -1877,12 +1899,8 @@ namespace SecureOverlay
                 {
                     _streamBuffer.Clear();
                 }
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 await Task.Delay(200);
                 
@@ -1905,16 +1923,8 @@ namespace SecureOverlay
             {
                 _streamBuffer.Clear();
             }
-            
-            _currentStreamingParagraph = new Paragraph
-            {
-                Foreground = Brushes.White,
-                Margin = new Thickness(0, 5, 0, 5)
-            };
-            
-            var headerRun = new Run($"{aiName}:\n") { FontWeight = FontWeights.Bold };
-            _currentStreamingParagraph.Inlines.Add(headerRun);
-            ChatDocument.Blocks.Add(_currentStreamingParagraph);
+            _streamingChatMarkdown = $"**{aiName}:**\n\n";
+            await RefreshChatSurfaceAsync();
             
             _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
             {
@@ -1970,24 +1980,12 @@ namespace SecureOverlay
                         _streamBuffer.Clear();
                     }
 
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
-
                     StatusText.Text = "🔄 Switching to managed extension...";
                     StatusIndicator.Fill = Brushes.Yellow;
 
                     aiName = GetCurrentDisplayProvider();
-                    _currentStreamingParagraph = new Paragraph
-                    {
-                        Foreground = Brushes.White,
-                        Margin = new Thickness(0, 5, 0, 5)
-                    };
-                    var retryHeaderRun = new Run($"{aiName}:\n") { FontWeight = FontWeights.Bold };
-                    _currentStreamingParagraph.Inlines.Add(retryHeaderRun);
-                    ChatDocument.Blocks.Add(_currentStreamingParagraph);
+                    _streamingChatMarkdown = $"**{aiName}:**\n\n";
+                    await RefreshChatSurfaceAsync();
 
                     _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
                     {
@@ -2014,12 +2012,8 @@ namespace SecureOverlay
                 if (error == "Cancelled")
                 {
                     Log.WriteLine("✗ Request was cancelled");
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
+                    _streamingChatMarkdown = null;
+                    await RefreshChatSurfaceAsync();
                     
                     AddToChat("_[Request cancelled]_", true);
                     
@@ -2044,12 +2038,8 @@ namespace SecureOverlay
                         UpdateCreditIndicator();
                         UpdateSessionStatus();
                     }
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
+                    _streamingChatMarkdown = null;
+                    await RefreshChatSurfaceAsync();
                     
                     AddToChat($"❌ **Error:** {error}", true);
 
@@ -2070,46 +2060,10 @@ namespace SecureOverlay
                 {
                     ResumeInterviewSessionAfterSuccess();
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        string finalText;
-                        lock (_streamBuffer)
-                        {
-                            finalText = _streamBuffer.ToString();
-                        }
-                        
-                        while (_currentStreamingParagraph.Inlines.Count > 1)
-                        {
-                            _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                        }
-                        _currentStreamingParagraph.Inlines.Add(new Run(finalText));
-                    }
-                    
                     await Task.Delay(100);
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
-                    
-                    var fullMarkdown = $"**{aiName}:**\n\n{response}";
-                    
-                    int blockCountBefore = ChatDocument.Blocks.Count;
-                    MarkdownHelper.AppendMarkdown(ChatDocument, fullMarkdown, false);
-                    
-                    if (ChatDocument.Blocks.Count > blockCountBefore)
-                    {
-                        var newBlock = ChatDocument.Blocks.Skip(blockCountBefore).FirstOrDefault();
-                        if (newBlock != null)
-                        {
-                            _ = Dispatcher.BeginInvoke(new Action(() =>
-                            {
-                                try { newBlock.BringIntoView(); } catch { }
-                            }), System.Windows.Threading.DispatcherPriority.Background);
-                        }
-                    }
+                    _streamingChatMarkdown = null;
+                    _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, $"**{aiName}:**\n\n{response}"));
+                    await RefreshChatSurfaceAsync();
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
                     if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
@@ -2158,12 +2112,8 @@ namespace SecureOverlay
                 Log.WriteLine("✗ Request cancelled (exception)");
                 
                 _streamUpdateTimer?.Stop();
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 StatusText.Text = "⚠️ Cancelled";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -2178,12 +2128,8 @@ namespace SecureOverlay
                 Log.WriteLine($"✗ Exception: {ex.Message}");
                 
                 _streamUpdateTimer?.Stop();
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 AddToChat($"❌ **Exception:** {ex.Message}", true);
                 PauseInterviewSessionForError("runtime_exception");
@@ -2202,7 +2148,7 @@ namespace SecureOverlay
             {
                 _streamUpdateTimer?.Stop();
                 _streamUpdateTimer = null;
-                _currentStreamingParagraph = null;
+                _streamingChatMarkdown = null;
                 
                 lock (_streamBuffer)
                 {
@@ -2219,7 +2165,7 @@ namespace SecureOverlay
 
         private void StreamUpdateTimer_Tick(object? sender, EventArgs e)
         {
-            if (_currentStreamingParagraph != null)
+            if (!string.IsNullOrWhiteSpace(_streamingChatMarkdown))
             {
                 string currentText;
                 lock (_streamBuffer)
@@ -2229,18 +2175,9 @@ namespace SecureOverlay
                 
                 if (currentText.Length > 0)
                 {
-                    while (_currentStreamingParagraph.Inlines.Count > 1)
-                    {
-                        _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                    }
-                    
-                    _currentStreamingParagraph.Inlines.Add(new Run(currentText));
-                    
-                    try
-                    {
-                        _currentStreamingParagraph.BringIntoView();
-                    }
-                    catch { }
+                    var aiName = GetCurrentDisplayProvider();
+                    _streamingChatMarkdown = $"**{aiName}:**\n\n{currentText}";
+                    _ = RefreshChatSurfaceAsync();
                 }
             }
         }
@@ -2249,51 +2186,76 @@ namespace SecureOverlay
         {
             try
             {
-                if (ChatDocument.Blocks.Count > 0)
-                {
-                    var firstBlock = ChatDocument.Blocks.FirstBlock;
-                    if (firstBlock is Paragraph p && p.Inlines.FirstInline is Run r)
-                    {
-                        if (r.Text.Contains("Welcome to your invisible"))
-                        {
-                            MarkdownHelper.ClearDocument(ChatDocument);
-                            Log.WriteLine("Cleared welcome message");
-                        }
-                    }
-                }
-
-                int blockCountBefore = ChatDocument.Blocks.Count;
-
-                MarkdownHelper.AppendMarkdown(ChatDocument, text, !isResponse);
-
-                if (ChatDocument.Blocks.Count > blockCountBefore)
-                {
-                    var newBlocks = ChatDocument.Blocks.Skip(blockCountBefore).FirstOrDefault();
-                    
-                    if (newBlocks != null)
-                    {
-                        Dispatcher.BeginInvoke(new Action(() =>
-                        {
-                            newBlocks.BringIntoView();
-                        }), System.Windows.Threading.DispatcherPriority.Background);
-                    }
-                }
+                _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(!isResponse, text));
+                _ = RefreshChatSurfaceAsync();
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"Error adding to chat: {ex.Message}");
-                
-                var paragraph = new Paragraph(new Run(text))
+            }
+        }
+
+        private async Task EnsureChatSurfaceReadyAsync()
+        {
+            if (_chatSurfaceInitialized)
+            {
+                return;
+            }
+
+            await MarkdownHelper.InitializeChatWebViewAsync(ChatWebView);
+            _chatSurfaceInitialized = true;
+        }
+
+        private IReadOnlyList<MarkdownHelper.ChatRenderMessage> BuildDisplayedChatMessages()
+        {
+            if (!string.IsNullOrWhiteSpace(_streamingChatMarkdown))
+            {
+                return _chatMessages
+                    .Concat(new[] { new MarkdownHelper.ChatRenderMessage(false, _streamingChatMarkdown) })
+                    .ToList();
+            }
+
+            if (_chatMessages.Count > 0)
+            {
+                return _chatMessages;
+            }
+
+            return new[]
+            {
+                new MarkdownHelper.ChatRenderMessage(false, MarkdownHelper.GetWelcomeMarkdown())
+            };
+        }
+
+        private async Task RefreshChatSurfaceAsync()
+        {
+            if (_chatRenderInFlight)
+            {
+                _chatRenderPending = true;
+                return;
+            }
+
+            _chatRenderInFlight = true;
+            try
+            {
+                do
                 {
-                    Foreground = isResponse ? Brushes.White : Brushes.LightBlue,
-                    Margin = new Thickness(0, 5, 0, 5)
-                };
-                ChatDocument.Blocks.Add(paragraph);
-                
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    paragraph.BringIntoView();
-                }), System.Windows.Threading.DispatcherPriority.Background);
+                    _chatRenderPending = false;
+                    await EnsureChatSurfaceReadyAsync();
+                    await MarkdownHelper.RenderChatTranscriptAsync(ChatWebView, BuildDisplayedChatMessages());
+                } while (_chatRenderPending);
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Chat surface render failed: {ex.Message}");
+            }
+            finally
+            {
+                _chatRenderInFlight = false;
+            }
+
+            if (_chatRenderPending)
+            {
+                await RefreshChatSurfaceAsync();
             }
         }
 
@@ -2466,8 +2428,9 @@ namespace SecureOverlay
                 _conversationManager.ClearJobDescription();
                 
                 // Clear UI
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 
                 // Update token counter
                 UpdateTokenCounter();
@@ -2527,8 +2490,9 @@ namespace SecureOverlay
                 _conversationManager.ClearJobDescription();
                 
                 // Clear UI
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 
                 // Update token counter
                 UpdateTokenCounter();
@@ -3230,8 +3194,9 @@ namespace SecureOverlay
                 }
 
                 SettingsManager.ClearConversationCache();
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 UpdateTokenCounter();
                 Log.WriteLine("✓ Active context reapplied and conversation reset");
                 return;
@@ -4637,14 +4602,8 @@ namespace SecureOverlay
                 {
                     _streamBuffer.Clear();
                 }
-
-                if (_currentStreamingParagraph == null)
-                    return;
-
-                while (_currentStreamingParagraph.Inlines.Count > 1)
-                {
-                    _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                }
+                _streamingChatMarkdown = $"**{GetCurrentDisplayProvider()}:**\n\n";
+                _ = RefreshChatSurfaceAsync();
             });
         }
 
@@ -4794,13 +4753,10 @@ namespace SecureOverlay
                             ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
                             PremiumDebtAdded = completion.PremiumDebtAdded
                         });
-                        var reconciliationFlush = _usageReconciliationService.FlushPending();
                         Log.WriteLine(
                             $"  ✓ Interview finalized: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +
                             $"charged={completion.ChargedCredits:0.##}, premiumDebt={completion.PremiumDebtAdded:0.##}");
-                        Log.WriteLine(
-                            $"  ✓ Usage reconciliation: pending={reconciliationFlush.PendingBefore}, " +
-                            $"synced={reconciliationFlush.SyncedCount}, failed={reconciliationFlush.FailedCount}");
+                        _usageReconciliationService.FlushPendingInBackground();
                         LogUsageQueueSnapshot();
                         _telemetryService.Track("billing", "interview_session_finalized", new Dictionary<string, string>
                         {
@@ -4811,9 +4767,9 @@ namespace SecureOverlay
                         });
                         _telemetryService.Track("sync", "usage_reconciliation_after_finalize", new Dictionary<string, string>
                         {
-                            ["pending"] = reconciliationFlush.PendingBefore.ToString(),
-                            ["synced"] = reconciliationFlush.SyncedCount.ToString(),
-                            ["failed"] = reconciliationFlush.FailedCount.ToString()
+                            ["pending"] = "background",
+                            ["synced"] = "background",
+                            ["failed"] = "background"
                         });
                     }
 

@@ -70,6 +70,7 @@ $websiteBaseUrl = Require-EnvVar "PHANTOM_WEBSITE_BASE_URL"
 $windowsBackendBaseUrl = Require-EnvVar "PHANTOM_WINDOWS_BACKEND_BASE_URL"
 $dashboardApiBaseUrl = Require-EnvVar "VITE_PHANTOM_DASHBOARD_API_BASE_URL"
 $websiteWindowsBackendApiBaseUrl = Require-EnvVar "VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL"
+$ragLog = [Environment]::GetEnvironmentVariable("RAG_LOG")
 $sharedCookieDomain = [Environment]::GetEnvironmentVariable("PHANTOM_SHARED_COOKIE_DOMAIN")
 $bootstrapAdminEmail = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_EMAIL")
 $bootstrapAdminPassword = [Environment]::GetEnvironmentVariable("PHANTOM_BOOTSTRAP_ADMIN_PASSWORD")
@@ -112,6 +113,7 @@ if ($SeedUsers) {
 $windowsBackendCommand = @"
 `$env:PHANTOM_WINDOWS_BACKEND_DATABASE_URL = '$windowsBackendDbUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY = '$windowsBackendInternalApiKey'
+`$env:RAG_LOG = '$ragLog'
 `$env:PHANTOM_SHARED_COOKIE_DOMAIN = '$sharedCookieDomain'
 `$env:PHANTOM_BOOTSTRAP_ADMIN_EMAIL = '$bootstrapAdminEmail'
 `$env:PHANTOM_BOOTSTRAP_ADMIN_PASSWORD = '$bootstrapAdminPassword'
@@ -132,6 +134,7 @@ $dashboardBackendCommand = @"
 `$env:PHANTOM_DASHBOARD_BACKEND_DATABASE_URL = '$dashboardBackendDbUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_BASE_URL = '$windowsBackendBaseUrl'
 `$env:PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY = '$windowsBackendInternalApiKey'
+`$env:RAG_LOG = '$ragLog'
 `$env:PHANTOM_SHARED_COOKIE_DOMAIN = '$sharedCookieDomain'
 dotnet restore
 dotnet run --urls http://localhost:5067
@@ -140,6 +143,7 @@ dotnet run --urls http://localhost:5067
 $websiteCommand = @"
 `$env:VITE_PHANTOM_DASHBOARD_API_BASE_URL = '$dashboardApiBaseUrl'
 `$env:VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL = '$websiteWindowsBackendApiBaseUrl'
+`$env:RAG_LOG = '$ragLog'
 npm install
 npm run dev
 "@
@@ -148,6 +152,7 @@ $windowsAppCommand = @"
 `$env:PHANTOM_HOSTED_MODE = 'remote'
 `$env:PHANTOM_WINDOWS_BACKEND_BASE_URL = '$windowsBackendBaseUrl'
 `$env:PHANTOM_WEBSITE_BASE_URL = '$websiteBaseUrl'
+`$env:RAG_LOG = '$ragLog'
 dotnet build .\SecureOverlay.sln -c Debug
 & '.\bin\Debug\net8.0-windows\svchost-shell.exe'
 "@
@@ -165,3 +170,6 @@ Write-Host "Website: $websiteBaseUrl"
 Write-Host "Windows backend: $windowsBackendBaseUrl"
 Write-Host "Dashboard backend: http://localhost:5067"
 Write-Host "Windows app hosted config: $windowsAppHostedConfigPath"
+if (-not [string]::IsNullOrWhiteSpace($ragLog)) {
+    Write-Host "RAG_LOG propagated: $ragLog"
+}

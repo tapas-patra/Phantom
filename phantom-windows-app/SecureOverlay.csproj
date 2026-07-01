@@ -33,7 +33,7 @@
     <AssemblyVersion>10.0.22631.4602</AssemblyVersion>
     
     <!-- Shared Phantom app icon -->
-    <ApplicationIcon>..\icons\phantom-logo.ico</ApplicationIcon>
+    <ApplicationIcon>assets\brand\phantom-logo.ico</ApplicationIcon>
     
   </PropertyGroup>
 
@@ -46,12 +46,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="..\icons\phantom-logo.ico">
+    <Resource Include="assets\brand\phantom-logo.ico">
       <Link>phantom-logo.ico</Link>
     </Resource>
-    <Resource Include="..\icons\phantom-logo-512.png">
+    <Resource Include="assets\brand\phantom-logo-512.png">
       <Link>phantom-logo-512.png</Link>
     </Resource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="assets\mermaid\mermaid.min.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="phantom.hosted.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

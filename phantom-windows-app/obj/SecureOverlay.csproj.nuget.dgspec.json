@@ -10,11 +10,11 @@
         "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj",
         "projectName": "svchost-shell",
         "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj",
-        "packagesPath": "/tmp/.nuget/packages/",
+        "packagesPath": "/Users/tapaskumarpatra/.nuget/packages/",
         "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/tmp/.nuget/NuGet/NuGet.Config"
+          "/Users/tapaskumarpatra/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0-windows"

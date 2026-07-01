@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Application.Telemetry;
 using SecureOverlay.Domain.Entities;
@@ -16,6 +18,8 @@ namespace SecureOverlay.Infrastructure.Telemetry
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedTelemetryClient _hostedTelemetryClient;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
+        private readonly object _syncLock = new object();
+        private int _flushScheduled;
 
         public HostedTelemetryService(
             ITelemetryRepository repository,
@@ -31,22 +35,25 @@ namespace SecureOverlay.Infrastructure.Telemetry
 
         public void Track(string category, string eventName, Dictionary<string, string>? attributes = null)
         {
-            var events = _repository.LoadAll();
-            events.Add(new TelemetryEvent
+            var telemetryEvent = new TelemetryEvent
             {
                 EventId = $"telemetry-{Guid.NewGuid():N}",
                 Category = category,
                 EventName = eventName,
                 OccurredAtUtc = DateTime.UtcNow,
                 Attributes = attributes ?? new Dictionary<string, string>()
-            });
+            };
 
-            events = Trim(events);
-            _repository.SaveAll(events);
+            lock (_syncLock)
+            {
+                var events = _repository.LoadAll();
+                events.Add(telemetryEvent);
+                _repository.SaveAll(Trim(events));
+            }
 
             if (_hostedRuntimeOptions.UseRemoteBackend)
             {
-                FlushPending(events);
+                ScheduleFlush();
             }
         }
 
@@ -58,8 +65,41 @@ namespace SecureOverlay.Infrastructure.Telemetry
                 .ToList();
         }
 
-        private void FlushPending(List<TelemetryEvent> events)
+        private void ScheduleFlush()
         {
+            if (Interlocked.Exchange(ref _flushScheduled, 1) == 1)
+            {
+                return;
+            }
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    FlushPending();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _flushScheduled, 0);
+                }
+            });
+        }
+
+        private void FlushPending()
+        {
+            List<TelemetryEvent> queuedEvents;
+            lock (_syncLock)
+            {
+                queuedEvents = _repository.LoadAll()
+                    .OrderBy(item => item.OccurredAtUtc)
+                    .ToList();
+            }
+
+            if (queuedEvents.Count == 0)
+            {
+                return;
+            }
+
             var session = _authSessionRepository.Load();
             if (session == null
                 || !session.IsAuthenticated
@@ -68,21 +108,33 @@ namespace SecureOverlay.Infrastructure.Telemetry
                 return;
             }
 
-            var remaining = new List<TelemetryEvent>();
-            foreach (var telemetryEvent in events.OrderBy(item => item.OccurredAtUtc))
+            var succeededIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var telemetryEvent in queuedEvents)
             {
                 try
                 {
                     _hostedTelemetryClient.Ingest(telemetryEvent, session.AccessToken);
+                    succeededIds.Add(telemetryEvent.EventId);
                 }
                 catch (Exception ex)
                 {
                     Log.WriteLine($"Telemetry flush deferred: {ex.Message}");
-                    remaining.Add(telemetryEvent);
+                    break;
                 }
             }
 
-            _repository.SaveAll(Trim(remaining));
+            if (succeededIds.Count == 0)
+            {
+                return;
+            }
+
+            lock (_syncLock)
+            {
+                var remaining = _repository.LoadAll()
+                    .Where(item => !succeededIds.Contains(item.EventId))
+                    .ToList();
+                _repository.SaveAll(Trim(remaining));
+            }
         }
 
         private static List<TelemetryEvent> Trim(List<TelemetryEvent> events)

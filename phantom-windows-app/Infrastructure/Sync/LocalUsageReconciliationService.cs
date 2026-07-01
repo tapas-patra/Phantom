@@ -1,5 +1,8 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Application.Sync;
 using SecureOverlay.Domain.Entities;
@@ -16,6 +19,8 @@ namespace SecureOverlay.Infrastructure.Sync
         private readonly IUsageReconciliationRepository _repository;
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedUsageClient _hostedUsageClient;
+        private readonly object _syncLock = new object();
+        private int _flushScheduled;
 
         public LocalUsageReconciliationService(
             IUsageReconciliationRepository repository,
@@ -29,20 +34,30 @@ namespace SecureOverlay.Infrastructure.Sync
 
         public void Enqueue(UsageReconciliationPayload payload)
         {
-            var records = _repository.LoadAll();
-            records.Add(new UsageReconciliationRecord
+            lock (_syncLock)
             {
-                RecordId = $"usage-{Guid.NewGuid():N}",
-                Payload = payload,
-                Status = UsageSyncStatus.Pending,
-                CreatedAtUtc = DateTime.UtcNow
-            });
-            _repository.SaveAll(records);
+                var records = _repository.LoadAll();
+                records.Add(new UsageReconciliationRecord
+                {
+                    RecordId = $"usage-{Guid.NewGuid():N}",
+                    Payload = payload,
+                    Status = UsageSyncStatus.Pending,
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                _repository.SaveAll(records);
+            }
+
+            FlushPendingInBackground();
         }
 
         public UsageReconciliationFlushResult FlushPending()
         {
-            var records = _repository.LoadAll();
+            List<UsageReconciliationRecord> records;
+            lock (_syncLock)
+            {
+                records = _repository.LoadAll();
+            }
+
             var result = new UsageReconciliationFlushResult
             {
                 PendingBefore = records.Count(record => record.Status == UsageSyncStatus.Pending || record.Status == UsageSyncStatus.Failed)
@@ -108,13 +123,62 @@ namespace SecureOverlay.Infrastructure.Sync
                 }
             }
 
-            _repository.SaveAll(records);
+            lock (_syncLock)
+            {
+                var latest = _repository.LoadAll();
+                var updatedById = records.ToDictionary(record => record.RecordId, StringComparer.Ordinal);
+                foreach (var latestRecord in latest)
+                {
+                    if (updatedById.TryGetValue(latestRecord.RecordId, out var updated))
+                    {
+                        latestRecord.Status = updated.Status;
+                        latestRecord.AttemptCount = updated.AttemptCount;
+                        latestRecord.LastError = updated.LastError;
+                        latestRecord.LedgerEntryId = updated.LedgerEntryId;
+                        latestRecord.LastAttemptAtUtc = updated.LastAttemptAtUtc;
+                        latestRecord.SyncedAtUtc = updated.SyncedAtUtc;
+                        latestRecord.DeadLetteredAtUtc = updated.DeadLetteredAtUtc;
+                    }
+                }
+
+                _repository.SaveAll(latest);
+            }
+
             return result;
+        }
+
+        public void FlushPendingInBackground()
+        {
+            if (Interlocked.Exchange(ref _flushScheduled, 1) == 1)
+            {
+                return;
+            }
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    FlushPending();
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Background usage reconciliation failed: {ex.Message}");
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _flushScheduled, 0);
+                }
+            });
         }
 
         public UsageReconciliationQueueSnapshot GetQueueSnapshot()
         {
-            var records = _repository.LoadAll();
+            List<UsageReconciliationRecord> records;
+            lock (_syncLock)
+            {
+                records = _repository.LoadAll();
+            }
+
             return new UsageReconciliationQueueSnapshot
             {
                 PendingCount = records.Count(record => record.Status == UsageSyncStatus.Pending),

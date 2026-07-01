@@ -29,6 +29,8 @@ builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
 builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseEmbeddingConfigRepository>();
+builder.Services.AddSingleton<HostedKnowledgeBaseReindexJobRepository>();
 builder.Services.AddSingleton<DesktopContextPackRepository>();
 builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
@@ -47,6 +49,8 @@ builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<IKnowledgeBaseEmbeddingService, KnowledgeBaseEmbeddingService>();
+builder.Services.AddSingleton<HostedKnowledgeBaseStructuredExtractionService>();
 builder.Services.AddSingleton<PaymentCatalog>();
 builder.Services.AddSingleton<AccountStateService>();
 builder.Services.AddSingleton<BootstrapAccountSeeder>();
@@ -60,6 +64,7 @@ builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
+builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryBufferService>();
@@ -81,8 +86,12 @@ builder.Services.AddCors(options =>
             origins.Add(backendOptions.PublicWebsiteBaseUrl.TrimEnd('/'));
         }
 
-        origins.Add("http://localhost:4173");
-        origins.Add("https://localhost:4173");
+        origins.Add(BackendOptions.DefaultPublicWebsiteBaseUrl);
+        if (builder.Environment.IsDevelopment())
+        {
+            origins.Add("http://localhost:4173");
+            origins.Add("https://localhost:4173");
+        }
 
         cors.WithOrigins(origins.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
             .AllowAnyHeader()
@@ -94,14 +103,28 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
+        context.HttpContext.Response.Headers["Retry-After"] = "5";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            error = "Too many requests. Please wait a few seconds and try again."
+        }, cancellationToken);
+    };
     options.AddPolicy("auth", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-            _ => new FixedWindowRateLimiterOptions
+            $"{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}:{httpContext.Request.Path.Value?.ToLowerInvariant() ?? "/"}",
+            partitionKey => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 15,
+                PermitLimit = partitionKey.EndsWith("/api/desktop/auth/login", StringComparison.Ordinal)
+                    || partitionKey.EndsWith("/api/admin/auth/login", StringComparison.Ordinal)
+                    ? 20
+                    : 30,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
+                QueueLimit = 2,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 AutoReplenishment = true
             }));
     options.AddPolicy("desktop-api", httpContext =>
@@ -215,6 +238,26 @@ app.UseExceptionHandler(exceptionApp =>
             return;
         }
 
+        if (exception is EmbeddingProviderException embeddingException)
+        {
+            context.Response.StatusCode = embeddingException.IsTransient
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status502BadGateway;
+            if (embeddingException.RetryAfterSeconds.HasValue && embeddingException.RetryAfterSeconds.Value > 0)
+            {
+                context.Response.Headers["Retry-After"] = embeddingException.RetryAfterSeconds.Value.ToString();
+            }
+
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = embeddingException.Message,
+                retryable = embeddingException.IsTransient,
+                providerStatusCode = embeddingException.ProviderStatusCode,
+                retryAfterSeconds = embeddingException.RetryAfterSeconds
+            });
+            return;
+        }
+
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
         await context.Response.WriteAsJsonAsync(new
         {
@@ -227,7 +270,7 @@ app.UseRateLimiter();
 
 app.MapGet("/health", (PostgresBackendStore store) => Results.Ok(new
 {
-    status = "ok",
+    status = "live",
     service = "phantom-windows-app-backend",
     utc = DateTime.UtcNow
 }));
@@ -239,15 +282,19 @@ var internalGroup = app.MapGroup("/api/internal")
 internalGroup.MapGet("/health/details", (
     PostgresBackendStore store,
     BackendOptions options,
-    OperationalMetricsService metrics) => Results.Ok(new
+    OperationalMetricsService metrics) =>
 {
-    status = store.CanConnect() ? "ok" : "degraded",
-    service = "phantom-windows-app-backend",
-    database = store.CanConnect() ? "reachable" : "unreachable",
-    projectionReplicaEnabled = options.HasDashboardProjectionReplica,
-    workers = metrics.CreateSnapshot(),
-    utc = DateTime.UtcNow
-}));
+    var databaseReachable = store.CanConnect();
+    return Results.Ok(new
+    {
+        status = databaseReachable ? "ok" : "degraded",
+        service = "phantom-windows-app-backend",
+        database = databaseReachable ? "reachable" : "unreachable",
+        projectionReplicaEnabled = options.HasDashboardProjectionReplica,
+        workers = metrics.CreateSnapshot(),
+        utc = DateTime.UtcNow
+    });
+});
 
 app.MapGet("/health/ready", (
     PostgresBackendStore store,
@@ -703,6 +750,61 @@ app.MapGet("/api/desktop/kb", (
     return Results.Ok(knowledgeBases.GetSummaryForAccount(account));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/kb/profile", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetProfileCard(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPut("/api/desktop/kb/profile", async (
+    HttpContext httpContext,
+    HostedKnowledgeBaseProfileCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.UpdateProfileCard(account, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/projects", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.ListProjectCards(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/projects/{projectCardId}", (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetProjectCard(account, projectCardId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPut("/api/desktop/kb/projects/{projectCardId}", async (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseProjectCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.UpdateProjectCard(account, projectCardId, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/kb/projects/{projectCardId}/recent", (
+    HttpContext httpContext,
+    string projectCardId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.SetRecentProject(account, projectCardId));
+}).RequireRateLimiting("desktop-api");
+
 app.MapGet("/api/desktop/support/tickets", (
     HttpContext httpContext,
     int? page,
@@ -745,25 +847,91 @@ app.MapPost("/api/desktop/kb/documents", async (
 
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     var form = await httpContext.Request.ReadFormAsync(cancellationToken);
-    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(account, form.Files, cancellationToken));
+    return Results.Ok(await knowledgeBases.UploadDocumentsAsync(
+        account,
+        form.Files,
+        form["section"].FirstOrDefault() ?? string.Empty,
+        cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
-app.MapGet("/api/desktop/kb/search", (
+app.MapPost("/api/desktop/kb/paste", async (
     HttpContext httpContext,
-    string query,
-    int? maxSnippets,
+    HostedKnowledgeBaseDocumentPasteRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.PasteDocumentAsync(account, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/documents/{documentId}", (
+    HttpContext httpContext,
+    string documentId,
     HostedKnowledgeBaseService knowledgeBases) =>
 {
     var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(knowledgeBases.Search(account, query, maxSnippets ?? 3));
+    return Results.Ok(knowledgeBases.GetDocumentContent(account, documentId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapDelete("/api/desktop/kb/documents/{documentId}", (
+    HttpContext httpContext,
+    string documentId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.DeleteDocument(account, documentId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/kb/reindex", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.QueueReindex(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/reindex", (
+    HttpContext httpContext,
+    string? jobId,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.GetLatestReindexJob(account, jobId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/kb/search", async (
+    HttpContext httpContext,
+    string query,
+    string? preferredDocumentIds,
+    int? maxSnippets,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    var preferredDocs = string.IsNullOrWhiteSpace(preferredDocumentIds)
+        ? Array.Empty<string>()
+        : preferredDocumentIds
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Take(8)
+            .ToArray();
+    return Results.Ok(await knowledgeBases.SearchAsync(account, query, preferredDocs, maxSnippets ?? 3, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/context-packs", (
     HttpContext httpContext,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(contextPacks.List(account));
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        return Results.Ok(contextPacks.List(account));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs", (
@@ -771,8 +939,15 @@ app.MapPost("/api/desktop/context-packs", (
     DesktopContextPackUpsertRequestDto request,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(contextPacks.Upsert(account, request));
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        return Results.Ok(contextPacks.Upsert(account, request));
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/context-packs/delete", (
@@ -780,9 +955,16 @@ app.MapPost("/api/desktop/context-packs/delete", (
     DesktopContextPackDeleteRequestDto request,
     DesktopContextPackService contextPacks) =>
 {
-    var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    contextPacks.Delete(account, request.PackId);
-    return Results.Ok(new { deleted = true });
+    try
+    {
+        var account = contextPacks.RequirePremiumAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+        contextPacks.Delete(account, request.PackId);
+        return Results.Ok(new { deleted = true });
+    }
+    catch (BackendValidationException validationException)
+    {
+        return Results.BadRequest(new { error = validationException.Message });
+    }
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/payments/catalog", (
@@ -1038,6 +1220,18 @@ adminGroup.MapPost("/managed-ai/catalog/vision", (
     ManagedAiCatalogService catalogService) =>
 {
     return Results.Ok(catalogService.UpdateModelVisionSupport(request));
+});
+
+adminGroup.MapGet("/kb/embedding-config", (IKnowledgeBaseEmbeddingService embeddingService) =>
+{
+    return Results.Ok(embeddingService.GetAdminConfiguration());
+});
+
+adminGroup.MapPost("/kb/embedding-config", (
+    HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto request,
+    IKnowledgeBaseEmbeddingService embeddingService) =>
+{
+    return Results.Ok(embeddingService.UpdateAdminConfiguration(request));
 });
 
 adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (

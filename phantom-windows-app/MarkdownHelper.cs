@@ -330,6 +330,16 @@ namespace SecureOverlay
           try {
             const { svg } = await window.mermaid.render(`phantom-mermaid-diagram-${i}`, candidate);
             target.innerHTML = svg;
+            const renderedText = (target.textContent || '').trim();
+            const isErrorSvg =
+              /syntax error in text/i.test(renderedText) ||
+              /parse error/i.test(renderedText) ||
+              /mermaid version/i.test(renderedText) ||
+              /syntax error in text/i.test(svg);
+            if (isErrorSvg) {
+              target.innerHTML = '';
+              throw new Error(renderedText || 'Mermaid produced an error diagram');
+            }
             const width = Math.ceil(Math.max(document.body.scrollWidth, document.documentElement.scrollWidth));
             const height = Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
             postToHost(JSON.stringify({ type: 'rendered', candidateIndex: i, candidate, width, height }));

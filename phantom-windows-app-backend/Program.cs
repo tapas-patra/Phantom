@@ -527,7 +527,11 @@ app.MapGet("/api/desktop/auth/me", (
         {
             session.UserId,
             session.Email,
+            AccessToken = cookies.ReadUserAccessToken(httpContext.Request) ?? string.Empty,
+            RefreshToken = cookies.ReadUserRefreshToken(httpContext.Request) ?? string.Empty,
             session.AuthMethod,
+            session.DeviceInstallId,
+            session.DeviceFingerprintHash,
             session.AuthenticatedAtUtc,
             session.ExpiresAtUtc,
             session.IsAuthenticated
@@ -636,7 +640,20 @@ app.MapGet("/api/admin/auth/me", (
 {
     try
     {
-        return Results.Ok(adminAuth.GetSession(cookies.GetAdminAuthorizationHeader(httpContext.Request)));
+        var session = adminAuth.GetSession(cookies.GetAdminAuthorizationHeader(httpContext.Request));
+        return Results.Ok(new
+        {
+            session.AdminId,
+            session.Email,
+            session.DisplayName,
+            session.Role,
+            AccessToken = cookies.ReadAdminAccessToken(httpContext.Request) ?? string.Empty,
+            RefreshToken = cookies.ReadAdminRefreshToken(httpContext.Request) ?? string.Empty,
+            session.AuthMethod,
+            session.AuthenticatedAtUtc,
+            session.ExpiresAtUtc,
+            session.IsAuthenticated
+        });
     }
     catch (BackendValidationException)
     {
@@ -1278,6 +1295,8 @@ static object SanitizeUserSession(AuthSessionDto session) => new
 {
     session.UserId,
     session.Email,
+    session.AccessToken,
+    session.RefreshToken,
     session.AuthMethod,
     session.DeviceInstallId,
     session.DeviceFingerprintHash,
@@ -1292,6 +1311,8 @@ static object SanitizeAdminSession(AdminAuthSessionDto session) => new
     session.Email,
     session.DisplayName,
     session.Role,
+    session.AccessToken,
+    session.RefreshToken,
     session.AuthMethod,
     session.AuthenticatedAtUtc,
     session.ExpiresAtUtc,

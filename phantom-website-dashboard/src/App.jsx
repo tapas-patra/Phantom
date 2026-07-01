@@ -60,6 +60,47 @@ import {
   waiveAdminPremiumDebt
 } from "./lib/api";
 
+const USER_SESSION_STORAGE_KEY = "phantom.website.user-session";
+const ADMIN_SESSION_STORAGE_KEY = "phantom.website.admin-session";
+
+function readStoredSession(storageKey) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const value = window.localStorage.getItem(storageKey);
+    if (!value) {
+      return null;
+    }
+
+    const session = JSON.parse(value);
+    return session?.isAuthenticated && session?.accessToken && session?.refreshToken ? session : null;
+  } catch {
+    window.localStorage.removeItem(storageKey);
+    return null;
+  }
+}
+
+function writeStoredSession(storageKey, session) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!session?.isAuthenticated || !session?.accessToken || !session?.refreshToken) {
+    window.localStorage.removeItem(storageKey);
+    return;
+  }
+
+  window.localStorage.setItem(storageKey, JSON.stringify(session));
+}
+
+function clearStoredSession(storageKey) {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(storageKey);
+  }
+}
+
 const publicNav = [
   { to: "/", label: "Product" },
   { to: "/pricing", label: "Plans" },
@@ -325,9 +366,9 @@ const termsSections = [
 export default function App() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
-  const [userSession, setUserSession] = useState(null);
+  const [userSession, setUserSession] = useState(() => readStoredSession(USER_SESSION_STORAGE_KEY));
   const [userSessionReady, setUserSessionReady] = useState(false);
-  const [adminSession, setAdminSession] = useState(null);
+  const [adminSession, setAdminSession] = useState(() => readStoredSession(ADMIN_SESSION_STORAGE_KEY));
   const [adminSessionReady, setAdminSessionReady] = useState(false);
   const [userSessionHydrationEnabled, setUserSessionHydrationEnabled] = useState(true);
   const [adminSessionHydrationEnabled, setAdminSessionHydrationEnabled] = useState(true);
@@ -337,11 +378,13 @@ export default function App() {
   function handleUserAuthenticated(session) {
     setUserSessionHydrationEnabled(true);
     setUserSession(session);
+    writeStoredSession(USER_SESSION_STORAGE_KEY, session);
   }
 
   function handleAdminAuthenticated(session) {
     setAdminSessionHydrationEnabled(true);
     setAdminSession(session);
+    writeStoredSession(ADMIN_SESSION_STORAGE_KEY, session);
   }
 
   async function handleUserLogout() {
@@ -354,6 +397,7 @@ export default function App() {
     } finally {
       setUserSession(null);
       setUserSessionReady(true);
+      clearStoredSession(USER_SESSION_STORAGE_KEY);
       userLogoutInFlightRef.current = false;
     }
   }
@@ -368,6 +412,7 @@ export default function App() {
     } finally {
       setAdminSession(null);
       setAdminSessionReady(true);
+      clearStoredSession(ADMIN_SESSION_STORAGE_KEY);
       adminLogoutInFlightRef.current = false;
     }
   }
@@ -393,7 +438,7 @@ export default function App() {
 
       if (!userSession?.isAuthenticated) {
         try {
-          const refreshed = await refreshAccountSession();
+          const refreshed = await refreshAccountSession(userSession?.refreshToken);
           if (!cancelled) {
             handleUserAuthenticated(refreshed);
           }
@@ -406,6 +451,7 @@ export default function App() {
           } catch {
             if (!cancelled) {
               setUserSession(null);
+              clearStoredSession(USER_SESSION_STORAGE_KEY);
             }
           } finally {
             if (!cancelled) {
@@ -430,13 +476,14 @@ export default function App() {
       }
 
       try {
-        const refreshed = await refreshAccountSession();
+        const refreshed = await refreshAccountSession(userSession?.refreshToken);
         if (!cancelled) {
           handleUserAuthenticated(refreshed);
         }
       } catch {
         if (!cancelled) {
           setUserSession(null);
+          clearStoredSession(USER_SESSION_STORAGE_KEY);
         }
       } finally {
         if (!cancelled) {
@@ -480,7 +527,7 @@ export default function App() {
 
       if (!adminSession?.isAuthenticated) {
         try {
-          const refreshed = await refreshAdminSession();
+          const refreshed = await refreshAdminSession(adminSession?.refreshToken);
           if (!cancelled) {
             handleAdminAuthenticated(refreshed);
           }
@@ -493,6 +540,7 @@ export default function App() {
           } catch {
             if (!cancelled) {
               setAdminSession(null);
+              clearStoredSession(ADMIN_SESSION_STORAGE_KEY);
             }
           } finally {
             if (!cancelled) {
@@ -517,13 +565,14 @@ export default function App() {
       }
 
       try {
-        const refreshed = await refreshAdminSession();
+        const refreshed = await refreshAdminSession(adminSession?.refreshToken);
         if (!cancelled) {
           handleAdminAuthenticated(refreshed);
         }
       } catch {
         if (!cancelled) {
           setAdminSession(null);
+          clearStoredSession(ADMIN_SESSION_STORAGE_KEY);
         }
       } finally {
         if (!cancelled) {

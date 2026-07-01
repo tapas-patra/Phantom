@@ -65,19 +65,21 @@ namespace SecureOverlay
         private bool _isDraggingWindow = false;
 
         // Streaming state
-        private Paragraph? _currentStreamingParagraph = null;
         private StringBuilder _streamBuffer = new StringBuilder();
         private System.Windows.Threading.DispatcherTimer? _streamUpdateTimer = null;
         private CancellationTokenSource? _currentRequestCancellation = null;
         private bool _isProcessingRequest = false;
+        private readonly List<MarkdownHelper.ChatRenderMessage> _chatMessages = new();
+        private string? _streamingChatMarkdown;
+        private bool _chatRenderInFlight;
+        private bool _chatRenderPending;
+        private bool _chatSurfaceInitialized;
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
         private bool _isChatSectionCollapsed = false;
-        private WebView2? _mermaidPanelWebView;
         private const double ExpandedWindowMinHeight = 220;
         private const double CollapsedWindowMinHeight = 88;
-        private const string MermaidChatPlaceholder = "_[Diagram rendered in the Mermaid panel below.]_";
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -310,11 +312,12 @@ namespace SecureOverlay
             // ═══════════════════════════════════════════════════════════════
             // Rebuild chat UI from restored conversation
             // ═══════════════════════════════════════════════════════════════
-            this.Loaded += (s, e) =>
+            this.Loaded += async (s, e) =>
             {
                 // Update API key indicator AFTER window is loaded
                 Log.WriteLine("Window loaded - updating API key indicator...");
                 UpdateAPIKeyIndicator();
+                await EnsureChatSurfaceReadyAsync();
                 
                 if (hasRestoredConversation && 
                     _conversationManager != null && 
@@ -325,7 +328,7 @@ namespace SecureOverlay
                     
                     try
                     {
-                        MarkdownHelper.ClearDocument(ChatDocument);
+                        _chatMessages.Clear();
                         
                         var displayMessages = cachedConversation.Messages
                             .Where(m => m.Role != "system")
@@ -339,16 +342,11 @@ namespace SecureOverlay
                             var isUser = msg.Role == "user";
                             var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
-                            var contentForChat = PrepareChatMarkdown(msg.Content, !isUser, out var mermaidCode);
-                            var fullText = prefix + contentForChat;
-                            
-                            MarkdownHelper.AppendMarkdown(ChatDocument, fullText, isUser);
-                            if (!isUser && !string.IsNullOrWhiteSpace(mermaidCode))
-                            {
-                                _ = ShowMermaidDiagramAsync(mermaidCode);
-                            }
+                            var fullText = prefix + msg.Content;
+                            _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(isUser, fullText));
                             rebuilt++;
                         }
+                        await RefreshChatSurfaceAsync();
                         
                         Log.WriteLine($"✓ Rebuilt {rebuilt} messages in chat UI");
 
@@ -383,17 +381,16 @@ namespace SecureOverlay
                     {
                         Log.WriteLine($"✗ Error rebuilding chat UI: {ex.Message}");
                         Log.WriteLine($"Stack trace: {ex.StackTrace}");
-                        
-                        MarkdownHelper.ClearDocument(ChatDocument);
-                        MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                        _chatMessages.Clear();
+                        await RefreshChatSurfaceAsync();
                     }
                 }
                 else
                 {
-                    if (ChatDocument.Blocks.Count == 0)
+                    if (_chatMessages.Count == 0)
                     {
                         Log.WriteLine("No cached conversation - showing welcome message");
-                        MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                        await RefreshChatSurfaceAsync();
                     }
                 }
             };
@@ -1902,12 +1899,8 @@ namespace SecureOverlay
                 {
                     _streamBuffer.Clear();
                 }
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 await Task.Delay(200);
                 
@@ -1918,7 +1911,6 @@ namespace SecureOverlay
             _isProcessingRequest = true;
 
             Log.WriteLine($"Sending message: '{message}'");
-            ClearMermaidDiagram();
             AddToChat($"**You:** {message}", false);
             InputTextBox.Text = "";
 
@@ -1931,16 +1923,8 @@ namespace SecureOverlay
             {
                 _streamBuffer.Clear();
             }
-            
-            _currentStreamingParagraph = new Paragraph
-            {
-                Foreground = Brushes.White,
-                Margin = new Thickness(0, 5, 0, 5)
-            };
-            
-            var headerRun = new Run($"{aiName}:\n") { FontWeight = FontWeights.Bold };
-            _currentStreamingParagraph.Inlines.Add(headerRun);
-            ChatDocument.Blocks.Add(_currentStreamingParagraph);
+            _streamingChatMarkdown = $"**{aiName}:**\n\n";
+            await RefreshChatSurfaceAsync();
             
             _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
             {
@@ -1996,24 +1980,12 @@ namespace SecureOverlay
                         _streamBuffer.Clear();
                     }
 
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
-
                     StatusText.Text = "🔄 Switching to managed extension...";
                     StatusIndicator.Fill = Brushes.Yellow;
 
                     aiName = GetCurrentDisplayProvider();
-                    _currentStreamingParagraph = new Paragraph
-                    {
-                        Foreground = Brushes.White,
-                        Margin = new Thickness(0, 5, 0, 5)
-                    };
-                    var retryHeaderRun = new Run($"{aiName}:\n") { FontWeight = FontWeights.Bold };
-                    _currentStreamingParagraph.Inlines.Add(retryHeaderRun);
-                    ChatDocument.Blocks.Add(_currentStreamingParagraph);
+                    _streamingChatMarkdown = $"**{aiName}:**\n\n";
+                    await RefreshChatSurfaceAsync();
 
                     _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
                     {
@@ -2040,12 +2012,8 @@ namespace SecureOverlay
                 if (error == "Cancelled")
                 {
                     Log.WriteLine("✗ Request was cancelled");
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
+                    _streamingChatMarkdown = null;
+                    await RefreshChatSurfaceAsync();
                     
                     AddToChat("_[Request cancelled]_", true);
                     
@@ -2070,12 +2038,8 @@ namespace SecureOverlay
                         UpdateCreditIndicator();
                         UpdateSessionStatus();
                     }
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
+                    _streamingChatMarkdown = null;
+                    await RefreshChatSurfaceAsync();
                     
                     AddToChat($"❌ **Error:** {error}", true);
 
@@ -2096,56 +2060,10 @@ namespace SecureOverlay
                 {
                     ResumeInterviewSessionAfterSuccess();
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        string finalText;
-                        lock (_streamBuffer)
-                        {
-                            finalText = _streamBuffer.ToString();
-                        }
-                        
-                        while (_currentStreamingParagraph.Inlines.Count > 1)
-                        {
-                            _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                        }
-                        _currentStreamingParagraph.Inlines.Add(new Run(finalText));
-                    }
-                    
                     await Task.Delay(100);
-                    
-                    if (_currentStreamingParagraph != null)
-                    {
-                        ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                        _currentStreamingParagraph = null;
-                    }
-                    
-                    var responseForChat = PrepareChatMarkdown(response, true, out var mermaidCode);
-                    if (!string.IsNullOrWhiteSpace(mermaidCode))
-                    {
-                        await ShowMermaidDiagramAsync(mermaidCode);
-                    }
-                    else
-                    {
-                        ClearMermaidDiagram();
-                    }
-
-                    var fullMarkdown = $"**{aiName}:**\n\n{responseForChat}";
-                    
-                    int blockCountBefore = ChatDocument.Blocks.Count;
-                    MarkdownHelper.AppendMarkdown(ChatDocument, fullMarkdown, false);
-                    
-                    if (ChatDocument.Blocks.Count > blockCountBefore)
-                    {
-                        var newBlock = ChatDocument.Blocks.Skip(blockCountBefore).FirstOrDefault();
-                        if (newBlock != null)
-                        {
-                            _ = Dispatcher.BeginInvoke(new Action(() =>
-                            {
-                                try { newBlock.BringIntoView(); } catch { }
-                            }), System.Windows.Threading.DispatcherPriority.Background);
-                        }
-                    }
+                    _streamingChatMarkdown = null;
+                    _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, $"**{aiName}:**\n\n{response}"));
+                    await RefreshChatSurfaceAsync();
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
                     if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
@@ -2194,12 +2112,8 @@ namespace SecureOverlay
                 Log.WriteLine("✗ Request cancelled (exception)");
                 
                 _streamUpdateTimer?.Stop();
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 StatusText.Text = "⚠️ Cancelled";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -2214,12 +2128,8 @@ namespace SecureOverlay
                 Log.WriteLine($"✗ Exception: {ex.Message}");
                 
                 _streamUpdateTimer?.Stop();
-                
-                if (_currentStreamingParagraph != null)
-                {
-                    ChatDocument.Blocks.Remove(_currentStreamingParagraph);
-                    _currentStreamingParagraph = null;
-                }
+                _streamingChatMarkdown = null;
+                await RefreshChatSurfaceAsync();
                 
                 AddToChat($"❌ **Exception:** {ex.Message}", true);
                 PauseInterviewSessionForError("runtime_exception");
@@ -2238,7 +2148,7 @@ namespace SecureOverlay
             {
                 _streamUpdateTimer?.Stop();
                 _streamUpdateTimer = null;
-                _currentStreamingParagraph = null;
+                _streamingChatMarkdown = null;
                 
                 lock (_streamBuffer)
                 {
@@ -2255,7 +2165,7 @@ namespace SecureOverlay
 
         private void StreamUpdateTimer_Tick(object? sender, EventArgs e)
         {
-            if (_currentStreamingParagraph != null)
+            if (!string.IsNullOrWhiteSpace(_streamingChatMarkdown))
             {
                 string currentText;
                 lock (_streamBuffer)
@@ -2265,18 +2175,9 @@ namespace SecureOverlay
                 
                 if (currentText.Length > 0)
                 {
-                    while (_currentStreamingParagraph.Inlines.Count > 1)
-                    {
-                        _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                    }
-                    
-                    _currentStreamingParagraph.Inlines.Add(new Run(currentText));
-                    
-                    try
-                    {
-                        _currentStreamingParagraph.BringIntoView();
-                    }
-                    catch { }
+                    var aiName = GetCurrentDisplayProvider();
+                    _streamingChatMarkdown = $"**{aiName}:**\n\n{currentText}";
+                    _ = RefreshChatSurfaceAsync();
                 }
             }
         }
@@ -2285,169 +2186,77 @@ namespace SecureOverlay
         {
             try
             {
-                if (ChatDocument.Blocks.Count > 0)
-                {
-                    var firstBlock = ChatDocument.Blocks.FirstBlock;
-                    if (firstBlock is Paragraph p && p.Inlines.FirstInline is Run r)
-                    {
-                        if (r.Text.Contains("Welcome to your invisible"))
-                        {
-                            MarkdownHelper.ClearDocument(ChatDocument);
-                            Log.WriteLine("Cleared welcome message");
-                        }
-                    }
-                }
-
-                int blockCountBefore = ChatDocument.Blocks.Count;
-
-                var textForChat = PrepareChatMarkdown(text, isResponse, out var mermaidCode);
-                MarkdownHelper.AppendMarkdown(ChatDocument, textForChat, !isResponse);
-                if (isResponse && !string.IsNullOrWhiteSpace(mermaidCode))
-                {
-                    _ = ShowMermaidDiagramAsync(mermaidCode);
-                }
-
-                if (ChatDocument.Blocks.Count > blockCountBefore)
-                {
-                    var newBlocks = ChatDocument.Blocks.Skip(blockCountBefore).FirstOrDefault();
-                    
-                    if (newBlocks != null)
-                    {
-                        Dispatcher.BeginInvoke(new Action(() =>
-                        {
-                            newBlocks.BringIntoView();
-                        }), System.Windows.Threading.DispatcherPriority.Background);
-                    }
-                }
+                _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(!isResponse, text));
+                _ = RefreshChatSurfaceAsync();
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"Error adding to chat: {ex.Message}");
-                
-                var paragraph = new Paragraph(new Run(text))
-                {
-                    Foreground = isResponse ? Brushes.White : Brushes.LightBlue,
-                    Margin = new Thickness(0, 5, 0, 5)
-                };
-                ChatDocument.Blocks.Add(paragraph);
-                
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    paragraph.BringIntoView();
-                }), System.Windows.Threading.DispatcherPriority.Background);
             }
         }
 
-        private string PrepareChatMarkdown(string markdown, bool allowMermaidPanel, out string mermaidCode)
+        private async Task EnsureChatSurfaceReadyAsync()
         {
-            mermaidCode = string.Empty;
-            if (!allowMermaidPanel)
-            {
-                return markdown;
-            }
-
-            if (!MarkdownHelper.TryExtractFirstMermaidBlock(markdown, out mermaidCode))
-            {
-                return markdown;
-            }
-
-            var replaced = MarkdownHelper.ReplaceMermaidBlocks(markdown, "\n\n" + MermaidChatPlaceholder + "\n\n");
-            return string.IsNullOrWhiteSpace(replaced) ? MermaidChatPlaceholder : replaced;
-        }
-
-        private async Task EnsureMermaidPanelWebViewAsync()
-        {
-            if (_mermaidPanelWebView != null)
+            if (_chatSurfaceInitialized)
             {
                 return;
             }
 
-            _mermaidPanelWebView = new WebView2
+            await MarkdownHelper.InitializeChatWebViewAsync(ChatWebView);
+            _chatSurfaceInitialized = true;
+        }
+
+        private IReadOnlyList<MarkdownHelper.ChatRenderMessage> BuildDisplayedChatMessages()
+        {
+            if (!string.IsNullOrWhiteSpace(_streamingChatMarkdown))
             {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
+                return _chatMessages
+                    .Concat(new[] { new MarkdownHelper.ChatRenderMessage(false, _streamingChatMarkdown) })
+                    .ToList();
+            }
+
+            if (_chatMessages.Count > 0)
+            {
+                return _chatMessages;
+            }
+
+            return new[]
+            {
+                new MarkdownHelper.ChatRenderMessage(false, MarkdownHelper.GetWelcomeMarkdown())
             };
-            MermaidPanelHost.Children.Insert(0, _mermaidPanelWebView);
-            await _mermaidPanelWebView.EnsureCoreWebView2Async();
         }
 
-        private async Task ShowMermaidDiagramAsync(string mermaidCode)
+        private async Task RefreshChatSurfaceAsync()
         {
-            if (string.IsNullOrWhiteSpace(mermaidCode))
+            if (_chatRenderInFlight)
             {
-                ClearMermaidDiagram();
+                _chatRenderPending = true;
                 return;
             }
 
+            _chatRenderInFlight = true;
             try
             {
-                await EnsureMermaidPanelWebViewAsync();
-                MermaidPanelBorder.Visibility = Visibility.Visible;
-                MermaidPanelTitle.Text = "Diagram";
-                MermaidPanelFallbackText.Visibility = Visibility.Collapsed;
-                if (_mermaidPanelWebView != null)
+                do
                 {
-                    _mermaidPanelWebView.Visibility = Visibility.Visible;
-                }
-
-                if (_mermaidPanelWebView == null)
-                {
-                    return;
-                }
-
-                var (success, errorMessage, candidate) = await MarkdownHelper.RenderMermaidToWebViewAsync(_mermaidPanelWebView, mermaidCode);
-                if (success)
-                {
-                    return;
-                }
-
-                Log.WriteLine($"Mermaid panel render failed: {errorMessage}");
-                MermaidPanelTitle.Text = "Diagram syntax issue";
-                if (_mermaidPanelWebView != null)
-                {
-                    _mermaidPanelWebView.Visibility = Visibility.Collapsed;
-                }
-
-                MermaidPanelFallbackText.Text = candidate;
-                MermaidPanelFallbackText.Visibility = Visibility.Visible;
+                    _chatRenderPending = false;
+                    await EnsureChatSurfaceReadyAsync();
+                    await MarkdownHelper.RenderChatTranscriptAsync(ChatWebView, BuildDisplayedChatMessages());
+                } while (_chatRenderPending);
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Mermaid panel exception: {ex.Message}");
-                MermaidPanelBorder.Visibility = Visibility.Visible;
-                MermaidPanelTitle.Text = "Diagram error";
-                if (_mermaidPanelWebView != null)
-                {
-                    _mermaidPanelWebView.Visibility = Visibility.Collapsed;
-                }
-
-                MermaidPanelFallbackText.Text = mermaidCode;
-                MermaidPanelFallbackText.Visibility = Visibility.Visible;
+                Log.WriteLine($"Chat surface render failed: {ex.Message}");
             }
-        }
-
-        private void ClearMermaidDiagram()
-        {
-            MermaidPanelBorder.Visibility = Visibility.Collapsed;
-            MermaidPanelTitle.Text = "Diagram";
-            MermaidPanelFallbackText.Text = string.Empty;
-            MermaidPanelFallbackText.Visibility = Visibility.Collapsed;
-
-            if (_mermaidPanelWebView?.CoreWebView2 != null)
+            finally
             {
-                try
-                {
-                    _mermaidPanelWebView.CoreWebView2.NavigateToString("<html><body style='background:transparent'></body></html>");
-                }
-                catch
-                {
-                }
+                _chatRenderInFlight = false;
             }
-        }
 
-        private void MermaidPanelCloseButton_Click(object sender, RoutedEventArgs e)
-        {
-            ClearMermaidDiagram();
+            if (_chatRenderPending)
+            {
+                await RefreshChatSurfaceAsync();
+            }
         }
 
         private void ActivateInterviewLock(InterviewSessionRecord session)
@@ -2619,8 +2428,9 @@ namespace SecureOverlay
                 _conversationManager.ClearJobDescription();
                 
                 // Clear UI
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 
                 // Update token counter
                 UpdateTokenCounter();
@@ -2680,8 +2490,9 @@ namespace SecureOverlay
                 _conversationManager.ClearJobDescription();
                 
                 // Clear UI
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 
                 // Update token counter
                 UpdateTokenCounter();
@@ -3383,8 +3194,9 @@ namespace SecureOverlay
                 }
 
                 SettingsManager.ClearConversationCache();
-                MarkdownHelper.ClearDocument(ChatDocument);
-                MarkdownHelper.AddWelcomeMessage(ChatDocument);
+                _chatMessages.Clear();
+                _streamingChatMarkdown = null;
+                _ = RefreshChatSurfaceAsync();
                 UpdateTokenCounter();
                 Log.WriteLine("✓ Active context reapplied and conversation reset");
                 return;
@@ -4790,14 +4602,8 @@ namespace SecureOverlay
                 {
                     _streamBuffer.Clear();
                 }
-
-                if (_currentStreamingParagraph == null)
-                    return;
-
-                while (_currentStreamingParagraph.Inlines.Count > 1)
-                {
-                    _currentStreamingParagraph.Inlines.Remove(_currentStreamingParagraph.Inlines.LastInline);
-                }
+                _streamingChatMarkdown = $"**{GetCurrentDisplayProvider()}:**\n\n";
+                _ = RefreshChatSurfaceAsync();
             });
         }
 

@@ -198,7 +198,6 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0">
@@ -252,61 +251,14 @@
                         MouseDown="ChatArea_MouseDown"
                         Cursor="Arrow"
                         ForceCursor="True">
-                    <FlowDocumentScrollViewer x:Name="ChatScrollViewer" 
-                                            VerticalScrollBarVisibility="Auto"
-                                            IsToolBarVisible="False"
-                                            Background="Transparent"
-                                            Foreground="White"
-                                            SelectionBrush="#8000AAFF"
-                                            Cursor="Arrow"
-                                            ForceCursor="True">
-                        <FlowDocument x:Name="ChatDocument" 
-                                    FontFamily="Segoe UI"
-                                    FontSize="14"
-                                    Foreground="White"
-                                    PagePadding="0"
-                                    Background="Transparent">
-                            <!-- Content will be added dynamically -->
-                        </FlowDocument>
-                    </FlowDocumentScrollViewer>
+                    <wv2:WebView2 x:Name="ChatWebView"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"/>
                 </Border>
 
+                <!-- INPUT AREA (Grid.Row="2") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- MERMAID VIEWER (Grid.Row="2") -->
-                <Border x:Name="MermaidPanelBorder" Grid.Row="2" Background="#30000000" BorderBrush="#70FFFFFF"
-                        BorderThickness="1.5" CornerRadius="10" Padding="12" Margin="0,0,0,15"
-                        Visibility="Collapsed">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="320"/>
-                        </Grid.RowDefinitions>
-
-                        <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                            <TextBlock x:Name="MermaidPanelTitle" Text="Diagram" FontSize="13" FontWeight="Bold"
-                                       Foreground="#FFD700" Effect="{StaticResource Shadow}" DockPanel.Dock="Left"/>
-                            <Button x:Name="MermaidPanelCloseButton" Content="Hide" Width="56" Height="24"
-                                    Click="MermaidPanelCloseButton_Click"
-                                    Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1"
-                                    Foreground="White" FontSize="11"
-                                    HorizontalAlignment="Right"
-                                    Style="{StaticResource ButtonStyle}"/>
-                        </DockPanel>
-
-                        <Grid Grid.Row="1" x:Name="MermaidPanelHost">
-                            <TextBlock x:Name="MermaidPanelFallbackText"
-                                       Visibility="Collapsed"
-                                       TextWrapping="NoWrap"
-                                       Foreground="#00FF7F"
-                                       FontFamily="Consolas"
-                                       FontSize="13"/>
-                        </Grid>
-                    </Grid>
-                </Border>
-
-                <!-- INPUT AREA (Grid.Row="3") -->
-                <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Grid Grid.Row="3" Margin="0,0,0,12">
+                <Grid Grid.Row="2" Margin="0,0,0,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>      <!-- Input box -->
                         <ColumnDefinition Width="Auto"/>   <!-- Screenshot button -->
@@ -412,9 +364,9 @@
                 </Grid>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- STATUS BAR (Grid.Row="4") -->
+                <!-- STATUS BAR (Grid.Row="3") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="4" Background="#40000000" CornerRadius="6" 
+                <Border Grid.Row="3" Background="#40000000" CornerRadius="6" 
                        Padding="12,8" BorderBrush="#60FFFFFF" BorderThickness="1"
                        MouseDown="StatusBar_MouseDown">
                     <Grid>
@@ -441,9 +393,9 @@
                 </Border>
 
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- DEBUG PANEL (Grid.Row="5") - COLLAPSIBLE -->
+                <!-- DEBUG PANEL (Grid.Row="4") - COLLAPSIBLE -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="5" x:Name="DebugPanel" 
+                <Border Grid.Row="4" x:Name="DebugPanel" 
                         Background="#50000000" BorderBrush="#70FF00FF" BorderThickness="2"
                         CornerRadius="8" Padding="10" Margin="0,12,0,0"
                         Visibility="Collapsed">

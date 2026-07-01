@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -64,6 +65,7 @@ namespace SecureOverlay
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
         private static readonly string MermaidScriptPath = Path.Combine(MermaidAssetFolder, "mermaid.min.js");
+        private static readonly string ChatShellPath = Path.Combine(WindowsAppPaths.TempRoot, "chat_shell.html");
 
         public static void AppendMarkdown(FlowDocument document, string markdown, bool isUser = false)
         {
@@ -108,6 +110,70 @@ namespace SecureOverlay
             }
         }
 
+        public static async Task InitializeChatWebViewAsync(WebView2 webView)
+        {
+            Directory.CreateDirectory(WindowsAppPaths.WebView2CachePath);
+            Directory.CreateDirectory(WindowsAppPaths.TempRoot);
+            if (!File.Exists(MermaidScriptPath))
+            {
+                throw new FileNotFoundException("Local Mermaid bundle not found.", MermaidScriptPath);
+            }
+
+            var env = await MermaidEnvironment.Value;
+            await webView.EnsureCoreWebView2Async(env);
+            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            webView.CoreWebView2.Settings.IsZoomControlEnabled = true;
+            webView.DefaultBackgroundColor = DrawingColor.Transparent;
+
+            if (Equals(webView.Tag, "chat-shell-ready"))
+            {
+                return;
+            }
+
+            File.WriteAllText(ChatShellPath, BuildChatShellHtml());
+            var navigationSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<CoreWebView2NavigationCompletedEventArgs>? navigationCompleted = null;
+            navigationCompleted = (_, _) =>
+            {
+                navigationSource.TrySetResult(true);
+            };
+
+            try
+            {
+                var coreWebView = webView.CoreWebView2;
+                if (coreWebView == null)
+                {
+                    return;
+                }
+
+                coreWebView.NavigationCompleted += navigationCompleted;
+                coreWebView.Navigate($"file:///{ChatShellPath.Replace("\\", "/")}");
+                await navigationSource.Task;
+                webView.Tag = "chat-shell-ready";
+            }
+            finally
+            {
+                if (webView.CoreWebView2 != null && navigationCompleted != null)
+                {
+                    webView.CoreWebView2.NavigationCompleted -= navigationCompleted;
+                }
+            }
+        }
+
+        public static async Task RenderChatTranscriptAsync(WebView2 webView, IReadOnlyList<ChatRenderMessage> messages)
+        {
+            await InitializeChatWebViewAsync(webView);
+            var html = BuildChatTranscriptHtml(messages);
+            var payloadJson = JsonSerializer.Serialize(new { html });
+            if (webView.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.render({payloadJson});");
+        }
+
         public static bool TryExtractFirstMermaidBlock(string markdown, out string mermaidCode)
         {
             mermaidCode = string.Empty;
@@ -135,6 +201,8 @@ namespace SecureOverlay
 
             return MermaidBlockRegex.Replace(markdown, replacement ?? string.Empty).Trim();
         }
+
+        public sealed record ChatRenderMessage(bool IsUser, string Markdown);
 
         public static async Task<(bool Success, string ErrorMessage, string Candidate)> RenderMermaidToWebViewAsync(
             WebView2 webView,
@@ -210,6 +278,245 @@ namespace SecureOverlay
                 tempDoc.Blocks.Remove(block);
                 document.Blocks.Add(block);
             }
+        }
+
+        private static string BuildChatTranscriptHtml(IReadOnlyList<ChatRenderMessage> messages)
+        {
+            var builder = new StringBuilder();
+            foreach (var message in messages)
+            {
+                builder.Append("<article class=\"message ")
+                    .Append(message.IsUser ? "user" : "assistant")
+                    .Append("\"><div class=\"message-body\">")
+                    .Append(RenderMarkdownToHtml(message.Markdown))
+                    .Append("</div></article>");
+            }
+
+            return builder.ToString();
+        }
+
+        private static string RenderMarkdownToHtml(string markdown)
+        {
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder();
+            foreach (var segment in SplitMarkdownSegments(markdown))
+            {
+                if (string.IsNullOrWhiteSpace(segment.Content))
+                {
+                    continue;
+                }
+
+                if (segment.IsMermaid)
+                {
+                    builder.Append(BuildMermaidHostHtml(segment.Content));
+                }
+                else
+                {
+                    builder.Append(Markdig.Markdown.ToHtml(segment.Content, _pipeline));
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static string BuildMermaidHostHtml(string mermaidCode)
+        {
+            var normalized = NormalizeMermaidWhitespace(mermaidCode);
+            var candidatesJson = JsonSerializer.Serialize(BuildMermaidRenderCandidates(normalized));
+            return """
+<div class="mermaid-card">
+  <div class="mermaid-host" data-candidates="__CANDIDATES__" data-raw="__RAW__"></div>
+</div>
+"""
+                .Replace("__CANDIDATES__", WebUtility.HtmlEncode(candidatesJson), StringComparison.Ordinal)
+                .Replace("__RAW__", WebUtility.HtmlEncode(normalized), StringComparison.Ordinal);
+        }
+
+        private static string BuildChatShellHtml()
+        {
+            var mermaidScriptUri = new Uri(MermaidScriptPath).AbsoluteUri;
+            return """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --text: #f5f7fb;
+      --muted: #9eb0c7;
+      --user: #c4e9ff;
+      --border: rgba(255,255,255,0.12);
+      --panel: rgba(255,255,255,0.04);
+      --code: #00ff7f;
+      --inline-code: #ffd76b;
+      --link: #73b8ff;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: "Segoe UI", sans-serif;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+    body {
+      padding: 0;
+    }
+    #transcript {
+      padding: 0 2px 0 0;
+    }
+    .message {
+      margin: 0 0 12px 0;
+      line-height: 1.55;
+      word-break: break-word;
+    }
+    .message.user {
+      color: var(--user);
+    }
+    .message.assistant {
+      color: var(--text);
+    }
+    .message-body > :first-child {
+      margin-top: 0;
+    }
+    .message-body > :last-child {
+      margin-bottom: 0;
+    }
+    p, ul, ol, pre, table, blockquote, h1, h2, h3, h4, h5, h6 {
+      margin: 0 0 10px 0;
+    }
+    ul, ol {
+      padding-left: 22px;
+    }
+    strong {
+      color: #ffd76b;
+    }
+    em {
+      color: #9ce49c;
+    }
+    a {
+      color: var(--link);
+    }
+    code {
+      color: var(--inline-code);
+      font-family: Consolas, "Courier New", monospace;
+      background: transparent;
+    }
+    pre {
+      color: var(--code);
+      font-family: Consolas, "Courier New", monospace;
+      background: transparent;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    blockquote {
+      border-left: 2px solid rgba(255,255,255,0.2);
+      padding-left: 10px;
+      color: var(--muted);
+    }
+    table {
+      border-collapse: collapse;
+      width: auto;
+      max-width: 100%;
+    }
+    th, td {
+      border: 1px solid rgba(255,255,255,0.16);
+      padding: 6px 8px;
+    }
+    .mermaid-card {
+      margin: 8px 0 12px 0;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel);
+      overflow: auto;
+      max-height: 360px;
+    }
+    .mermaid-host svg {
+      display: block;
+      max-width: none;
+      height: auto;
+    }
+    .mermaid-fallback {
+      margin: 0;
+      color: var(--code);
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div id="transcript"></div>
+  <script src="__MERMAID_SRC__"></script>
+  <script>
+    const transcript = document.getElementById('transcript');
+
+    function isMermaidError(svg, text) {
+      return /syntax error in text/i.test(text) ||
+             /parse error/i.test(text) ||
+             /mermaid version/i.test(text) ||
+             /syntax error in text/i.test(svg);
+    }
+
+    async function renderMermaidHosts(root) {
+      if (!window.mermaid) {
+        return;
+      }
+
+      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+      const hosts = Array.from(root.querySelectorAll('.mermaid-host'));
+      for (let i = 0; i < hosts.length; i += 1) {
+        const host = hosts[i];
+        const raw = host.getAttribute('data-raw') || '';
+        let candidates = [];
+        try {
+          candidates = JSON.parse(host.getAttribute('data-candidates') || '[]');
+        } catch {}
+
+        let rendered = false;
+        for (let j = 0; j < candidates.length; j += 1) {
+          const candidate = candidates[j];
+          try {
+            const { svg } = await window.mermaid.render(`phantom-chat-mermaid-${i}-${j}`, candidate);
+            const probe = document.createElement('div');
+            probe.innerHTML = svg;
+            const text = (probe.textContent || '').trim();
+            if (isMermaidError(svg, text)) {
+              throw new Error(text || 'Mermaid produced an error diagram');
+            }
+
+            host.innerHTML = svg;
+            rendered = true;
+            break;
+          } catch {}
+        }
+
+        if (!rendered) {
+          const pre = document.createElement('pre');
+          pre.className = 'mermaid-fallback';
+          pre.textContent = raw;
+          host.replaceChildren(pre);
+        }
+      }
+    }
+
+    window.phantomChat = {
+      render: async function(payload) {
+        transcript.innerHTML = payload && payload.html ? payload.html : '';
+        await renderMermaidHosts(transcript);
+        requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      }
+    };
+  </script>
+</body>
+</html>
+"""
+                .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal);
         }
 
         private static IReadOnlyList<MarkdownSegment> SplitMarkdownSegments(string markdown)
@@ -1130,7 +1437,12 @@ namespace SecureOverlay
 
         public static void AddWelcomeMessage(FlowDocument document)
         {
-            var welcome = @"# Welcome to your invisible AI assistant! 🤖
+            AppendMarkdown(document, GetWelcomeMarkdown(), false);
+        }
+
+        public static string GetWelcomeMarkdown()
+        {
+            return @"# Welcome to your invisible AI assistant! 🤖
 
 ✓ **Completely invisible** to screen sharing  
 ✓ **Mouse cursor** IS visible  
@@ -1142,8 +1454,6 @@ namespace SecureOverlay
 - `Ctrl+Alt+=` = Settings  
 
 Ask me anything!";
-
-            AppendMarkdown(document, welcome, false);
         }
 
         private sealed record MarkdownSegment(string Content, bool IsMermaid);

@@ -108,6 +108,92 @@ namespace SecureOverlay
             }
         }
 
+        public static bool TryExtractFirstMermaidBlock(string markdown, out string mermaidCode)
+        {
+            mermaidCode = string.Empty;
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                return false;
+            }
+
+            var match = MermaidBlockRegex.Match(markdown);
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            mermaidCode = match.Groups["code"].Value.Trim();
+            return !string.IsNullOrWhiteSpace(mermaidCode);
+        }
+
+        public static string ReplaceMermaidBlocks(string markdown, string replacement)
+        {
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                return string.Empty;
+            }
+
+            return MermaidBlockRegex.Replace(markdown, replacement ?? string.Empty).Trim();
+        }
+
+        public static async Task<(bool Success, string ErrorMessage, string Candidate)> RenderMermaidToWebViewAsync(
+            WebView2 webView,
+            string mermaidCode)
+        {
+            Directory.CreateDirectory(WindowsAppPaths.WebView2CachePath);
+            Directory.CreateDirectory(WindowsAppPaths.TempRoot);
+            if (!File.Exists(MermaidScriptPath))
+            {
+                return (false, "Local Mermaid bundle not found.", mermaidCode);
+            }
+
+            var env = await MermaidEnvironment.Value;
+            await webView.EnsureCoreWebView2Async(env);
+            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            webView.CoreWebView2.Settings.IsZoomControlEnabled = true;
+            webView.DefaultBackgroundColor = DrawingColor.Transparent;
+
+            var messageSource = new TaskCompletionSource<MermaidBrowserMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<CoreWebView2WebMessageReceivedEventArgs>? webMessageHandler = null;
+            try
+            {
+                webMessageHandler = (_, args) =>
+                {
+                    var message = args.TryGetWebMessageAsString();
+                    Log.WriteLine($"Mermaid WebView: {message}");
+                    if (TryParseMermaidBrowserMessage(message, out var parsed))
+                    {
+                        messageSource.TrySetResult(parsed);
+                    }
+                };
+                webView.CoreWebView2.WebMessageReceived += webMessageHandler;
+
+                var htmlFilePath = Path.Combine(WindowsAppPaths.TempRoot, $"mermaid_panel_{Guid.NewGuid():N}.html");
+                Log.WriteLine($"Mermaid source: {FormatMermaidForLog(mermaidCode)}");
+                File.WriteAllText(htmlFilePath, BuildMermaidViewerHtml(mermaidCode));
+                webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+
+                var completedTask = await Task.WhenAny(messageSource.Task, Task.Delay(8000));
+                if (completedTask != messageSource.Task)
+                {
+                    return (false, "Timed out waiting for Mermaid render.", mermaidCode);
+                }
+
+                var browserMessage = await messageSource.Task;
+                return browserMessage.IsSuccess
+                    ? (true, string.Empty, browserMessage.Candidate ?? mermaidCode)
+                    : (false, browserMessage.ErrorMessage ?? "Mermaid render failed.", browserMessage.Candidate ?? mermaidCode);
+            }
+            finally
+            {
+                if (webView.CoreWebView2 != null && webMessageHandler != null)
+                {
+                    webView.CoreWebView2.WebMessageReceived -= webMessageHandler;
+                }
+            }
+        }
+
         private static void AppendStandardMarkdown(FlowDocument document, string markdown, bool isUser)
         {
             var tempDoc = Markdig.Wpf.Markdown.ToFlowDocument(markdown, _pipeline);
@@ -370,6 +456,98 @@ namespace SecureOverlay
               throw new Error('Mermaid produced an empty SVG');
             }
             postToHost(JSON.stringify({ type: 'rendered', candidateIndex: i, candidate, width, height }));
+            return;
+          } catch (err) {
+            lastError = err && err.message ? err.message : String(err);
+          }
+        }
+      } catch (err) {
+        lastError = err && err.message ? err.message : String(err);
+      }
+      postToHost(JSON.stringify({ type: 'error', error: lastError, candidate: lastCandidate }));
+    })();
+  </script>
+</body>
+</html>
+"""
+                .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal)
+                .Replace("__MERMAID_CANDIDATES__", mermaidCandidatesJson, StringComparison.Ordinal)
+                .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
+        }
+
+        private static string BuildMermaidViewerHtml(string mermaidCode)
+        {
+            var mermaidCandidatesJson = JsonSerializer.Serialize(BuildMermaidRenderCandidates(mermaidCode));
+            var mermaidJson = JsonSerializer.Serialize(NormalizeMermaidWhitespace(mermaidCode));
+            var mermaidScriptUri = new Uri(MermaidScriptPath).AbsoluteUri;
+            return """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      color: #ffffff;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      font-family: "Segoe UI", sans-serif;
+    }
+    #diagram {
+      padding: 12px;
+      box-sizing: border-box;
+      min-width: max-content;
+      min-height: 100%;
+    }
+    svg {
+      max-width: none;
+      height: auto;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="diagram"></div>
+  <script src="__MERMAID_SRC__"></script>
+  <script>
+    const graphDefinition = __MERMAID_JSON__;
+    const graphCandidates = __MERMAID_CANDIDATES__;
+    const target = document.getElementById('diagram');
+    const postToHost = (payload) => {
+      try {
+        if (window.chrome && window.chrome.webview) {
+          window.chrome.webview.postMessage(payload);
+        }
+      } catch {}
+    };
+    (async function () {
+      let lastCandidate = graphDefinition;
+      let lastError = 'Unknown Mermaid error';
+      try {
+        if (!window.mermaid) {
+          throw new Error('Mermaid runtime not available');
+        }
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+        for (let i = 0; i < graphCandidates.length; i += 1) {
+          const candidate = graphCandidates[i];
+          lastCandidate = candidate;
+          try {
+            const { svg } = await window.mermaid.render(`phantom-mermaid-viewer-${i}`, candidate);
+            target.innerHTML = svg;
+            const renderedText = (target.textContent || '').trim();
+            const isErrorSvg =
+              /syntax error in text/i.test(renderedText) ||
+              /parse error/i.test(renderedText) ||
+              /mermaid version/i.test(renderedText) ||
+              /syntax error in text/i.test(svg);
+            if (isErrorSvg) {
+              target.innerHTML = '';
+              throw new Error(renderedText || 'Mermaid produced an error diagram');
+            }
+            postToHost(JSON.stringify({ type: 'rendered', candidateIndex: i, candidate, width: 0, height: 0 }));
             return;
           } catch (err) {
             lastError = err && err.message ? err.message : String(err);

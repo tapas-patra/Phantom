@@ -15,6 +15,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using Microsoft.Web.WebView2.Wpf;
 using FormsScreen = System.Windows.Forms.Screen;
 using SecureOverlay.Application.Billing;
 using SecureOverlay.Application.Context;
@@ -73,8 +74,10 @@ namespace SecureOverlay
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
         private bool _isChatSectionCollapsed = false;
+        private WebView2? _mermaidPanelWebView;
         private const double ExpandedWindowMinHeight = 220;
         private const double CollapsedWindowMinHeight = 88;
+        private const string MermaidChatPlaceholder = "_[Diagram rendered in the Mermaid panel below.]_";
 
         // ═══════════════════════════════════════════════════════════════
         // NEW: Settings Page
@@ -336,9 +339,14 @@ namespace SecureOverlay
                             var isUser = msg.Role == "user";
                             var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
-                            var fullText = prefix + msg.Content;
+                            var contentForChat = PrepareChatMarkdown(msg.Content, !isUser, out var mermaidCode);
+                            var fullText = prefix + contentForChat;
                             
                             MarkdownHelper.AppendMarkdown(ChatDocument, fullText, isUser);
+                            if (!isUser && !string.IsNullOrWhiteSpace(mermaidCode))
+                            {
+                                _ = ShowMermaidDiagramAsync(mermaidCode);
+                            }
                             rebuilt++;
                         }
                         
@@ -1910,6 +1918,7 @@ namespace SecureOverlay
             _isProcessingRequest = true;
 
             Log.WriteLine($"Sending message: '{message}'");
+            ClearMermaidDiagram();
             AddToChat($"**You:** {message}", false);
             InputTextBox.Text = "";
 
@@ -2111,7 +2120,17 @@ namespace SecureOverlay
                         _currentStreamingParagraph = null;
                     }
                     
-                    var fullMarkdown = $"**{aiName}:**\n\n{response}";
+                    var responseForChat = PrepareChatMarkdown(response, true, out var mermaidCode);
+                    if (!string.IsNullOrWhiteSpace(mermaidCode))
+                    {
+                        await ShowMermaidDiagramAsync(mermaidCode);
+                    }
+                    else
+                    {
+                        ClearMermaidDiagram();
+                    }
+
+                    var fullMarkdown = $"**{aiName}:**\n\n{responseForChat}";
                     
                     int blockCountBefore = ChatDocument.Blocks.Count;
                     MarkdownHelper.AppendMarkdown(ChatDocument, fullMarkdown, false);
@@ -2281,7 +2300,12 @@ namespace SecureOverlay
 
                 int blockCountBefore = ChatDocument.Blocks.Count;
 
-                MarkdownHelper.AppendMarkdown(ChatDocument, text, !isResponse);
+                var textForChat = PrepareChatMarkdown(text, isResponse, out var mermaidCode);
+                MarkdownHelper.AppendMarkdown(ChatDocument, textForChat, !isResponse);
+                if (isResponse && !string.IsNullOrWhiteSpace(mermaidCode))
+                {
+                    _ = ShowMermaidDiagramAsync(mermaidCode);
+                }
 
                 if (ChatDocument.Blocks.Count > blockCountBefore)
                 {
@@ -2312,6 +2336,118 @@ namespace SecureOverlay
                     paragraph.BringIntoView();
                 }), System.Windows.Threading.DispatcherPriority.Background);
             }
+        }
+
+        private string PrepareChatMarkdown(string markdown, bool allowMermaidPanel, out string mermaidCode)
+        {
+            mermaidCode = string.Empty;
+            if (!allowMermaidPanel)
+            {
+                return markdown;
+            }
+
+            if (!MarkdownHelper.TryExtractFirstMermaidBlock(markdown, out mermaidCode))
+            {
+                return markdown;
+            }
+
+            var replaced = MarkdownHelper.ReplaceMermaidBlocks(markdown, "\n\n" + MermaidChatPlaceholder + "\n\n");
+            return string.IsNullOrWhiteSpace(replaced) ? MermaidChatPlaceholder : replaced;
+        }
+
+        private async Task EnsureMermaidPanelWebViewAsync()
+        {
+            if (_mermaidPanelWebView != null)
+            {
+                return;
+            }
+
+            _mermaidPanelWebView = new WebView2
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            MermaidPanelHost.Children.Insert(0, _mermaidPanelWebView);
+            await _mermaidPanelWebView.EnsureCoreWebView2Async();
+        }
+
+        private async Task ShowMermaidDiagramAsync(string mermaidCode)
+        {
+            if (string.IsNullOrWhiteSpace(mermaidCode))
+            {
+                ClearMermaidDiagram();
+                return;
+            }
+
+            try
+            {
+                await EnsureMermaidPanelWebViewAsync();
+                MermaidPanelBorder.Visibility = Visibility.Visible;
+                MermaidPanelTitle.Text = "Diagram";
+                MermaidPanelFallbackText.Visibility = Visibility.Collapsed;
+                if (_mermaidPanelWebView != null)
+                {
+                    _mermaidPanelWebView.Visibility = Visibility.Visible;
+                }
+
+                if (_mermaidPanelWebView == null)
+                {
+                    return;
+                }
+
+                var (success, errorMessage, candidate) = await MarkdownHelper.RenderMermaidToWebViewAsync(_mermaidPanelWebView, mermaidCode);
+                if (success)
+                {
+                    return;
+                }
+
+                Log.WriteLine($"Mermaid panel render failed: {errorMessage}");
+                MermaidPanelTitle.Text = "Diagram syntax issue";
+                if (_mermaidPanelWebView != null)
+                {
+                    _mermaidPanelWebView.Visibility = Visibility.Collapsed;
+                }
+
+                MermaidPanelFallbackText.Text = candidate;
+                MermaidPanelFallbackText.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Mermaid panel exception: {ex.Message}");
+                MermaidPanelBorder.Visibility = Visibility.Visible;
+                MermaidPanelTitle.Text = "Diagram error";
+                if (_mermaidPanelWebView != null)
+                {
+                    _mermaidPanelWebView.Visibility = Visibility.Collapsed;
+                }
+
+                MermaidPanelFallbackText.Text = mermaidCode;
+                MermaidPanelFallbackText.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void ClearMermaidDiagram()
+        {
+            MermaidPanelBorder.Visibility = Visibility.Collapsed;
+            MermaidPanelTitle.Text = "Diagram";
+            MermaidPanelFallbackText.Text = string.Empty;
+            MermaidPanelFallbackText.Visibility = Visibility.Collapsed;
+
+            if (_mermaidPanelWebView?.CoreWebView2 != null)
+            {
+                try
+                {
+                    _mermaidPanelWebView.CoreWebView2.NavigateToString("<html><body style='background:transparent'></body></html>");
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void MermaidPanelCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            ClearMermaidDiagram();
         }
 
         private void ActivateInterviewLock(InterviewSessionRecord session)

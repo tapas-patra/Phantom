@@ -1,16 +1,18 @@
 # Vercel Deployment
 
-This repo is prepared for three separate Vercel projects with these root directories:
+This repo was prepared for three separate Vercel projects with these root directories:
 
 - `phantom-windows-app-backend/`
 - `phantom-dashboard-backend/`
 - `phantom-website-dashboard/`
 
-Current hosted URLs:
+Current hosted URLs from the earlier Vercel-only attempt:
 
-- Windows backend: `https://phantom-ai-windows-app-backend.vercel.app`
-- Dashboard backend: `https://phantom-dashboard-backend.vercel.app`
+- Windows backend: `https://phantom-ai-windows-app-backend.vercel.app` (not usable for ASP.NET hosting on Vercel)
+- Dashboard backend: `https://phantom-dashboard-backend.vercel.app` (not usable for ASP.NET hosting on Vercel)
 - Website: `https://phantom-website-dashboard.vercel.app`
+
+Active backend hosting guidance now lives in [RENDER-DEPLOYMENT.md](/Users/tapaskumarpatra/TKP-Other-personal/Phantom/RENDER-DEPLOYMENT.md:1).
 
 ## Project 1: `phantom-windows-app-backend`
 

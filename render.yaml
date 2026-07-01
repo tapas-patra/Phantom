@@ -1,0 +1,72 @@
+services:
+  - type: web
+    name: phantom-ai-windows-app-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./phantom-windows-app-backend/Dockerfile
+    dockerContext: ./phantom-windows-app-backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Development
+      - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
+        value: https://phantom-website-dashboard.vercel.app
+      - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI
+        value: https://phantom-ai-windows-app-backend.onrender.com/api/admin/integrations/gmail/oauth/callback
+      - key: PHANTOM_SHARED_COOKIE_DOMAIN
+        value: ""
+      - key: PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER
+        value: mock
+      - key: PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE
+        value: "123321"
+      - key: PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP
+        value: "false"
+      - key: PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING
+        value: "false"
+      - key: PHANTOM_WINDOWS_BACKEND_DATABASE_URL
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY
+        sync: false
+      - key: PHANTOM_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: PHANTOM_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET
+        sync: false
+
+  - type: web
+    name: phantom-dashboard-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./phantom-dashboard-backend/Dockerfile
+    dockerContext: ./phantom-dashboard-backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PHANTOM_WINDOWS_BACKEND_BASE_URL
+        value: https://phantom-ai-windows-app-backend.onrender.com
+      - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
+        value: https://phantom-website-dashboard.vercel.app
+      - key: PHANTOM_SHARED_COOKIE_DOMAIN
+        value: ""
+      - key: PHANTOM_DASHBOARD_BACKEND_DATABASE_URL
+        sync: false
+      - key: PHANTOM_DASHBOARD_ADMIN_API_KEY
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY
+        sync: false

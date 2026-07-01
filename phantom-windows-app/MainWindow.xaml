@@ -155,7 +155,6 @@
                         <Button x:Name="LegacyFallbackButton" Content="Legacy" Width="70" Height="32" Click="LegacyFallbackButton_Click"
                             Background="#505A3A24" BorderBrush="#90D7C46B" BorderThickness="1.5"
                             Foreground="White" FontSize="12" FontWeight="Bold" Margin="0,0,8,0"
-                            ToolTip="Launch the configured legacy Phantom app and close this hosted app"
                             Style="{StaticResource ButtonStyle}"/>
 
                         <!-- AUTO-RESTART BUTTON -->

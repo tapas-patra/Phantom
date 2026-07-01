@@ -3310,9 +3310,7 @@ namespace SecureOverlay
 
             var hasLegacyFallbackPath = !string.IsNullOrWhiteSpace(_settings.LegacyFallbackAppPath);
             LegacyFallbackButton.Opacity = hasLegacyFallbackPath ? 1.0 : 0.55;
-            LegacyFallbackButton.ToolTip = hasLegacyFallbackPath
-                ? _settings.LegacyFallbackAppPath
-                : "Configure the legacy Phantom app path in Settings";
+            LegacyFallbackButton.ToolTip = null;
         }
 
         private void LegacyFallbackButton_Click(object sender, RoutedEventArgs e)

@@ -25,10 +25,5 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             return new HttpHostedTelemetryClient(options);
         }
-
-        public static IHostedLockClient CreateLockClient(HostedRuntimeOptions options)
-        {
-            return new HttpHostedLockClient(options);
-        }
     }
 }

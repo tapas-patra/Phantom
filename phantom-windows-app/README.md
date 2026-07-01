@@ -22,12 +22,11 @@ Required runtime env vars:
 
 Runtime config fallback:
 - if environment variables are not visible after elevation, the app also reads `phantom.hosted.json` from the working directory or executable directory
-- this repo now ships a production `phantom.hosted.json` and copies it into the build output, so normal builds do not need manual env setup for the current Vercel deployment
 
 Local development example:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=http://localhost:5057`
 - `PHANTOM_WEBSITE_BASE_URL=http://localhost:4173`
 
 Hosted deployment example:
-- `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://phantom-ai-windows-app-backend.vercel.app`
-- `PHANTOM_WEBSITE_BASE_URL=https://phantom-website-dashboard.vercel.app`
+- `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://windows-api.your-domain.com`
+- `PHANTOM_WEBSITE_BASE_URL=https://app.your-domain.com`

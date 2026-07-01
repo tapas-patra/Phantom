@@ -43,7 +43,11 @@ ON CONFLICT(session_id) DO UPDATE SET
     public DesktopSessionRecord? FindByRefreshTokenHash(string refreshTokenHash)
     {
         using var connection = _store.OpenConnection();
-        return FindByRefreshTokenHash(refreshTokenHash, connection, transaction: null, forUpdate: false);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM auth_sessions WHERE refresh_token_hash = @refreshTokenHash LIMIT 1;";
+        command.Parameters.AddWithValue("refreshTokenHash", refreshTokenHash);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
     }
 
     public DesktopSessionRecord? FindLatestByUser(string userId)
@@ -73,61 +77,7 @@ LIMIT 1;";
     public void RevokeBySessionId(string sessionId)
     {
         using var connection = _store.OpenConnection();
-        RevokeBySessionId(sessionId, connection, transaction: null);
-    }
-
-    public DesktopSessionRecord? FindByRefreshTokenHash(
-        string refreshTokenHash,
-        NpgsqlConnection connection,
-        NpgsqlTransaction? transaction,
-        bool forUpdate)
-    {
         using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT * FROM auth_sessions WHERE refresh_token_hash = @refreshTokenHash LIMIT 1";
-        if (forUpdate)
-        {
-            command.CommandText += " FOR UPDATE";
-        }
-
-        command.CommandText += ";";
-        command.Parameters.AddWithValue("refreshTokenHash", refreshTokenHash);
-        using var reader = command.ExecuteReader();
-        return reader.Read() ? Map(reader) : null;
-    }
-
-    public void Save(DesktopSessionRecord session, NpgsqlConnection connection, NpgsqlTransaction? transaction)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = @"
-INSERT INTO auth_sessions (
-    session_id, user_id, email, access_token_hash, refresh_token_hash, auth_method, device_install_id,
-    device_fingerprint_hash, authenticated_at_utc, expires_at_utc, is_authenticated, revoked_at_utc
-) VALUES (
-    @sessionId, @userId, @email, @accessTokenHash, @refreshTokenHash, @authMethod, @deviceInstallId,
-    @deviceFingerprintHash, @authenticatedAt, @expiresAt, @isAuthenticated, @revokedAt
-)
-ON CONFLICT(session_id) DO UPDATE SET
-    user_id = EXCLUDED.user_id,
-    email = EXCLUDED.email,
-    access_token_hash = EXCLUDED.access_token_hash,
-    refresh_token_hash = EXCLUDED.refresh_token_hash,
-    auth_method = EXCLUDED.auth_method,
-    device_install_id = EXCLUDED.device_install_id,
-    device_fingerprint_hash = EXCLUDED.device_fingerprint_hash,
-    authenticated_at_utc = EXCLUDED.authenticated_at_utc,
-    expires_at_utc = EXCLUDED.expires_at_utc,
-    is_authenticated = EXCLUDED.is_authenticated,
-    revoked_at_utc = EXCLUDED.revoked_at_utc;";
-        Bind(command, session);
-        command.ExecuteNonQuery();
-    }
-
-    public void RevokeBySessionId(string sessionId, NpgsqlConnection connection, NpgsqlTransaction? transaction)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
         command.CommandText = @"
 UPDATE auth_sessions
 SET is_authenticated = FALSE, revoked_at_utc = @revokedAt

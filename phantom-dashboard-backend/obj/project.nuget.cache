@@ -1,17 +1,18 @@
 {
   "version": 2,
-  "dgSpecHash": "vZBwKibvpRY=",
-  "success": true,
+  "dgSpecHash": "lW8CpbzBYT0=",
+  "success": false,
   "projectFilePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
-  "expectedPackageFiles": [
-    "/Users/tapaskumarpatra/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/8.0.0/microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
-    "/Users/tapaskumarpatra/.nuget/packages/microsoft.extensions.logging.abstractions/8.0.0/microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",
-    "/Users/tapaskumarpatra/.nuget/packages/npgsql/8.0.4/npgsql.8.0.4.nupkg.sha512",
-    "/Users/tapaskumarpatra/.nuget/packages/microsoft.netcore.app.ref/8.0.28/microsoft.netcore.app.ref.8.0.28.nupkg.sha512",
-    "/Users/tapaskumarpatra/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.28/microsoft.aspnetcore.app.ref.8.0.28.nupkg.sha512",
-    "/Users/tapaskumarpatra/.nuget/packages/microsoft.netcore.app.host.osx-x64/8.0.28/microsoft.netcore.app.host.osx-x64.8.0.28.nupkg.sha512"
-  ],
+  "expectedPackageFiles": [],
   "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  nodename nor servname provided, or not known (api.nuget.org:443)\n  nodename nor servname provided, or not known",
+      "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
+      "filePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-dashboard-backend/Phantom.Dashboard.Backend.csproj",
+      "targetGraphs": []
+    },
     {
       "code": "NU1900",
       "level": "Warning",

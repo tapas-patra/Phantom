@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -31,6 +32,18 @@ namespace SecureOverlay
         private static readonly Regex MermaidBlockRegex = new(
             @"```mermaid\s*(?<code>[\s\S]*?)```",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MermaidInlineHeaderRegex = new(
+            @"^(?<header>(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram-v2|stateDiagram|erDiagram|journey|gantt|pie|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|xychart-beta))\s+(?<body>.+)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex MermaidNodeBoundaryRegex = new(
+            @"(?<left>(?:\b[A-Za-z][A-Za-z0-9_-]*|[\]\)\}]))\s+(?<right>[A-Za-z][A-Za-z0-9_-]*[\[\(\{])",
+            RegexOptions.Compiled);
+        private static readonly Regex MermaidKeywordBoundaryRegex = new(
+            @"(?<left>(?:\b[A-Za-z][A-Za-z0-9_-]*|[\]\)\}]))\s+(?<right>(?:subgraph|end|direction|style|classDef|class|click|linkStyle)\b)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MermaidEdgeBoundaryRegex = new(
+            @"(?<left>(?:\b[A-Za-z][A-Za-z0-9_-]*|[\]\)\}]))\s+(?<right>[A-Za-z][A-Za-z0-9_-]*\s*[-.=ox<>]{2,})",
+            RegexOptions.Compiled);
         private static readonly Lazy<Task<CoreWebView2Environment>> MermaidEnvironment = new(
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
@@ -184,6 +197,7 @@ namespace SecureOverlay
                     Log.WriteLine($"Mermaid WebView: {args.TryGetWebMessageAsString()}");
                 };
                 var htmlFilePath = Path.Combine(WindowsAppPaths.TempRoot, $"mermaid_{Guid.NewGuid():N}.html");
+                Log.WriteLine($"Mermaid source: {FormatMermaidForLog(mermaidCode)}");
                 File.WriteAllText(htmlFilePath, BuildMermaidHtml(mermaidCode));
                 webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
 
@@ -251,7 +265,8 @@ namespace SecureOverlay
 
         private static string BuildMermaidHtml(string mermaidCode)
         {
-            var mermaidJson = JsonSerializer.Serialize(NormalizeMermaidCode(mermaidCode));
+            var mermaidCandidatesJson = JsonSerializer.Serialize(BuildMermaidRenderCandidates(mermaidCode));
+            var mermaidJson = JsonSerializer.Serialize(NormalizeMermaidWhitespace(mermaidCode));
             var mermaidScriptUri = new Uri(MermaidScriptPath).AbsoluteUri;
             return """
 <!DOCTYPE html>
@@ -281,6 +296,7 @@ namespace SecureOverlay
   <script src="__MERMAID_SRC__"></script>
   <script>
     const graphDefinition = __MERMAID_JSON__;
+    const graphCandidates = __MERMAID_CANDIDATES__;
     const target = document.getElementById('diagram');
     const postToHost = (payload) => {
       try {
@@ -290,78 +306,221 @@ namespace SecureOverlay
       } catch {}
     };
     (async function () {
+      let lastCandidate = graphDefinition;
+      let lastError = 'Unknown Mermaid error';
       try {
         if (!window.mermaid) {
           throw new Error('Mermaid runtime not available');
         }
         window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
-        const { svg } = await window.mermaid.render('phantom-mermaid-diagram', graphDefinition);
-        target.innerHTML = svg;
-        postToHost(`mermaid:rendered:${document.body.scrollHeight}`);
+        for (let i = 0; i < graphCandidates.length; i += 1) {
+          const candidate = graphCandidates[i];
+          lastCandidate = candidate;
+          try {
+            const { svg } = await window.mermaid.render(`phantom-mermaid-diagram-${i}`, candidate);
+            target.innerHTML = svg;
+            postToHost(`mermaid:rendered:${i}:${document.body.scrollHeight}`);
+            return;
+          } catch (err) {
+            lastError = err && err.message ? err.message : String(err);
+          }
+        }
       } catch (err) {
-        postToHost(`mermaid:error:${err && err.message ? err.message : err}`);
-        target.innerHTML = `<pre style="white-space: pre-wrap; color: #00ff7f;">${graphDefinition.replace(/</g, '&lt;')}</pre>`;
+        lastError = err && err.message ? err.message : String(err);
       }
+      postToHost(`mermaid:error:${lastError}`);
+      postToHost(`mermaid:candidate:${lastCandidate}`);
+      target.innerHTML = `<pre style="white-space: pre-wrap; color: #00ff7f;">${lastCandidate.replace(/</g, '&lt;')}</pre>`;
     })();
   </script>
 </body>
 </html>
 """
                 .Replace("__MERMAID_SRC__", mermaidScriptUri, StringComparison.Ordinal)
+                .Replace("__MERMAID_CANDIDATES__", mermaidCandidatesJson, StringComparison.Ordinal)
                 .Replace("__MERMAID_JSON__", mermaidJson, StringComparison.Ordinal);
         }
 
-        private static string NormalizeMermaidCode(string mermaidCode)
+        private static IReadOnlyList<string> BuildMermaidRenderCandidates(string mermaidCode)
         {
-            var normalized = mermaidCode.Replace("\r\n", "\n").Trim();
-            if (normalized.Contains('\n'))
+            var candidates = new List<string>();
+            var normalized = NormalizeMermaidWhitespace(mermaidCode);
+            AddMermaidCandidate(candidates, normalized);
+
+            if (!TrySplitMermaidHeaderAndBody(normalized, out var header, out var body))
             {
-                return normalized;
+                return candidates;
             }
 
-            var directionalHeaderMatch = Regex.Match(
-                normalized,
-                @"^(?<header>(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR))\s+(?<body>.+)$",
-                RegexOptions.IgnoreCase);
-            if (directionalHeaderMatch.Success)
+            AddMermaidCandidate(candidates, CombineMermaidHeaderAndBody(header, body));
+
+            if (IsFlowchartHeader(header))
             {
-                return $"{directionalHeaderMatch.Groups["header"].Value}\n{directionalHeaderMatch.Groups["body"].Value.Trim()}";
+                AddMermaidCandidate(candidates, CombineMermaidHeaderAndBody(header, NormalizeFlowchartBody(body, aggressive: false)));
+                AddMermaidCandidate(candidates, CombineMermaidHeaderAndBody(header, NormalizeFlowchartBody(body, aggressive: true)));
             }
 
-            foreach (var header in new[]
-                     {
-                         "sequenceDiagram",
-                         "classDiagram",
-                         "stateDiagram-v2",
-                         "stateDiagram",
-                         "erDiagram",
-                         "journey",
-                         "gantt",
-                         "pie",
-                         "gitGraph",
-                         "mindmap",
-                         "timeline",
-                         "quadrantChart",
-                         "requirementDiagram",
-                         "xychart-beta"
-                     })
+            return candidates;
+        }
+
+        private static string NormalizeMermaidWhitespace(string mermaidCode)
+        {
+            return mermaidCode.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        }
+
+        private static bool TrySplitMermaidHeaderAndBody(string mermaidCode, out string header, out string body)
+        {
+            var normalized = NormalizeMermaidWhitespace(mermaidCode);
+            var newlineIndex = normalized.IndexOf('\n');
+            if (newlineIndex >= 0)
             {
-                if (normalized.StartsWith(header + " ", StringComparison.OrdinalIgnoreCase))
+                var firstLine = normalized[..newlineIndex].Trim();
+                var remaining = normalized[(newlineIndex + 1)..].Trim();
+                if (IsStandaloneMermaidHeader(firstLine) && !string.IsNullOrWhiteSpace(remaining))
                 {
-                    return $"{header}\n{normalized[header.Length..].Trim()}";
+                    header = firstLine;
+                    body = remaining;
+                    return true;
                 }
             }
 
+            var inlineHeaderMatch = MermaidInlineHeaderRegex.Match(normalized);
+            if (inlineHeaderMatch.Success)
+            {
+                header = inlineHeaderMatch.Groups["header"].Value.Trim();
+                body = inlineHeaderMatch.Groups["body"].Value.Trim();
+                return true;
+            }
+
+            header = string.Empty;
+            body = string.Empty;
+            return false;
+        }
+
+        private static string CombineMermaidHeaderAndBody(string header, string body)
+        {
+            return string.IsNullOrWhiteSpace(body)
+                ? header.Trim()
+                : $"{header.Trim()}\n{body.Trim()}";
+        }
+
+        private static bool IsFlowchartHeader(string header)
+        {
+            return header.StartsWith("flowchart ", StringComparison.OrdinalIgnoreCase) ||
+                   header.StartsWith("graph ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsStandaloneMermaidHeader(string line)
+        {
+            return line.Equals("sequenceDiagram", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("classDiagram", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("stateDiagram-v2", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("stateDiagram", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("erDiagram", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("journey", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("gantt", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("pie", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("gitGraph", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("mindmap", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("timeline", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("quadrantChart", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("requirementDiagram", StringComparison.OrdinalIgnoreCase) ||
+                   line.Equals("xychart-beta", StringComparison.OrdinalIgnoreCase) ||
+                   Regex.IsMatch(line, @"^(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)$", RegexOptions.IgnoreCase);
+        }
+
+        private static string NormalizeFlowchartBody(string body, bool aggressive)
+        {
+            var normalized = NormalizeMermaidWhitespace(body);
+            normalized = Regex.Replace(normalized, @"\s*;\s*", "\n");
+
+            for (var iteration = 0; iteration < 4; iteration++)
+            {
+                var updated = normalized;
+                updated = MermaidKeywordBoundaryRegex.Replace(updated, "${left}\n${right}");
+                updated = MermaidNodeBoundaryRegex.Replace(updated, "${left}\n${right}");
+                updated = MermaidEdgeBoundaryRegex.Replace(updated, "${left}\n${right}");
+
+                if (aggressive)
+                {
+                    updated = Regex.Replace(
+                        updated,
+                        @"(?<left>[\]\)\}]|""|\b[A-Za-z][A-Za-z0-9_-]*)\s+(?<right>[A-Z][A-Za-z0-9_-]*\b)",
+                        "${left}\n${right}");
+                }
+
+                updated = NormalizeMermaidLines(updated);
+                if (updated == normalized)
+                {
+                    break;
+                }
+
+                normalized = updated;
+            }
+
             return normalized;
+        }
+
+        private static string NormalizeMermaidLines(string mermaidCode)
+        {
+            var builder = new StringBuilder();
+            using var reader = new StringReader(mermaidCode);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                if (builder.Length > 0)
+                {
+                    builder.Append('\n');
+                }
+
+                builder.Append(trimmed);
+            }
+
+            return builder.ToString();
+        }
+
+        private static void AddMermaidCandidate(List<string> candidates, string candidate)
+        {
+            var normalized = NormalizeMermaidLines(candidate);
+            if (normalized.Length == 0)
+            {
+                return;
+            }
+
+            foreach (var existing in candidates)
+            {
+                if (string.Equals(existing, normalized, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            candidates.Add(normalized);
+        }
+
+        private static string FormatMermaidForLog(string mermaidCode)
+        {
+            var normalized = NormalizeMermaidWhitespace(mermaidCode).Replace("\n", "\\n");
+            return normalized.Length <= 600 ? normalized : normalized[..600] + "...";
         }
 
         [Conditional("DEBUG")]
         private static void RunMermaidNormalizationSelfCheck()
         {
             Debug.Assert(
-                NormalizeMermaidCode("flowchart TD A[JAQ CLI] --> B[Start]") ==
+                CombineMermaidHeaderAndBody("flowchart TD", NormalizeFlowchartBody("A[JAQ CLI] --> B[Start]", aggressive: false)) ==
                 "flowchart TD\nA[JAQ CLI] --> B[Start]",
                 "Mermaid one-line normalization regressed.");
+            Debug.Assert(
+                CombineMermaidHeaderAndBody("flowchart TD", NormalizeFlowchartBody("A[Client] --> B[API] C --> D[Worker]", aggressive: false)) ==
+                "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]",
+                "Mermaid statement splitting regressed.");
         }
 
         private static double CalculateDiagramHeight(string mermaidCode)

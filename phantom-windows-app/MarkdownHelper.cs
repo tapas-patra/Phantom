@@ -24,8 +24,10 @@ namespace SecureOverlay
     {
         private const double MermaidViewportWidth = 640d;
         private const double MermaidViewportHeight = 320d;
-        private const int MermaidCaptureMinWidth = 900;
-        private const int MermaidCaptureMinHeight = 320;
+        private const int MermaidRenderSurfaceWidth = 1400;
+        private const int MermaidRenderSurfaceHeight = 1000;
+        private const int MermaidCaptureMinWidth = 260;
+        private const int MermaidCaptureMinHeight = 140;
         private const int MermaidCaptureMaxWidth = 1600;
         private const int MermaidCaptureMaxHeight = 2200;
 
@@ -289,9 +291,11 @@ namespace SecureOverlay
       color: #ffffff;
       overflow: hidden;
       font-family: "Segoe UI", sans-serif;
+      width: fit-content;
+      height: fit-content;
     }
     #diagram {
-      padding: 12px;
+      padding: 0;
       box-sizing: border-box;
       display: inline-block;
     }
@@ -340,8 +344,31 @@ namespace SecureOverlay
               target.innerHTML = '';
               throw new Error(renderedText || 'Mermaid produced an error diagram');
             }
-            const width = Math.ceil(Math.max(document.body.scrollWidth, document.documentElement.scrollWidth));
-            const height = Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+            const svgNode = target.querySelector('svg');
+            if (!svgNode) {
+              throw new Error('Mermaid did not produce an SVG node');
+            }
+            const rect = svgNode.getBoundingClientRect();
+            const viewBox = svgNode.viewBox && svgNode.viewBox.baseVal
+              ? svgNode.viewBox.baseVal
+              : null;
+            const width = Math.ceil(
+              Math.max(
+                rect.width || 0,
+                svgNode.width && svgNode.width.baseVal ? svgNode.width.baseVal.value : 0,
+                viewBox ? viewBox.width : 0
+              )
+            );
+            const height = Math.ceil(
+              Math.max(
+                rect.height || 0,
+                svgNode.height && svgNode.height.baseVal ? svgNode.height.baseVal.value : 0,
+                viewBox ? viewBox.height : 0
+              )
+            );
+            if (width <= 0 || height <= 0) {
+              throw new Error('Mermaid produced an empty SVG');
+            }
             postToHost(JSON.stringify({ type: 'rendered', candidateIndex: i, candidate, width, height }));
             return;
           } catch (err) {
@@ -388,8 +415,8 @@ namespace SecureOverlay
 
                 var webView = new WebView2
                 {
-                    Width = MermaidCaptureMinWidth,
-                    Height = MermaidCaptureMinHeight,
+                    Width = MermaidRenderSurfaceWidth,
+                    Height = MermaidRenderSurfaceHeight,
                     Visibility = Visibility.Visible,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,

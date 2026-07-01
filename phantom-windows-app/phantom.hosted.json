@@ -1,0 +1,5 @@
+{
+  "mode": "remote",
+  "websiteBaseUrl": "https://phantom-website-dashboard.vercel.app",
+  "desktopBackendBaseUrl": "https://phantom-ai-windows-app-backend.vercel.app"
+}

@@ -29,6 +29,7 @@ builder.Services.AddCors(cors =>
             origins.Add(options.PublicWebsiteBaseUrl);
         }
 
+        origins.Add(DashboardOptions.DefaultPublicWebsiteBaseUrl);
         origins.Add("http://localhost:4173");
         origins.Add("https://localhost:4173");
 

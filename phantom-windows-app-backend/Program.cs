@@ -86,6 +86,7 @@ builder.Services.AddCors(options =>
             origins.Add(backendOptions.PublicWebsiteBaseUrl.TrimEnd('/'));
         }
 
+        origins.Add(BackendOptions.DefaultPublicWebsiteBaseUrl);
         origins.Add("http://localhost:4173");
         origins.Add("https://localhost:4173");
 

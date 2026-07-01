@@ -4,6 +4,8 @@ namespace Phantom.WindowsApp.Backend.Infrastructure;
 
 public sealed class BackendOptions
 {
+    public const string DefaultPublicWebsiteBaseUrl = "https://phantom-website-dashboard.vercel.app";
+
     public string DatabaseUrl { get; init; } = string.Empty;
     public string DashboardProjectionDatabaseUrl { get; init; } = string.Empty;
     public int DefaultLeaseHours { get; init; } = 24;
@@ -176,7 +178,7 @@ public sealed class BackendOptions
             PublicWebsiteBaseUrl = ReadString(
                 "PHANTOM_PUBLIC_WEBSITE_BASE_URL",
                 section["PublicWebsiteBaseUrl"],
-                string.Empty),
+                DefaultPublicWebsiteBaseUrl),
             SmtpHost = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_SMTP_HOST",
                 section["SmtpHost"],

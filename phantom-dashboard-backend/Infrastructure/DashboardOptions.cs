@@ -4,6 +4,9 @@ namespace Phantom.Dashboard.Backend.Infrastructure;
 
 public sealed class DashboardOptions
 {
+    public const string DefaultWindowsBackendBaseUrl = "https://phantom-ai-windows-app-backend.vercel.app";
+    public const string DefaultPublicWebsiteBaseUrl = "https://phantom-website-dashboard.vercel.app";
+
     public string DatabaseUrl { get; init; } = string.Empty;
     public string AdminApiKey { get; init; } = string.Empty;
     public string WindowsBackendBaseUrl { get; init; } = string.Empty;
@@ -34,7 +37,7 @@ public sealed class DashboardOptions
             WindowsBackendBaseUrl =
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_BASE_URL")?.Trim().TrimEnd('/')
                 ?? section["WindowsBackendBaseUrl"]?.Trim().TrimEnd('/')
-                ?? string.Empty,
+                ?? DefaultWindowsBackendBaseUrl,
             WindowsBackendInternalApiKey =
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY")?.Trim()
                 ?? section["WindowsBackendInternalApiKey"]?.Trim()
@@ -43,7 +46,7 @@ public sealed class DashboardOptions
                 Environment.GetEnvironmentVariable("PHANTOM_PUBLIC_WEBSITE_BASE_URL")?.Trim().TrimEnd('/')
                 ?? Environment.GetEnvironmentVariable("PHANTOM_WEBSITE_BASE_URL")?.Trim().TrimEnd('/')
                 ?? section["PublicWebsiteBaseUrl"]?.Trim().TrimEnd('/')
-                ?? string.Empty,
+                ?? DefaultPublicWebsiteBaseUrl,
             SharedCookieDomain =
                 Environment.GetEnvironmentVariable("PHANTOM_SHARED_COOKIE_DOMAIN")?.Trim()
                 ?? section["SharedCookieDomain"]?.Trim()

@@ -3584,6 +3584,7 @@ namespace SecureOverlay
             if (_isHidden)
             {
                 Log.WriteLine("Showing window...");
+                this.Show();
                 this.Opacity = 1.0;
                 IsHitTestVisible = true;
                 _isHidden = false;
@@ -3598,11 +3599,14 @@ namespace SecureOverlay
             else
             {
                 Log.WriteLine("Hiding window...");
+                CloseCurrentDropdownMenu();
                 this.Opacity = 0.0;
                 IsHitTestVisible = false;
                 _isHidden = true;
                 
                 _cursorManager?.DeactivateCustomCursor();
+                // ponytail: WebView2 is its own HWND; opacity alone leaves it visible, so hide the whole window.
+                this.Hide();
                 
                 Log.WriteLine("✓ Window hidden");
             }

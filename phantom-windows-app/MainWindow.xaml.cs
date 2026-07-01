@@ -15,6 +15,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using FormsScreen = System.Windows.Forms.Screen;
 using SecureOverlay.Application.Billing;
@@ -74,6 +75,8 @@ namespace SecureOverlay
         private bool _chatRenderInFlight;
         private bool _chatRenderPending;
         private bool _chatSurfaceInitialized;
+        private bool _chatCursorBridgeInitialized;
+        private bool _chatCursorHidden;
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
@@ -2204,7 +2207,87 @@ namespace SecureOverlay
             }
 
             await MarkdownHelper.InitializeChatWebViewAsync(ChatWebView);
+            if (!_chatCursorBridgeInitialized && ChatWebView.CoreWebView2 != null)
+            {
+                ChatWebView.CoreWebView2.WebMessageReceived += ChatWebView_WebMessageReceived;
+                _chatCursorBridgeInitialized = true;
+            }
+
             _chatSurfaceInitialized = true;
+        }
+
+        private void ChatWebView_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            if (_isHidden)
+            {
+                return;
+            }
+
+            string? message;
+            try
+            {
+                message = e.TryGetWebMessageAsString();
+            }
+            catch
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(message) || !message.StartsWith("CHAT_CURSOR:", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!_settings.UseFakeCursor)
+            {
+                SetChatCursorHidden(false);
+                return;
+            }
+
+            var payload = message["CHAT_CURSOR:".Length..];
+            if (string.Equals(payload, "enter", StringComparison.Ordinal))
+            {
+                _cursorManager?.ActivateCustomCursor();
+                SetChatCursorHidden(true);
+                return;
+            }
+
+            if (string.Equals(payload, "leave", StringComparison.Ordinal))
+            {
+                SetChatCursorHidden(false);
+                _cursorManager?.DeactivateCustomCursor();
+                return;
+            }
+
+            if (!payload.StartsWith("move:", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var coordinates = payload["move:".Length..].Split(':');
+            if (coordinates.Length != 2 ||
+                !double.TryParse(coordinates[0], out var x) ||
+                !double.TryParse(coordinates[1], out var y))
+            {
+                return;
+            }
+
+            var webViewPoint = new Point(x, y);
+            var windowPoint = ChatWebView.TranslatePoint(webViewPoint, this);
+            _cursorManager?.ActivateCustomCursor();
+            _cursorManager?.UpdateCustomCursorPosition(windowPoint);
+            SetChatCursorHidden(true);
+        }
+
+        private void SetChatCursorHidden(bool hidden)
+        {
+            if (!_chatSurfaceInitialized || _chatCursorHidden == hidden)
+            {
+                return;
+            }
+
+            _chatCursorHidden = hidden;
+            _ = MarkdownHelper.SetChatCursorHiddenAsync(ChatWebView, hidden);
         }
 
         private IReadOnlyList<MarkdownHelper.ChatRenderMessage> BuildDisplayedChatMessages()
@@ -3600,6 +3683,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Hiding window...");
                 CloseCurrentDropdownMenu();
+                SetChatCursorHidden(false);
                 this.Opacity = 0.0;
                 IsHitTestVisible = false;
                 _isHidden = true;
@@ -4857,6 +4941,12 @@ namespace SecureOverlay
                     _cursorManager.Dispose();
                     _cursorManager = null;
                     Log.WriteLine("  ✓ Cursor manager disposed");
+                }
+
+                if (_chatCursorBridgeInitialized && ChatWebView.CoreWebView2 != null)
+                {
+                    ChatWebView.CoreWebView2.WebMessageReceived -= ChatWebView_WebMessageReceived;
+                    _chatCursorBridgeInitialized = false;
                 }
 
                 _taskViewMonitor?.StopMonitoring();

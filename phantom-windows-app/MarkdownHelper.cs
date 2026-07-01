@@ -174,6 +174,18 @@ namespace SecureOverlay
             await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.render({payloadJson});");
         }
 
+        public static async Task SetChatCursorHiddenAsync(WebView2 webView, bool hidden)
+        {
+            await InitializeChatWebViewAsync(webView);
+            if (webView.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            var hiddenJson = hidden ? "true" : "false";
+            await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.setCursorHidden({hiddenJson});");
+        }
+
         public static bool TryExtractFirstMermaidBlock(string markdown, out string mermaidCode)
         {
             mermaidCode = string.Empty;
@@ -388,6 +400,10 @@ namespace SecureOverlay
     .message-body > :last-child {
       margin-bottom: 0;
     }
+    body.hide-cursor,
+    body.hide-cursor * {
+      cursor: none !important;
+    }
     p, ul, ol, pre, table, blockquote, h1, h2, h3, h4, h5, h6 {
       margin: 0 0 10px 0;
     }
@@ -455,6 +471,56 @@ namespace SecureOverlay
   <script src="__MERMAID_SRC__"></script>
   <script>
     const transcript = document.getElementById('transcript');
+    let pendingCursorMove = null;
+    let cursorMoveQueued = false;
+    let cursorBridgeBound = false;
+
+    function postHostMessage(message) {
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(message);
+      }
+    }
+
+    function flushCursorMove() {
+      cursorMoveQueued = false;
+      if (!pendingCursorMove) {
+        return;
+      }
+
+      postHostMessage(`CHAT_CURSOR:move:${pendingCursorMove.x}:${pendingCursorMove.y}`);
+      pendingCursorMove = null;
+    }
+
+    function queueCursorMove(event) {
+      pendingCursorMove = {
+        x: Math.round(event.clientX),
+        y: Math.round(event.clientY)
+      };
+
+      if (cursorMoveQueued) {
+        return;
+      }
+
+      cursorMoveQueued = true;
+      window.requestAnimationFrame(flushCursorMove);
+    }
+
+    function bindCursorBridge() {
+      if (cursorBridgeBound) {
+        return;
+      }
+
+      cursorBridgeBound = true;
+      window.addEventListener('pointerenter', () => postHostMessage('CHAT_CURSOR:enter'), true);
+      window.addEventListener('pointerleave', () => postHostMessage('CHAT_CURSOR:leave'), true);
+      window.addEventListener('pointermove', queueCursorMove, { passive: true });
+      window.addEventListener('blur', () => postHostMessage('CHAT_CURSOR:leave'));
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          postHostMessage('CHAT_CURSOR:leave');
+        }
+      });
+    }
 
     function isMermaidError(svg, text) {
       return /syntax error in text/i.test(text) ||
@@ -506,12 +572,17 @@ namespace SecureOverlay
     }
 
     window.phantomChat = {
+      setCursorHidden: function(hidden) {
+        document.body.classList.toggle('hide-cursor', !!hidden);
+      },
       render: async function(payload) {
         transcript.innerHTML = payload && payload.html ? payload.html : '';
         await renderMermaidHosts(transcript);
         requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
       }
     };
+
+    bindCursorBridge();
   </script>
 </body>
 </html>

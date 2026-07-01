@@ -324,6 +324,7 @@ const termsSections = [
 
 export default function App() {
   const location = useLocation();
+  const isAdminRoute = location.pathname.startsWith("/admin");
   const [userSession, setUserSession] = useState(null);
   const [userSessionReady, setUserSessionReady] = useState(false);
   const [adminSession, setAdminSession] = useState(null);
@@ -456,6 +457,13 @@ export default function App() {
     let refreshTimer = 0;
 
     async function hydrateAdminSession() {
+      if (!isAdminRoute) {
+        if (!cancelled) {
+          setAdminSessionReady(true);
+        }
+        return;
+      }
+
       if (adminLogoutInFlightRef.current) {
         if (!cancelled) {
           setAdminSessionReady(true);
@@ -529,9 +537,9 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated, adminSessionHydrationEnabled]);
+  }, [adminSession?.expiresAtUtc, adminSession?.isAuthenticated, adminSessionHydrationEnabled, isAdminRoute]);
 
-  const surface = location.pathname.startsWith("/admin")
+  const surface = isAdminRoute
     ? "admin"
     : location.pathname.startsWith("/dashboard")
       ? "user"

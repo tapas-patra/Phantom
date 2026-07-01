@@ -789,6 +789,11 @@ namespace SecureOverlay.Services
             string? imageBase64,
             CancellationToken cancellationToken)
         {
+            if (_knowledgeBaseLoader != null && !HasFreshKnowledgeBaseSummaryCache())
+            {
+                await LoadKnowledgeBaseSummaryAsync(cancellationToken);
+            }
+
             RagTraceLogger.WriteLine(
                 $"planner:start question='{TrimForLog(userMessage, 240)}' image_attached={imageBase64 != null} prior_turns={Math.Max(0, _fullConversation.Count - 2)} previous_snippets={_retrievedKnowledgeSnippets.Count}");
             if (TryBuildHeuristicResponsePlan(userMessage, out var heuristicPlan))
@@ -956,6 +961,8 @@ Rules:
             out ResponsePlan plan)
         {
             plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
+            var namedProjectTarget = ExtractLikelyProjectTarget(normalizedUserMessage);
+            var namedProjectAsk = !string.IsNullOrWhiteSpace(namedProjectTarget);
             var hasActiveProject = !string.IsNullOrWhiteSpace(_activeProjectCardId);
             var explicitProjectAsk =
                 ContainsAnyToken(
@@ -968,15 +975,16 @@ Rules:
                     "what did you work on",
                     "worked on",
                     "tell me about a project",
-                    "tell me about your project");
+                    "tell me about your project")
+                || namedProjectAsk;
             var projectDetailAsk =
                 ContainsAnyToken(normalizedUserMessage, "architecture", "system design", "tech stack", "stack", "challenge", "challenges", "impact", "role")
-                && (ContainsAnyToken(normalizedUserMessage, "project", "projects", "this", "that", "it", "built", "worked on") || hasActiveProject);
+                && (ContainsAnyToken(normalizedUserMessage, "project", "projects", "this", "that", "it", "built", "worked on") || hasActiveProject || namedProjectAsk);
             var activeProjectFollowUp =
                 hasActiveProject
                 && ContainsAnyToken(normalizedUserMessage, "this", "that", "it", "the project", "architecture", "design", "stack", "challenge", "impact", "role")
                 && !ContainsAnyToken(normalizedUserMessage, "yourself", "background", "resume", "strength", "weakness", "current role");
-            if (!explicitProjectAsk && !projectDetailAsk && !activeProjectFollowUp)
+            if (!explicitProjectAsk && !projectDetailAsk && !activeProjectFollowUp && !namedProjectAsk)
             {
                 return false;
             }
@@ -992,7 +1000,7 @@ Rules:
                             : "recent project architecture technologies impact role";
             plan = ResponsePlan.Project(
                 knowledgeQuery,
-                target: ExtractLikelyProjectTarget(normalizedUserMessage),
+                target: namedProjectTarget,
                 scope: scope,
                 confidence: 1d,
                 source: "heuristic-project");
@@ -1044,6 +1052,13 @@ Rules:
                 if (string.IsNullOrWhiteSpace(title))
                 {
                     continue;
+                }
+
+                var slug = NormalizeText(card.Slug);
+                if (!string.IsNullOrWhiteSpace(slug)
+                    && normalizedUserMessage.Contains(slug, StringComparison.Ordinal))
+                {
+                    return card.Title;
                 }
 
                 if (normalizedUserMessage.Contains(title, StringComparison.Ordinal))
@@ -1970,6 +1985,13 @@ Rules:
                 : normalized.Substring(0, maxLength) + "...";
         }
 
+        private static string FormatKeyUsageForLog(int currentKeyIndex, int totalKeys)
+        {
+            return totalKeys <= 0
+                ? "managed auth"
+                : $"Key #{Math.Min(currentKeyIndex + 1, totalKeys)}/{totalKeys}";
+        }
+
         private string BuildPlannerKnowledgeBaseHint()
         {
             if (_knowledgeBaseSummaryCache == null)
@@ -2262,7 +2284,7 @@ Rules:
                     var currentKeyIndex = _rotationManager?.GetCurrentKeyIndex(_currentProvider) ?? 0;
                     currentModel = _rotationManager?.GetCurrentModel(_currentProvider) ?? "";
                     
-                    Log.WriteLine($"Using: Key #{currentKeyIndex + 1}/{totalKeys}, Model: {currentModel}");
+                    Log.WriteLine($"Using: {FormatKeyUsageForLog(currentKeyIndex, totalKeys)}, Model: {currentModel}");
                     
                     var response = await _aiService.SendMessageStreamAsync(context, onChunkReceived, cancellationToken, imageBase64);
 
@@ -2586,7 +2608,7 @@ Rules:
                 var currentKeyIndex = _rotationManager?.GetCurrentKeyIndex(_currentProvider) ?? 0;
                 currentModel = _rotationManager?.GetCurrentModel(_currentProvider) ?? "";
                 
-                Log.WriteLine($"Using: Key #{currentKeyIndex + 1}/{totalKeys}, Model: {currentModel}");
+                    Log.WriteLine($"Using: {FormatKeyUsageForLog(currentKeyIndex, totalKeys)}, Model: {currentModel}");
                 
                 try
                 {

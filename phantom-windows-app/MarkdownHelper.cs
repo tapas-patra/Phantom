@@ -21,6 +21,9 @@ namespace SecureOverlay
 {
     public static class MarkdownHelper
     {
+        private const double MermaidViewportWidth = 640d;
+        private const double MermaidViewportHeight = 320d;
+
         static MarkdownHelper()
         {
             RunMermaidNormalizationSelfCheck();
@@ -135,11 +138,11 @@ namespace SecureOverlay
 
         private static void AppendMermaidBlock(FlowDocument document, string mermaidCode)
         {
-            var diagramHeight = CalculateDiagramHeight(mermaidCode);
             var container = new StackPanel
             {
                 Orientation = Orientation.Vertical,
-                Margin = new Thickness(0, 8, 0, 8)
+                Margin = new Thickness(0, 8, 0, 8),
+                MaxWidth = MermaidViewportWidth
             };
             container.Children.Add(new TextBlock
             {
@@ -152,8 +155,8 @@ namespace SecureOverlay
 
             var webView = new WebView2
             {
-                Width = 720,
-                Height = diagramHeight,
+                Width = MermaidViewportWidth,
+                Height = MermaidViewportHeight,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
             var border = new Border
@@ -163,18 +166,20 @@ namespace SecureOverlay
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(0),
+                Width = MermaidViewportWidth,
+                Height = MermaidViewportHeight,
+                ClipToBounds = true,
                 Child = webView
             };
             container.Children.Add(border);
 
             document.Blocks.Add(new BlockUIContainer(container));
-            _ = InitializeMermaidBlockAsync(webView, mermaidCode, diagramHeight, container);
+            _ = InitializeMermaidBlockAsync(webView, mermaidCode, container);
         }
 
         private static async Task InitializeMermaidBlockAsync(
             WebView2 webView,
             string mermaidCode,
-            double fallbackHeight,
             Panel container)
         {
             try
@@ -200,14 +205,6 @@ namespace SecureOverlay
                 Log.WriteLine($"Mermaid source: {FormatMermaidForLog(mermaidCode)}");
                 File.WriteAllText(htmlFilePath, BuildMermaidHtml(mermaidCode));
                 webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
-
-                void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args)
-                {
-                    webView.NavigationCompleted -= OnNavigationCompleted;
-                    _ = ResizeMermaidBlockAsync(webView, fallbackHeight);
-                }
-
-                webView.NavigationCompleted += OnNavigationCompleted;
             }
             catch (Exception ex)
             {
@@ -223,24 +220,6 @@ namespace SecureOverlay
                 });
                 container.Children.Add(BuildMermaidFallback(mermaidCode));
             }
-        }
-
-        private static async Task ResizeMermaidBlockAsync(WebView2 webView, double fallbackHeight)
-        {
-            try
-            {
-                var rawHeight = await webView.ExecuteScriptAsync("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight).toString()");
-                if (double.TryParse(rawHeight.Trim('"'), out var measuredHeight))
-                {
-                    webView.Height = Math.Clamp(measuredHeight + 16d, 220d, 720d);
-                    return;
-                }
-            }
-            catch
-            {
-            }
-
-            webView.Height = fallbackHeight;
         }
 
         private static FrameworkElement BuildMermaidFallback(string mermaidCode)
@@ -279,20 +258,31 @@ namespace SecureOverlay
       padding: 0;
       background: transparent;
       color: #ffffff;
-      overflow: auto;
+      height: 100%;
+      overflow: hidden;
       font-family: "Segoe UI", sans-serif;
+    }
+    #viewport {
+      height: 320px;
+      overflow: auto;
+      box-sizing: border-box;
     }
     #diagram {
       padding: 12px;
+      box-sizing: border-box;
+      min-height: 100%;
     }
     svg {
       max-width: 100%;
       height: auto;
+      display: block;
     }
   </style>
 </head>
 <body>
-  <div id="diagram"></div>
+  <div id="viewport">
+    <div id="diagram"></div>
+  </div>
   <script src="__MERMAID_SRC__"></script>
   <script>
     const graphDefinition = __MERMAID_JSON__;

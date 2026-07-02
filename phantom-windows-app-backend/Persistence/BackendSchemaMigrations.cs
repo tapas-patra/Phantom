@@ -18,7 +18,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("010_hosted_kb_reindex_jobs", HostedKnowledgeBaseReindexJobsSql),
         new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql),
         new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql),
-        new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql)
+        new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql),
+        new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1235,5 +1236,47 @@ ALTER TABLE dashboard_wallet_history
     ADD COLUMN IF NOT EXISTS charged_pro_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE dashboard_wallet_history
     ADD COLUMN IF NOT EXISTS charged_premium_credits NUMERIC(18,2) NOT NULL DEFAULT 0;
+";
+
+    private const string ManagedAiLatencyChecksSql = @"
+CREATE TABLE IF NOT EXISTS managed_ai_latency_runs (
+    job_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    total_models INTEGER NOT NULL DEFAULT 0,
+    processed_models INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    requested_at_utc TIMESTAMPTZ NOT NULL,
+    started_at_utc TIMESTAMPTZ NULL,
+    completed_at_utc TIMESTAMPTZ NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_managed_ai_latency_runs_requested
+    ON managed_ai_latency_runs(requested_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_managed_ai_latency_runs_status_requested
+    ON managed_ai_latency_runs(status, requested_at_utc ASC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_ai_latency_runs_active_singleton
+    ON managed_ai_latency_runs((status))
+    WHERE status IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS managed_ai_model_latency_status (
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    model_display_name TEXT NOT NULL,
+    supports_vision BOOLEAN NOT NULL DEFAULT FALSE,
+    is_chat_capable BOOLEAN NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    latency_ms INTEGER NULL,
+    checked_at_utc TIMESTAMPTZ NULL,
+    last_job_id TEXT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (provider_id, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_managed_ai_model_latency_status_checked
+    ON managed_ai_model_latency_status(checked_at_utc DESC, provider_id, model_id);
 ";
 }

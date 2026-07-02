@@ -28,6 +28,7 @@ builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
 builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
+builder.Services.AddSingleton<ManagedAiLatencyRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseEmbeddingConfigRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseReindexJobRepository>();
@@ -49,6 +50,7 @@ builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<ManagedAiDiagnosticsService>();
 builder.Services.AddSingleton<IKnowledgeBaseEmbeddingService, KnowledgeBaseEmbeddingService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseStructuredExtractionService>();
 builder.Services.AddSingleton<PaymentCatalog>();
@@ -64,6 +66,7 @@ builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
+builder.Services.AddHostedService<ManagedAiLatencyWorker>();
 builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
 builder.Services.AddSingleton<UsageReconciliationService>();
 builder.Services.AddSingleton<LockService>();
@@ -1237,6 +1240,26 @@ adminGroup.MapPost("/managed-ai/catalog/vision", (
     ManagedAiCatalogService catalogService) =>
 {
     return Results.Ok(catalogService.UpdateModelVisionSupport(request));
+});
+
+adminGroup.MapPost("/managed-ai/test", async (
+    AdminManagedAiTestRequestDto request,
+    ManagedAiDiagnosticsService diagnostics,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await diagnostics.RunInteractiveTestAsync(request, cancellationToken));
+});
+
+adminGroup.MapPost("/managed-ai/latency/check", (
+    ManagedAiDiagnosticsService diagnostics) =>
+{
+    return Results.Ok(diagnostics.EnqueueLatencyCheck());
+});
+
+adminGroup.MapGet("/managed-ai/latency/status", (
+    ManagedAiDiagnosticsService diagnostics) =>
+{
+    return Results.Ok(diagnostics.GetLatencyStatus());
 });
 
 adminGroup.MapGet("/kb/embedding-config", (IKnowledgeBaseEmbeddingService embeddingService) =>

@@ -814,6 +814,53 @@ tbody tr:last-child th {
   gap: 16px;
 }
 
+.admin-chat-log {
+  display: grid;
+  gap: 12px;
+  max-height: 24rem;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.admin-chat-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.admin-chat-bubble {
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.admin-chat-bubble strong,
+.admin-chat-bubble p,
+.admin-chat-bubble small {
+  margin: 0;
+}
+
+.admin-chat-user {
+  justify-self: end;
+  background: rgba(76, 201, 240, 0.12);
+  border-color: rgba(76, 201, 240, 0.22);
+}
+
+.admin-chat-assistant {
+  justify-self: start;
+}
+
+.admin-chat-error {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: rgba(251, 113, 133, 0.12);
+}
+
 .admin-form-inline {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

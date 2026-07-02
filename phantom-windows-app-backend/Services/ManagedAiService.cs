@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +11,8 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class ManagedAiService
 {
+    private const int AdminModelTimeoutMs = 20000;
+
     private static readonly HttpClient HttpClient = new()
     {
         Timeout = TimeSpan.FromMinutes(5)
@@ -165,16 +168,7 @@ public sealed class ManagedAiService
             throw new BackendValidationException("At least one chat message is required.");
         }
 
-        var providerCredentials = _credentials.ListByProvider(request.Provider)
-            .Where(item => item.IsEnabled)
-            .OrderBy(item => item.Priority)
-            .ThenByDescending(item => item.UpdatedAtUtc)
-            .ToArray();
-
-        if (providerCredentials.Length == 0)
-        {
-            throw new BackendValidationException($"No managed credentials are configured for {request.Provider}.");
-        }
+        var providerCredentials = GetEnabledProviderCredentials(request.Provider);
 
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = "text/event-stream";
@@ -202,6 +196,89 @@ public sealed class ManagedAiService
                 : $"Managed AI request failed: {lastError.Message}");
     }
 
+    public async Task<AdminManagedAiTestResponseDto> RunAdminTestAsync(
+        AdminManagedAiTestRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        ValidateAdminTestRequest(request);
+
+        var testedAtUtc = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(AdminModelTimeoutMs);
+
+            var outputText = await GenerateProviderResponseWithFallbackAsync(
+                request.ProviderId,
+                request.ModelId,
+                request.Messages,
+                request.ImageBase64,
+                timeoutCts.Token);
+
+            stopwatch.Stop();
+            return new AdminManagedAiTestResponseDto
+            {
+                ProviderId = request.ProviderId.Trim(),
+                ModelId = request.ModelId.Trim(),
+                Status = "ok",
+                OutputText = NormalizeResponseText(outputText),
+                ErrorMessage = string.Empty,
+                LatencyMs = ToLatencyMs(stopwatch.ElapsedMilliseconds),
+                IsChatCapable = true,
+                TestedAtUtc = testedAtUtc
+            };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            return new AdminManagedAiTestResponseDto
+            {
+                ProviderId = request.ProviderId.Trim(),
+                ModelId = request.ModelId.Trim(),
+                Status = "timeout",
+                OutputText = string.Empty,
+                ErrorMessage = "Model response exceeded 20 seconds.",
+                LatencyMs = ToLatencyMs(stopwatch.ElapsedMilliseconds),
+                IsChatCapable = null,
+                TestedAtUtc = testedAtUtc
+            };
+        }
+        catch (Exception ex) when (ex is not BackendValidationException)
+        {
+            stopwatch.Stop();
+            return new AdminManagedAiTestResponseDto
+            {
+                ProviderId = request.ProviderId.Trim(),
+                ModelId = request.ModelId.Trim(),
+                Status = ClassifyAdminFailure(ex),
+                OutputText = string.Empty,
+                ErrorMessage = GetSingleLineMessage(ex),
+                LatencyMs = ToLatencyMs(stopwatch.ElapsedMilliseconds),
+                IsChatCapable = InferChatCapability(ex),
+                TestedAtUtc = testedAtUtc
+            };
+        }
+    }
+
+    private static void ValidateAdminTestRequest(AdminManagedAiTestRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId) || !ManagedAiCatalog.IsAllowedProvider(request.ProviderId))
+        {
+            throw new BackendValidationException("Unsupported managed provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        if (request.Messages == null || request.Messages.Count == 0)
+        {
+            throw new BackendValidationException("At least one chat message is required.");
+        }
+    }
+
     private static void EnsureManagedAccess(DesktopAccountRecord account, bool allowPaidSessionExtension)
     {
         var effectiveTier = AccessModeResolver.GetEffectiveAccessTier(account);
@@ -213,6 +290,58 @@ public sealed class ManagedAiService
         {
             throw new BackendValidationException("Managed AI is available only for Free and Premium tiers.");
         }
+    }
+
+    private ManagedProviderCredentialRecord[] GetEnabledProviderCredentials(string providerId)
+    {
+        var providerCredentials = _credentials.ListByProvider(providerId)
+            .Where(item => item.IsEnabled)
+            .OrderBy(item => item.Priority)
+            .ThenByDescending(item => item.UpdatedAtUtc)
+            .ToArray();
+
+        if (providerCredentials.Length == 0)
+        {
+            throw new BackendValidationException($"No managed credentials are configured for {providerId}.");
+        }
+
+        return providerCredentials;
+    }
+
+    private async Task<string> GenerateProviderResponseWithFallbackAsync(
+        string providerId,
+        string modelId,
+        IReadOnlyList<DesktopAiChatMessageDto> messages,
+        string? imageBase64,
+        CancellationToken cancellationToken)
+    {
+        var providerCredentials = GetEnabledProviderCredentials(providerId);
+        Exception? lastError = null;
+
+        foreach (var credential in providerCredentials)
+        {
+            try
+            {
+                var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
+                return await GenerateProviderResponseAsync(
+                    providerId,
+                    modelId,
+                    messages,
+                    imageBase64,
+                    apiKey,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is not BackendValidationException)
+            {
+                lastError = ex;
+            }
+        }
+
+        throw lastError ?? new InvalidOperationException("Managed AI request failed.");
     }
 
     private async Task StreamProviderAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
@@ -264,6 +393,46 @@ public sealed class ManagedAiService
             default:
                 throw new BackendValidationException("Unsupported managed provider.");
         }
+    }
+
+    private async Task<string> GenerateProviderResponseAsync(
+        string providerId,
+        string modelId,
+        IReadOnlyList<DesktopAiChatMessageDto> messages,
+        string? imageBase64,
+        string apiKey,
+        CancellationToken cancellationToken)
+    {
+        return providerId switch
+        {
+            ManagedAiCatalog.ChatGpt => await GenerateOpenAiCompatibleResponseAsync(
+                "https://api.openai.com/v1/chat/completions",
+                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                modelId,
+                apiKey,
+                cancellationToken),
+            ManagedAiCatalog.Mistral => await GenerateOpenAiCompatibleResponseAsync(
+                "https://api.mistral.ai/v1/chat/completions",
+                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: true),
+                modelId,
+                apiKey,
+                cancellationToken),
+            ManagedAiCatalog.Groq => await GenerateOpenAiCompatibleResponseAsync(
+                "https://api.groq.com/openai/v1/chat/completions",
+                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                modelId,
+                apiKey,
+                cancellationToken),
+            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken),
+            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken),
+            ManagedAiCatalog.Nvidia => await GenerateOpenAiCompatibleResponseAsync(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                modelId,
+                apiKey,
+                cancellationToken),
+            _ => throw new BackendValidationException("Unsupported managed provider.")
+        };
     }
 
     private async Task StreamOpenAiCompatibleAsync(
@@ -334,6 +503,49 @@ public sealed class ManagedAiService
         }
     }
 
+    private async Task<string> GenerateOpenAiCompatibleResponseAsync(
+        string url,
+        object[] messages,
+        string model,
+        string apiKey,
+        CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            model,
+            messages,
+            max_tokens = 64,
+            stream = false
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!document.RootElement.TryGetProperty("choices", out var choices)
+            || choices.GetArrayLength() == 0)
+        {
+            return string.Empty;
+        }
+
+        var choice = choices[0];
+        if (!choice.TryGetProperty("message", out var message)
+            || !message.TryGetProperty("content", out var content))
+        {
+            return string.Empty;
+        }
+
+        return ReadOpenAiContent(content);
+    }
+
     private async Task StreamClaudeAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
     {
         var systemPrompt = request.Messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
@@ -341,42 +553,7 @@ public sealed class ManagedAiService
             .Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content))
             .ToArray();
 
-        var apiMessages = filteredMessages
-            .Select((item, index) =>
-            {
-                var isLastUser = string.Equals(item.Role, "user", StringComparison.OrdinalIgnoreCase)
-                    && index == filteredMessages.Length - 1;
-
-                if (isLastUser && !string.IsNullOrWhiteSpace(request.ImageBase64))
-                {
-                    return (object)new
-                    {
-                        role = "user",
-                        content = new object[]
-                        {
-                            new
-                            {
-                                type = "image",
-                                source = new
-                                {
-                                    type = "base64",
-                                    media_type = "image/png",
-                                    data = request.ImageBase64
-                                }
-                            },
-                            new { type = "text", text = item.Content }
-                        }
-                    };
-                }
-
-                return (object)new
-                {
-                    role = item.Role,
-                    content = item.Content
-                };
-            })
-            .ToArray();
-
+        var apiMessages = BuildClaudeMessages(filteredMessages, request.ImageBase64);
         var payload = JsonSerializer.Serialize(new
         {
             model = request.Model,
@@ -436,6 +613,56 @@ public sealed class ManagedAiService
 
             await WriteSseJsonAsync(downstreamResponse, new { delta = deltaText }, cancellationToken);
         }
+    }
+
+    private async Task<string> GenerateClaudeResponseAsync(
+        string modelId,
+        IReadOnlyList<DesktopAiChatMessageDto> messages,
+        string? imageBase64,
+        string apiKey,
+        CancellationToken cancellationToken)
+    {
+        var systemPrompt = messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
+        var filteredMessages = messages
+            .Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content))
+            .ToArray();
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            model = modelId,
+            max_tokens = 64,
+            system = systemPrompt,
+            messages = BuildClaudeMessages(filteredMessages, imageBase64)
+        });
+
+        using var outbound = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+        outbound.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+        outbound.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await HttpClient.SendAsync(outbound, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!document.RootElement.TryGetProperty("content", out var content)
+            || content.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            " ",
+            content.EnumerateArray()
+                .Where(item =>
+                    item.TryGetProperty("type", out var typeElement)
+                    && string.Equals(typeElement.GetString(), "text", StringComparison.OrdinalIgnoreCase)
+                    && item.TryGetProperty("text", out var textElement)
+                    && !string.IsNullOrWhiteSpace(textElement.GetString()))
+                .Select(item => item.GetProperty("text").GetString()!.Trim()));
     }
 
     private async Task StreamGeminiAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
@@ -504,6 +731,56 @@ public sealed class ManagedAiService
         }
     }
 
+    private async Task<string> GenerateGeminiResponseAsync(
+        string modelId,
+        IReadOnlyList<DesktopAiChatMessageDto> messages,
+        string? imageBase64,
+        string apiKey,
+        CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            contents = BuildGeminiContents(messages, imageBase64),
+            generationConfig = new
+            {
+                maxOutputTokens = 64,
+                temperature = 0.2
+            }
+        });
+
+        var url = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(modelId)}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+        using var outbound = new HttpRequestMessage(HttpMethod.Post, url);
+        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await HttpClient.SendAsync(outbound, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!document.RootElement.TryGetProperty("candidates", out var candidates)
+            || candidates.GetArrayLength() == 0)
+        {
+            return string.Empty;
+        }
+
+        var candidate = candidates[0];
+        if (!candidate.TryGetProperty("content", out var content)
+            || !content.TryGetProperty("parts", out var parts)
+            || parts.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            " ",
+            parts.EnumerateArray()
+                .Where(item => item.TryGetProperty("text", out var textElement) && !string.IsNullOrWhiteSpace(textElement.GetString()))
+                .Select(item => item.GetProperty("text").GetString()!.Trim()));
+    }
+
     private static object[] BuildOpenAiMessages(IReadOnlyList<DesktopAiChatMessageDto> messages, string? imageBase64, bool mistralImageUrl)
     {
         var filtered = messages
@@ -546,6 +823,45 @@ public sealed class ManagedAiService
                             ? (object)new { type = "image_url", image_url = $"data:image/png;base64,{imageBase64}" }
                             : (object)new { type = "image_url", image_url = new { url = $"data:image/png;base64,{imageBase64}" } }
                     }
+                };
+            })
+            .ToArray();
+    }
+
+    private static object[] BuildClaudeMessages(IReadOnlyList<DesktopAiChatMessageDto> filteredMessages, string? imageBase64)
+    {
+        return filteredMessages
+            .Select((item, index) =>
+            {
+                var isLastUser = string.Equals(item.Role, "user", StringComparison.OrdinalIgnoreCase)
+                    && index == filteredMessages.Count - 1;
+
+                if (isLastUser && !string.IsNullOrWhiteSpace(imageBase64))
+                {
+                    return (object)new
+                    {
+                        role = "user",
+                        content = new object[]
+                        {
+                            new
+                            {
+                                type = "image",
+                                source = new
+                                {
+                                    type = "base64",
+                                    media_type = "image/png",
+                                    data = imageBase64
+                                }
+                            },
+                            new { type = "text", text = item.Content }
+                        }
+                    };
+                }
+
+                return (object)new
+                {
+                    role = item.Role,
+                    content = item.Content
                 };
             })
             .ToArray();
@@ -602,6 +918,65 @@ public sealed class ManagedAiService
         }
 
         return items.ToArray();
+    }
+
+    private static string ReadOpenAiContent(JsonElement content)
+    {
+        return content.ValueKind switch
+        {
+            JsonValueKind.String => content.GetString() ?? string.Empty,
+            JsonValueKind.Array => string.Join(
+                " ",
+                content.EnumerateArray()
+                    .Where(item =>
+                        item.TryGetProperty("text", out var textElement)
+                        && !string.IsNullOrWhiteSpace(textElement.GetString()))
+                    .Select(item => item.GetProperty("text").GetString()!.Trim())),
+            _ => string.Empty
+        };
+    }
+
+    private static string NormalizeResponseText(string responseText)
+    {
+        return string.IsNullOrWhiteSpace(responseText) ? "[empty response]" : responseText.Trim();
+    }
+
+    private static int ToLatencyMs(long elapsedMilliseconds)
+    {
+        return elapsedMilliseconds > int.MaxValue ? int.MaxValue : (int)Math.Max(0, elapsedMilliseconds);
+    }
+
+    private static string ClassifyAdminFailure(Exception ex)
+    {
+        return LooksLikeNonChatCapable(ex.Message) ? "not_chat_capable" : "failed";
+    }
+
+    private static bool? InferChatCapability(Exception ex)
+    {
+        return LooksLikeNonChatCapable(ex.Message) ? false : null;
+    }
+
+    private static bool LooksLikeNonChatCapable(string message)
+    {
+        var normalized = message.ToLowerInvariant();
+        return normalized.Contains("unsupported")
+            || normalized.Contains("not supported")
+            || normalized.Contains("does not support")
+            || normalized.Contains("no such model")
+            || normalized.Contains("unknown model")
+            || normalized.Contains("invalid model")
+            || normalized.Contains("model_not_found")
+            || (normalized.Contains("404") && normalized.Contains("model"))
+            || normalized.Contains("chat/completions")
+            || normalized.Contains("generatecontent")
+            || normalized.Contains("messages api");
+    }
+
+    private static string GetSingleLineMessage(Exception ex)
+    {
+        var message = ex.Message?.Trim() ?? "Managed AI request failed.";
+        var newlineIndex = message.IndexOfAny(['\r', '\n']);
+        return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
     }
 
     private static async Task WriteSseJsonAsync(HttpResponse response, object payload, CancellationToken cancellationToken)

@@ -26,6 +26,7 @@ import {
   markHostedKnowledgeBaseProjectRecent,
   pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
+  fetchManagedAiLatencyStatus,
   fetchPaymentCatalog,
   fetchSupportOverview,
   fetchWalletHistory,
@@ -45,7 +46,9 @@ import {
   resetUserPassword,
   sendPhoneOtp,
   startGmailOAuth,
+  sendManagedAiAdminTest,
   triggerManagedAiCatalogRefresh,
+  triggerManagedAiLatencyCheck,
   updateAdminUser,
   updateAdminSupportTicket,
   updateHostedKnowledgeBaseProfile,
@@ -3034,6 +3037,7 @@ function AdminResetPasswordPage() {
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
   const [inventory, setInventory] = useState(null);
+  const [latencyStatus, setLatencyStatus] = useState(null);
   const [gmailStatus, setGmailStatus] = useState(null);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3047,15 +3051,17 @@ function AdminDashboardPage({ adminSession }) {
       setLoading(true);
       setError("");
       try {
-        const [overviewData, inventoryData, gmailStatusData] = await Promise.all([
+        const [overviewData, inventoryData, latencyStatusData, gmailStatusData] = await Promise.all([
           fetchAdminOverview(adminSession.accessToken),
           fetchManagedAiAdminInventory(adminSession.accessToken),
+          fetchManagedAiLatencyStatus(adminSession.accessToken),
           fetchGmailOAuthStatus(adminSession.accessToken)
         ]);
 
         if (!cancelled) {
           setOverview(overviewData);
           setInventory(inventoryData);
+          setLatencyStatus(latencyStatusData);
           setGmailStatus(gmailStatusData);
         }
       } catch (loadError) {
@@ -3079,6 +3085,19 @@ function AdminDashboardPage({ adminSession }) {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);
     setInventory(nextInventory);
     return nextInventory;
+  }
+
+  async function refreshManagedAiState() {
+    const [nextInventory, nextLatencyStatus] = await Promise.all([
+      fetchManagedAiAdminInventory(adminSession.accessToken),
+      fetchManagedAiLatencyStatus(adminSession.accessToken)
+    ]);
+    setInventory(nextInventory);
+    setLatencyStatus(nextLatencyStatus);
+    return {
+      inventory: nextInventory,
+      latencyStatus: nextLatencyStatus
+    };
   }
 
   async function refreshOverview() {
@@ -3182,7 +3201,8 @@ function AdminDashboardPage({ adminSession }) {
                 <ManagedAiAdminPanel
                   accessToken={adminSession.accessToken}
                   inventory={inventory}
-                  onRefresh={refreshManagedInventory}
+                  latencyStatus={latencyStatus}
+                  onRefresh={refreshManagedAiState}
                   catalogRefreshResult={catalogRefreshResult}
                   onCatalogRefreshResult={setCatalogRefreshResult}
                 />
@@ -3587,7 +3607,286 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
   );
 }
 
-function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
+function ManagedAiTesterCard({ accessToken, catalogProviders, latencyModels, onRefresh }) {
+  const [providerId, setProviderId] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [history, setHistory] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  const latencyByModelKey = useMemo(
+    () =>
+      new Map(
+        (latencyModels || []).map((item) => [
+          `${item.providerId}::${item.modelId}`,
+          item
+        ])
+      ),
+    [latencyModels]
+  );
+
+  const eligibleProviders = useMemo(
+    () =>
+      (catalogProviders || [])
+        .map((provider) => ({
+          ...provider,
+          models: (provider.models || []).filter((model) => latencyByModelKey.get(`${provider.providerId}::${model.modelId}`)?.isChatCapable !== false)
+        }))
+        .filter((provider) => provider.models.length > 0),
+    [catalogProviders, latencyByModelKey]
+  );
+
+  useEffect(() => {
+    if (eligibleProviders.length === 0) {
+      setProviderId("");
+      setModelId("");
+      return;
+    }
+
+    const nextProvider =
+      eligibleProviders.find((provider) => provider.providerId === providerId) || eligibleProviders[0];
+    const nextModel =
+      nextProvider.models.find((model) => model.modelId === modelId) || nextProvider.models[0];
+
+    if (nextProvider.providerId !== providerId) {
+      setProviderId(nextProvider.providerId);
+      setHistory([]);
+    }
+
+    if (nextModel?.modelId !== modelId) {
+      setModelId(nextModel?.modelId || "");
+      setHistory([]);
+    }
+  }, [eligibleProviders, modelId, providerId]);
+
+  const selectedProvider = eligibleProviders.find((provider) => provider.providerId === providerId) || null;
+  const selectedModel = selectedProvider?.models?.find((model) => model.modelId === modelId) || null;
+  const selectedLatency = latencyByModelKey.get(`${providerId}::${modelId}`) || null;
+
+  function handleProviderChange(nextProviderId) {
+    const nextProvider = eligibleProviders.find((provider) => provider.providerId === nextProviderId);
+    setProviderId(nextProviderId);
+    setModelId(nextProvider?.models?.[0]?.modelId || "");
+    setHistory([]);
+    setLocalError("");
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt || !providerId || !modelId) {
+      return;
+    }
+
+    const nextUserEntry = {
+      role: "user",
+      content: trimmedPrompt,
+      contextEligible: true
+    };
+    const nextHistory = trimAdminTesterHistory([...history, nextUserEntry]);
+
+    setHistory(nextHistory);
+    setPrompt("");
+    setSubmitting(true);
+    setLocalError("");
+
+    try {
+      const result = await sendManagedAiAdminTest(accessToken, {
+        providerId,
+        modelId,
+        messages: nextHistory
+          .filter((item) => item.contextEligible !== false)
+          .map((item) => ({
+            role: item.role,
+            content: item.content
+          }))
+      });
+
+      const assistantEntry = {
+        role: "assistant",
+        content: result.status === "ok" ? result.outputText : result.errorMessage || "Model test failed.",
+        contextEligible: result.status === "ok",
+        status: result.status,
+        latencyMs: result.latencyMs
+      };
+      setHistory((current) => trimAdminTesterHistory([...current, assistantEntry]));
+      await onRefresh();
+    } catch (error) {
+      setLocalError(error.message || "Could not run the admin model test.");
+      setHistory((current) =>
+        trimAdminTesterHistory([
+          ...current,
+          {
+            role: "assistant",
+            content: error.message || "Could not run the admin model test.",
+            contextEligible: false,
+            status: "failed",
+            latencyMs: 0
+          }
+        ])
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <article className="glass-panel admin-form-panel table-span-full">
+      <div className="table-header">
+        <div>
+          <p className="eyebrow">Admin model tester</p>
+          <h3>Check one fetched model without touching the premium runtime</h3>
+        </div>
+      </div>
+      <p>
+        This uses the managed pipeline directly but keeps the global runtime selection unchanged. Models already marked
+        as not chat-capable stay out of this tester.
+      </p>
+      {localError ? <p className="status-message status-error">{localError}</p> : null}
+      {eligibleProviders.length === 0 ? (
+        <p>No chat-capable test candidates are available yet. Run latency checks or refresh the provider catalog first.</p>
+      ) : (
+        <>
+          <div className="admin-form-inline">
+            <label>
+              Provider
+              <select value={providerId} onChange={(event) => handleProviderChange(event.target.value)}>
+                {eligibleProviders.map((provider) => (
+                  <option key={provider.providerId} value={provider.providerId}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model
+              <select value={modelId} onChange={(event) => { setModelId(event.target.value); setHistory([]); setLocalError(""); }}>
+                {(selectedProvider?.models || []).map((model) => (
+                  <option key={model.modelId} value={model.modelId}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="stack-list">
+            <InfoRow label="Selected model" value={selectedModel?.displayName || "n/a"} />
+            <InfoRow label="Last status" value={formatManagedAiLatencyStatus(selectedLatency?.status)} />
+            <InfoRow
+              label="Last latency"
+              value={selectedLatency?.latencyMs ? `${selectedLatency.latencyMs} ms` : "Not measured"}
+            />
+          </div>
+
+          <div className="admin-chat-log">
+            {history.length === 0 ? (
+              <p className="admin-chat-empty">Send a prompt to verify the selected model through the managed pipeline.</p>
+            ) : (
+              history.map((entry, index) => (
+                <div
+                  className={`admin-chat-bubble admin-chat-${entry.role} ${entry.role === "assistant" && entry.status && entry.status !== "ok" ? "admin-chat-error" : ""}`}
+                  key={`${entry.role}-${index}`}
+                >
+                  <strong>{entry.role === "user" ? "Admin" : "Model"}</strong>
+                  <p>{entry.content}</p>
+                  {entry.role === "assistant" && entry.latencyMs ? (
+                    <small>{entry.status === "ok" ? `${entry.latencyMs} ms` : formatManagedAiLatencyStatus(entry.status)}</small>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+
+          <form className="admin-form" onSubmit={handleSubmit}>
+            <label>
+              Prompt
+              <textarea
+                rows={4}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Ask the selected model to answer a small prompt."
+              />
+            </label>
+            <button className="button button-primary" type="submit" disabled={submitting || !prompt.trim()}>
+              {submitting ? "Testing..." : "Send Test Prompt"}
+            </button>
+          </form>
+        </>
+      )}
+    </article>
+  );
+}
+
+function ManagedAiLatencyPanel({ accessToken, latencyStatus, onRefresh }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const latestRun = latencyStatus?.latestRun || null;
+  const models = latencyStatus?.models || [];
+
+  async function handleCheckLatency() {
+    setSubmitting(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      const run = await triggerManagedAiLatencyCheck(accessToken);
+      await onRefresh();
+      setSuccess(run?.status === "queued" ? "Latency check queued." : "Latency check is already running.");
+    } catch (error) {
+      setLocalError(error.message || "Could not start the latency check.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <article className="glass-panel admin-form-panel table-span-full">
+        <div className="table-header">
+          <div>
+            <p className="eyebrow">Managed latency checks</p>
+            <h3>Probe fetched models through the pipeline</h3>
+          </div>
+          <button className="button button-primary button-compact" type="button" onClick={handleCheckLatency} disabled={submitting}>
+            {submitting ? "Queueing..." : "Check Latency"}
+          </button>
+        </div>
+        <p>
+          Each run sends a tiny chat probe through the Windows backend pipeline. Any model that takes more than 20
+          seconds is marked as timeout. Non chat-capable models stay visible here and stay hidden from the tester.
+        </p>
+        {localError ? <p className="status-message status-error">{localError}</p> : null}
+        {success ? <p className="status-message">{success}</p> : null}
+        <div className="stack-list">
+          <InfoRow label="Latest run" value={latestRun ? formatManagedAiLatencyStatus(latestRun.status) : "No run yet"} />
+          <InfoRow label="Processed" value={latestRun ? `${latestRun.processedModels}/${latestRun.totalModels}` : "0/0"} />
+          <InfoRow label="Requested" value={formatDate(latestRun?.requestedAtUtc)} />
+          <InfoRow label="Completed" value={formatDate(latestRun?.completedAtUtc)} />
+        </div>
+      </article>
+
+      <DataTable
+        title="Latency status by fetched model"
+        columns={["Provider", "Model", "Chat-capable", "Status", "Latency", "Checked", "Detail"]}
+        rows={models.map((item) => [
+          item.providerLabel,
+          item.displayName,
+          item.isChatCapable === true ? "Yes" : item.isChatCapable === false ? "No" : "Unknown",
+          formatManagedAiLatencyStatus(item.status),
+          item.latencyMs ? `${item.latencyMs} ms` : "n/a",
+          formatDate(item.checkedAtUtc),
+          item.message
+        ])}
+        emptyLabel="No fetched models are available yet."
+      />
+    </>
+  );
+}
+
+function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
   const [providerId, setProviderId] = useState("ChatGPT");
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -3691,6 +3990,13 @@ function ManagedAiAdminPanel({ accessToken, inventory, onRefresh, catalogRefresh
 
       <ManagedRuntimeSelectionCard accessToken={accessToken} inventory={inventory} onRefresh={onRefresh} />
       <KnowledgeBaseEmbeddingConfigCard accessToken={accessToken} inventory={inventory} onRefresh={onRefresh} />
+      <ManagedAiTesterCard
+        accessToken={accessToken}
+        catalogProviders={catalogProviders}
+        latencyModels={latencyStatus?.models || []}
+        onRefresh={onRefresh}
+      />
+      <ManagedAiLatencyPanel accessToken={accessToken} latencyStatus={latencyStatus} onRefresh={onRefresh} />
 
       <article className="glass-panel admin-form-panel">
         <div className="table-header">
@@ -4865,6 +5171,33 @@ function getBrowserRegistrationFingerprint() {
   };
   writeStoredJson("phantom.website.device-profile", deviceProfile);
   return deviceProfile.deviceFingerprintHash;
+}
+
+function trimAdminTesterHistory(history) {
+  return history.slice(-8);
+}
+
+function formatManagedAiLatencyStatus(status) {
+  switch (status) {
+    case "ok":
+      return "Ready";
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "timeout":
+      return "Timeout (>20s)";
+    case "not_chat_capable":
+      return "Not chat-capable";
+    case "failed":
+      return "Failed";
+    case "untested":
+      return "Untested";
+    default:
+      return status || "Unknown";
+  }
 }
 
 function formatDate(value) {

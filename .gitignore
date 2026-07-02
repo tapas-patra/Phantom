@@ -1,6 +1,7 @@
 /.idea/
 phantom-website-dashboard/node_modules/
 phantom-website-dashboard/dist/
-/bin
-/obj
+*/bin/
+*/obj/
 .dotnet
+*/.env

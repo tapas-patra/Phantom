@@ -424,6 +424,27 @@ export async function updateManagedAiModelVision(accessToken, payload) {
   });
 }
 
+export async function sendManagedAiAdminTest(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/test", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function triggerManagedAiLatencyCheck(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/latency/check", {
+    method: "POST",
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function fetchManagedAiLatencyStatus(accessToken) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/latency/status", {
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchHostedKnowledgeBase(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb", {
     headers: authHeaders(accessToken)

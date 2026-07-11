@@ -12,6 +12,9 @@ namespace SecureOverlay.Services
 {
     public class ConversationManager
     {
+        private const int RecentFullMessageCount = 10;
+        private const int PlannerRecentMessageCount = 10;
+
         private List<ConversationMessage> _fullConversation = new List<ConversationMessage>();
         private string _systemPrompt = "";
         private string _resumeText = string.Empty;
@@ -676,7 +679,7 @@ namespace SecureOverlay.Services
 
 
         // ═══════════════════════════════════════════════════════════════
-        // OPTIMIZED CONTEXT BUILDING (Keep last 2 pairs in full)
+        // OPTIMIZED CONTEXT BUILDING (Keep recent messages in full)
         // ═══════════════════════════════════════════════════════════════
 
         private List<ConversationMessage> BuildOptimizedContext()
@@ -697,19 +700,37 @@ namespace SecureOverlay.Services
             if (userMessages.Count == 0)
                 return context;
 
-            // 3. Identify the last 2 pairs (4 messages: user + assistant + user + assistant)
-            var keepFullCount = Math.Min(4, userMessages.Count); // Last 4 messages (2 pairs)
-            var recentMessages = userMessages.Skip(Math.Max(0, userMessages.Count - keepFullCount)).ToList();
-            
-            // Reserve tokens for these recent messages (in full)
-            var recentTokens = recentMessages.Sum(m => m.EstimatedTokens);
-            tokenBudget -= recentTokens;
+            // 3. Keep the latest suffix of messages in full, up to the recent-message cap.
+            var recentMessagesReversed = new List<ConversationMessage>();
+            foreach (var msg in userMessages.AsEnumerable().Reverse())
+            {
+                if (recentMessagesReversed.Count >= RecentFullMessageCount)
+                {
+                    break;
+                }
 
-            Log.WriteLine($"Reserving {recentTokens} tokens for last {recentMessages.Count} messages (full content)");
+                var wouldLeaveHeadroom = tokenBudget - msg.EstimatedTokens >= 100;
+                if (recentMessagesReversed.Count > 0 && !wouldLeaveHeadroom)
+                {
+                    break;
+                }
+
+                recentMessagesReversed.Add(msg);
+                tokenBudget -= msg.EstimatedTokens;
+            }
+
+            recentMessagesReversed.Reverse();
+            var recentMessages = recentMessagesReversed;
+            var recentTokens = recentMessages.Sum(m => m.EstimatedTokens);
+
+            Log.WriteLine($"Reserved {recentTokens} tokens for last {recentMessages.Count} messages (full content)");
 
             // 4. Build sliding window for OLDER messages (with summaries)
             var slidingWindow = new List<ConversationMessage>();
-            var olderMessages = userMessages.Take(Math.Max(0, userMessages.Count - keepFullCount)).Reverse().ToList();
+            var olderMessages = userMessages
+                .Take(Math.Max(0, userMessages.Count - recentMessages.Count))
+                .Reverse()
+                .ToList();
 
             int pairsIncluded = 0;
             foreach (var msg in olderMessages)
@@ -756,7 +777,7 @@ namespace SecureOverlay.Services
             slidingWindow.Reverse();
             context.AddRange(slidingWindow);
 
-            // 6. Add the recent messages (last 2 pairs) in FULL
+            // 6. Add the recent messages in FULL
             context.AddRange(recentMessages);
 
             Log.WriteLine($"Context built: {context.Count} messages, ~{context.Sum(m => m.EstimatedTokens)} tokens");
@@ -851,7 +872,7 @@ namespace SecureOverlay.Services
             var priorTurns = _fullConversation
                 .Skip(1)
                 .Take(Math.Max(0, _fullConversation.Count - 2))
-                .TakeLast(4)
+                .TakeLast(PlannerRecentMessageCount)
                 .Select(message => $"{message.Role}: {TruncateMessage(message.Content, 280)}")
                 .ToArray();
             var previousRetrieval = _retrievedKnowledgeSnippets

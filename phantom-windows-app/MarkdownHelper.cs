@@ -61,6 +61,9 @@ namespace SecureOverlay
         private static readonly Regex MermaidEndBoundaryRegex = new(
             @"(?<left>[\]\)\}""])\s+(?<right>end\b)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CodeFenceRegex = new(
+            @"```",
+            RegexOptions.Compiled);
         private static readonly Lazy<Task<CoreWebView2Environment>> MermaidEnvironment = new(
             () => CoreWebView2Environment.CreateAsync(null, WindowsAppPaths.WebView2CachePath));
         private static readonly string MermaidAssetFolder = Path.Combine(AppContext.BaseDirectory, "assets", "mermaid");
@@ -276,7 +279,8 @@ namespace SecureOverlay
 
         private static void AppendStandardMarkdown(FlowDocument document, string markdown, bool isUser)
         {
-            var tempDoc = Markdig.Wpf.Markdown.ToFlowDocument(markdown, _pipeline);
+            var normalizedMarkdown = NormalizeMarkdownForDisplay(markdown);
+            var tempDoc = Markdig.Wpf.Markdown.ToFlowDocument(normalizedMarkdown, _pipeline);
             StyleDocument(tempDoc, isUser);
 
             while (tempDoc.Blocks.Count > 0)
@@ -314,8 +318,9 @@ namespace SecureOverlay
                 return string.Empty;
             }
 
+            var normalizedMarkdown = NormalizeMarkdownForDisplay(markdown);
             var builder = new StringBuilder();
-            foreach (var segment in SplitMarkdownSegments(markdown))
+            foreach (var segment in SplitMarkdownSegments(normalizedMarkdown))
             {
                 if (string.IsNullOrWhiteSpace(segment.Content))
                 {
@@ -427,9 +432,16 @@ namespace SecureOverlay
     pre {
       color: var(--code);
       font-family: Consolas, "Courier New", monospace;
-      background: transparent;
-      white-space: pre-wrap;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 10px 12px;
+      white-space: pre;
       overflow-x: auto;
+    }
+    pre code {
+      display: block;
+      white-space: inherit;
     }
     blockquote {
       border-left: 2px solid rgba(255,255,255,0.2);
@@ -611,6 +623,22 @@ namespace SecureOverlay
             }
 
             return segments;
+        }
+
+        private static string NormalizeMarkdownForDisplay(string markdown)
+        {
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                return string.Empty;
+            }
+
+            var normalized = markdown.Replace("\r\n", "\n").Replace('\r', '\n');
+            if (CodeFenceRegex.Matches(normalized).Count % 2 != 0)
+            {
+                normalized += "\n```";
+            }
+
+            return normalized;
         }
 
         private static void AppendMermaidBlock(FlowDocument document, string mermaidCode)

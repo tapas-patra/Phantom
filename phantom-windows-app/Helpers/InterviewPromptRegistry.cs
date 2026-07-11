@@ -11,6 +11,12 @@ namespace SecureOverlay.Helpers
             "Avoid corporate buzzwords, textbook definitions, essay-style transitions, numbered frameworks unless asked, and obvious AI-style filler. " +
             "Most answers should feel like something a strong candidate would say out loud in 20 to 60 seconds. " +
             "When the user asks for an architecture, flow, sequence, state, or other diagram, answer with a short explanation plus a Mermaid fenced code block using ```mermaid ... ``` when that is the clearest format. In Mermaid, put each statement on its own line: the diagram header on one line, each node or edge on its own line, and each subgraph/end on its own line. Unless the user asks for only the diagram, include 2 to 5 lines of plain-English explanation before or after it. Do not say you cannot draw directly if Mermaid can express the answer.";
+        private const string MarkdownFormatGuardrails =
+            "Format output as valid Markdown. " +
+            "When code, JSON, SQL, shell commands, selectors, XPath, HTML, CSS, or API payloads are requested, put them in fenced code blocks and include a language tag when obvious. " +
+            "Do not mix explanation text inside the same code fence. " +
+            "Close every fence you open. " +
+            "Keep bullets, headings, and tables syntactically clean so the renderer can display them correctly.";
 
         public static class InterviewTypes
         {
@@ -68,7 +74,7 @@ namespace SecureOverlay.Helpers
 
         private static string ComposePrompt(string rolePrompt, string roundPrompt)
         {
-            return $"{rolePrompt} {HumanVoiceGuardrails} {roundPrompt}";
+            return $"{rolePrompt} {HumanVoiceGuardrails} {MarkdownFormatGuardrails} {roundPrompt}";
         }
     }
 }

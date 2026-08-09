@@ -5,4 +5,5 @@ phantom-website-dashboard/dist/
 */obj/
 .dotnet
 */.env
+/local-dev.env.ps1
 .DS_Store

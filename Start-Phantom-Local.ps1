@@ -160,7 +160,6 @@ Write-Host "Opened Phantom local stack windows."
 Write-Host "Website: $websiteBaseUrl"
 Write-Host "Windows backend: $windowsBackendBaseUrl"
 Write-Host "Dashboard backend: http://localhost:5067"
-Write-Host "Windows app hosted config: $windowsAppHostedConfigPath"
 if (-not [string]::IsNullOrWhiteSpace($ragLog)) {
     Write-Host "RAG_LOG propagated: $ragLog"
 }

@@ -892,6 +892,7 @@ namespace SecureOverlay.Services
                 ("Show the exact deployment details from my notes", ResponsePlanType.Retrieve),
                 ("Give me an example", ResponsePlanType.Direct),
                 ("Tell me about Atlas Payments", ResponsePlanType.Project),
+                ("Tell me about any project you worked on", ResponsePlanType.Project),
                 ("Tell me about any other project you worked on", ResponsePlanType.Project)
             };
 
@@ -902,6 +903,11 @@ namespace SecureOverlay.Services
                 {
                     throw new InvalidOperationException($"Router self-check failed for '{question}': expected {expected}, got {actual}.");
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(RouteResponse("Tell me about any project you worked on").Target))
+            {
+                throw new InvalidOperationException("Router self-check failed: generic project request was treated as a named project.");
             }
 
             var alternateRoute = RouteResponse("Tell me about any other project you worked on");
@@ -1129,7 +1135,7 @@ namespace SecureOverlay.Services
             }
 
             var target = match.Groups["target"].Value.Trim();
-            return new[] { "my", "your", "a", "the", "recent", "latest", "current", "my recent", "your recent" }.Contains(target, StringComparer.Ordinal)
+            return new[] { "my", "your", "a", "any", "the", "recent", "latest", "current", "my recent", "your recent" }.Contains(target, StringComparer.Ordinal)
                 ? string.Empty
                 : target;
         }

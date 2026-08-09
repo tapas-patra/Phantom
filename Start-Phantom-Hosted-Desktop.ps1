@@ -18,6 +18,7 @@ $env:PHANTOM_HOSTED_MODE = $hostedConfig.mode
 $env:PHANTOM_WINDOWS_BACKEND_BASE_URL = $hostedConfig.desktopBackendBaseUrl
 $env:PHANTOM_WEBSITE_BASE_URL = $hostedConfig.websiteBaseUrl
 $env:RAG_LOG = "true"
+[Environment]::SetEnvironmentVariable("RAG_LOG", "true", [EnvironmentVariableTarget]::User)
 
 Write-Host "Hosted backend: $($hostedConfig.desktopBackendBaseUrl)"
 

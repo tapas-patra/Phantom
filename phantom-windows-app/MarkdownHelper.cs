@@ -489,6 +489,7 @@ namespace SecureOverlay
       padding: 6px 8px;
     }
     .mermaid-card {
+      position: relative;
       margin: 8px 0 12px 0;
       padding: 12px;
       border: 1px solid var(--border);
@@ -496,24 +497,59 @@ namespace SecureOverlay
       background: var(--panel);
       overflow: auto;
       max-height: 360px;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      cursor: grab;
+    }
+    .mermaid-card.is-panning {
+      cursor: grabbing;
+      user-select: none;
+    }
+    .mermaid-host {
+      width: max-content;
+      min-width: 100%;
     }
     .mermaid-host svg {
       display: block;
       max-width: none;
       height: auto;
     }
+    .mermaid-host text,
+    .mermaid-host tspan,
+    .mermaid-host foreignObject {
+      cursor: text;
+      user-select: text;
+    }
     .mermaid-fallback {
       margin: 0;
       color: var(--code);
       white-space: pre;
     }
+    #chat-cursor {
+      position: fixed;
+      z-index: 2147483647;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      background: #111827;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+      pointer-events: none;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+    body.hide-cursor #chat-cursor.is-present {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
   <div id="transcript"></div>
+  <div id="chat-cursor" aria-hidden="true"></div>
   <script src="__MERMAID_SRC__"></script>
   <script>
     const transcript = document.getElementById('transcript');
+    const chatCursor = document.getElementById('chat-cursor');
     let pendingCursorMove = null;
     let cursorMoveQueued = false;
     let cursorBridgeBound = false;
@@ -535,6 +571,9 @@ namespace SecureOverlay
     }
 
     function queueCursorMove(event) {
+      chatCursor.style.left = `${event.clientX}px`;
+      chatCursor.style.top = `${event.clientY}px`;
+      chatCursor.classList.add('is-present');
       pendingCursorMove = {
         x: Math.round(event.clientX),
         y: Math.round(event.clientY)
@@ -555,14 +594,69 @@ namespace SecureOverlay
 
       cursorBridgeBound = true;
       window.addEventListener('pointerenter', () => postHostMessage('CHAT_CURSOR:enter'), true);
-      window.addEventListener('pointerleave', () => postHostMessage('CHAT_CURSOR:leave'), true);
+      window.addEventListener('pointerleave', () => {
+        chatCursor.classList.remove('is-present');
+        postHostMessage('CHAT_CURSOR:leave');
+      }, true);
       window.addEventListener('pointermove', queueCursorMove, { passive: true });
-      window.addEventListener('blur', () => postHostMessage('CHAT_CURSOR:leave'));
+      window.addEventListener('blur', () => {
+        chatCursor.classList.remove('is-present');
+        postHostMessage('CHAT_CURSOR:leave');
+      });
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
           postHostMessage('CHAT_CURSOR:leave');
         }
       });
+    }
+
+    function prepareMermaidHost(host) {
+      const svg = host.querySelector('svg');
+      const viewBox = svg && svg.viewBox ? svg.viewBox.baseVal : null;
+      const width = viewBox && viewBox.width > 0
+        ? viewBox.width
+        : parseFloat(svg && svg.getAttribute('width'));
+      if (svg && Number.isFinite(width) && width > 0) {
+        svg.style.width = `${Math.ceil(width)}px`;
+      }
+
+      const card = host.closest('.mermaid-card');
+      if (!card || card.dataset.panBound) return;
+      card.dataset.panBound = 'true';
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let scrollLeft = 0;
+      let scrollTop = 0;
+
+      card.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || event.target.closest('text, tspan, a, button, input, textarea, foreignObject')) return;
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        scrollLeft = card.scrollLeft;
+        scrollTop = card.scrollTop;
+        card.setPointerCapture(pointerId);
+        card.classList.add('is-panning');
+        event.preventDefault();
+      });
+      card.addEventListener('pointermove', event => {
+        if (event.pointerId !== pointerId) return;
+        card.scrollLeft = scrollLeft - (event.clientX - startX);
+        card.scrollTop = scrollTop - (event.clientY - startY);
+      });
+      const endPan = event => {
+        if (event.pointerId !== pointerId) return;
+        pointerId = null;
+        card.classList.remove('is-panning');
+      };
+      card.addEventListener('pointerup', endPan);
+      card.addEventListener('pointercancel', endPan);
+      card.addEventListener('wheel', event => {
+        if (!event.shiftKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+        card.scrollLeft += event.deltaY;
+        event.preventDefault();
+      }, { passive: false });
     }
 
     function isMermaidError(svg, text) {
@@ -603,6 +697,7 @@ namespace SecureOverlay
             }
 
             host.innerHTML = svg;
+            prepareMermaidHost(host);
             rendered = true;
             break;
           } catch {}
@@ -626,6 +721,7 @@ namespace SecureOverlay
     window.phantomChat = {
       setCursorHidden: function(hidden) {
         document.body.classList.toggle('hide-cursor', !!hidden);
+        if (!hidden) chatCursor.classList.remove('is-present');
       },
       render: async function(payload) {
         transcript.innerHTML = payload && payload.html ? payload.html : '';

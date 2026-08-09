@@ -900,7 +900,7 @@ namespace SecureOverlay.Services
                 var actual = RouteResponse(question).Type;
                 if (actual != expected)
                 {
-                    throw new InvalidOperationException($"Router self-check failed: expected {expected}, got {actual}.");
+                    throw new InvalidOperationException($"Router self-check failed for '{question}': expected {expected}, got {actual}.");
                 }
             }
 
@@ -1059,6 +1059,8 @@ namespace SecureOverlay.Services
                     "current position",
                     "your strength",
                     "your strengths",
+                    "my strength",
+                    "my strengths",
                     "your weakness",
                     "your weaknesses",
                     "biggest strength",

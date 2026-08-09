@@ -20,14 +20,16 @@ public static class BackendSchemaMigrations
         new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql),
         new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql),
         new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql),
-        new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql)
+        new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql),
+        new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
     {
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql),
         new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql),
-        new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql)
+        new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql),
+        new SchemaMigration("004_dashboard_interview_question_bank_names", DashboardInterviewQuestionBankNamesSql)
     };
 
     private const string CoreSchemaSql = @"
@@ -1332,5 +1334,17 @@ CREATE TABLE IF NOT EXISTS dashboard_interview_question_banks (
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
     ON dashboard_interview_question_banks(user_id, interview_ended_at_utc DESC);
+";
+
+    private const string InterviewQuestionBankNamesSql = @"
+ALTER TABLE interview_question_bank_jobs
+    ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE dashboard_interview_question_banks
+    ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
+";
+
+    private const string DashboardInterviewQuestionBankNamesSql = @"
+ALTER TABLE dashboard_interview_question_banks
+    ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
 ";
 }

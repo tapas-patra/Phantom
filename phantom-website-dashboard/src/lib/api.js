@@ -231,6 +231,18 @@ export async function fetchInterviewQuestionBanks(accessToken, page = 1, pageSiz
   );
 }
 
+export async function updateInterviewQuestionBank(accessToken, sessionId, payload) {
+  return request(
+    WINDOWS_BACKEND_API_BASE,
+    `/api/desktop/interview-question-banks/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PUT",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
 export async function fetchUserSupportTickets(accessToken, page = 1, pageSize = 10) {
   return request(
     WINDOWS_BACKEND_API_BASE,

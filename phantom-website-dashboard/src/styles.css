@@ -814,6 +814,39 @@ tbody tr:last-child th {
   gap: 16px;
 }
 
+.question-bank-heading,
+.question-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.question-bank-heading h3,
+.question-bank-heading p {
+  margin-bottom: 0;
+}
+
+.question-bank-editor,
+.question-bank-editor label {
+  display: grid;
+  gap: 10px;
+}
+
+.question-bank-editor {
+  gap: 18px;
+}
+
+.question-bank-editor label span {
+  color: var(--muted);
+}
+
+.question-bank-list {
+  display: grid;
+  gap: 12px;
+  padding-left: 1.5rem;
+}
+
 .admin-chat-log {
   display: grid;
   gap: 12px;
@@ -940,6 +973,11 @@ tbody tr:last-child th {
   .audience-grid,
   .comparison-grid,
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .question-bank-heading,
+  .question-edit-row {
     grid-template-columns: 1fr;
   }
 

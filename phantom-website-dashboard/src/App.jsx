@@ -55,6 +55,7 @@ import {
   updateHostedKnowledgeBaseProfile,
   updateHostedKnowledgeBaseProject,
   updateKnowledgeBaseEmbeddingConfig,
+  updateInterviewQuestionBank,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
   uploadHostedKnowledgeBaseDocuments,
@@ -2746,10 +2747,60 @@ function HistoryPanel({ accessToken }) {
 
 function QuestionBanksPanel({ accessToken }) {
   const [banksPage, setBanksPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [editingSessionId, setEditingSessionId] = useState("");
+  const [draft, setDraft] = useState({ interviewName: "", questions: [] });
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
 
   useEffect(() => {
     loadQuestionBanksPage(accessToken, 1, setBanksPage);
   }, [accessToken]);
+
+  function startEditing(bank) {
+    setEditingSessionId(bank.sessionId);
+    setDraft({
+      interviewName: bank.interviewName || "",
+      questions: [...(bank.questions || [])]
+    });
+    setStatus("");
+  }
+
+  function updateQuestion(index, value) {
+    setDraft((current) => ({
+      ...current,
+      questions: current.questions.map((question, questionIndex) => questionIndex === index ? value : question)
+    }));
+  }
+
+  function mergeWithPrevious(index) {
+    setDraft((current) => {
+      const questions = [...current.questions];
+      const followUp = questions[index].trim();
+      const previous = questions[index - 1].trim().replace(/[?.!]+$/, "");
+      const normalizedFollowUp = followUp ? `${followUp.charAt(0).toLowerCase()}${followUp.slice(1)}` : "";
+      questions[index - 1] = [previous, normalizedFollowUp].filter(Boolean).join("; ");
+      questions.splice(index, 1);
+      return { ...current, questions };
+    });
+  }
+
+  async function saveChanges(sessionId) {
+    setSaving(true);
+    setStatus("");
+    try {
+      const updated = await updateInterviewQuestionBank(accessToken, sessionId, draft);
+      setBanksPage((current) => ({
+        ...current,
+        items: current.items.map((bank) => bank.sessionId === sessionId ? updated : bank)
+      }));
+      setEditingSessionId("");
+      setStatus("Interview question bank updated.");
+    } catch (error) {
+      setStatus(error.message || "Could not update the interview question bank.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="dashboard-grid">
@@ -2767,16 +2818,72 @@ function QuestionBanksPanel({ accessToken }) {
       ) : (
         banksPage.items.map((bank) => (
           <article className="glass-panel table-span-full" key={bank.sessionId}>
-            <p className="story-tag">Interview · {formatDate(bank.interviewEndedAtUtc)}</p>
-            <h3>{bank.questions.length} grouped question{bank.questions.length === 1 ? "" : "s"}</h3>
-            <ol>
-              {bank.questions.map((question, index) => (
-                <li key={`${bank.sessionId}-${index}`}>{question}</li>
-              ))}
-            </ol>
+            {editingSessionId === bank.sessionId ? (
+              <div className="question-bank-editor">
+                <label>
+                  <span>Interview name</span>
+                  <input
+                    maxLength={120}
+                    value={draft.interviewName}
+                    onChange={(event) => setDraft((current) => ({ ...current, interviewName: event.target.value }))}
+                    placeholder="Example: Senior backend interview"
+                  />
+                </label>
+                {draft.questions.map((question, index) => (
+                  <div className="question-edit-row" key={`${bank.sessionId}-${index}`}>
+                    <label>
+                      <span>Question {index + 1}</span>
+                      <textarea
+                        rows="2"
+                        maxLength={2000}
+                        value={question}
+                        onChange={(event) => updateQuestion(index, event.target.value)}
+                      />
+                    </label>
+                    {index > 0 ? (
+                      <button className="button button-ghost button-compact" type="button" onClick={() => mergeWithPrevious(index)}>
+                        Merge with previous
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                <div className="table-actions">
+                  <button className="button button-primary button-compact" type="button" disabled={saving} onClick={() => saveChanges(bank.sessionId)}>
+                    {saving ? "Saving..." : "Save changes"}
+                  </button>
+                  <button className="button button-ghost button-compact" type="button" disabled={saving} onClick={() => setEditingSessionId("")}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="question-bank-heading">
+                  <div>
+                    <p className="story-tag">Interview · {formatDate(bank.interviewEndedAtUtc)}</p>
+                    <h3>{bank.interviewName || "Untitled interview"}</h3>
+                  </div>
+                  <button className="button button-secondary button-compact" type="button" onClick={() => startEditing(bank)}>
+                    Edit interview
+                  </button>
+                </div>
+                <p>{(bank.questions || []).length} grouped question{(bank.questions || []).length === 1 ? "" : "s"}</p>
+                <ol className="question-bank-list">
+                  {(bank.questions || []).map((question, index) => (
+                    <li key={`${bank.sessionId}-${index}`}>{question}</li>
+                  ))}
+                </ol>
+              </>
+            )}
           </article>
         ))
       )}
+
+      {status ? (
+        <article className="glass-panel table-span-full">
+          <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p>
+        </article>
+      ) : null}
 
       <article className="glass-panel table-span-full">
         <PaginationBar

@@ -259,7 +259,7 @@ LIMIT 1;";
         using (var command = connection.CreateCommand())
         {
             command.CommandText = @"
-SELECT session_id, questions_json::text, interview_started_at_utc, interview_ended_at_utc
+SELECT session_id, interview_name, questions_json::text, interview_started_at_utc, interview_ended_at_utc
 FROM dashboard_interview_question_banks
 WHERE user_id = @userId
 ORDER BY interview_ended_at_utc DESC
@@ -274,6 +274,7 @@ LIMIT @pageSize;";
                 items.Add(new
                 {
                     sessionId = reader.GetString(reader.GetOrdinal("session_id")),
+                    interviewName = reader.GetString(reader.GetOrdinal("interview_name")),
                     questions = System.Text.Json.JsonSerializer.Deserialize<string[]>(reader.GetString(reader.GetOrdinal("questions_json")))
                         ?? Array.Empty<string>(),
                     interviewStartedAtUtc = reader.GetDateTime(reader.GetOrdinal("interview_started_at_utc")),

@@ -5,7 +5,8 @@ public static class DashboardSchemaMigrations
     public static IReadOnlyList<SchemaMigration> All { get; } = new[]
     {
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionSchemaSql),
-        new SchemaMigration("002_interview_question_banks", InterviewQuestionBanksSql)
+        new SchemaMigration("002_interview_question_banks", InterviewQuestionBanksSql),
+        new SchemaMigration("003_interview_question_bank_names", InterviewQuestionBankNamesSql)
     };
 
     private const string DashboardProjectionSchemaSql = @"
@@ -100,5 +101,10 @@ CREATE TABLE IF NOT EXISTS dashboard_interview_question_banks (
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
     ON dashboard_interview_question_banks(user_id, interview_ended_at_utc DESC);
+";
+
+    private const string InterviewQuestionBankNamesSql = @"
+ALTER TABLE dashboard_interview_question_banks
+    ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
 ";
 }

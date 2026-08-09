@@ -105,18 +105,20 @@ WHERE job_id = @jobId;";
             command.Transaction = transaction;
             command.CommandText = @"
 INSERT INTO dashboard_interview_question_banks (
-    session_id, user_id, questions_json,
+    session_id, user_id, interview_name, questions_json,
     interview_started_at_utc, interview_ended_at_utc, created_at_utc
 ) VALUES (
-    @sessionId, @userId, @questions,
+    @sessionId, @userId, @interviewName, @questions,
     @interviewStartedAtUtc, @interviewEndedAtUtc, NOW()
 )
 ON CONFLICT (session_id) DO UPDATE SET
+    interview_name = EXCLUDED.interview_name,
     questions_json = EXCLUDED.questions_json,
     interview_started_at_utc = EXCLUDED.interview_started_at_utc,
     interview_ended_at_utc = EXCLUDED.interview_ended_at_utc;";
             command.Parameters.AddWithValue("sessionId", job.SessionId);
             command.Parameters.AddWithValue("userId", job.UserId);
+            command.Parameters.AddWithValue("interviewName", job.InterviewName);
             command.Parameters.AddWithValue("questions", NpgsqlDbType.Jsonb, questionsJson);
             command.Parameters.AddWithValue("interviewStartedAtUtc", job.InterviewStartedAtUtc);
             command.Parameters.AddWithValue("interviewEndedAtUtc", job.InterviewEndedAtUtc);
@@ -124,6 +126,65 @@ ON CONFLICT (session_id) DO UPDATE SET
         }
 
         transaction.Commit();
+    }
+
+    public InterviewQuestionBankJob? UpdateCompleted(
+        string userId,
+        string sessionId,
+        string interviewName,
+        IReadOnlyList<string> questions)
+    {
+        var questionsJson = JsonSerializer.Serialize(questions);
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        InterviewQuestionBankJob? job;
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = @"
+UPDATE interview_question_bank_jobs
+SET interview_name = @interviewName, questions_json = @questions, updated_at_utc = NOW()
+WHERE session_id = @sessionId AND user_id = @userId AND status = 'completed'
+RETURNING *;";
+            command.Parameters.AddWithValue("sessionId", sessionId);
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("interviewName", interviewName);
+            command.Parameters.AddWithValue("questions", NpgsqlDbType.Jsonb, questionsJson);
+            using var reader = command.ExecuteReader();
+            job = reader.Read() ? Map(reader) : null;
+        }
+
+        if (job == null)
+        {
+            transaction.Rollback();
+            return null;
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = @"
+INSERT INTO dashboard_interview_question_banks (
+    session_id, user_id, interview_name, questions_json,
+    interview_started_at_utc, interview_ended_at_utc, created_at_utc
+) VALUES (
+    @sessionId, @userId, @interviewName, @questions,
+    @interviewStartedAtUtc, @interviewEndedAtUtc, NOW()
+)
+ON CONFLICT (session_id) DO UPDATE SET
+    interview_name = EXCLUDED.interview_name,
+    questions_json = EXCLUDED.questions_json;";
+            command.Parameters.AddWithValue("sessionId", job.SessionId);
+            command.Parameters.AddWithValue("userId", job.UserId);
+            command.Parameters.AddWithValue("interviewName", job.InterviewName);
+            command.Parameters.AddWithValue("questions", NpgsqlDbType.Jsonb, job.QuestionsJson);
+            command.Parameters.AddWithValue("interviewStartedAtUtc", job.InterviewStartedAtUtc);
+            command.Parameters.AddWithValue("interviewEndedAtUtc", job.InterviewEndedAtUtc);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return job;
     }
 
     public void MarkFailed(string jobId, string error)
@@ -145,7 +206,9 @@ WHERE job_id = @jobId;";
             reader.GetString(reader.GetOrdinal("job_id")),
             reader.GetString(reader.GetOrdinal("session_id")),
             reader.GetString(reader.GetOrdinal("user_id")),
+            reader.GetString(reader.GetOrdinal("interview_name")),
             reader.GetString(reader.GetOrdinal("raw_question_inputs_json")),
+            reader.GetString(reader.GetOrdinal("questions_json")),
             reader.GetDateTime(reader.GetOrdinal("interview_started_at_utc")),
             reader.GetDateTime(reader.GetOrdinal("interview_ended_at_utc")));
     }
@@ -155,6 +218,8 @@ public sealed record InterviewQuestionBankJob(
     string JobId,
     string SessionId,
     string UserId,
+    string InterviewName,
     string RawQuestionInputsJson,
+    string QuestionsJson,
     DateTime InterviewStartedAtUtc,
     DateTime InterviewEndedAtUtc);

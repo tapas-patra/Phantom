@@ -849,6 +849,17 @@ app.MapPost("/api/desktop/support/tickets", (
     return Results.Ok(supportTickets.CreateTicket(account, request));
 }).RequireRateLimiting("desktop-api");
 
+app.MapPut("/api/desktop/interview-question-banks/{sessionId}", (
+    HttpContext httpContext,
+    string sessionId,
+    InterviewQuestionBankUpdateRequestDto request,
+    DesktopSessionService desktopSessions,
+    InterviewQuestionBankService questionBanks) =>
+{
+    var account = desktopSessions.RequireAccount(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(questionBanks.Update(account.UserId, sessionId, request));
+}).RequireRateLimiting("desktop-api");
+
 app.MapPost("/api/desktop/kb", (
     HttpContext httpContext,
     HostedKnowledgeBaseCreateRequestDto request,

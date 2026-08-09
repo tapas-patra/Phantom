@@ -428,19 +428,25 @@ ON CONFLICT (user_id) DO UPDATE SET
         command.Transaction = transaction;
         command.CommandText = @"
 INSERT INTO dashboard_interview_question_banks (
-    session_id, user_id, questions_json,
+    session_id, user_id, interview_name, questions_json,
     interview_started_at_utc, interview_ended_at_utc, created_at_utc
 ) VALUES (
-    @sessionId, @userId, @questions,
+    @sessionId, @userId, @interviewName, @questions,
     @interviewStartedAtUtc, @interviewEndedAtUtc, @createdAtUtc
 )
 ON CONFLICT (session_id) DO UPDATE SET
     user_id = EXCLUDED.user_id,
+    interview_name = EXCLUDED.interview_name,
     questions_json = EXCLUDED.questions_json,
     interview_started_at_utc = EXCLUDED.interview_started_at_utc,
     interview_ended_at_utc = EXCLUDED.interview_ended_at_utc;";
         command.Parameters.AddWithValue("sessionId", root.GetProperty("session_id").GetString() ?? string.Empty);
         command.Parameters.AddWithValue("userId", root.GetProperty("user_id").GetString() ?? string.Empty);
+        command.Parameters.AddWithValue(
+            "interviewName",
+            root.TryGetProperty("interview_name", out var interviewName)
+                ? interviewName.GetString() ?? string.Empty
+                : string.Empty);
         command.Parameters.AddWithValue("questions", NpgsqlDbType.Jsonb, root.GetProperty("questions_json").GetRawText());
         command.Parameters.AddWithValue("interviewStartedAtUtc", root.GetProperty("interview_started_at_utc").GetDateTime());
         command.Parameters.AddWithValue("interviewEndedAtUtc", root.GetProperty("interview_ended_at_utc").GetDateTime());

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Windows;
 
@@ -13,6 +14,8 @@ namespace SecureOverlay
         private static DebugLogger? _instance;
         private readonly ObservableCollection<string> _logMessages = new ObservableCollection<string>();
         private readonly int _maxMessages = 1000;
+        private readonly ConcurrentQueue<string> _pendingMessages = new();
+        private volatile bool _uiCollectionEnabled;
 
         public static DebugLogger Instance
         {
@@ -43,18 +46,31 @@ namespace SecureOverlay
 
             var timestampedMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
 
-            // Try to update on UI thread if available
-            if (System.Windows.Application.Current != null)
+            _pendingMessages.Enqueue(timestampedMessage);
+            while (_pendingMessages.Count > _maxMessages && _pendingMessages.TryDequeue(out _))
             {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                {
-                    AddMessageToCollection(timestampedMessage);
-                });
             }
-            else
+
+            if (_uiCollectionEnabled && System.Windows.Application.Current != null)
             {
-                // Before UI is ready, just add directly
-                AddMessageToCollection(timestampedMessage);
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(FlushPending));
+            }
+        }
+
+        public void SetUiCollectionEnabled(bool enabled)
+        {
+            _uiCollectionEnabled = enabled;
+            if (enabled && System.Windows.Application.Current != null)
+            {
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(FlushPending));
+            }
+        }
+
+        private void FlushPending()
+        {
+            while (_pendingMessages.TryDequeue(out var message))
+            {
+                AddMessageToCollection(message);
             }
         }
 

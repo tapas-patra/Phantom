@@ -80,6 +80,7 @@ namespace SecureOverlay.Services
             {
                 var payload = new
                 {
+                    requestId = LiveRequestTrace.Current?.CorrelationId ?? string.Empty,
                     provider = _provider,
                     model = _model,
                     allowPaidSessionExtension = _allowPaidSessionExtension,
@@ -99,6 +100,7 @@ namespace SecureOverlay.Services
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken);
+                LiveRequestTrace.Current?.Mark("provider_headers_received");
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -143,9 +145,17 @@ namespace SecureOverlay.Services
                         try
                         {
                             var chunk = JObject.Parse(data);
+                            var streamError = chunk["error"]?.Value<string>();
+                            if (!string.IsNullOrWhiteSpace(streamError))
+                            {
+                                return fullResponse.Length == 0
+                                    ? $"Error: {streamError}"
+                                    : fullResponse.ToString() + $"\n\n[Stream ended: {streamError}]";
+                            }
                             var delta = chunk["delta"]?.Value<string>();
                             if (!string.IsNullOrWhiteSpace(delta))
                             {
+                                LiveRequestTrace.Current?.Mark("first_upstream_token");
                                 fullResponse.Append(delta);
                                 onChunkReceived?.Invoke(delta);
                             }
@@ -199,6 +209,7 @@ namespace SecureOverlay.Services
         {
             var payload = new
             {
+                requestId = LiveRequestTrace.Current?.CorrelationId ?? string.Empty,
                 provider = _provider,
                 model = _model,
                 allowPaidSessionExtension = _allowPaidSessionExtension,
@@ -218,6 +229,7 @@ namespace SecureOverlay.Services
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
+            LiveRequestTrace.Current?.Mark("provider_headers_received");
 
             if (!response.IsSuccessStatusCode)
             {
@@ -248,9 +260,17 @@ namespace SecureOverlay.Services
                     try
                     {
                         var chunk = JObject.Parse(data);
-                        var delta = chunk["delta"]?.Value<string>();
-                        if (!string.IsNullOrWhiteSpace(delta))
+                        var streamError = chunk["error"]?.Value<string>();
+                        if (!string.IsNullOrWhiteSpace(streamError))
                         {
+                            return fullResponse.Length == 0
+                                ? $"Error: {streamError}"
+                                : fullResponse.ToString() + $"\n\n[Stream ended: {streamError}]";
+                        }
+                        var delta = chunk["delta"]?.Value<string>();
+                    if (!string.IsNullOrWhiteSpace(delta))
+                    {
+                        LiveRequestTrace.Current?.Mark("first_upstream_token");
                             fullResponse.Append(delta);
                             onChunkReceived?.Invoke(delta);
                         }

@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using SecureOverlay.Platform.Windows;
 
 namespace SecureOverlay
@@ -8,6 +10,8 @@ namespace SecureOverlay
     {
         private static readonly string LogFilePath = WindowsAppPaths.RagLogPath;
         private static readonly (bool Enabled, string Source, string Value) Configuration = ReadConfiguration();
+        private static readonly Channel<string> Lines = Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
         private static readonly object Sync = new object();
         private static bool _initialized;
 
@@ -23,11 +27,7 @@ namespace SecureOverlay
             try
             {
                 EnsureInitialized();
-                var timestamped = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
-                lock (Sync)
-                {
-                    File.AppendAllText(LogFilePath, timestamped + Environment.NewLine);
-                }
+                Lines.Writer.TryWrite($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
             }
             catch
             {
@@ -72,7 +72,23 @@ namespace SecureOverlay
                 File.WriteAllText(
                     LogFilePath,
                     $"=== RAG SESSION START: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==={Environment.NewLine}");
+                _ = Task.Run(WriteLoopAsync);
                 _initialized = true;
+            }
+        }
+
+        private static async Task WriteLoopAsync()
+        {
+            try
+            {
+                await using var writer = new StreamWriter(LogFilePath, append: true) { AutoFlush = true };
+                await foreach (var line in Lines.Reader.ReadAllAsync())
+                {
+                    await writer.WriteLineAsync(line);
+                }
+            }
+            catch
+            {
             }
         }
 

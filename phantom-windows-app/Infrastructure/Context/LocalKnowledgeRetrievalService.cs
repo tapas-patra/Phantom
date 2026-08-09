@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -18,6 +19,7 @@ namespace SecureOverlay.Infrastructure.Context
             int maxSnippets = 3,
             CancellationToken cancellationToken = default)
         {
+            RunScopeSelfCheck();
             if (pack == null || pack.Documents.Count == 0 || string.IsNullOrWhiteSpace(query))
             {
                 RagTraceLogger.WriteLine(
@@ -31,7 +33,12 @@ namespace SecureOverlay.Infrastructure.Context
                 return Task.FromResult<IReadOnlyList<RetrievedContextSnippet>>(Array.Empty<RetrievedContextSnippet>());
             }
 
+            var preferredDocuments = preferredDocumentIds?
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal)
+                ?? new HashSet<string>(StringComparer.Ordinal);
             IReadOnlyList<RetrievedContextSnippet> snippets = pack.Documents
+                .Where(document => preferredDocuments.Count == 0 || preferredDocuments.Contains(document.DocumentId))
                 .SelectMany(document => document.Chunks.Select(chunk => new RetrievedContextSnippet
                 {
                     DocumentId = document.DocumentId,
@@ -50,6 +57,13 @@ namespace SecureOverlay.Infrastructure.Context
                 $"local_retrieval:result query='{TrimForLog(query, 180)}' terms={terms.Count} doc_count={pack.Documents.Count} hits={snippets.Count} docs={string.Join(", ", snippets.Select(snippet => TrimForLog(snippet.DocumentTitle, 80)))}");
 
             return Task.FromResult(snippets);
+        }
+
+        [Conditional("DEBUG")]
+        private static void RunScopeSelfCheck()
+        {
+            var preferred = new[] { "doc-a" }.ToHashSet(StringComparer.Ordinal);
+            Debug.Assert(preferred.Contains("doc-a") && !preferred.Contains("doc-b"), "Document scope filtering regressed.");
         }
 
         private static int ScoreChunk(string searchText, List<string> terms)

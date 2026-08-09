@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SecureOverlay.Domain.Entities;
@@ -13,18 +13,19 @@ namespace SecureOverlay.Services
     public class ConversationManager
     {
         private const int RecentFullMessageCount = 10;
-        private const int PlannerRecentMessageCount = 10;
 
         private List<ConversationMessage> _fullConversation = new List<ConversationMessage>();
         private string _systemPrompt = "";
         private string _resumeText = string.Empty;
         private string _resumeSummary = string.Empty;
         private bool _resumeSummarized = false;
+        private Task<bool>? _resumeSummaryTask;
 
         // NEW: Job Description fields
         private string _jobDescriptionText = string.Empty;
         private string _jobDescriptionSummary = string.Empty;
         private bool _jobDescriptionSummarized = false;
+        private Task<bool>? _jobDescriptionSummaryTask;
         private string _structuredKnowledgeContext = string.Empty;
         private string _activeProjectCardId = string.Empty;
         private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
@@ -34,10 +35,8 @@ namespace SecureOverlay.Services
         private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
         private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
         private Task? _interviewContextPackWarmupTask;
-        private DateTime _knowledgeBaseSummaryCachedAtUtc = DateTime.MinValue;
-        private static readonly TimeSpan KnowledgeBaseSummaryCacheTtl = TimeSpan.FromSeconds(30);
+        private string _knowledgeBaseRevision = string.Empty;
         private readonly Dictionary<string, CachedInterviewContextPack> _interviewContextPacks = new(StringComparer.Ordinal);
-        private static readonly TimeSpan InterviewContextPackTtl = TimeSpan.FromMinutes(5);
         private string _stablePromptPrefix = string.Empty;
         private string _stablePromptPrefixKey = string.Empty;
 
@@ -66,6 +65,8 @@ namespace SecureOverlay.Services
             _currentProvider = aiService.GetProviderName();
             _knowledgeRetriever = knowledgeRetriever;
             _knowledgeBaseLoader = knowledgeBaseLoader;
+
+            RunRouterSelfCheck();
 
             _fullConversation.Add(new ConversationMessage
             {
@@ -114,6 +115,7 @@ namespace SecureOverlay.Services
         public void SetResume(string resumeText, string cachedSummary = "")
         {
             _resumeText = resumeText;
+            _resumeSummaryTask = null;
 
             if (!string.IsNullOrWhiteSpace(cachedSummary))
             {
@@ -149,6 +151,7 @@ namespace SecureOverlay.Services
                 // Clear old summary since resume changed
                 _resumeSummary = "";
                 _resumeSummarized = false;
+                _resumeSummaryTask = null;
                 
                 if (!string.IsNullOrWhiteSpace(resumeText))
                 {
@@ -191,9 +194,9 @@ namespace SecureOverlay.Services
 
         public bool HasResume() => !string.IsNullOrWhiteSpace(_resumeText);
 
-        private async Task<bool> SummarizeResumeAsync()
+        private async Task<bool> SummarizeResumeAsync(string sourceText)
         {
-            if (_resumeSummarized || string.IsNullOrWhiteSpace(_resumeText))
+            if (_resumeSummarized || string.IsNullOrWhiteSpace(sourceText))
                 return true;
 
             try
@@ -224,7 +227,7 @@ namespace SecureOverlay.Services
                     new ConversationMessage
                     {
                         Role = "user",
-                        Content = _resumeText
+                        Content = sourceText
                     }
                 };
 
@@ -232,6 +235,11 @@ namespace SecureOverlay.Services
 
                 if (!summary.StartsWith("Error:"))
                 {
+                    if (!string.Equals(_resumeText, sourceText, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
                     _resumeSummary = summary.Trim();
                     _resumeSummarized = true;
                     Log.WriteLine($"✓ Resume summarized ({EstimateTokens(_resumeSummary)} tokens)");
@@ -266,6 +274,7 @@ namespace SecureOverlay.Services
             Log.WriteLine($"  cachedSummary length: {cachedSummary?.Length ?? 0}");
             
             _jobDescriptionText = jdText?? string.Empty;
+            _jobDescriptionSummaryTask = null;
 
             if (!string.IsNullOrWhiteSpace(cachedSummary))
             {
@@ -308,6 +317,7 @@ namespace SecureOverlay.Services
                 // Clear old summary since JD changed
                 _jobDescriptionSummary = "";
                 _jobDescriptionSummarized = false;
+                _jobDescriptionSummaryTask = null;
                 
                 if (!string.IsNullOrWhiteSpace(jdText))
                 {
@@ -352,6 +362,7 @@ namespace SecureOverlay.Services
             _jobDescriptionText = "";
             _jobDescriptionSummary = "";
             _jobDescriptionSummarized = false;
+            _jobDescriptionSummaryTask = null;
             
             UpdateSystemPromptWithContext();
             
@@ -362,9 +373,50 @@ namespace SecureOverlay.Services
 
         public bool HasJobDescription() => !string.IsNullOrWhiteSpace(_jobDescriptionText);
 
-        private async Task<bool> SummarizeJobDescriptionAsync()
+        public async Task PrepareContextAsync(CancellationToken cancellationToken = default)
         {
-            if (_jobDescriptionSummarized || string.IsNullOrWhiteSpace(_jobDescriptionText))
+            if (HasResume() && !_resumeSummarized)
+            {
+                var task = _resumeSummaryTask ??= SummarizeResumeAsync(_resumeText);
+                try
+                {
+                    await task.WaitAsync(cancellationToken);
+                }
+                finally
+                {
+                    if (ReferenceEquals(_resumeSummaryTask, task) && task.IsCompleted)
+                    {
+                        _resumeSummaryTask = null;
+                    }
+                }
+            }
+
+            if (HasJobDescription() && !_jobDescriptionSummarized)
+            {
+                var task = _jobDescriptionSummaryTask ??= SummarizeJobDescriptionAsync(_jobDescriptionText);
+                try
+                {
+                    await task.WaitAsync(cancellationToken);
+                }
+                finally
+                {
+                    if (ReferenceEquals(_jobDescriptionSummaryTask, task) && task.IsCompleted)
+                    {
+                        _jobDescriptionSummaryTask = null;
+                    }
+                }
+            }
+        }
+
+        public async Task WarmLiveContextAsync(CancellationToken cancellationToken = default)
+        {
+            await PrepareContextAsync(cancellationToken);
+            await LoadKnowledgeBaseSummaryAsync(cancellationToken);
+        }
+
+        private async Task<bool> SummarizeJobDescriptionAsync(string sourceText)
+        {
+            if (_jobDescriptionSummarized || string.IsNullOrWhiteSpace(sourceText))
                 return true;
 
             try
@@ -381,7 +433,7 @@ namespace SecureOverlay.Services
                     new ConversationMessage
                     {
                         Role = "user",
-                        Content = _jobDescriptionText
+                        Content = sourceText
                     }
                 };
 
@@ -389,6 +441,11 @@ namespace SecureOverlay.Services
 
                 if (!summary.StartsWith("Error:"))
                 {
+                    if (!string.Equals(_jobDescriptionText, sourceText, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
                     _jobDescriptionSummary = summary.Trim();
                     _jobDescriptionSummarized = true;
                     Log.WriteLine($"✓ JD summarized ({EstimateTokens(_jobDescriptionSummary)} tokens)");
@@ -465,7 +522,9 @@ namespace SecureOverlay.Services
                 {
                     _systemPrompt,
                     _resumeSummary,
-                    _jobDescriptionSummary
+                    _jobDescriptionSummary,
+                    _resumeSummarized ? string.Empty : TruncateMessageStatic(_resumeText, 2000),
+                    _jobDescriptionSummarized ? string.Empty : TruncateMessageStatic(_jobDescriptionText, 1200)
                 });
             if (string.Equals(_stablePromptPrefixKey, stablePromptKey, StringComparison.Ordinal))
             {
@@ -479,11 +538,20 @@ namespace SecureOverlay.Services
             {
                 contextParts.Append($"\n\nUser Profile: {_resumeSummary}");
             }
+            else if (!string.IsNullOrWhiteSpace(_resumeText))
+            {
+                contextParts.Append($"\n\nUser Profile (raw fallback): {TruncateMessageStatic(_resumeText, 2000)}");
+            }
 
             if (!string.IsNullOrWhiteSpace(_jobDescriptionSummary))
             {
                 contextParts.Append("\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n");
                 contextParts.Append(_jobDescriptionSummary);
+            }
+            else if (!string.IsNullOrWhiteSpace(_jobDescriptionText))
+            {
+                contextParts.Append("\n\nInterview Context (raw fallback):\n");
+                contextParts.Append(TruncateMessageStatic(_jobDescriptionText, 1200));
             }
 
             _stablePromptPrefix = contextParts.ToString();
@@ -516,47 +584,22 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            // Summarize resume on first user message
-            if (HasResume() && !_resumeSummarized)
-            {
-                var summarized = await SummarizeResumeAsync();
-                if (!summarized)
-                {
-                    _fullConversation.RemoveAt(_fullConversation.Count - 1);
-                    return ("", "Failed to summarize resume. Please try again.");
-                }
-            }
-            
-            // Summarize JD on first user message
-            if (HasJobDescription() && !_jobDescriptionSummarized)
-            {
-                Log.WriteLine("✓ JD needs summarization - calling SummarizeJobDescriptionAsync()");
-                var summarized = await SummarizeJobDescriptionAsync();
-                if (!summarized)
-                {
-                    _fullConversation.RemoveAt(_fullConversation.Count - 1);
-                    return ("", "Failed to summarize job description. Please try again.");
-                }
-            }
-
             PrimeKnowledgeBaseSummaryLoad(CancellationToken.None);
 
-            // ponytail: cheap local routing handles obvious interview asks; model planner stays for ambiguous turns.
-            var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, CancellationToken.None);
-            await ApplyPlannerDecisionAsync(plannerDecision, userMessage, CancellationToken.None);
+            var route = RouteResponse(userMessage);
+            await ApplyRouteAsync(route, userMessage, CancellationToken.None);
 
-            var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
+            var retrievalMissResponse = BuildRetrievalMissResponse(route);
             if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
             {
                 RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true");
                 return CompleteAssistantResponse(retrievalMissResponse);
             }
 
-            if (plannerDecision.Type == ResponsePlanType.Direct
-                && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
+            if (route.Type == ResponsePlanType.Direct
+                && !string.IsNullOrWhiteSpace(route.DirectAnswer))
             {
-                RagTraceLogger.WriteLine("planner:direct_answer_used=true");
-                return CompleteAssistantResponse(plannerDecision.DirectAnswer);
+                return CompleteAssistantResponse(route.DirectAnswer);
             }
 
             // Build optimized context for API
@@ -564,6 +607,7 @@ namespace SecureOverlay.Services
 
             // Log context info
             var totalTokens = optimizedContext.Sum(m => m.EstimatedTokens);
+            LiveRequestTrace.Current?.SetContext(route.Type.ToString(), route.Type == ResponsePlanType.Retrieve || _retrievedKnowledgeSnippets.Count > 0, totalTokens);
             Log.WriteLine($"Sending {optimizedContext.Count} messages ({totalTokens} tokens) to AI");
 
             // ✅ Send with image support
@@ -609,35 +653,12 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            // Summarize resume on first user message
-            if (HasResume() && !_resumeSummarized)
-            {
-                var summarized = await SummarizeResumeAsync();
-                if (!summarized)
-                {
-                    _fullConversation.RemoveAt(_fullConversation.Count - 1);
-                    return ("", "Failed to summarize resume. Please try again.");
-                }
-            }
-
-            // Summarize JD on first user message
-            if (HasJobDescription() && !_jobDescriptionSummarized)
-            {
-                var summarized = await SummarizeJobDescriptionAsync();
-                if (!summarized)
-                {
-                    _fullConversation.RemoveAt(_fullConversation.Count - 1);
-                    return ("", "Failed to summarize job description. Please try again.");
-                }
-            }
-
             PrimeKnowledgeBaseSummaryLoad(cancellationToken);
 
-            // ponytail: one planner call decides direct vs retrieve; no second router or word gate.
-            var plannerDecision = await PlanResponseAsync(userMessage, imageBase64, cancellationToken);
-            await ApplyPlannerDecisionAsync(plannerDecision, userMessage, cancellationToken);
+            var route = RouteResponse(userMessage);
+            await ApplyRouteAsync(route, userMessage, cancellationToken);
 
-            var retrievalMissResponse = BuildRetrievalMissResponse(plannerDecision);
+            var retrievalMissResponse = BuildRetrievalMissResponse(route);
             if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
             {
                 RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true [streaming]");
@@ -645,18 +666,18 @@ namespace SecureOverlay.Services
                 return CompleteAssistantResponse(retrievalMissResponse);
             }
 
-            if (plannerDecision.Type == ResponsePlanType.Direct
-                && !string.IsNullOrWhiteSpace(plannerDecision.DirectAnswer))
+            if (route.Type == ResponsePlanType.Direct
+                && !string.IsNullOrWhiteSpace(route.DirectAnswer))
             {
-                RagTraceLogger.WriteLine("planner:direct_answer_used=true [streaming]");
-                onChunkReceived?.Invoke(plannerDecision.DirectAnswer);
-                return CompleteAssistantResponse(plannerDecision.DirectAnswer);
+                onChunkReceived?.Invoke(route.DirectAnswer);
+                return CompleteAssistantResponse(route.DirectAnswer);
             }
 
             // Build optimized context for API
             var optimizedContext = BuildOptimizedContext();
 
             var totalTokens = optimizedContext.Sum(m => m.EstimatedTokens);
+            LiveRequestTrace.Current?.SetContext(route.Type.ToString(), route.Type == ResponsePlanType.Retrieve || _retrievedKnowledgeSnippets.Count > 0, totalTokens);
             Log.WriteLine($"Sending {optimizedContext.Count} messages ({totalTokens} tokens) to AI [STREAMING]");
 
             // ✅ Send with cancellation support AND image
@@ -805,147 +826,103 @@ namespace SecureOverlay.Services
             return (fullResponse, "");
         }
 
-        private async Task<ResponsePlan> PlanResponseAsync(
-            string userMessage,
-            string? imageBase64,
-            CancellationToken cancellationToken)
+        private ResponsePlan RouteResponse(string userMessage)
         {
-            if (_knowledgeBaseLoader != null && !HasFreshKnowledgeBaseSummaryCache())
-            {
-                await LoadKnowledgeBaseSummaryAsync(cancellationToken);
-            }
-
-            RagTraceLogger.WriteLine(
-                $"planner:start question='{TrimForLog(userMessage, 240)}' image_attached={imageBase64 != null} prior_turns={Math.Max(0, _fullConversation.Count - 2)} previous_snippets={_retrievedKnowledgeSnippets.Count}");
-            if (TryBuildHeuristicResponsePlan(userMessage, out var heuristicPlan))
-            {
-                RagTraceLogger.WriteLine(
-                    $"planner:heuristic type={heuristicPlan.Type} scope={heuristicPlan.Scope} target='{TrimForLog(heuristicPlan.Target, 120)}' knowledge_query='{TrimForLog(heuristicPlan.KnowledgeQuery, 240)}'");
-                return heuristicPlan;
-            }
-
-            if (!_aiService.IsConfigured())
-            {
-                RagTraceLogger.WriteLine("planner:ai_not_configured fallback=retrieve");
-                return ResponsePlan.Retrieve(userMessage, "ai-not-configured");
-            }
-
-            var plannerMessages = BuildPlannerMessages(userMessage);
-            var plannerResponse = await SendPlannerRequestAsync(plannerMessages, imageBase64, cancellationToken);
-            RagTraceLogger.WriteLine($"planner:raw_response {TrimForLog(plannerResponse, 1200)}");
-            if (plannerResponse.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
-            {
-                Log.WriteLine($"⚠️ Planner failed, falling back to retrieval: {plannerResponse}");
-                RagTraceLogger.WriteLine("planner:error fallback=retrieve");
-                return ResponsePlan.Retrieve(userMessage, "planner-error");
-            }
-
-            if (TryParseResponsePlan(plannerResponse, userMessage, out var plan))
-            {
-                Log.WriteLine(
-                    $"Planner decision: Type={plan.Type}, Confidence={plan.Confidence:0.00}, KnowledgeQuery='{plan.KnowledgeQuery}'");
-                RagTraceLogger.WriteLine(
-                    $"planner:decision type={plan.Type} scope={plan.Scope} confidence={plan.Confidence:0.00} target='{TrimForLog(plan.Target, 120)}' direct_answer='{TrimForLog(plan.DirectAnswer, 240)}' knowledge_query='{TrimForLog(plan.KnowledgeQuery, 240)}'");
-                return plan;
-            }
-
-            Log.WriteLine("⚠️ Planner returned invalid JSON. Falling back to retrieval.");
-            RagTraceLogger.WriteLine("planner:invalid_json fallback=retrieve");
-            return ResponsePlan.Retrieve(userMessage, "planner-parse-fallback");
-        }
-
-        private async Task<string> SendPlannerRequestAsync(
-            List<ConversationMessage> messages,
-            string? imageBase64,
-            CancellationToken cancellationToken)
-        {
-            var builder = new System.Text.StringBuilder();
-            return await _aiService.SendMessageStreamAsync(
-                messages,
-                chunk => builder.Append(chunk),
-                cancellationToken,
-                imageBase64);
-        }
-
-        private List<ConversationMessage> BuildPlannerMessages(string userMessage)
-        {
-            var priorTurns = _fullConversation
-                .Skip(1)
-                .Take(Math.Max(0, _fullConversation.Count - 2))
-                .TakeLast(PlannerRecentMessageCount)
-                .Select(message => $"{message.Role}: {TruncateMessage(message.Content, 280)}")
-                .ToArray();
-            var previousRetrieval = _retrievedKnowledgeSnippets
-                .Take(2)
-                .Select(snippet => $"{snippet.DocumentTitle}: {TruncateMessage(snippet.Text, 180)}")
-                .ToArray();
-
-            var plannerContext = new List<string>
-            {
-                $"Current question: {userMessage}",
-                $"Recent conversation:\n{(priorTurns.Length == 0 ? "(none)" : string.Join("\n", priorTurns))}",
-                $"Previous retrieval context:\n{(previousRetrieval.Length == 0 ? "(none)" : string.Join("\n", previousRetrieval))}",
-                $"Structured KB snapshot:\n{BuildPlannerKnowledgeBaseHint()}"
-            };
-
-            return new List<ConversationMessage>
-            {
-                new ConversationMessage
-                {
-                    Role = "system",
-                    Content = @"You are a routing planner for an interview assistant.
-Return strict JSON only with this shape:
-{""type"":""direct|profile|project|retrieve"",""direct_answer"":""..."",""knowledge_query"":""..."",""scope"":""global|previous_docs|active_project"",""target"":""..."",""confidence"":0.0}
-
-Rules:
-- type=direct when the user can be answered from general knowledge or recent generic conversation.
-- type=profile when the answer should come from the user's background, intro, resume, strengths, skills, current role, or experience summary.
-- type=project when the answer should come from one of the user's projects, including project overview, architecture, tech stack, role, challenges, or impact.
-- type=retrieve when the answer should be grounded in uploaded knowledge-base content that is not primarily the structured profile/project material.
-- In interview context, prompts like ""introduce yourself"", ""tell me about yourself"", ""walk me through your background"", and ""summarize your experience"" are about the USER, so use type=profile.
-- In interview context, prompts like ""tell me about any of your projects"", ""tell me about a recent project"", ""what did you build"", ""explain the architecture of this"", and ""what challenges did you face"" after a project discussion should use type=project.
-- Never answer resume, project, or background questions as the assistant's own identity or invented experience.
-- For broad self-introduction prompts, rewrite knowledge_query to something semantically rich like ""candidate background summary experience skills"" instead of copying the raw wording.
-- For broad project prompts, rewrite knowledge_query to something semantically rich like ""recent project architecture technologies impact role"" instead of copying the raw wording.
-- For follow-ups like ""this"", ""that"", ""it"", or ""that project"", rewrite knowledge_query to the specific project/topic from recent conversation.
-- Use scope=""active_project"" only when the request clearly continues the same project already in discussion.
-- Use scope=""previous_docs"" only when the request clearly continues the same retrieved document/topic outside the project route.
-- Use scope=""global"" when the user is switching topics, naming a different project, or asking a fresh question.
-- When a specific project name is clear, put that project name into target.
-- For generic follow-ups like ""give me an example"" after a conceptual question, use type=direct.
-- If type=direct, include a complete direct_answer and leave knowledge_query empty.
-- If type=profile, project, or retrieve, leave direct_answer empty and include a short, specific knowledge_query.
-- If unsure between direct and a grounded route, prefer the grounded route.
-- Do not include markdown fences or extra text."
-                },
-                new ConversationMessage
-                {
-                    Role = "user",
-                    Content = string.Join("\n\n", plannerContext)
-                }
-                };
-        }
-
-        private bool TryBuildHeuristicResponsePlan(string userMessage, out ResponsePlan plan)
-        {
-            plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
             var normalized = NormalizeText(userMessage);
             if (string.IsNullOrWhiteSpace(normalized))
             {
-                return false;
+                return ResponsePlan.Direct(string.Empty, 1d);
             }
 
-            if (TryBuildHeuristicProjectPlan(userMessage, normalized, out plan))
+            if (TryBuildHeuristicProjectPlan(userMessage, normalized, out var plan))
             {
-                return true;
+                return TraceRoute(plan);
+            }
+
+            if (LooksLikeExplicitDocumentQuestion(normalized))
+            {
+                var scope = _lastRetrievedDocumentIds.Count > 0
+                    && ContainsAnyToken(normalized, "that document", "those documents", "these notes", "those notes", "same document")
+                        ? RetrievalScope.PreviousDocuments
+                        : RetrievalScope.Global;
+                return TraceRoute(ResponsePlan.Retrieve(userMessage, "deterministic-document", scope, confidence: 1d));
             }
 
             if (TryBuildHeuristicProfilePlan(userMessage, normalized, out plan))
             {
+                return TraceRoute(plan);
+            }
+
+            return TraceRoute(ResponsePlan.Direct(string.Empty, 1d));
+        }
+
+        [Conditional("DEBUG")]
+        private void RunRouterSelfCheck()
+        {
+            var previousSummary = _knowledgeBaseSummaryCache;
+            var previousActiveProjectId = _activeProjectCardId;
+            var project = new HostedKnowledgeBaseProjectCardDto
+            {
+                ProjectCardId = "router-check-atlas",
+                Title = "Atlas Payments",
+                Slug = "atlas-payments",
+                IsRecent = true,
+                Summary = "Payment routing"
+            };
+            _knowledgeBaseSummaryCache = new HostedKnowledgeBaseSummaryDto
+            {
+                ProjectCards = new[] { project }
+            };
+            _activeProjectCardId = project.ProjectCardId;
+
+            var checks = new[]
+            {
+                ("Explain dependency injection", ResponsePlanType.Direct),
+                ("Tell me about yourself", ResponsePlanType.Profile),
+                ("What are my strengths?", ResponsePlanType.Profile),
+                ("Tell me about my recent project", ResponsePlanType.Project),
+                ("Why did you choose that database?", ResponsePlanType.Project),
+                ("Show the exact deployment details from my notes", ResponsePlanType.Retrieve),
+                ("Give me an example", ResponsePlanType.Direct),
+                ("Tell me about Atlas Payments", ResponsePlanType.Project)
+            };
+
+            foreach (var (question, expected) in checks)
+            {
+                var actual = RouteResponse(question).Type;
+                if (actual != expected)
+                {
+                    throw new InvalidOperationException($"Router self-check failed: expected {expected}, got {actual}.");
+                }
+            }
+
+            var unknownRoute = RouteResponse("Tell me about Orion project");
+            if (unknownRoute.Type != ResponsePlanType.Project
+                || SelectProjectCard(new[] { project }, unknownRoute, "Tell me about Orion project") != null)
+            {
+                throw new InvalidOperationException("Router self-check failed: unknown project selected an unrelated project.");
+            }
+
+            _knowledgeBaseSummaryCache = previousSummary;
+            _activeProjectCardId = previousActiveProjectId;
+        }
+
+        private static bool LooksLikeExplicitDocumentQuestion(string normalizedUserMessage)
+        {
+            if (ContainsAnyToken(normalizedUserMessage, "uploaded document", "uploaded file", "knowledge base", "my notes", "from my notes", "these notes", "those notes"))
+            {
                 return true;
             }
 
-            return false;
+            return ContainsAnyToken(normalizedUserMessage, "exact", "specific", "implementation", "deployment", "line", "detail", "details")
+                && ContainsAnyToken(normalizedUserMessage, "resume", "document", "file", "notes");
+        }
+
+        private static ResponsePlan TraceRoute(ResponsePlan plan)
+        {
+            RagTraceLogger.WriteLine(
+                $"router:decision type={plan.Type} scope={plan.Scope} target='{TrimForLog(plan.Target, 120)}' knowledge_query='{TrimForLog(plan.KnowledgeQuery, 240)}'");
+            return plan;
         }
 
         private bool TryBuildHeuristicProfilePlan(
@@ -983,6 +960,10 @@ Rules:
         {
             plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
             var namedProjectTarget = ExtractLikelyProjectTarget(normalizedUserMessage);
+            if (string.IsNullOrWhiteSpace(namedProjectTarget))
+            {
+                namedProjectTarget = ExtractExplicitProjectTarget(normalizedUserMessage);
+            }
             var namedProjectAsk = !string.IsNullOrWhiteSpace(namedProjectTarget);
             var hasActiveProject = !string.IsNullOrWhiteSpace(_activeProjectCardId);
             var explicitProjectAsk =
@@ -1097,102 +1078,31 @@ Rules:
             return string.Empty;
         }
 
-        private static bool TryParseResponsePlan(string plannerResponse, string userMessage, out ResponsePlan plan)
+        private static string ExtractExplicitProjectTarget(string normalizedUserMessage)
         {
-            plan = ResponsePlan.Retrieve(userMessage, "default");
-            var json = ExtractJsonObject(plannerResponse);
-            if (string.IsNullOrWhiteSpace(json))
+            var match = Regex.Match(normalizedUserMessage, @"\bproject\s+(?:called|named)\s+(?<target>[a-z0-9 ]{2,60})$");
+            if (!match.Success)
             {
-                return false;
+                match = Regex.Match(normalizedUserMessage, @"\babout\s+(?<target>[a-z0-9 ]{2,60}?)\s+project\b");
             }
 
-            try
+            if (!match.Success)
             {
-                using var document = JsonDocument.Parse(json);
-                var root = document.RootElement;
-                var type = root.TryGetProperty("type", out var typeElement)
-                    ? (typeElement.GetString() ?? string.Empty).Trim().ToLowerInvariant()
-                    : string.Empty;
-                var directAnswer = root.TryGetProperty("direct_answer", out var answerElement)
-                    ? (answerElement.GetString() ?? string.Empty).Trim()
-                    : string.Empty;
-                var knowledgeQuery = root.TryGetProperty("knowledge_query", out var queryElement)
-                    ? (queryElement.GetString() ?? string.Empty).Trim()
-                    : string.Empty;
-                if (string.IsNullOrWhiteSpace(knowledgeQuery)
-                    && root.TryGetProperty("rag_query", out var ragQueryElement))
-                {
-                    knowledgeQuery = (ragQueryElement.GetString() ?? string.Empty).Trim();
-                }
-                var scope = root.TryGetProperty("scope", out var scopeElement)
-                    ? (scopeElement.GetString() ?? string.Empty).Trim().ToLowerInvariant()
-                    : string.Empty;
-                var target = root.TryGetProperty("target", out var targetElement)
-                    ? (targetElement.GetString() ?? string.Empty).Trim()
-                    : string.Empty;
-                var confidence = root.TryGetProperty("confidence", out var confidenceElement)
-                    && confidenceElement.ValueKind == JsonValueKind.Number
-                    && confidenceElement.TryGetDouble(out var parsedConfidence)
-                    ? parsedConfidence
-                    : 0d;
-                var retrievalScope = scope switch
-                {
-                    "previous_docs" => RetrievalScope.PreviousDocuments,
-                    "active_project" => RetrievalScope.ActiveProject,
-                    _ => RetrievalScope.Global
-                };
-
-                if (type == "direct")
-                {
-                    plan = ResponsePlan.Direct(directAnswer, confidence);
-                    return true;
-                }
-
-                if (type == "profile")
-                {
-                    plan = ResponsePlan.Profile(
-                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
-                        target,
-                        retrievalScope,
-                        confidence);
-                    return true;
-                }
-
-                if (type == "project")
-                {
-                    plan = ResponsePlan.Project(
-                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
-                        target,
-                        retrievalScope,
-                        confidence);
-                    return true;
-                }
-
-                if (type == "retrieve")
-                {
-                    plan = ResponsePlan.Retrieve(
-                        string.IsNullOrWhiteSpace(knowledgeQuery) ? userMessage : knowledgeQuery,
-                        "planner",
-                        retrievalScope,
-                        target,
-                        confidence);
-                    return true;
-                }
-
-                return false;
+                return string.Empty;
             }
-            catch
-            {
-                return false;
-            }
+
+            var target = match.Groups["target"].Value.Trim();
+            return new[] { "my", "your", "a", "the", "recent", "latest", "current", "my recent", "your recent" }.Contains(target, StringComparer.Ordinal)
+                ? string.Empty
+                : target;
         }
 
-        private async Task ApplyPlannerDecisionAsync(
-            ResponsePlan plannerDecision,
+        private async Task ApplyRouteAsync(
+            ResponsePlan route,
             string userMessage,
             CancellationToken cancellationToken)
         {
-            switch (plannerDecision.Type)
+            switch (route.Type)
             {
                 case ResponsePlanType.Direct:
                     ClearStructuredKnowledgeContext();
@@ -1201,19 +1111,19 @@ Rules:
 
                 case ResponsePlanType.Profile:
                     ClearRetrievedKnowledgeSnippets();
-                    await PrepareProfileGroundingAsync(plannerDecision, userMessage, cancellationToken);
+                    await PrepareProfileGroundingAsync(route, userMessage, cancellationToken);
                     return;
 
                 case ResponsePlanType.Project:
-                    await PrepareProjectGroundingAsync(plannerDecision, userMessage, cancellationToken);
+                    await PrepareProjectGroundingAsync(route, userMessage, cancellationToken);
                     return;
 
                 case ResponsePlanType.Retrieve:
                 default:
                     ClearStructuredKnowledgeContext();
                     await RefreshRetrievedKnowledgeSnippetsAsync(
-                        plannerDecision.KnowledgeQuery,
-                        plannerDecision.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
+                        route.KnowledgeQuery,
+                        route.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
                         cancellationToken);
                     return;
             }
@@ -1266,6 +1176,11 @@ Rules:
             }
 
             var groundedProject = selectedProject!;
+            if (!string.IsNullOrWhiteSpace(_activeProjectCardId)
+                && !string.Equals(_activeProjectCardId, groundedProject.ProjectCardId, StringComparison.Ordinal))
+            {
+                ClearRetrievedKnowledgeSnippets();
+            }
             _activeProjectCardId = groundedProject.ProjectCardId;
             var packKind = DetermineProjectPackKind(plannerDecision, userMessage);
             if (TryApplyInterviewContextPack(BuildProjectPackCacheKey(groundedProject.ProjectCardId, packKind), out var cachedPack))
@@ -1316,8 +1231,7 @@ Rules:
 
         private bool HasFreshKnowledgeBaseSummaryCache()
         {
-            return _knowledgeBaseSummaryCache != null
-                && DateTime.UtcNow - _knowledgeBaseSummaryCachedAtUtc <= KnowledgeBaseSummaryCacheTtl;
+            return _knowledgeBaseSummaryCache != null;
         }
 
         private async Task<HostedKnowledgeBaseSummaryDto?> LoadKnowledgeBaseSummaryAsync(CancellationToken cancellationToken)
@@ -1357,9 +1271,14 @@ Rules:
         {
             try
             {
-                _knowledgeBaseSummaryCache = await _knowledgeBaseLoader!(cancellationToken);
-                _knowledgeBaseSummaryCachedAtUtc = DateTime.UtcNow;
-                _interviewContextPacks.Clear();
+                var summary = await _knowledgeBaseLoader!(cancellationToken);
+                var revision = BuildKnowledgeBaseRevision(summary);
+                if (!string.Equals(_knowledgeBaseRevision, revision, StringComparison.Ordinal))
+                {
+                    _interviewContextPacks.Clear();
+                    _knowledgeBaseRevision = revision;
+                }
+                _knowledgeBaseSummaryCache = summary;
                 RagTraceLogger.WriteLine(
                     $"kb_summary:refresh_success status='{_knowledgeBaseSummaryCache?.Status ?? "(null)"}' projects={_knowledgeBaseSummaryCache?.ProjectCards?.Count ?? 0}");
                 PrimeInterviewContextPackWarmup();
@@ -1407,22 +1326,17 @@ Rules:
                 if (HasProfileGrounding(knowledgeBase.ProfileCard))
                 {
                     await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileGeneral, cancellationToken);
-                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileIntro, cancellationToken);
-                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileStrengths, cancellationToken);
-                    await CacheProfilePackAsync(knowledgeBase.ProfileCard, InterviewPackKind.ProfileRole, cancellationToken);
                 }
 
-                var primaryProject = (knowledgeBase.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
-                    .OrderByDescending(card => card.IsRecent)
+                var projects = knowledgeBase.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>();
+                var primaryProject = projects
+                    .OrderByDescending(card => string.Equals(card.ProjectCardId, _activeProjectCardId, StringComparison.Ordinal))
+                    .ThenByDescending(card => card.IsRecent)
                     .ThenBy(card => card.SortOrder)
                     .FirstOrDefault();
                 if (HasProjectGrounding(primaryProject))
                 {
                     await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectOverview, cancellationToken);
-                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectArchitecture, cancellationToken);
-                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectChallenges, cancellationToken);
-                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectStack, cancellationToken);
-                    await CacheProjectPackAsync(primaryProject!, InterviewPackKind.ProjectImpact, cancellationToken);
                 }
             }
             catch (OperationCanceledException)
@@ -1448,7 +1362,6 @@ Rules:
             await Task.Yield();
             _interviewContextPacks[packKey] = new CachedInterviewContextPack
             {
-                CachedAtUtc = DateTime.UtcNow,
                 StructuredContext = BuildProfileGrounding(profileCard, packKind),
                 Snippets = Array.Empty<RetrievedContextSnippet>()
             };
@@ -1492,7 +1405,6 @@ Rules:
 
             _interviewContextPacks[packKey] = new CachedInterviewContextPack
             {
-                CachedAtUtc = DateTime.UtcNow,
                 StructuredContext = BuildProjectGrounding(projectCard, packKind),
                 Snippets = snippets
             };
@@ -1518,13 +1430,7 @@ Rules:
 
         private bool TryGetCachedInterviewContextPack(string packKey, out CachedInterviewContextPack pack)
         {
-            if (_interviewContextPacks.TryGetValue(packKey, out pack!)
-                && DateTime.UtcNow - pack.CachedAtUtc <= InterviewContextPackTtl)
-            {
-                return true;
-            }
-
-            _interviewContextPacks.Remove(packKey);
+            if (_interviewContextPacks.TryGetValue(packKey, out pack!)) return true;
             pack = new CachedInterviewContextPack();
             return false;
         }
@@ -1537,6 +1443,19 @@ Rules:
             if (projectCards == null || projectCards.Count == 0)
             {
                 return null;
+            }
+
+            var requestedTarget = NormalizeText(plannerDecision.Target);
+            if (!string.IsNullOrWhiteSpace(requestedTarget))
+            {
+                return projectCards.FirstOrDefault(card =>
+                {
+                    var title = NormalizeText(card.Title);
+                    var slug = NormalizeText(card.Slug);
+                    return title.Contains(requestedTarget, StringComparison.Ordinal)
+                        || requestedTarget.Contains(title, StringComparison.Ordinal)
+                        || slug.Contains(requestedTarget, StringComparison.Ordinal);
+                });
             }
 
             if (plannerDecision.Scope == RetrievalScope.ActiveProject
@@ -1797,15 +1716,18 @@ Rules:
             return InterviewPackKind.ProjectOverview;
         }
 
-        private static string BuildProfilePackCacheKey(InterviewPackKind packKind)
+        private string BuildProfilePackCacheKey(InterviewPackKind packKind)
         {
-            return $"profile:{packKind}";
+            return $"{_knowledgeBaseRevision}:profile:{packKind}";
         }
 
-        private static string BuildProjectPackCacheKey(string projectCardId, InterviewPackKind packKind)
+        private string BuildProjectPackCacheKey(string projectCardId, InterviewPackKind packKind)
         {
-            return $"project:{projectCardId}:{packKind}";
+            return $"{_knowledgeBaseRevision}:project:{projectCardId}:{packKind}";
         }
+
+        private static string BuildKnowledgeBaseRevision(HostedKnowledgeBaseSummaryDto? summary)
+            => summary == null ? string.Empty : $"{summary.KnowledgeBaseId}:{summary.LastProcessedAtUtc?.Ticks ?? 0}";
 
         private static string BuildProfileGrounding(
             HostedKnowledgeBaseProfileCardDto profileCard,
@@ -1960,29 +1882,6 @@ Rules:
             UpdateSystemPromptWithContext();
         }
 
-        private static string ExtractJsonObject(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            var fencedMatch = Regex.Match(
-                value,
-                "```(?:json)?\\s*(\\{.*\\})\\s*```",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            if (fencedMatch.Success)
-            {
-                return fencedMatch.Groups[1].Value.Trim();
-            }
-
-            var firstBrace = value.IndexOf('{');
-            var lastBrace = value.LastIndexOf('}');
-            return firstBrace >= 0 && lastBrace > firstBrace
-                ? value.Substring(firstBrace, lastBrace - firstBrace + 1).Trim()
-                : string.Empty;
-        }
-
         private static string FormatDocumentIds(IReadOnlyList<string>? documentIds)
         {
             if (documentIds == null || documentIds.Count == 0)
@@ -2013,46 +1912,35 @@ Rules:
                 : $"Key #{Math.Min(currentKeyIndex + 1, totalKeys)}/{totalKeys}";
         }
 
-        private string BuildPlannerKnowledgeBaseHint()
-        {
-            if (_knowledgeBaseSummaryCache == null)
-            {
-                return "not_loaded";
-            }
-
-            var projectTitles = (_knowledgeBaseSummaryCache.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
-                .Take(5)
-                .Select(card => card.IsRecent ? $"{card.Title} (recent)" : card.Title)
-                .Where(title => !string.IsNullOrWhiteSpace(title))
-                .ToArray();
-            var activeProjectTitle = (_knowledgeBaseSummaryCache.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
-                .FirstOrDefault(card => string.Equals(card.ProjectCardId, _activeProjectCardId, StringComparison.Ordinal))
-                ?.Title;
-
-            return string.Join(
-                "\n",
-                new[]
-                {
-                    $"status={_knowledgeBaseSummaryCache.Status}",
-                    $"profile_available={HasProfileGrounding(_knowledgeBaseSummaryCache.ProfileCard)}",
-                    $"project_count={_knowledgeBaseSummaryCache.ProjectCards?.Count ?? 0}",
-                    $"active_project={(string.IsNullOrWhiteSpace(activeProjectTitle) ? "(none)" : activeProjectTitle)}",
-                    $"project_titles={(projectTitles.Length == 0 ? "(none)" : string.Join(", ", projectTitles))}"
-                });
-        }
-
         private async Task RefreshRetrievedKnowledgeSnippetsAsync(
             string retrievalQuery,
             IReadOnlyList<string>? preferredDocumentIds,
             CancellationToken cancellationToken)
         {
             var previousSnippets = _retrievedKnowledgeSnippets;
-            var canReusePreviousSnippets = preferredDocumentIds != null && preferredDocumentIds.Count > 0;
+            var requestedDocumentIds = preferredDocumentIds?
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal)
+                ?? new HashSet<string>(StringComparer.Ordinal);
+            var previousDocumentIds = previousSnippets
+                .Select(snippet => snippet.DocumentId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal);
+            var canReusePreviousSnippets = requestedDocumentIds.Count > 0
+                && requestedDocumentIds.SetEquals(previousDocumentIds);
             RagTraceLogger.WriteLine(
                 $"retrieval:start query='{TrimForLog(retrievalQuery, 240)}' preferred_docs={FormatDocumentIds(preferredDocumentIds)} previous_snippet_count={previousSnippets.Count}");
+            LiveRequestTrace.Current?.Mark("retrieval_started");
             var retrievedSnippets = _knowledgeRetriever == null
                 ? Array.Empty<RetrievedContextSnippet>()
                 : await _knowledgeRetriever(retrievalQuery, preferredDocumentIds, cancellationToken);
+            LiveRequestTrace.Current?.Mark("retrieval_finished");
+            if (requestedDocumentIds.Count > 0)
+            {
+                retrievedSnippets = retrievedSnippets
+                    .Where(snippet => requestedDocumentIds.Contains(snippet.DocumentId))
+                    .ToArray();
+            }
 
             if (retrievedSnippets.Count > 0)
             {
@@ -2074,6 +1962,7 @@ Rules:
             else
             {
                 _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+                _lastRetrievedDocumentIds = Array.Empty<string>();
                 RagTraceLogger.WriteLine("retrieval:empty preserving_previous_snippets=false");
             }
 
@@ -2082,12 +1971,13 @@ Rules:
 
         private void ClearRetrievedKnowledgeSnippets()
         {
-            if (_retrievedKnowledgeSnippets.Count == 0)
+            if (_retrievedKnowledgeSnippets.Count == 0 && _lastRetrievedDocumentIds.Count == 0)
             {
                 return;
             }
 
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
+            _lastRetrievedDocumentIds = Array.Empty<string>();
             RagTraceLogger.WriteLine("retrieval:clear");
             UpdateSystemPromptWithContext();
         }
@@ -2191,7 +2081,7 @@ Rules:
                     Type = ResponsePlanType.Direct,
                     DirectAnswer = directAnswer ?? string.Empty,
                     Confidence = confidence,
-                    Source = "planner"
+                    Source = "deterministic"
                 };
             }
 
@@ -2200,7 +2090,7 @@ Rules:
                 string target,
                 RetrievalScope scope,
                 double confidence,
-                string source = "planner")
+                string source = "deterministic")
             {
                 return new ResponsePlan
                 {
@@ -2218,7 +2108,7 @@ Rules:
                 string target,
                 RetrievalScope scope,
                 double confidence,
-                string source = "planner")
+                string source = "deterministic")
             {
                 return new ResponsePlan
                 {
@@ -2252,7 +2142,6 @@ Rules:
 
         private sealed class CachedInterviewContextPack
         {
-            public DateTime CachedAtUtc { get; init; }
             public string StructuredContext { get; init; } = string.Empty;
             public IReadOnlyList<RetrievedContextSnippet> Snippets { get; init; } = Array.Empty<RetrievedContextSnippet>();
         }
@@ -2306,6 +2195,7 @@ Rules:
                     currentModel = _rotationManager?.GetCurrentModel(_currentProvider) ?? "";
                     
                     Log.WriteLine($"Using: {FormatKeyUsageForLog(currentKeyIndex, totalKeys)}, Model: {currentModel}");
+                    LiveRequestTrace.Current?.Mark("provider_request_started");
                     
                     var response = await _aiService.SendMessageStreamAsync(context, onChunkReceived, cancellationToken, imageBase64);
 
@@ -2581,6 +2471,7 @@ Rules:
 
         private void ResetStreamingAttempt(Action? onRetryCleanup)
         {
+            LiveRequestTrace.Current?.MarkRetry();
             if (onRetryCleanup == null)
                 return;
 

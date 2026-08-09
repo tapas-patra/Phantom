@@ -77,6 +77,11 @@ namespace SecureOverlay
         private bool _chatSurfaceInitialized;
         private bool _chatCursorBridgeInitialized;
         private bool _chatCursorHidden;
+        private bool _nextRequestIsVoice;
+        private string? _streamMessageId;
+        private int _streamRenderedLength;
+        private bool _streamDeltaInFlight;
+        private LiveRequestTrace? _activeRequestTrace;
 
         private bool _autoSendAfterVoice = false;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
@@ -109,6 +114,7 @@ namespace SecureOverlay
         private TaskViewMonitor _taskViewMonitor; 
         
         private BitmapImage? _attachedScreenshot = null;
+        private string? _attachedScreenshotBase64;
 
         private Window? _currentDropdownMenu = null;
         private readonly AppLaunchContext _launchContext;
@@ -216,7 +222,12 @@ namespace SecureOverlay
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
-            RefreshManagedCatalogCache();
+            _ = RefreshManagedCatalogCacheAsync();
+            _ = Task.Run(() =>
+            {
+                ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
+                SettingsManager.Save(_settings);
+            });
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
@@ -920,7 +931,7 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
-        private void RefreshManagedCatalogCache()
+        private async Task RefreshManagedCatalogCacheAsync()
         {
             try
             {
@@ -930,7 +941,7 @@ namespace SecureOverlay
                     return;
                 }
 
-                var catalog = _hostedAccountClient.GetManagedCatalog(session.AccessToken);
+                var catalog = await _hostedAccountClient.GetManagedCatalogAsync(session.AccessToken);
                 if (catalog != null)
                 {
                     _settings.PremiumConfiguredProviders = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
@@ -1518,6 +1529,8 @@ namespace SecureOverlay
                     Log.WriteLine($"Job description loaded ({_conversationManager.HasJobDescription()})");
                 }
 
+                _ = PrepareAndPersistContextAsync();
+
                 Log.WriteLine("✓ New conversation manager created with rotation support");
             }
 
@@ -1778,6 +1791,14 @@ namespace SecureOverlay
                 }
             }
 
+            using var requestTrace = LiveRequestTrace.Begin(
+                GetCurrentRuntimeProviderId(),
+                _rotationManager?.GetCurrentModel(GetCurrentRuntimeProviderId()) ?? string.Empty,
+                _nextRequestIsVoice,
+                _attachedScreenshot != null);
+            _activeRequestTrace = requestTrace;
+            _nextRequestIsVoice = false;
+
             if (_currentAI == null || !_currentAI.IsConfigured())
             {
                 if (HasByoEntitlement()
@@ -1878,7 +1899,7 @@ namespace SecureOverlay
             string? imageBase64 = null;
             if (_attachedScreenshot != null)
             {
-                imageBase64 = BitmapImageToBase64(_attachedScreenshot);
+                imageBase64 = _attachedScreenshotBase64 ??= await BitmapImageToBase64Async(_attachedScreenshot);
                 if (imageBase64 != null)
                 {
                     Log.WriteLine($"✓ Screenshot encoded for transmission ({imageBase64.Length} chars)");
@@ -1927,8 +1948,11 @@ namespace SecureOverlay
             {
                 _streamBuffer.Clear();
             }
-            _streamingChatMarkdown = $"**{aiName}:**\n\n";
+            _streamingChatMarkdown = null;
             await RefreshChatSurfaceAsync();
+            _streamMessageId = requestTrace.CorrelationId;
+            _streamRenderedLength = 0;
+            await MarkdownHelper.BeginAssistantMessageAsync(ChatWebView, _streamMessageId, aiName);
             
             _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
             {
@@ -1946,24 +1970,23 @@ namespace SecureOverlay
                 {
                     if (_currentRequestCancellation != null && !_currentRequestCancellation.Token.IsCancellationRequested)
                     {
-                        Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                         lock (_streamBuffer)
                         {
+                            if (requestTrace.Mark("first_desktop_chunk"))
+                            {
+                                Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
+                            }
                             _streamBuffer.Append(chunk);
                         }
                     }
                 };
 
-                var (response, error) = await Task.Run(async () =>
-                {
-                    return await _conversationManager.SendMessageStreamAsync(
-                        message, 
-                        onChunk, 
-                        _currentRequestCancellation.Token,
-                        imageBase64,
-                        ResetCurrentStreamingAttempt
-                    );
-                }, _currentRequestCancellation.Token);
+                var (response, error) = await _conversationManager.SendMessageStreamAsync(
+                    message,
+                    onChunk,
+                    _currentRequestCancellation.Token,
+                    imageBase64,
+                    ResetCurrentStreamingAttempt);
                 
                 _streamUpdateTimer?.Stop();
 
@@ -1988,8 +2011,8 @@ namespace SecureOverlay
                     StatusIndicator.Fill = Brushes.Yellow;
 
                     aiName = GetCurrentDisplayProvider();
-                    _streamingChatMarkdown = $"**{aiName}:**\n\n";
-                    await RefreshChatSurfaceAsync();
+                    _streamRenderedLength = 0;
+                    await MarkdownHelper.BeginAssistantMessageAsync(ChatWebView, _streamMessageId!, aiName);
 
                     _streamUpdateTimer = new System.Windows.Threading.DispatcherTimer
                     {
@@ -1998,16 +2021,12 @@ namespace SecureOverlay
                     _streamUpdateTimer.Tick += StreamUpdateTimer_Tick;
                     _streamUpdateTimer.Start();
 
-                    (response, error) = await Task.Run(async () =>
-                    {
-                        return await _conversationManager.SendMessageStreamAsync(
-                            message,
-                            onChunk,
-                            _currentRequestCancellation.Token,
-                            imageBase64,
-                            ResetCurrentStreamingAttempt
-                        );
-                    }, _currentRequestCancellation.Token);
+                    (response, error) = await _conversationManager.SendMessageStreamAsync(
+                        message,
+                        onChunk,
+                        _currentRequestCancellation.Token,
+                        imageBase64,
+                        ResetCurrentStreamingAttempt);
 
                     _streamUpdateTimer?.Stop();
                 }
@@ -2015,8 +2034,10 @@ namespace SecureOverlay
                 var elapsed = (DateTime.Now - startTime).TotalSeconds;
                 if (error == "Cancelled")
                 {
+                    requestTrace.Complete(0, "cancelled");
                     Log.WriteLine("✗ Request was cancelled");
                     _streamingChatMarkdown = null;
+                    _streamMessageId = null;
                     await RefreshChatSurfaceAsync();
                     
                     AddToChat("_[Request cancelled]_", true);
@@ -2026,6 +2047,7 @@ namespace SecureOverlay
                 }
                 else if (!string.IsNullOrEmpty(error))
                 {
+                    requestTrace.Complete(0, "error");
                     Log.WriteLine($"✗ AI Error: {error}");
 
                     var isDesktopAuthFailure =
@@ -2043,6 +2065,7 @@ namespace SecureOverlay
                         UpdateSessionStatus();
                     }
                     _streamingChatMarkdown = null;
+                    _streamMessageId = null;
                     await RefreshChatSurfaceAsync();
                     
                     AddToChat($"❌ **Error:** {error}", true);
@@ -2062,12 +2085,15 @@ namespace SecureOverlay
                 }
                 else
                 {
+                    requestTrace.Complete(response.Length, "success");
                     ResumeInterviewSessionAfterSuccess();
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
-                    await Task.Delay(100);
+                    await FlushStreamingDeltaAsync();
                     _streamingChatMarkdown = null;
-                    _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, $"**{aiName}:**\n\n{response}"));
-                    await RefreshChatSurfaceAsync();
+                    var finalMarkdown = $"**{aiName}:**\n\n{response}";
+                    await MarkdownHelper.FinalizeAssistantMessageAsync(ChatWebView, _streamMessageId!, finalMarkdown);
+                    _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
+                    _streamMessageId = null;
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
                     if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
@@ -2113,10 +2139,12 @@ namespace SecureOverlay
             }
             catch (OperationCanceledException)
             {
+                requestTrace.Complete(0, "cancelled");
                 Log.WriteLine("✗ Request cancelled (exception)");
                 
                 _streamUpdateTimer?.Stop();
                 _streamingChatMarkdown = null;
+                _streamMessageId = null;
                 await RefreshChatSurfaceAsync();
                 
                 StatusText.Text = "⚠️ Cancelled";
@@ -2129,6 +2157,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
+                requestTrace.Complete(0, "error");
                 Log.WriteLine($"✗ Exception: {ex.Message}");
                 
                 _streamUpdateTimer?.Stop();
@@ -2153,6 +2182,7 @@ namespace SecureOverlay
                 _streamUpdateTimer?.Stop();
                 _streamUpdateTimer = null;
                 _streamingChatMarkdown = null;
+                _streamMessageId = null;
                 
                 lock (_streamBuffer)
                 {
@@ -2162,27 +2192,47 @@ namespace SecureOverlay
                 _isProcessingRequest = false;
                 _currentRequestCancellation?.Dispose();
                 _currentRequestCancellation = null;
+                if (ReferenceEquals(_activeRequestTrace, requestTrace))
+                {
+                    _activeRequestTrace = null;
+                }
                 
                 FocusInput();
             }
         }
 
-        private void StreamUpdateTimer_Tick(object? sender, EventArgs e)
+        private async void StreamUpdateTimer_Tick(object? sender, EventArgs e)
         {
-            if (!string.IsNullOrWhiteSpace(_streamingChatMarkdown))
+            await FlushStreamingDeltaAsync();
+        }
+
+        private async Task FlushStreamingDeltaAsync()
+        {
+            if (_streamDeltaInFlight || string.IsNullOrWhiteSpace(_streamMessageId))
             {
-                string currentText;
-                lock (_streamBuffer)
+                return;
+            }
+
+            string delta;
+            lock (_streamBuffer)
+            {
+                if (_streamBuffer.Length <= _streamRenderedLength)
                 {
-                    currentText = _streamBuffer.ToString();
+                    return;
                 }
-                
-                if (currentText.Length > 0)
-                {
-                    var aiName = GetCurrentDisplayProvider();
-                    _streamingChatMarkdown = $"**{aiName}:**\n\n{currentText}";
-                    _ = RefreshChatSurfaceAsync();
-                }
+
+                delta = _streamBuffer.ToString(_streamRenderedLength, _streamBuffer.Length - _streamRenderedLength);
+                _streamRenderedLength = _streamBuffer.Length;
+            }
+
+            _streamDeltaInFlight = true;
+            try
+            {
+                await MarkdownHelper.AppendAssistantDeltaAsync(ChatWebView, _streamMessageId, delta);
+            }
+            finally
+            {
+                _streamDeltaInFlight = false;
             }
         }
 
@@ -2233,7 +2283,22 @@ namespace SecureOverlay
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(message) || !message.StartsWith("CHAT_CURSOR:", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            if (message.StartsWith("CHAT_STREAM_PAINT:", StringComparison.Ordinal))
+            {
+                var requestId = message["CHAT_STREAM_PAINT:".Length..];
+                if (string.Equals(_activeRequestTrace?.CorrelationId, requestId, StringComparison.Ordinal))
+                {
+                    _activeRequestTrace?.Mark("first_ui_paint");
+                }
+                return;
+            }
+
+            if (!message.StartsWith("CHAT_CURSOR:", StringComparison.Ordinal))
             {
                 return;
             }
@@ -2918,7 +2983,7 @@ namespace SecureOverlay
 
             _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(1500)
+                Interval = TimeSpan.FromMilliseconds(350)
             };
 
             _voiceCompletionTimer.Tick += async (s, args) =>
@@ -2939,7 +3004,7 @@ namespace SecureOverlay
                     VoiceStatusText.Text = "Sending...";
                     VoiceStatusText.Foreground = Brushes.LightGreen;
 
-                    await Task.Delay(500);
+                    _nextRequestIsVoice = true;
                     await SendMessage();
 
                     VoiceStatusText.Text = "Ready";
@@ -2983,11 +3048,13 @@ namespace SecureOverlay
             if (DebugPanel.Visibility == Visibility.Visible)
             {
                 DebugPanel.Visibility = Visibility.Collapsed;
+                _debugLogger.SetUiCollectionEnabled(false);
                 Log.WriteLine("✓ Debug panel hidden");
             }
             else
             {
                 DebugPanel.Visibility = Visibility.Visible;
+                _debugLogger.SetUiCollectionEnabled(true);
                 Log.WriteLine("✓ Debug panel shown");
                 
                 Dispatcher.BeginInvoke(new Action(() =>
@@ -3154,7 +3221,7 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
-                RefreshManagedCatalogCache();
+                _ = RefreshManagedCatalogCacheAsync();
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
@@ -3284,6 +3351,7 @@ namespace SecureOverlay
                 _ = RefreshChatSurfaceAsync();
                 UpdateTokenCounter();
                 Log.WriteLine("✓ Active context reapplied and conversation reset");
+                _ = PrepareAndPersistContextAsync();
                 return;
             }
 
@@ -3299,6 +3367,28 @@ namespace SecureOverlay
             }
 
             Log.WriteLine("✓ Resume and job description updated in conversation manager");
+            _ = PrepareAndPersistContextAsync();
+        }
+
+        private async Task PrepareAndPersistContextAsync()
+        {
+            if (_conversationManager == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _conversationManager.WarmLiveContextAsync();
+                var selectedPack = _contextPackService.GetSelectedPack();
+                selectedPack.ResumeSummary = _conversationManager.GetResumeSummary();
+                selectedPack.JobDescriptionSummary = _conversationManager.GetJobDescriptionSummary();
+                _contextPackService.SaveSelectedPack(selectedPack);
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Context preparation will retry later: {ex.Message}");
+            }
         }
 
         private void UpdateLegacyFallbackButtonState()
@@ -4148,6 +4238,7 @@ namespace SecureOverlay
                 if (screenshot != null)
                 {
                     _attachedScreenshot = screenshot;
+                    _attachedScreenshotBase64 = null;
                     Log.WriteLine("✓ Screenshot attached");
                     
                     // Show visual feedback
@@ -4187,6 +4278,7 @@ namespace SecureOverlay
             }
             
             _attachedScreenshot = null;
+            _attachedScreenshotBase64 = null;
             ScreenshotButtonText.Text = "📸";
             ScreenshotButton.Background = new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromArgb(80, 0, 170, 255)
@@ -4238,24 +4330,31 @@ namespace SecureOverlay
         // IMAGE CONVERSION HELPER
         // ═══════════════════════════════════════════════════════════════
 
-        private string? BitmapImageToBase64(BitmapImage? bitmapImage)
+        private static async Task<string?> BitmapImageToBase64Async(BitmapImage? bitmapImage)
         {
             if (bitmapImage == null) return null;
 
             try
             {
-                var encoder = new PngBitmapEncoder();
-                encoder.Frames.Add(BitmapFrame.Create(bitmapImage));
-                
-                using (var memoryStream = new MemoryStream())
+                var source = bitmapImage.Clone();
+                source.Freeze();
+                return await Task.Run(() =>
                 {
+                    BitmapSource encodedSource = source;
+                    var scale = Math.Min(1d, 1600d / Math.Max(source.PixelWidth, source.PixelHeight));
+                    if (scale < 1d)
+                    {
+                        var resized = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+                        resized.Freeze();
+                        encodedSource = resized;
+                    }
+
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(encodedSource));
+                    using var memoryStream = new MemoryStream();
                     encoder.Save(memoryStream);
-                    byte[] imageBytes = memoryStream.ToArray();
-                    string base64 = Convert.ToBase64String(imageBytes);
-                    
-                    Log.WriteLine($"✓ Converted screenshot to base64 ({base64.Length} chars, {imageBytes.Length} bytes)");
-                    return base64;
-                }
+                    return Convert.ToBase64String(memoryStream.ToArray());
+                });
             }
             catch (Exception ex)
             {
@@ -4739,15 +4838,18 @@ namespace SecureOverlay
 
         private void ResetCurrentStreamingAttempt()
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(async () =>
             {
                 lock (_streamBuffer)
                 {
                     _streamBuffer.Clear();
                 }
-                _streamingChatMarkdown = $"**{GetCurrentDisplayProvider()}:**\n\n";
-                _ = RefreshChatSurfaceAsync();
-            });
+                _streamRenderedLength = 0;
+                if (!string.IsNullOrWhiteSpace(_streamMessageId))
+                {
+                    await MarkdownHelper.BeginAssistantMessageAsync(ChatWebView, _streamMessageId, GetCurrentDisplayProvider());
+                }
+            }));
         }
 
 

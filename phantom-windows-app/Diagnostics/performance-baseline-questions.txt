@@ -1,0 +1,82 @@
+# Run every prompt once cold and once warm. Do not put answers or candidate content in timing logs.
+
+[generic-technical]
+Explain dependency injection.
+What is eventual consistency?
+Compare a process and a thread.
+How does a hash table work?
+What is database normalization?
+Explain optimistic locking.
+What makes an API idempotent?
+When would you use a queue?
+Explain TLS at a high level.
+What is a race condition?
+
+[behavioral-profile]
+Tell me about yourself.
+Walk me through your background.
+What are my strengths?
+What is my current role?
+Summarize my experience.
+Why should we hire me?
+What skills should I emphasize?
+Describe my domain experience.
+Give a concise professional introduction for me.
+Which achievement best demonstrates my impact?
+
+[project]
+Tell me about my recent project.
+What problem did my recent project solve?
+What was my role in the project?
+Describe the project architecture.
+Which technologies did the project use?
+What was the project's business impact?
+What challenges did I face on the project?
+How did I measure the project's success?
+What tradeoffs did I make in the project?
+Summarize the project in one minute.
+
+[project-follow-up]
+Why did you choose that database?
+What would you change in that design?
+How did it scale?
+What was the hardest part?
+How did you test it?
+What security controls did it use?
+How did you deploy it?
+What did you personally own?
+What alternatives did you reject?
+What did you learn from it?
+
+[system-design]
+Design a URL shortener.
+Design a notification system.
+Design a rate limiter.
+Design a payment system.
+Design a chat service.
+Design a file storage service.
+Design an audit logging platform.
+Design a job scheduler.
+Design a metrics pipeline.
+Design a ticket booking system.
+
+[coding]
+Write a function that detects a cycle in a linked list.
+Find the first non-repeating character in a string.
+Merge two sorted arrays.
+Implement binary search.
+Explain and code an LRU cache.
+
+[voice]
+Explain dependency injection in thirty seconds.
+Tell me about myself.
+Tell me about my recent project.
+Why did you choose that database?
+Design a rate limiter.
+
+[screenshot]
+Explain the error shown in this screenshot.
+Read the code in this screenshot and find the bug.
+Summarize the diagram in this screenshot.
+What does this dashboard indicate?
+Suggest the next debugging step from this screenshot.

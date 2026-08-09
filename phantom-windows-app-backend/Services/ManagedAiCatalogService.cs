@@ -39,7 +39,6 @@ public sealed class ManagedAiCatalogService
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
     {
-        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
         var configuredProviderIds = _credentials.ListAll()
             .Where(item => item.IsEnabled)
             .Select(item => item.ProviderId)
@@ -108,7 +107,6 @@ public sealed class ManagedAiCatalogService
 
     public ManagedAiRuntimeSelectionDto GetAdminRuntimeSelection()
     {
-        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
         return MapRuntimeSelection(_runtimeSelectionRepository.Get(), ListCatalogProviders());
     }
 
@@ -124,7 +122,6 @@ public sealed class ManagedAiCatalogService
             throw new BackendValidationException("ModelId is required.");
         }
 
-        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
         var providers = ListCatalogProviders();
         var provider = providers.FirstOrDefault(item => string.Equals(item.ProviderId, request.ProviderId, StringComparison.OrdinalIgnoreCase))
             ?? throw new BackendValidationException("Managed provider catalog not found.");
@@ -150,7 +147,6 @@ public sealed class ManagedAiCatalogService
 
     public bool IsAllowedModel(string provider, string model)
     {
-        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
         var record = _catalogRepository.FindByProviderId(provider);
         if (record == null)
         {
@@ -163,7 +159,6 @@ public sealed class ManagedAiCatalogService
 
     public bool ModelSupportsVision(string provider, string model)
     {
-        EnsureCatalogFreshAsync().GetAwaiter().GetResult();
         var record = _catalogRepository.FindByProviderId(provider);
         if (record == null)
         {
@@ -209,11 +204,6 @@ public sealed class ManagedAiCatalogService
             RefreshedAtUtc = DateTime.UtcNow,
             Providers = providers
         };
-    }
-
-    private async Task EnsureCatalogFreshAsync(bool force = false, CancellationToken cancellationToken = default)
-    {
-        await RefreshCatalogAsync(force, cancellationToken);
     }
 
     private async Task<IReadOnlyList<ManagedAiCatalogRefreshProviderResultDto>> RefreshCatalogAsync(

@@ -24,6 +24,7 @@ public sealed class ManagedAiService
     private readonly AccountRepository _accounts;
     private readonly TokenService _tokens;
     private readonly ManagedAiCatalogService _catalogService;
+    private readonly ILogger<ManagedAiService> _logger;
 
     public ManagedAiService(
         ManagedProviderCredentialRepository credentials,
@@ -31,7 +32,8 @@ public sealed class ManagedAiService
         AuthSessionRepository sessions,
         AccountRepository accounts,
         TokenService tokens,
-        ManagedAiCatalogService catalogService)
+        ManagedAiCatalogService catalogService,
+        ILogger<ManagedAiService> logger)
     {
         _credentials = credentials;
         _protector = protector;
@@ -39,6 +41,7 @@ public sealed class ManagedAiService
         _accounts = accounts;
         _tokens = tokens;
         _catalogService = catalogService;
+        _logger = logger;
     }
 
     public ManagedAiCatalogDto GetCatalogForAccount(DesktopAccountRecord account)
@@ -145,6 +148,8 @@ public sealed class ManagedAiService
 
     public async Task StreamChatAsync(HttpResponse response, DesktopAccountRecord account, DesktopAiChatRequestDto request, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        LogTiming(request, "provider_request_started", stopwatch);
         EnsureManagedAccess(account, request.AllowPaidSessionExtension);
 
         if (string.IsNullOrWhiteSpace(request.Provider) || !ManagedAiCatalog.IsAllowedProvider(request.Provider))
@@ -172,7 +177,9 @@ public sealed class ManagedAiService
 
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = "text/event-stream";
-        response.Headers.CacheControl = "no-cache";
+        response.Headers.CacheControl = "no-cache, no-transform";
+        response.Headers["X-Accel-Buffering"] = "no";
+        var streamWriter = new SseDeltaWriter(response, milestone => LogTiming(request, milestone, stopwatch));
 
         Exception? lastError = null;
         foreach (var credential in providerCredentials)
@@ -180,13 +187,20 @@ public sealed class ManagedAiService
             try
             {
                 var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                await StreamProviderAsync(response, request, apiKey, cancellationToken);
+                await StreamProviderAsync(streamWriter, request, apiKey, cancellationToken);
+                await streamWriter.FlushAsync(cancellationToken);
                 await WriteSseDataAsync(response, "[DONE]", cancellationToken);
                 return;
             }
             catch (Exception ex) when (ex is not BackendValidationException && ex is not OperationCanceledException)
             {
                 lastError = ex;
+                if (streamWriter.HasWritten || response.HasStarted)
+                {
+                    await streamWriter.FlushAsync(cancellationToken);
+                    await WriteSseJsonAsync(response, new { error = "The managed provider stream ended unexpectedly." }, cancellationToken);
+                    return;
+                }
             }
         }
 
@@ -194,6 +208,18 @@ public sealed class ManagedAiService
             lastError == null
                 ? "Managed AI request failed."
                 : $"Managed AI request failed: {lastError.Message}");
+    }
+
+    private void LogTiming(DesktopAiChatRequestDto request, string milestone, Stopwatch stopwatch)
+    {
+        _logger.LogInformation(
+            "Managed AI timing requestId={RequestId} milestone={Milestone} elapsedMs={ElapsedMs} provider={Provider} model={Model} image={HasImage}",
+            request.RequestId,
+            milestone,
+            stopwatch.Elapsed.TotalMilliseconds,
+            request.Provider,
+            request.Model,
+            !string.IsNullOrWhiteSpace(request.ImageBase64));
     }
 
     public async Task<AdminManagedAiTestResponseDto> RunAdminTestAsync(
@@ -344,49 +370,55 @@ public sealed class ManagedAiService
         throw lastError ?? new InvalidOperationException("Managed AI request failed.");
     }
 
-    private async Task StreamProviderAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
+    private async Task StreamProviderAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
     {
+        RunOutputBudgetSelfCheck();
+        var outputBudget = GetLiveOutputBudget(request.Messages);
         switch (request.Provider)
         {
             case ManagedAiCatalog.ChatGpt:
                 await StreamOpenAiCompatibleAsync(
-                    downstreamResponse,
+                    streamWriter,
                     "https://api.openai.com/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
                     request.Model,
+                    outputBudget,
                     apiKey,
                     cancellationToken);
                 return;
             case ManagedAiCatalog.Mistral:
                 await StreamOpenAiCompatibleAsync(
-                    downstreamResponse,
+                    streamWriter,
                     "https://api.mistral.ai/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: true),
                     request.Model,
+                    outputBudget,
                     apiKey,
                     cancellationToken);
                 return;
             case ManagedAiCatalog.Groq:
                 await StreamOpenAiCompatibleAsync(
-                    downstreamResponse,
+                    streamWriter,
                     "https://api.groq.com/openai/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
                     request.Model,
+                    outputBudget,
                     apiKey,
                     cancellationToken);
                 return;
             case ManagedAiCatalog.Claude:
-                await StreamClaudeAsync(downstreamResponse, request, apiKey, cancellationToken);
+                await StreamClaudeAsync(streamWriter, request, apiKey, outputBudget, cancellationToken);
                 return;
             case ManagedAiCatalog.Gemini:
-                await StreamGeminiAsync(downstreamResponse, request, apiKey, cancellationToken);
+                await StreamGeminiAsync(streamWriter, request, apiKey, outputBudget, cancellationToken);
                 return;
             case ManagedAiCatalog.Nvidia:
                 await StreamOpenAiCompatibleAsync(
-                    downstreamResponse,
+                    streamWriter,
                     "https://integrate.api.nvidia.com/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
                     request.Model,
+                    outputBudget,
                     apiKey,
                     cancellationToken);
                 return;
@@ -436,10 +468,11 @@ public sealed class ManagedAiService
     }
 
     private async Task StreamOpenAiCompatibleAsync(
-        HttpResponse downstreamResponse,
+        SseDeltaWriter streamWriter,
         string url,
         object[] messages,
         string model,
+        int outputBudget,
         string apiKey,
         CancellationToken cancellationToken)
     {
@@ -447,7 +480,7 @@ public sealed class ManagedAiService
         {
             model,
             messages,
-            max_tokens = 2000,
+            max_tokens = outputBudget,
             stream = true
         });
 
@@ -456,6 +489,7 @@ public sealed class ManagedAiService
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -499,7 +533,7 @@ public sealed class ManagedAiService
                 continue;
             }
 
-            await WriteSseJsonAsync(downstreamResponse, new { delta = deltaText }, cancellationToken);
+            await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
     }
 
@@ -546,7 +580,7 @@ public sealed class ManagedAiService
         return ReadOpenAiContent(content);
     }
 
-    private async Task StreamClaudeAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
+    private async Task StreamClaudeAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, int outputBudget, CancellationToken cancellationToken)
     {
         var systemPrompt = request.Messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
         var filteredMessages = request.Messages
@@ -557,7 +591,7 @@ public sealed class ManagedAiService
         var payload = JsonSerializer.Serialize(new
         {
             model = request.Model,
-            max_tokens = 2000,
+            max_tokens = outputBudget,
             system = systemPrompt,
             messages = apiMessages,
             stream = true
@@ -569,6 +603,7 @@ public sealed class ManagedAiService
         outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -611,7 +646,7 @@ public sealed class ManagedAiService
                 continue;
             }
 
-            await WriteSseJsonAsync(downstreamResponse, new { delta = deltaText }, cancellationToken);
+            await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
     }
 
@@ -665,7 +700,7 @@ public sealed class ManagedAiService
                 .Select(item => item.GetProperty("text").GetString()!.Trim()));
     }
 
-    private async Task StreamGeminiAsync(HttpResponse downstreamResponse, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
+    private async Task StreamGeminiAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, int outputBudget, CancellationToken cancellationToken)
     {
         var contents = BuildGeminiContents(request.Messages, request.ImageBase64);
         var payload = JsonSerializer.Serialize(new
@@ -673,7 +708,7 @@ public sealed class ManagedAiService
             contents,
             generationConfig = new
             {
-                maxOutputTokens = 2000,
+                maxOutputTokens = outputBudget,
                 temperature = 0.7
             }
         });
@@ -683,6 +718,7 @@ public sealed class ManagedAiService
         outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -727,7 +763,7 @@ public sealed class ManagedAiService
                 continue;
             }
 
-            await WriteSseJsonAsync(downstreamResponse, new { delta = deltaText }, cancellationToken);
+            await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
     }
 
@@ -979,6 +1015,31 @@ public sealed class ManagedAiService
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
     }
 
+    private static int GetLiveOutputBudget(IReadOnlyList<DesktopAiChatMessageDto> messages)
+    {
+        var question = messages.LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
+            ?.ToLowerInvariant() ?? string.Empty;
+        if (ContainsAny(question, "expand", "deeper", "in detail", "step by step")) return 1000;
+        if (ContainsAny(question, "write code", "implement", "algorithm", "complexity", "debug this")) return 450;
+        if (ContainsAny(question, "system design", "design a", "architecture", "scalability", "high availability")) return 550;
+        if (ContainsAny(question, "my project", "your project", "project called", "project named")) return 320;
+        if (question.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 12
+            && ContainsAny(question, "why", "how", "what about", "give an example", "clarify")) return 160;
+        return 250;
+    }
+
+    private static bool ContainsAny(string value, params string[] terms)
+        => terms.Any(term => value.Contains(term, StringComparison.Ordinal));
+
+    [Conditional("DEBUG")]
+    private static void RunOutputBudgetSelfCheck()
+    {
+        static DesktopAiChatMessageDto User(string content) => new() { Role = "user", Content = content };
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Why?") }) == 160);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Design a highly available payment system") }) == 550);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Expand in detail") }) == 1000);
+    }
+
     private static async Task WriteSseJsonAsync(HttpResponse response, object payload, CancellationToken cancellationToken)
     {
         await WriteSseDataAsync(response, JsonSerializer.Serialize(payload), cancellationToken);
@@ -988,5 +1049,61 @@ public sealed class ManagedAiService
     {
         await response.WriteAsync($"data: {data}\n\n", cancellationToken);
         await response.Body.FlushAsync(cancellationToken);
+    }
+
+    private sealed class SseDeltaWriter
+    {
+        private static readonly TimeSpan CoalesceWindow = TimeSpan.FromMilliseconds(35);
+        private readonly HttpResponse _response;
+        private readonly Action<string> _mark;
+        private readonly StringBuilder _pending = new();
+        private readonly Stopwatch _sinceFlush = Stopwatch.StartNew();
+        private bool _providerHeadersMarked;
+        private bool _firstTokenMarked;
+
+        public SseDeltaWriter(HttpResponse response, Action<string> mark)
+        {
+            _response = response;
+            _mark = mark;
+        }
+
+        public bool HasWritten { get; private set; }
+
+        public void MarkProviderHeaders()
+        {
+            if (_providerHeadersMarked) return;
+            _providerHeadersMarked = true;
+            _mark("provider_headers_received");
+        }
+
+        public async Task AppendAsync(string delta, CancellationToken cancellationToken)
+        {
+            if (!_firstTokenMarked)
+            {
+                _firstTokenMarked = true;
+                _mark("first_upstream_token");
+                await WriteSseJsonAsync(_response, new { delta }, cancellationToken);
+                HasWritten = true;
+                _mark("first_backend_sse_write");
+                _sinceFlush.Restart();
+                return;
+            }
+
+            _pending.Append(delta);
+            if (_sinceFlush.Elapsed >= CoalesceWindow)
+            {
+                await FlushAsync(cancellationToken);
+            }
+        }
+
+        public async Task FlushAsync(CancellationToken cancellationToken)
+        {
+            if (_pending.Length == 0) return;
+            var delta = _pending.ToString();
+            _pending.Clear();
+            await WriteSseJsonAsync(_response, new { delta }, cancellationToken);
+            HasWritten = true;
+            _sinceFlush.Restart();
+        }
     }
 }

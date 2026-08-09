@@ -177,6 +177,34 @@ namespace SecureOverlay
             await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.render({payloadJson});");
         }
 
+        public static async Task BeginAssistantMessageAsync(WebView2 webView, string id, string label)
+        {
+            await InitializeChatWebViewAsync(webView);
+            if (webView.CoreWebView2 != null)
+            {
+                var payload = JsonSerializer.Serialize(new { id, label });
+                await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.beginAssistantMessage({payload});");
+            }
+        }
+
+        public static async Task AppendAssistantDeltaAsync(WebView2 webView, string id, string delta)
+        {
+            if (webView.CoreWebView2 != null && !string.IsNullOrEmpty(delta))
+            {
+                var payload = JsonSerializer.Serialize(new { id, delta });
+                await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.appendAssistantDelta({payload});");
+            }
+        }
+
+        public static async Task FinalizeAssistantMessageAsync(WebView2 webView, string id, string markdown)
+        {
+            if (webView.CoreWebView2 != null)
+            {
+                var payload = JsonSerializer.Serialize(new { id, html = RenderMarkdownToHtml(markdown) });
+                await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.finalizeAssistantMessage({payload});");
+            }
+        }
+
         public static async Task SetChatCursorHiddenAsync(WebView2 webView, bool hidden)
         {
             await InitializeChatWebViewAsync(webView);
@@ -399,6 +427,9 @@ namespace SecureOverlay
     .message.assistant {
       color: var(--text);
     }
+    .stream-text {
+      white-space: pre-wrap;
+    }
     .message-body > :first-child {
       margin-top: 0;
     }
@@ -590,6 +621,44 @@ namespace SecureOverlay
       render: async function(payload) {
         transcript.innerHTML = payload && payload.html ? payload.html : '';
         await renderMermaidHosts(transcript);
+        requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      },
+      beginAssistantMessage: function(payload) {
+        const existing = document.getElementById(payload.id);
+        if (existing) existing.remove();
+        const article = document.createElement('article');
+        article.id = payload.id;
+        article.className = 'message assistant';
+        const body = document.createElement('div');
+        body.className = 'message-body';
+        const label = document.createElement('strong');
+        label.textContent = `${payload.label}:`;
+        const stream = document.createElement('div');
+        stream.className = 'stream-text';
+        body.append(label, stream);
+        article.append(body);
+        transcript.append(article);
+        requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      },
+      appendAssistantDelta: function(payload) {
+        const article = document.getElementById(payload.id);
+        const stream = article && article.querySelector('.stream-text');
+        if (!stream) return;
+        stream.append(document.createTextNode(payload.delta || ''));
+        requestAnimationFrame(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+          if (!article.dataset.firstPaintReported) {
+            article.dataset.firstPaintReported = 'true';
+            postHostMessage(`CHAT_STREAM_PAINT:${payload.id}`);
+          }
+        });
+      },
+      finalizeAssistantMessage: async function(payload) {
+        const article = document.getElementById(payload.id);
+        const body = article && article.querySelector('.message-body');
+        if (!body) return;
+        body.innerHTML = payload.html || '';
+        await renderMermaidHosts(article);
         requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
       }
     };

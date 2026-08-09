@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Npgsql;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -9,11 +11,17 @@ namespace Phantom.WindowsApp.Backend.Persistence;
 
 public sealed class HostedKnowledgeBaseRepository
 {
+    private static readonly HashSet<string> LexicalStopWords = new(StringComparer.Ordinal)
+    {
+        "about", "and", "did", "does", "for", "from", "has", "have", "how", "into",
+        "that", "the", "this", "used", "using", "was", "were", "what", "when", "where", "who", "why", "with", "your"
+    };
     private readonly PostgresBackendStore _store;
 
     public HostedKnowledgeBaseRepository(PostgresBackendStore store)
     {
         _store = store;
+        RunLexicalQuerySelfCheck();
     }
 
     public HostedKnowledgeBaseRecord? FindByUserId(string userId)
@@ -170,13 +178,13 @@ WITH lexical AS (
         search_text,
         ts_rank_cd(
             to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text),
-            plainto_tsquery('simple', @query)
+            websearch_to_tsquery('simple', @lexicalQuery)
         ) AS lexical_score
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
       AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
-          @@ plainto_tsquery('simple', @query)
+          @@ websearch_to_tsquery('simple', @lexicalQuery)
     ORDER BY lexical_score DESC, document_id ASC, chunk_index ASC
     LIMIT @lexicalLimit
 )
@@ -211,12 +219,12 @@ WITH lexical AS (
         search_text,
         ts_rank_cd(
             to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text),
-            plainto_tsquery('simple', @query)
+            websearch_to_tsquery('simple', @lexicalQuery)
         ) AS lexical_score,
         row_number() OVER (
             ORDER BY ts_rank_cd(
                 to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text),
-                plainto_tsquery('simple', @query)
+                websearch_to_tsquery('simple', @lexicalQuery)
             ) DESC,
             document_id ASC,
             chunk_index ASC
@@ -225,7 +233,7 @@ WITH lexical AS (
     WHERE knowledge_base_id = @knowledgeBaseId
       AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
-          @@ plainto_tsquery('simple', @query)
+          @@ websearch_to_tsquery('simple', @lexicalQuery)
     ORDER BY lexical_score DESC, document_id ASC, chunk_index ASC
     LIMIT @lexicalLimit
 ),
@@ -302,7 +310,9 @@ LIMIT @finalLimit;";
         }
 
         command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
-        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue(
+            "lexicalQuery",
+            BuildLexicalQuery(query));
         command.Parameters.AddWithValue("lexicalLimit", lexicalLimit);
         command.Parameters.AddWithValue("semanticLimit", semanticLimit);
         command.Parameters.AddWithValue("finalLimit", finalLimit);
@@ -341,6 +351,20 @@ LIMIT @finalLimit;";
         }
 
         return items;
+    }
+
+    private static string BuildLexicalQuery(string query)
+        => string.Join(" OR ", Regex.Matches(query.ToLowerInvariant(), "[a-z0-9]+")
+            .Select(match => match.Value)
+            .Where(term => term.Length >= 3 && !LexicalStopWords.Contains(term))
+            .Distinct(StringComparer.Ordinal));
+
+    [Conditional("DEBUG")]
+    private static void RunLexicalQuerySelfCheck()
+    {
+        Debug.Assert(
+            BuildLexicalQuery("Why did you use payment retries?") == "use OR payment OR retries",
+            "Expanded lexical queries must use safe OR terms.");
     }
 
     public void SaveKnowledgeBase(HostedKnowledgeBaseRecord record)

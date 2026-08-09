@@ -13,7 +13,7 @@ namespace SecureOverlay.Infrastructure.Context
     public sealed class HostedKnowledgeRetrievalService : IKnowledgeRetrievalService
     {
         private static readonly TimeSpan HostedKnowledgeRefreshTimeout = TimeSpan.FromMilliseconds(500);
-        private static readonly TimeSpan HostedKnowledgeSearchTimeout = TimeSpan.FromMilliseconds(4000);
+        private static readonly TimeSpan HostedKnowledgeSearchTimeout = TimeSpan.FromMilliseconds(650);
 
         private readonly IKnowledgeRetrievalService _localFallback;
         private readonly IAuthSessionRepository _sessions;
@@ -41,12 +41,11 @@ namespace SecureOverlay.Infrastructure.Context
         {
             // ponytail: planner owns the routing decision; retrieval just executes the rewritten query.
             pack ??= new ContextPack();
-            var scopedHostedRequest = preferredDocumentIds != null && preferredDocumentIds.Count > 0;
             var accountSnapshot = _accounts.Load();
             var session = _sessions.Load();
             var hostedKnowledgeBase = accountSnapshot?.HostedKnowledgeBase;
             RagTraceLogger.WriteLine(
-                $"hosted_retrieval:start query='{TrimForLog(query, 240)}' preferred_docs={FormatDocumentIds(preferredDocumentIds)} kb_present={hostedKnowledgeBase != null} kb_status='{hostedKnowledgeBase?.Status ?? "(none)"}' can_use={hostedKnowledgeBase?.CanUseInInterview ?? false} local_docs={pack?.Documents?.Count ?? 0}");
+                $"hosted_retrieval:start query='{TrimForLog(query, 240)}' preferred_docs={FormatDocumentIds(preferredDocumentIds)} kb_present={hostedKnowledgeBase != null} kb_status='{hostedKnowledgeBase?.Status ?? "(none)"}' can_use={hostedKnowledgeBase?.CanUseInInterview ?? false} local_docs={pack.Documents.Count}");
 
             if (accountSnapshot != null
                 && session != null
@@ -101,12 +100,7 @@ namespace SecureOverlay.Infrastructure.Context
                     cancellationToken);
                 if (result.Snippets == null || result.Snippets.Count == 0)
                 {
-                    RagTraceLogger.WriteLine($"hosted_retrieval:no_hosted_hits fallback_local={!scopedHostedRequest}");
-                    if (scopedHostedRequest)
-                    {
-                        return Array.Empty<RetrievedContextSnippet>();
-                    }
-
+                    RagTraceLogger.WriteLine("hosted_retrieval:no_hosted_hits fallback_local=true");
                     return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
                 }
 
@@ -130,28 +124,14 @@ namespace SecureOverlay.Infrastructure.Context
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                Log.WriteLine(scopedHostedRequest
-                    ? "Hosted KB retrieval hit the live-search deadline for scoped docs."
-                    : "Hosted KB retrieval hit the live-search deadline. Falling back to local context.");
-                RagTraceLogger.WriteLine($"hosted_retrieval:search_timeout fallback_local={!scopedHostedRequest}");
-                if (scopedHostedRequest)
-                {
-                    return Array.Empty<RetrievedContextSnippet>();
-                }
-
+                Log.WriteLine("Hosted KB retrieval hit the live-search deadline. Falling back to local context.");
+                RagTraceLogger.WriteLine("hosted_retrieval:search_timeout fallback_local=true");
                 return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
             }
             catch (HostedServiceException ex)
             {
-                Log.WriteLine(scopedHostedRequest
-                    ? $"Hosted KB scoped retrieval failed: {ex.Message}"
-                    : $"Hosted KB retrieval failed, using local fallback: {ex.Message}");
-                RagTraceLogger.WriteLine($"hosted_retrieval:search_error message='{TrimForLog(ex.Message, 240)}' fallback_local={!scopedHostedRequest}");
-                if (scopedHostedRequest)
-                {
-                    return Array.Empty<RetrievedContextSnippet>();
-                }
-
+                Log.WriteLine($"Hosted KB retrieval failed, using local fallback: {ex.Message}");
+                RagTraceLogger.WriteLine($"hosted_retrieval:search_error message='{TrimForLog(ex.Message, 240)}' fallback_local=true");
                 return await _localFallback.RetrieveForPromptAsync(pack, query, preferredDocumentIds, maxSnippets, cancellationToken);
             }
         }

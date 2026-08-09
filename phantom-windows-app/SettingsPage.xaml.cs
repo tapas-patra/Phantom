@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -1357,8 +1358,12 @@ namespace SecureOverlay
                     Log.WriteLine($"✓ Debug mode enabled: {_settings.DebugErrorSimulation}");
                 }
                 
-                ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
                 SettingsManager.Save(_settings);
+                _ = Task.Run(() =>
+                {
+                    ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
+                    SettingsManager.Save(_settings);
+                });
 
                 var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
                 if (!IsPremiumAccount() || !selectedHostedPack)

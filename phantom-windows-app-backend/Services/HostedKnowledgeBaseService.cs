@@ -13,6 +13,8 @@ using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
 using Phantom.WindowsApp.Backend.Persistence;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 
 namespace Phantom.WindowsApp.Backend.Services;
 
@@ -799,6 +801,7 @@ public sealed class HostedKnowledgeBaseService
         var activeEmbeddingProfile = $"{profile.ModelId}:{profile.Version}:{profile.Dimensions}";
         var cacheKey = BuildSearchCacheKey(
             knowledgeBase.KnowledgeBaseId,
+            knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
             activeEmbeddingProfile,
             normalizedQuery,
             normalizedPreferredDocumentIds,
@@ -806,8 +809,10 @@ public sealed class HostedKnowledgeBaseService
         if (TryGetCachedSearch(cacheKey, out var cachedSnippets))
         {
             _logger.LogInformation(
-                "Hosted KB search cache hit for knowledgeBaseId={KnowledgeBaseId} queryLength={QueryLength} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
+                "Hosted KB search cache hit for knowledgeBaseId={KnowledgeBaseId} kbRevision={KnowledgeBaseRevision} mode={SearchMode} queryLength={QueryLength} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
                 knowledgeBase.KnowledgeBaseId,
+                knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
+                _embeddingService.IsConfigured ? "hybrid_cache" : "lexical_cache",
                 normalizedQuery.Length,
                 cachedSnippets.Count,
                 stopwatch.ElapsedMilliseconds);
@@ -856,7 +861,7 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
             query: normalizedQuery,
             preferredDocumentIds: normalizedPreferredDocumentIds,
-            restrictToPreferredDocuments: false,
+            restrictToPreferredDocuments: normalizedPreferredDocumentIds.Length > 0,
             queryEmbeddingVector: queryVectorLiteral,
             embeddingModel: profile.ModelId,
             embeddingDimensions: profile.Dimensions,
@@ -864,20 +869,37 @@ public sealed class HostedKnowledgeBaseService
             lexicalLimit: candidateLimit,
             semanticLimit: candidateLimit,
             finalLimit: candidateLimit);
+        foreach (var (candidate, rank) in candidates.Take(5).Select((candidate, index) => (candidate, index + 1)))
+        {
+            _logger.LogDebug(
+                "Hosted KB candidate kbRevision={KnowledgeBaseRevision} rank={Rank} chunkId={ChunkId} documentId={DocumentId} sectionTitle={SectionTitle} lexicalScore={LexicalScore} semanticScore={SemanticScore} fusedScore={FusedScore}.",
+                knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
+                rank,
+                candidate.ChunkId,
+                candidate.DocumentId,
+                candidate.SectionTitle,
+                candidate.LexicalScore,
+                candidate.SemanticSimilarity,
+                candidate.FusedScore);
+        }
         var snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
 
-        _searchCache[cacheKey] = new CachedSearchEntry
+        if (queryVectorLiteral != null || !_embeddingService.IsConfigured)
         {
-            CachedAtUtc = DateTime.UtcNow,
-            Snippets = snippets
-        };
-        TrimSearchCacheIfNeeded();
+            _searchCache[cacheKey] = new CachedSearchEntry
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                Snippets = snippets
+            };
+            TrimSearchCacheIfNeeded();
+        }
 
         _logger.LogInformation(
-            "Hosted KB search completed for knowledgeBaseId={KnowledgeBaseId} queryLength={QueryLength} usedSemantic={UsedSemantic} candidates={CandidateCount} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
+            "Hosted KB search completed for knowledgeBaseId={KnowledgeBaseId} kbRevision={KnowledgeBaseRevision} mode={SearchMode} queryLength={QueryLength} candidates={CandidateCount} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
             knowledgeBase.KnowledgeBaseId,
+            knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
+            queryVectorLiteral != null ? "hybrid" : _embeddingService.IsConfigured ? "degraded_lexical" : "lexical",
             normalizedQuery.Length,
-            !string.IsNullOrWhiteSpace(queryVectorLiteral),
             candidates.Count,
             snippets.Count,
             stopwatch.ElapsedMilliseconds);
@@ -1438,8 +1460,46 @@ public sealed class HostedKnowledgeBaseService
         {
             ".txt" or ".md" or ".json" or ".csv" or ".log" => (await ReadUtf8Async(sourceStream, cancellationToken), extension.TrimStart('.')),
             ".docx" => (await ExtractDocxAsync(sourceStream, cancellationToken), "docx"),
-            _ => throw new BackendValidationException($"'{file.FileName}' uses an unsupported document type. Supported types: txt, md, json, csv, log, docx.")
+            ".pdf" => (ExtractPdf(sourceStream, cancellationToken), "pdf"),
+            _ => throw new BackendValidationException($"'{file.FileName}' uses an unsupported document type. Supported types: txt, md, json, csv, log, docx, pdf.")
         };
+    }
+
+    private static string ExtractPdf(Stream stream, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = PdfDocument.Open(stream);
+            var pages = new List<string>(document.NumberOfPages);
+            foreach (var page in document.GetPages())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var text = ContentOrderTextExtractor.GetText(page).Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    pages.Add($"--- Page {page.Number} ---\n{text}");
+                }
+            }
+
+            if (pages.Count == 0)
+            {
+                throw new BackendValidationException("The PDF contains no extractable text. It may be scanned; OCR is required before upload.");
+            }
+
+            return string.Join("\n\n", pages);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (BackendValidationException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw new BackendValidationException("The PDF could not be read. Verify that it is a valid, unencrypted PDF.");
+        }
     }
 
     private static async Task<string> ReadUtf8Async(Stream stream, CancellationToken cancellationToken)
@@ -1826,6 +1886,7 @@ public sealed class HostedKnowledgeBaseService
 
     private static string BuildSearchCacheKey(
         string knowledgeBaseId,
+        long knowledgeBaseRevision,
         string embeddingProfileKey,
         string normalizedQuery,
         IReadOnlyList<string> preferredDocumentIds,
@@ -1834,7 +1895,7 @@ public sealed class HostedKnowledgeBaseService
         var preferredDocKey = preferredDocumentIds.Count == 0
             ? "-"
             : string.Join(",", preferredDocumentIds);
-        return $"{knowledgeBaseId}:{embeddingProfileKey}:{maxSnippets}:{preferredDocKey}:{normalizedQuery}";
+        return $"{knowledgeBaseId}:{knowledgeBaseRevision}:{embeddingProfileKey}:{maxSnippets}:{preferredDocKey}:{normalizedQuery}";
     }
 
     private bool TryGetCachedSearch(string cacheKey, out IReadOnlyList<HostedKnowledgeBaseSnippetDto> snippets)

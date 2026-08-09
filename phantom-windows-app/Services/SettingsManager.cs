@@ -524,7 +524,6 @@ namespace SecureOverlay.Services
             CleanupDuplicateModels(settings);
             SyncModelListsWithRegistry(settings);
             ProviderModelCatalogCache.BackfillFromLegacySettings(settings);
-            ByoProviderModelCatalogService.RefreshStaleCatalogs(settings);
             ApplyDerivedSettings(settings);
 
             if (persistChanges)

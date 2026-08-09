@@ -1,0 +1,98 @@
+[
+  {
+    "question": "Explain dependency injection.",
+    "expectedRoute": "Direct",
+    "expectedEntityId": null,
+    "expectedSourceDocumentIds": [],
+    "requiredFacts": ["dependencies are supplied rather than constructed internally"],
+    "forbiddenFacts": ["candidate-specific project claims"]
+  },
+  {
+    "question": "Tell me about yourself.",
+    "expectedRoute": "Profile",
+    "expectedEntityId": "fixture-profile",
+    "expectedSourceDocumentIds": ["fixture-resume"],
+    "requiredFacts": ["fixture candidate summary"],
+    "forbiddenFacts": ["unlisted employers"]
+  },
+  {
+    "question": "What are my strongest skills?",
+    "expectedRoute": "Profile",
+    "expectedEntityId": "fixture-profile",
+    "expectedSourceDocumentIds": ["fixture-resume"],
+    "requiredFacts": ["fixture skill"],
+    "forbiddenFacts": ["skills absent from the fixture"]
+  },
+  {
+    "question": "Tell me about my recent Atlas Payments project.",
+    "expectedRoute": "Project",
+    "expectedEntityId": "fixture-project-atlas",
+    "expectedSourceDocumentIds": ["fixture-atlas-design"],
+    "requiredFacts": ["fixture Atlas outcome"],
+    "forbiddenFacts": ["Orion facts"]
+  },
+  {
+    "question": "Why did you choose that database?",
+    "expectedRoute": "Project",
+    "expectedEntityId": "fixture-project-atlas",
+    "expectedSourceDocumentIds": ["fixture-atlas-design"],
+    "requiredFacts": ["fixture Atlas database tradeoff"],
+    "forbiddenFacts": ["Orion database choice"]
+  },
+  {
+    "question": "Show the exact Atlas retry and idempotency implementation from my notes.",
+    "expectedRoute": "Retrieve",
+    "expectedEntityId": "fixture-project-atlas",
+    "expectedSourceDocumentIds": ["fixture-atlas-design"],
+    "requiredFacts": ["fixture idempotency key", "fixture retry policy"],
+    "forbiddenFacts": ["Orion deployment details"]
+  },
+  {
+    "question": "In that same document, what was the timeout?",
+    "expectedRoute": "Retrieve",
+    "expectedEntityId": "fixture-project-atlas",
+    "expectedSourceDocumentIds": ["fixture-atlas-design"],
+    "requiredFacts": ["fixture timeout value"],
+    "forbiddenFacts": ["facts from other documents"]
+  },
+  {
+    "question": "Now tell me about Orion Search.",
+    "expectedRoute": "Project",
+    "expectedEntityId": "fixture-project-orion",
+    "expectedSourceDocumentIds": ["fixture-orion-overview"],
+    "requiredFacts": ["fixture Orion outcome"],
+    "forbiddenFacts": ["Atlas facts"]
+  },
+  {
+    "question": "What exact deployment topology did Orion use?",
+    "expectedRoute": "Project",
+    "expectedEntityId": "fixture-project-orion",
+    "expectedSourceDocumentIds": ["fixture-orion-overview"],
+    "requiredFacts": ["fixture Orion topology"],
+    "forbiddenFacts": ["Atlas topology"]
+  },
+  {
+    "question": "Tell me about a project named Mercury Ledger.",
+    "expectedRoute": "Project",
+    "expectedEntityId": "missing",
+    "expectedSourceDocumentIds": [],
+    "requiredFacts": ["grounded miss"],
+    "forbiddenFacts": ["Atlas facts", "Orion facts"]
+  },
+  {
+    "question": "Show the exact poison-message queue details from my notes.",
+    "expectedRoute": "Retrieve",
+    "expectedEntityId": "fixture-project-orion",
+    "expectedSourceDocumentIds": ["fixture-orion-overview"],
+    "requiredFacts": ["fixture dead-letter queue terminology"],
+    "forbiddenFacts": ["unsupported queue vendor"]
+  },
+  {
+    "question": "What was my production incident count in 2019?",
+    "expectedRoute": "Retrieve",
+    "expectedEntityId": null,
+    "expectedSourceDocumentIds": [],
+    "requiredFacts": ["no answer in knowledge base"],
+    "forbiddenFacts": ["invented incident count"]
+  }
+]

@@ -635,17 +635,16 @@ namespace SecureOverlay
         return;
       }
 
+      const leaveChatSurface = () => {
+        chatCursor.classList.remove('is-present');
+        postHostMessage('CHAT_CURSOR:leave');
+      };
       cursorBridgeBound = true;
       window.addEventListener('pointerenter', () => postHostMessage('CHAT_CURSOR:enter'), true);
-      window.addEventListener('pointerleave', () => {
-        chatCursor.classList.remove('is-present');
-        postHostMessage('CHAT_CURSOR:leave');
-      }, true);
+      window.addEventListener('pointerleave', leaveChatSurface, true);
+      document.addEventListener('mouseleave', leaveChatSurface, true);
       window.addEventListener('pointermove', queueCursorMove, { passive: true });
-      window.addEventListener('blur', () => {
-        chatCursor.classList.remove('is-present');
-        postHostMessage('CHAT_CURSOR:leave');
-      });
+      window.addEventListener('blur', leaveChatSurface);
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
           postHostMessage('CHAT_CURSOR:leave');

@@ -261,6 +261,9 @@ namespace SecureOverlay
 
         public void DeactivateCustomCursor()
         {
+            _embeddedSurfaceCursorActive = false;
+            UpdateCursorVisualState();
+
             if (!_useFakeCursor || _isSuspended)
                 return;
 

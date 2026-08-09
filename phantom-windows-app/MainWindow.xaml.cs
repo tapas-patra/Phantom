@@ -1290,7 +1290,8 @@ namespace SecureOverlay
         {
             if (_isDraggingWindow)
                 return;
-            
+
+            ResetEmbeddedCursorState();
             _cursorManager?.ActivateCustomCursor();
         }
 
@@ -1298,14 +1299,22 @@ namespace SecureOverlay
         {
             if (_isDraggingWindow)
                 return;
-            
+
+            ResetEmbeddedCursorState();
             _cursorManager?.DeactivateCustomCursor();
         }
 
         private void Window_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
+            ResetEmbeddedCursorState();
             var position = e.GetPosition(this);
             _cursorManager?.UpdateCustomCursorPosition(position);
+        }
+
+        private void ResetEmbeddedCursorState()
+        {
+            SetChatCursorHidden(false);
+            _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
         }
 
         // Public methods for settings preview
@@ -4375,6 +4384,8 @@ namespace SecureOverlay
             try
             {
                 // Hide main window during capture
+                ResetEmbeddedCursorState();
+                _cursorManager?.DeactivateCustomCursor();
                 this.Hide();
                 System.Threading.Thread.Sleep(200); // Let window hide
                 

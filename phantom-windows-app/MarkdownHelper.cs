@@ -577,7 +577,7 @@ namespace SecureOverlay
         return;
       }
 
-      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark', suppressErrorRendering: true });
       const hosts = Array.from(root.querySelectorAll('.mermaid-host'));
       for (let i = 0; i < hosts.length; i += 1) {
         const host = hosts[i];
@@ -590,8 +590,11 @@ namespace SecureOverlay
         let rendered = false;
         for (let j = 0; j < candidates.length; j += 1) {
           const candidate = candidates[j];
+          const renderId = `phantom-chat-mermaid-${i}-${j}`;
           try {
-            const { svg } = await window.mermaid.render(`phantom-chat-mermaid-${i}-${j}`, candidate);
+            const parsed = await window.mermaid.parse(candidate, { suppressErrors: true });
+            if (!parsed) continue;
+            const { svg } = await window.mermaid.render(renderId, candidate);
             const probe = document.createElement('div');
             probe.innerHTML = svg;
             const text = (probe.textContent || '').trim();
@@ -603,6 +606,12 @@ namespace SecureOverlay
             rendered = true;
             break;
           } catch {}
+          finally {
+            for (const id of [renderId, `d${renderId}`, `i${renderId}`]) {
+              const artifact = document.getElementById(id);
+              if (artifact && !transcript.contains(artifact)) artifact.remove();
+            }
+          }
         }
 
         if (!rendered) {
@@ -888,11 +897,13 @@ namespace SecureOverlay
         if (!window.mermaid) {
           throw new Error('Mermaid runtime not available');
         }
-        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark', suppressErrorRendering: true });
         for (let i = 0; i < graphCandidates.length; i += 1) {
           const candidate = graphCandidates[i];
           lastCandidate = candidate;
           try {
+            const parsed = await window.mermaid.parse(candidate, { suppressErrors: true });
+            if (!parsed) continue;
             const { svg } = await window.mermaid.render(`phantom-mermaid-diagram-${i}`, candidate);
             target.innerHTML = svg;
             const renderedText = (target.textContent || '').trim();
@@ -1005,11 +1016,13 @@ namespace SecureOverlay
         if (!window.mermaid) {
           throw new Error('Mermaid runtime not available');
         }
-        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark' });
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'dark', suppressErrorRendering: true });
         for (let i = 0; i < graphCandidates.length; i += 1) {
           const candidate = graphCandidates[i];
           lastCandidate = candidate;
           try {
+            const parsed = await window.mermaid.parse(candidate, { suppressErrors: true });
+            if (!parsed) continue;
             const { svg } = await window.mermaid.render(`phantom-mermaid-viewer-${i}`, candidate);
             target.innerHTML = svg;
             const renderedText = (target.textContent || '').trim();

@@ -869,9 +869,16 @@ namespace SecureOverlay.Services
                 IsRecent = true,
                 Summary = "Payment routing"
             };
+            var alternateProject = new HostedKnowledgeBaseProjectCardDto
+            {
+                ProjectCardId = "router-check-orion",
+                Title = "Orion Search",
+                Slug = "orion-search",
+                Summary = "Search platform"
+            };
             _knowledgeBaseSummaryCache = new HostedKnowledgeBaseSummaryDto
             {
-                ProjectCards = new[] { project }
+                ProjectCards = new[] { project, alternateProject }
             };
             _activeProjectCardId = project.ProjectCardId;
 
@@ -884,7 +891,8 @@ namespace SecureOverlay.Services
                 ("Why did you choose that database?", ResponsePlanType.Project),
                 ("Show the exact deployment details from my notes", ResponsePlanType.Retrieve),
                 ("Give me an example", ResponsePlanType.Direct),
-                ("Tell me about Atlas Payments", ResponsePlanType.Project)
+                ("Tell me about Atlas Payments", ResponsePlanType.Project),
+                ("Tell me about any other project you worked on", ResponsePlanType.Project)
             };
 
             foreach (var (question, expected) in checks)
@@ -894,6 +902,15 @@ namespace SecureOverlay.Services
                 {
                     throw new InvalidOperationException($"Router self-check failed: expected {expected}, got {actual}.");
                 }
+            }
+
+            var alternateRoute = RouteResponse("Tell me about any other project you worked on");
+            if (!string.Equals(
+                    SelectProjectCard(new[] { project, alternateProject }, alternateRoute, "Tell me about any other project you worked on")?.ProjectCardId,
+                    alternateProject.ProjectCardId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Router self-check failed: alternate-project request reused the active project.");
             }
 
             var unknownRoute = RouteResponse("Tell me about Orion project");
@@ -959,8 +976,9 @@ namespace SecureOverlay.Services
             out ResponsePlan plan)
         {
             plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
-            var namedProjectTarget = ExtractLikelyProjectTarget(normalizedUserMessage);
-            if (string.IsNullOrWhiteSpace(namedProjectTarget))
+            var alternateProjectAsk = IsAlternateProjectRequest(normalizedUserMessage);
+            var namedProjectTarget = alternateProjectAsk ? string.Empty : ExtractLikelyProjectTarget(normalizedUserMessage);
+            if (!alternateProjectAsk && string.IsNullOrWhiteSpace(namedProjectTarget))
             {
                 namedProjectTarget = ExtractExplicitProjectTarget(normalizedUserMessage);
             }
@@ -1006,8 +1024,25 @@ namespace SecureOverlay.Services
                 scope: scope,
                 confidence: 1d,
                 source: "heuristic-project");
+            if (alternateProjectAsk)
+            {
+                plan = ResponsePlan.Project(
+                    "alternative work project overview architecture technologies impact role",
+                    target: string.Empty,
+                    scope: RetrievalScope.Global,
+                    confidence: 1d,
+                    source: "heuristic-alternate-project");
+            }
             return true;
         }
+
+        private static bool IsAlternateProjectRequest(string normalizedUserMessage)
+            => ContainsAnyToken(
+                normalizedUserMessage,
+                "any other project",
+                "another project",
+                "other project",
+                "different project");
 
         private bool LooksLikeProfileQuestion(string normalizedUserMessage)
         {
@@ -1169,6 +1204,22 @@ namespace SecureOverlay.Services
                 userMessage);
             if (!HasProjectGrounding(selectedProject))
             {
+                if (string.IsNullOrWhiteSpace(plannerDecision.Target))
+                {
+                    _activeProjectCardId = string.Empty;
+                    ClearRetrievedKnowledgeSnippets();
+                    var profile = knowledgeBase?.ProfileCard;
+                    _structuredKnowledgeContext = HasProfileWorkEvidence(profile)
+                        ? BuildProfileProjectFallbackGrounding(profile!)
+                        : BuildGenericProjectFallbackGrounding();
+                    RagTraceLogger.WriteLine(
+                        HasProfileWorkEvidence(profile)
+                            ? "project_grounding:fallback=profile_work"
+                            : "project_grounding:fallback=generic_fresher");
+                    UpdateSystemPromptWithContext();
+                    return;
+                }
+
                 ClearStructuredKnowledgeContext();
                 ClearRetrievedKnowledgeSnippets();
                 RagTraceLogger.WriteLine("project_grounding:missing");
@@ -1445,6 +1496,16 @@ namespace SecureOverlay.Services
                 return null;
             }
 
+            if (string.Equals(plannerDecision.Source, "heuristic-alternate-project", StringComparison.Ordinal))
+            {
+                return projectCards
+                    .Where(card => string.IsNullOrWhiteSpace(_activeProjectCardId)
+                        || !string.Equals(card.ProjectCardId, _activeProjectCardId, StringComparison.Ordinal))
+                    .OrderByDescending(card => card.IsRecent)
+                    .ThenBy(card => card.SortOrder)
+                    .FirstOrDefault();
+            }
+
             var requestedTarget = NormalizeText(plannerDecision.Target);
             if (!string.IsNullOrWhiteSpace(requestedTarget))
             {
@@ -1581,6 +1642,12 @@ namespace SecureOverlay.Services
                 || profileCard.Strengths.Count > 0
                 || profileCard.Domains.Count > 0;
         }
+
+        private static bool HasProfileWorkEvidence(HostedKnowledgeBaseProfileCardDto? profileCard)
+            => profileCard != null
+                && (profileCard.YearsOfExperience > 0
+                    || !string.IsNullOrWhiteSpace(profileCard.CurrentRole)
+                    || !string.IsNullOrWhiteSpace(profileCard.ResumeText));
 
         private static bool HasProjectGrounding(HostedKnowledgeBaseProjectCardDto? projectCard)
         {
@@ -1837,6 +1904,26 @@ namespace SecureOverlay.Services
 
             return string.Join("\n", lines);
         }
+
+        private static string BuildProfileProjectFallbackGrounding(HostedKnowledgeBaseProfileCardDto profileCard)
+        {
+            var lines = new List<string>
+            {
+                "No separate project card is available for this request. Switch away from the previously discussed project and describe a different real work or resume project only if the profile evidence below supports it. Never say the conversation is locked to one project, and never invent missing details."
+            };
+            AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
+            if (profileCard.YearsOfExperience > 0)
+            {
+                lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+            }
+            AppendGroundingList(lines, "Domains", profileCard.Domains);
+            AppendGroundingList(lines, "Skills", profileCard.Skills);
+            AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 1600));
+            return string.Join("\n", lines);
+        }
+
+        private static string BuildGenericProjectFallbackGrounding()
+            => "No grounded candidate project or work-project evidence is available. Give a concise generic fresher project-answer template, clearly label it as an example the candidate must adapt, and do not claim it as real experience.";
 
         private static void AppendGroundingLine(ICollection<string> lines, string label, string? value)
         {

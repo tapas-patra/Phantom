@@ -2859,7 +2859,7 @@ namespace SecureOverlay
                     _voiceCompletionTimer.Stop();
                     _voiceCompletionTimer.Start();
                     
-                    Log.WriteLine("  Timer restarted - waiting 1.5 more seconds");
+                    Log.WriteLine("  Timer restarted - waiting 350 ms for more speech");
                 }
                 else
                 {
@@ -2943,7 +2943,7 @@ namespace SecureOverlay
                 {
                     Log.WriteLine("  Auto-send enabled - starting completion timer");
                     StartVoiceCompletionTimer();
-                    Log.WriteLine("  Started 1.5-second completion timer");
+                    Log.WriteLine("  Started 350 ms completion timer");
                 }
                 else
                 {

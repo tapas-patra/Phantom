@@ -1,11 +1,16 @@
 {
-  "routes": [
+  "rewrites": [
     {
-      "handle": "filesystem"
+      "source": "/api/windows/:path*",
+      "destination": "https://phantom-ai-windows-app-backend.onrender.com/:path*"
     },
     {
-      "src": "/.*",
-      "dest": "/index.html"
+      "source": "/api/dashboard-backend/:path*",
+      "destination": "https://phantom-dashboard-backend.onrender.com/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

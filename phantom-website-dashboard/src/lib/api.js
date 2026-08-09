@@ -1,5 +1,5 @@
-const HOSTED_DASHBOARD_API_BASE = "https://phantom-dashboard-backend.onrender.com";
-const HOSTED_WINDOWS_BACKEND_API_BASE = "https://phantom-ai-windows-app-backend.onrender.com";
+const HOSTED_DASHBOARD_API_BASE = "/api/dashboard-backend";
+const HOSTED_WINDOWS_BACKEND_API_BASE = "/api/windows";
 const DASHBOARD_API_BASE =
   import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
   HOSTED_DASHBOARD_API_BASE;

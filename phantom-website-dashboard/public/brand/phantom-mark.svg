@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Phantom</title>
+  <rect width="64" height="64" rx="18" fill="#315CF5"/>
+  <path d="M16 48V29C16 18.5 22.7 11 32 11s16 7.5 16 18v19l-6-4.8-5 4.8-5-4.8-5 4.8-5-4.8L16 48Z" fill="#fff"/>
+  <path d="M23 29c2.5-2.3 5.4-3.5 9-3.5s6.5 1.2 9 3.5" fill="none" stroke="#315CF5" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="26" cy="34" r="2" fill="#315CF5"/>
+  <circle cx="38" cy="34" r="2" fill="#315CF5"/>
+</svg>

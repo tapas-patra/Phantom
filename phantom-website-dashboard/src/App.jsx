@@ -68,38 +68,6 @@ import {
 const USER_SESSION_STORAGE_KEY = "phantom.website.user-session";
 const ADMIN_SESSION_STORAGE_KEY = "phantom.website.admin-session";
 
-function readStoredSession(storageKey) {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const value = window.localStorage.getItem(storageKey);
-    if (!value) {
-      return null;
-    }
-
-    const session = JSON.parse(value);
-    return session?.isAuthenticated && session?.accessToken && session?.refreshToken ? session : null;
-  } catch {
-    window.localStorage.removeItem(storageKey);
-    return null;
-  }
-}
-
-function writeStoredSession(storageKey, session) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  if (!session?.isAuthenticated || !session?.accessToken || !session?.refreshToken) {
-    window.localStorage.removeItem(storageKey);
-    return;
-  }
-
-  window.localStorage.setItem(storageKey, JSON.stringify(session));
-}
-
 function clearStoredSession(storageKey) {
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(storageKey);
@@ -108,9 +76,10 @@ function clearStoredSession(storageKey) {
 
 const publicNav = [
   { to: "/", label: "Product" },
-  { to: "/pricing", label: "Plans" },
+  { to: "/#workflow", label: "How it works" },
+  { to: "/pricing", label: "Pricing" },
   { to: "/download", label: "Download" },
-  { to: "/privacy", label: "Privacy" }
+  { to: "/#security", label: "Security" }
 ];
 
 const userNav = [
@@ -140,7 +109,7 @@ const plans = [
     summary: "Get a hosted trial lane before you commit to credits or provider setup.",
     bullets: [
       "Phantom-managed AI lane",
-      "2 guided trial sessions, 20 minutes each",
+      "2 hosted trial blocks, 15 minutes each",
       "Phone OTP and email verification required",
       "No provider key setup"
     ],
@@ -179,64 +148,46 @@ const plans = [
   }
 ];
 
-const publicHighlights = [
-  {
-    title: "Built for live pressure",
-    copy:
-      "Phantom is designed for the moments when interviews move fast and you need your thinking, preparation, and AI support to stay within reach."
-  },
-  {
-    title: "Flexible from day one",
-    copy:
-      "Start with managed AI, switch to your own provider stack when you want more control, or move into Premium when you want a more complete setup."
-  },
-  {
-    title: "Preparation that stays close",
-    copy:
-      "Keep role research, company notes, personal stories, and premium knowledge-base context ready without turning your interview into a tab-management exercise."
-  }
-];
-
 const publicFeatureRows = [
-  { label: "Live support", value: "Fast AI help when the conversation shifts" },
-  { label: "Flexible setup", value: "Hosted AI or your own providers" },
-  { label: "Context ready", value: "Prep material close when you need it" },
-  { label: "Windows workspace", value: "Focused app built for live rounds" }
+  { label: "Input", value: "Voice, text, and screenshots" },
+  { label: "Context", value: "Resume, projects, and role research" },
+  { label: "AI lane", value: "Managed models or your own providers" },
+  { label: "Runtime", value: "Focused Windows desktop workspace" }
 ];
 
 const publicJourney = [
   {
-    title: "Prepare with intent",
+    title: "Build your interview context",
     body:
-      "Organize role context, company research, notes, and the stories you want ready before the interview starts."
+      "Organise your resume, project stories, company research, and role notes into one reusable workspace."
   },
   {
-    title: "Launch with confidence",
+    title: "Check readiness before the call",
     body:
-      "Open Phantom and start with the AI setup that fits you, whether that means managed AI or your own provider lane."
+      "Confirm your account, credits, model lane, device, and knowledge status before you enter a live round."
   },
   {
-    title: "Stay sharp in the moment",
+    title: "Respond with relevant context",
     body:
-      "Use the workspace to clarify ideas, shape answers, and recover quickly when the interview gets fast or unpredictable."
+      "Phantom retrieves the material that fits the question and streams a focused response inside the desktop workspace."
   }
 ];
 
 const publicValueProps = [
   {
-    title: "A real interview workspace",
+    title: "Context that follows the conversation",
     detail:
-      "Phantom gives you a dedicated environment for live rounds instead of forcing everything into a browser tab."
+      "Your profile, projects, recent work, and interview notes become useful precisely when the question calls for them."
   },
   {
-    title: "Hosted or BYO AI",
+    title: "A model setup that fits you",
     detail:
-      "You can begin with Phantom-managed AI and move to your own model stack when you want more control over providers and spend."
+      "Begin with Phantom-managed AI, connect supported provider accounts for more control, or use the full Premium workflow."
   },
   {
-    title: "Premium context when it matters",
+    title: "Built around a Windows runtime",
     detail:
-      "Premium workflows can keep deeper context available through a hosted knowledge base so the product feels more prepared with every round."
+      "The website prepares the account and context. The live experience stays in Phantom's focused desktop application."
   }
 ];
 
@@ -372,9 +323,9 @@ const termsSections = [
 export default function App() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
-  const [userSession, setUserSession] = useState(() => readStoredSession(USER_SESSION_STORAGE_KEY));
+  const [userSession, setUserSession] = useState(null);
   const [userSessionReady, setUserSessionReady] = useState(false);
-  const [adminSession, setAdminSession] = useState(() => readStoredSession(ADMIN_SESSION_STORAGE_KEY));
+  const [adminSession, setAdminSession] = useState(null);
   const [adminSessionReady, setAdminSessionReady] = useState(false);
   const [userSessionHydrationEnabled, setUserSessionHydrationEnabled] = useState(true);
   const [adminSessionHydrationEnabled, setAdminSessionHydrationEnabled] = useState(true);
@@ -384,14 +335,28 @@ export default function App() {
   function handleUserAuthenticated(session) {
     setUserSessionHydrationEnabled(true);
     setUserSession(session);
-    writeStoredSession(USER_SESSION_STORAGE_KEY, session);
   }
 
   function handleAdminAuthenticated(session) {
     setAdminSessionHydrationEnabled(true);
     setAdminSession(session);
-    writeStoredSession(ADMIN_SESSION_STORAGE_KEY, session);
   }
+
+  useEffect(() => {
+    clearStoredSession(USER_SESSION_STORAGE_KEY);
+    clearStoredSession(ADMIN_SESSION_STORAGE_KEY);
+  }, []);
+
+  useEffect(() => {
+    if (!location.hash) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "smooth" });
+    });
+  }, [location.pathname, location.hash]);
 
   async function handleUserLogout() {
     userLogoutInFlightRef.current = true;
@@ -671,10 +636,10 @@ function SiteHeader({ surface, userSession, adminSession, onUserLogout, onAdminL
   return (
     <header className="site-header">
       <Link className="brandmark" to="/">
-        <img className="brandmark-mark brandmark-logo" src="/brand/phantom-logo-192.png" alt="Phantom logo" />
+        <img className="brandmark-mark brandmark-logo" src="/brand/phantom-mark.svg" alt="" />
         <span>
           <strong>Phantom</strong>
-          <small>Protected Interview Runtime</small>
+          <small>{surface === "public" ? "Interview intelligence for Windows" : surface === "admin" ? "Operations" : "Workspace"}</small>
         </span>
       </Link>
 
@@ -732,18 +697,36 @@ function PublicFooter() {
   return (
     <footer className="site-footer">
       <div className="footer-grid">
-        <div>
-          <p className="eyebrow">Phantom</p>
+        <div className="footer-brand">
+          <Link className="brandmark" to="/">
+            <img className="brandmark-mark brandmark-logo" src="/brand/phantom-mark.svg" alt="" />
+            <span><strong>Phantom</strong><small>Interview intelligence for Windows</small></span>
+          </Link>
           <p className="footer-copy">
-            A focused interview workspace for people who want to feel more prepared in live rounds.
+            Prepare deeply. Stay present. Bring the right context into every live round.
           </p>
         </div>
-        <div className="footer-links">
-          <Link to="/pricing">Plans</Link>
+        <div className="footer-column">
+          <strong>Product</strong>
+          <Link to="/#workflow">How it works</Link>
+          <Link to="/pricing">Pricing</Link>
           <Link to="/download">Download</Link>
+        </div>
+        <div className="footer-column">
+          <strong>Account</strong>
+          <Link to="/register">Create account</Link>
+          <Link to="/login">Sign in</Link>
+          <Link to="/dashboard/support">Support</Link>
+        </div>
+        <div className="footer-column">
+          <strong>Legal</strong>
           <Link to="/privacy">Privacy Policy</Link>
           <Link to="/terms">Terms of Use</Link>
         </div>
+      </div>
+      <div className="footer-bottom">
+        <span>© {new Date().getFullYear()} Phantom</span>
+        <span>Windows desktop application · AI output requires human judgement</span>
       </div>
     </footer>
   );
@@ -796,121 +779,126 @@ function MarketingPage({ userSession }) {
   };
 
   return (
-    <main className="page">
+    <main className="page marketing-page">
       <Seo
-        title="Phantom | Interview Workspace For Live Rounds"
-        description="Phantom is a focused Windows interview workspace that keeps AI support, preparation, and premium context close when live interviews move fast."
+        title="Phantom | Think clearly when the room gets loud"
+        description="Bring your preparation, project stories, and AI support into one focused Windows interview workspace."
         structuredData={structuredData}
       />
 
-      <section className="hero-grid">
-        <article className="glass-panel hero-panel hero-panel-primary">
-          <p className="eyebrow">Interview workspace for live rounds</p>
-          <h1>
-            Walk into every interview with your preparation and AI support already in place.
-          </h1>
+      <section className="marketing-hero" id="product">
+        <div className="marketing-hero-copy">
+          <p className="eyebrow">A calmer way to show up prepared</p>
+          <h1>Think clearly when the room gets <em>loud.</em></h1>
           <p className="lead-copy">
-            Phantom gives you a focused Windows workspace for high-pressure interviews, so your notes, company
-            context, and AI assistance stay close when you need to think, respond, and adapt quickly.
+            Phantom brings your preparation, project stories, and AI support into one focused Windows workspace—ready when the interview changes direction.
           </p>
           <div className="hero-actions">
             <Link className="button button-primary" to={userSession?.isAuthenticated ? "/dashboard" : "/register"}>
-              {userSession?.isAuthenticated ? "Open Dashboard" : "Start Free Trial"}
+              {userSession?.isAuthenticated ? "Open your workspace" : "Start your free trial"}
             </Link>
-            <Link className="button button-secondary" to="/pricing">
-              See Plans
-            </Link>
+            <a className="button button-secondary" href="#workflow">See how Phantom works</a>
           </div>
-          <div className="signal-strip">
-            <span>Private Windows workspace</span>
+          <div className="hero-meta" aria-label="Product facts">
+            <span>Windows 10/11</span>
             <span>Hosted or BYO AI</span>
-            <span>Premium knowledge base</span>
-            <span>Built for live rounds</span>
+            <span>Voice + screenshots</span>
           </div>
-        </article>
+        </div>
 
-        <article className="glass-panel hero-panel hero-panel-side">
-          <p className="eyebrow">Why people choose Phantom</p>
-          <div className="stack-list">
-            {publicFeatureRows.map((item) => (
-              <InfoRow key={item.label} label={item.label} value={item.value} />
-            ))}
+        <article className="phantom-demo" aria-label="Example of Phantom using interview context">
+          <div className="demo-toolbar"><span>Interview · System design</span><span>18:42</span></div>
+          <div className="demo-transcript">
+            <div><small>Interviewer</small><p>How did you reduce risk during the payment migration?</p></div>
+            <div><small>Your preparation</small><p>Migration notes · rollback plan · impact metrics</p></div>
           </div>
-          <div className="status-band">
-            <span className="status-pill status-pill-good">Start free</span>
-            <span className="status-pill">Use your own stack later</span>
-            <span className="status-pill">Keep context ready</span>
+          <div className="phantom-lens">
+            <div className="lens-header"><strong>Phantom Lens</strong><span>Premium context</span></div>
+            <p>Lead with the zero-downtime result, then explain the shadow-traffic rollout and the rollback window you reduced from hours to minutes.</p>
+            <div className="lens-footer"><span>Resume + Payment migration</span><span>Ready</span></div>
           </div>
         </article>
       </section>
 
-      <section className="triple-grid">
-        {publicHighlights.map((item) => (
-          <article className="glass-panel story-card" key={item.title}>
-            <p className="story-tag">Core principle</p>
-            <h2>{item.title}</h2>
-            <p>{item.copy}</p>
+      <section className="product-ribbon" aria-label="Phantom capabilities">
+        {publicFeatureRows.map((item) => <InfoRow key={item.label} label={item.label} value={item.value} />)}
+      </section>
+
+      <section className="story-intro" id="workflow">
+        <div>
+          <p className="eyebrow">One continuous workflow</p>
+          <h2>From preparation to live support, without the tab chaos.</h2>
+        </div>
+        <p>Phantom is designed around the interview itself. The website organises access and context; the Windows app keeps both close when the conversation starts moving.</p>
+      </section>
+
+      <section className="triple-grid journey-grid">
+        {publicJourney.map((item, index) => <TimelineStep key={item.title} index={`0${index + 1}`} title={item.title} body={item.body} />)}
+      </section>
+
+      <section className="feature-showcase feature-showcase-dark">
+        <div className="feature-copy">
+          <p className="eyebrow">The context layer</p>
+          <h2>Your experience becomes useful at the exact moment a question calls for it.</h2>
+          <p>Premium knowledge spaces turn resumes, project notes, architecture decisions, company research, and recent work into structured interview context.</p>
+          <Link className="text-link" to={userSession?.isAuthenticated ? "/dashboard/knowledge-base" : "/register"}>Build your knowledge space <span>→</span></Link>
+        </div>
+        <div className="context-map" aria-label="Example knowledge context">
+          <div className="context-source"><small>Profile</small><strong>Backend engineer</strong><span>8 years · Fintech</span></div>
+          <div className="context-source"><small>Recent project</small><strong>Payment migration</strong><span>.NET · PostgreSQL · Kafka</span></div>
+          <div className="context-result"><small>Retrieved for this question</small><strong>Zero-downtime migration story</strong><span>Impact, trade-offs, and rollback plan ready</span></div>
+        </div>
+      </section>
+
+      <section className="feature-showcase">
+        <div className="feature-copy">
+          <p className="eyebrow">One workspace, your choice of AI</p>
+          <h2>Start managed. Bring your own stack when you want more control.</h2>
+          <p>Free Trial lets you experience the workflow without configuring a provider. Pro BYO uses supported provider accounts. Premium combines managed models with hosted interview context.</p>
+          <Link className="text-link" to="/pricing">Compare every plan <span>→</span></Link>
+        </div>
+        <div className="lane-list">
+          <div><span>Free</span><strong>Explore Phantom with managed trial access</strong></div>
+          <div><span>Pro BYO</span><strong>Use your own provider keys and model spend</strong></div>
+          <div><span>Premium</span><strong>Managed AI with the complete context workflow</strong></div>
+        </div>
+      </section>
+
+      <section className="trust-section" id="security">
+        <div className="section-heading">
+          <p className="eyebrow">Designed with clear boundaries</p>
+          <h2>Your account, device, usage, and interview context stay deliberately separated.</h2>
+        </div>
+        <div className="comparison-grid">
+          {publicValueProps.map((item) => <MetricDefinition key={item.title} title={item.title} detail={item.detail} />)}
+        </div>
+        <p className="responsible-note">Phantom supports preparation and authorised live assistance. Always follow the rules of the interview, employer, institution, or platform you are using.</p>
+      </section>
+
+      <section className="triple-grid marketing-pricing">
+        {plans.map((plan) => (
+          <article className={`plan-card tone-${plan.tone}`} key={plan.name}>
+            <div className="plan-head"><span>{plan.badge}</span><strong>{plan.price}</strong></div>
+            <h2>{plan.name}</h2><p>{plan.summary}</p>
+            <Link className="text-link" to={plan.to}>{plan.cta} <span>→</span></Link>
           </article>
         ))}
       </section>
 
-      <section className="glass-panel section-panel">
-        <div className="section-heading">
-          <p className="eyebrow">How it fits your workflow</p>
-          <h2>Prepare once. Show up sharper every round.</h2>
-          <p>
-            Phantom works best when it feels like an extension of your preparation, not another thing to manage
-            when the interview is already underway.
-          </p>
-        </div>
-        <div className="timeline-grid">
-          {publicJourney.map((item, index) => (
-            <TimelineStep
-              key={item.title}
-              index={`0${index + 1}`}
-              title={item.title}
-              body={item.body}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="glass-panel comparison-panel">
-        <div className="section-heading">
-          <p className="eyebrow">What makes it feel different</p>
-          <h2>More than a prompt box. More focused than a browser setup.</h2>
-        </div>
-        <div className="comparison-grid">
-          {publicValueProps.map((item) => (
-            <MetricDefinition key={item.title} title={item.title} detail={item.detail} />
-          ))}
-        </div>
-      </section>
-
-      <section className="glass-panel page-intro">
-        <p className="eyebrow">Ready to try it?</p>
-        <h1>Start free, then choose the setup that matches how you want to work.</h1>
-        <p>
-          Begin with the free trial, explore the workflow, and move into the plan that fits how you want to
-          prepare, practice, and show up in live interviews.
-        </p>
+      <section className="closing-cta">
+        <p className="eyebrow">Ready before the call</p>
+        <h2>Bring your best context into the room.</h2>
+        <p>Start with two hosted 15-minute trial blocks. No provider keys required.</p>
         <div className="hero-actions">
-          <Link className="button button-primary" to={userSession?.isAuthenticated ? "/dashboard" : "/register"}>
-            {userSession?.isAuthenticated ? "Open Dashboard" : "Create Free Account"}
-          </Link>
-          <Link className="button button-secondary" to="/pricing">
-            Compare Plans
-          </Link>
-          <Link className="button button-ghost" to="/download">
-            Download Path
-          </Link>
+          <Link className="button button-primary" to={userSession?.isAuthenticated ? "/dashboard" : "/register"}>{userSession?.isAuthenticated ? "Open your workspace" : "Create your free account"}</Link>
+          <Link className="button button-secondary" to="/pricing">View pricing</Link>
         </div>
       </section>
 
-      <section className="glass-panel faq-panel">
+      <section className="faq-panel">
         <div className="section-heading">
-          <p className="eyebrow">FAQ</p>
-          <h2>Questions people ask before they start.</h2>
+          <p className="eyebrow">Common questions</p>
+          <h2>Know what Phantom is—and what happens after you sign up.</h2>
         </div>
         <div className="faq-list">
           {publicFaqs.map((item) => (
@@ -933,11 +921,10 @@ function PricingPage() {
         description="Compare Phantom's Free Trial, Pro BYO, and Premium AI plans for protected desktop interview workflows."
       />
       <section className="glass-panel page-intro">
-        <p className="eyebrow">Pricing architecture</p>
-        <h1>Price the operating model, not just the seat.</h1>
+        <p className="eyebrow">Simple paths into Phantom</p>
+        <h1>Choose who manages the AI—and how much context comes with it.</h1>
         <p>
-          Phantom has to reconcile hosted model cost, provider ownership, premium retrieval, and protected
-          continuation. The pricing surface should reflect those realities directly.
+          Try the workflow free, connect your own supported providers for more control, or use Premium when you want managed models and the complete knowledge experience.
         </p>
       </section>
 
@@ -964,13 +951,13 @@ function PricingPage() {
 
       <section className="glass-panel comparison-panel">
         <div className="section-heading">
-          <p className="eyebrow">Decision guide</p>
-          <h2>Choose the lane that matches who should own the AI spend and setup burden.</h2>
+          <p className="eyebrow">Which plan fits?</p>
+          <h2>The difference is simple: setup, provider ownership, and context depth.</h2>
         </div>
         <div className="comparison-grid">
           <MetricDefinition title="Free Trial" detail="Use when you need product validation before buying credits or adding keys." />
           <MetricDefinition title="Pro BYO" detail="Use when you want Phantom's desktop runtime but your own provider accounts and billing." />
-          <MetricDefinition title="Premium AI" detail="Use when you want managed model lanes, premium context, and less operator setup." />
+          <MetricDefinition title="Premium AI" detail="Use when you want managed models, richer context, and no provider setup." />
         </div>
       </section>
     </main>
@@ -1013,19 +1000,18 @@ function DownloadPage({ userSession }) {
     <main className="page">
       <Seo
         title="Download | Phantom"
-        description="Understand Phantom's Windows desktop installer path, verification requirements, and download eligibility."
+        description="Download Phantom for Windows and check your account's installer eligibility."
       />
       <section className="hero-grid">
         <article className="glass-panel hero-panel hero-panel-primary">
-          <p className="eyebrow">Windows runtime delivery</p>
-          <h1>The interview happens in the desktop runtime, not in the browser.</h1>
+          <p className="eyebrow">Phantom for Windows</p>
+          <h1>Your live workspace belongs on the desktop.</h1>
           <p className="lead-copy">
-            This page exists to explain installer eligibility, verification gates, and what happens after the
-            Windows app launches and checks hosted account state.
+            Prepare on the web, then move into the focused Windows experience for voice, screenshots, context retrieval, and live AI support.
           </p>
           <div className="stats-grid">
-            <MetricCard label="Runtime" value=".NET 8 + WebView2" />
-            <MetricCard label="Gate" value="Hosted account check" />
+            <MetricCard label="System" value="Windows 10/11" />
+            <MetricCard label="Account" value="Verified sign-in" />
             <MetricCard label="Channel" value={entitlement?.releaseChannel || "Account gated"} />
           </div>
           <div className="hero-actions">
@@ -1048,7 +1034,7 @@ function DownloadPage({ userSession }) {
         </article>
 
         <article className="glass-panel hero-panel hero-panel-side">
-          <p className="eyebrow">Current installer state</p>
+          <p className="eyebrow">Your download status</p>
           <div className="stack-list">
             <InfoRow label="Installer" value={entitlement?.installerLabel || "Sign in to resolve"} />
             <InfoRow label="Version" value={entitlement?.installerVersion || "Pending"} />
@@ -1059,13 +1045,13 @@ function DownloadPage({ userSession }) {
 
       <section className="glass-panel section-panel">
         <div className="section-heading">
-          <p className="eyebrow">Flow</p>
-          <h2>What a user needs before the desktop app can proceed.</h2>
+          <p className="eyebrow">Three simple steps</p>
+          <h2>Move from account setup to a ready desktop workspace.</h2>
         </div>
         <div className="timeline-grid">
           <TimelineStep index="01" title="Create account" body="Register on the website and complete phone OTP plus email verification." />
-          <TimelineStep index="02" title="Resolve eligibility" body="Use the dashboard to confirm plan, credits, devices, and download access." />
-          <TimelineStep index="03" title="Launch Phantom" body="The Windows runtime checks hosted state before the live session becomes interactive." />
+          <TimelineStep index="02" title="Check your workspace" body="Confirm your plan, credits, device status, and download access in the dashboard." />
+          <TimelineStep index="03" title="Launch Phantom" body="Sign in on Windows, choose your AI lane, and enter the interview ready." />
         </div>
       </section>
     </main>
@@ -1108,16 +1094,15 @@ function UserLoginPage({ onAuthenticated, userSession }) {
       />
       <section className="auth-shell">
         <article className="glass-panel auth-aside">
-          <p className="eyebrow">User dashboard</p>
-          <h1>Check hosted account state without touching the live runtime.</h1>
+          <p className="eyebrow">Welcome back</p>
+          <h1>Your preparation is still here.</h1>
           <p>
-            Sign in here to see balances, devices, download readiness, purchase history, and hosted
-            knowledge-base status.
+            Sign in to review your knowledge space, credits, devices, downloads, and recent interview questions before returning to the desktop app.
           </p>
           <ul>
-            <li>Browser session uses the same hosted account authority</li>
-            <li>Wallet and device state remain visible outside the desktop app</li>
-            <li>Premium context management stays on the website</li>
+            <li>Keep account and device readiness visible</li>
+            <li>Manage Premium context outside live sessions</li>
+            <li>Review usage and interview question banks</li>
           </ul>
         </article>
 
@@ -1141,7 +1126,7 @@ function UserLoginPage({ onAuthenticated, userSession }) {
             />
           </label>
           <button className="button button-primary" type="submit" disabled={submitting}>
-            {submitting ? "Signing in..." : "Open User Dashboard"}
+            {submitting ? "Signing in..." : "Sign in to Phantom"}
           </button>
           {status ? <p className="status-message status-error">{status}</p> : null}
           <div className="link-row">
@@ -1277,16 +1262,15 @@ function RegisterPage() {
       />
       <section className="auth-shell">
         <article className="glass-panel auth-aside">
-          <p className="eyebrow">Account setup</p>
-          <h1>Register on the web, then return to the Windows runtime.</h1>
+          <p className="eyebrow">Start free</p>
+          <h1>Create the workspace that follows you into every round.</h1>
           <p>
-            Registration creates the hosted identity, associates the browser or desktop profile, and starts the
-            verification path that unlocks dashboard and installer access.
+            Create your account here, complete phone and email verification, then download Phantom for Windows.
           </p>
           <ul>
-            <li>Phone OTP is required before account creation</li>
-            <li>Email verification is required before normal sign-in</li>
-            <li>Device metadata can be passed from the desktop handoff</li>
+            <li>Two hosted 15-minute trial blocks</li>
+            <li>No provider keys required to begin</li>
+            <li>Upgrade only when the workflow fits you</li>
           </ul>
         </article>
 
@@ -1736,8 +1720,17 @@ function UserDashboardPage({ session }) {
       />
       <section className="dashboard-shell">
         <aside className="glass-panel dashboard-rail">
-          <p className="eyebrow">Account snapshot</p>
-          <h2>{summary.email}</h2>
+          <div className="dashboard-rail-heading">
+            <p className="eyebrow">Your workspace</p>
+            <h2>{summary.email}</h2>
+          </div>
+          <nav className="dashboard-nav" aria-label="Workspace navigation">
+            {userNav.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.to === "/dashboard"} className={({ isActive }) => isActive ? "dashboard-nav-active" : ""}>
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
           <div className="status-band">
             <span className="status-pill">{summary.planLabel}</span>
             <span className={`status-pill ${summary.phoneVerified ? "status-pill-good" : "status-pill-warn"}`}>
@@ -1840,12 +1833,13 @@ function UserOverviewPanel({ accessToken, summary, download, support, knowledgeB
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero">
-        <p className="eyebrow">User dashboard</p>
-        <h1>One place to check account health before you return to the desktop.</h1>
-        <p>
-          This surface should lead with clarity: plan, credits, download readiness, recent usage, and premium
-          context state. It should not try to mimic the desktop runtime itself.
-        </p>
+        <p className="eyebrow">{summary.phoneVerified && download?.canDownload ? "Ready to launch" : "Action required"}</p>
+        <h1>{summary.phoneVerified && download?.canDownload ? "Your Phantom workspace is ready." : "Complete account verification to unlock Phantom."}</h1>
+        <p>{summary.phoneVerified ? "Your account is verified. Review context, credits, and recent interview activity before opening the desktop app." : "Verify your phone and email, then return here to download and launch the Windows app."}</p>
+        <div className="hero-actions">
+          <Link className="button button-primary" to="/download">{download?.canDownload ? "Download Phantom" : "Check download access"}</Link>
+          <Link className="button button-secondary" to="/dashboard/knowledge-base">Review knowledge</Link>
+        </div>
       </article>
 
       <MetricCard label="Plan" value={summary.planLabel} />
@@ -2181,11 +2175,10 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero">
-        <p className="eyebrow">Premium knowledge base</p>
-        <h1>Upload context once and keep the hosted retrieval layer aligned with the desktop runtime.</h1>
+        <p className="eyebrow">Your knowledge space</p>
+        <h1>Turn your experience into context Phantom can retrieve when it matters.</h1>
         <p>
-          Premium knowledge bases belong on the website because they are hosted, processed, and synced across
-          devices. The desktop app should consume this state, not manage the source-of-truth content.
+          Add your resume, project stories, role notes, and company research here. Phantom keeps the structured context ready for your Windows sessions.
         </p>
       </article>
 
@@ -2543,11 +2536,10 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
       <MetricCard label="Premium debt" value={summary.premiumNegativeCredits.toFixed(2)} tone="warn" />
 
       <article className="glass-panel dashboard-hero table-span-full">
-        <p className="eyebrow">Wallet checkout</p>
-        <h1>Buy the lane you need and settle continuation debt only when it exists.</h1>
+        <p className="eyebrow">Credits and billing</p>
+        <h1>Choose the AI lane that fits how you want to work.</h1>
         <p>
-          Premium takes priority whenever Premium credits exist. If Premium reaches zero and Pro remains,
-          Phantom falls back to Pro BYO. Debt settlement is a separate, explicit flow.
+          Premium credits use Phantom's managed AI first. When they run out, available Pro credits let you continue with your own connected provider.
         </p>
       </article>
 
@@ -2669,9 +2661,9 @@ function DevicesPanel({ accessToken }) {
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
-        <p className="eyebrow">Device inventory</p>
-        <h1>Keep device visibility in the dashboard instead of guessing from the desktop.</h1>
-        <p>The dashboard should show active and historical browser or desktop identities without exposing more than operators need.</p>
+        <p className="eyebrow">Your devices</p>
+        <h1>Know exactly where your Phantom account has been used.</h1>
+        <p>Review active and previous browser or Windows sessions, including their sign-in method and last activity.</p>
       </article>
       {devices.length === 0 ? (
         <article className="glass-panel">
@@ -2714,7 +2706,8 @@ function HistoryPanel({ accessToken }) {
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
         <p className="eyebrow">Usage history</p>
-        <h1>Show charge records clearly enough for support and self-serve review.</h1>
+        <h1>A clear record of every credit charge.</h1>
+        <p>Review session-level usage, credit deductions, and any Premium continuation balance in one place.</p>
       </article>
       <DataTable
         title="Usage charge history"
@@ -2937,8 +2930,8 @@ function SupportPanel({ accessToken, support }) {
   return (
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
-        <p className="eyebrow">Support preview</p>
-        <h1>Expose the signals users actually need, then let them file a ticket without leaving the dashboard.</h1>
+        <p className="eyebrow">Support</p>
+        <h1>Tell us what happened. Include the details that will help us resolve it faster.</h1>
       </article>
       <article className="glass-panel table-span-full">
         <h3>{support?.openLockSessionId || "No active support event"}</h3>
@@ -3292,8 +3285,17 @@ function AdminDashboardPage({ adminSession }) {
       />
       <section className="dashboard-shell">
         <aside className="glass-panel dashboard-rail">
-          <p className="eyebrow">Control plane</p>
-          <h2>Hosted operations</h2>
+          <div className="dashboard-rail-heading">
+            <p className="eyebrow">Control plane</p>
+            <h2>Hosted operations</h2>
+          </div>
+          <nav className="dashboard-nav" aria-label="Admin navigation">
+            {adminNav.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.to === "/admin"} className={({ isActive }) => isActive ? "dashboard-nav-active" : ""}>
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
           <div className="status-band">
             <span className="status-pill">Managed AI</span>
             <span className="status-pill">Payments</span>
@@ -3409,10 +3411,9 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
     <div className="dashboard-grid">
       <article className="glass-panel dashboard-hero table-span-full">
         <p className="eyebrow">Admin overview</p>
-        <h1>Monitor hosted operations without leaking internal mechanics into the public site.</h1>
+        <h1>Monitor the systems that keep Phantom available.</h1>
         <p>
-          This console should stay operational: counts, provider readiness, email delivery health, and payment
-          state. It is not a second marketing site.
+          Review user activity, provider readiness, email delivery, payments, and support from one operational workspace.
         </p>
       </article>
 

@@ -7,6 +7,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class RegistrationService
 {
+    private const string CurrentTermsVersion = "2026-08-10";
     private readonly BackendOptions _options;
     private readonly AccountRepository _accounts;
     private readonly PasswordHasher _passwordHasher;
@@ -35,6 +36,11 @@ public sealed class RegistrationService
 
     public AuthRegisterResultDto Register(AuthRegisterRequestDto request, string publicBackendBaseUrl)
     {
+        if (!request.AcceptedTerms)
+        {
+            throw new BackendValidationException("Accept the Terms of Use and Privacy Policy before creating an account.");
+        }
+
         if (string.IsNullOrWhiteSpace(request.Email))
         {
             throw new BackendValidationException("Email is required.");
@@ -102,6 +108,8 @@ public sealed class RegistrationService
         account.PhoneVerified = true;
         account.PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? account.PhoneVerifiedAtUtc ?? now;
         account.RegistrationDeviceFingerprintHash = deviceFingerprintHash;
+        account.TermsAcceptedAtUtc = now;
+        account.TermsVersion = CurrentTermsVersion;
         if (AccessModeResolver.IsFree(account))
         {
             account.PremiumAvailableCredits = Math.Max(account.PremiumAvailableCredits, 0.5m);

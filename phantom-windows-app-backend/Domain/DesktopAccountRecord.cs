@@ -12,6 +12,8 @@ public sealed class DesktopAccountRecord
     public bool PhoneVerified { get; set; }
     public DateTime? PhoneVerifiedAtUtc { get; set; }
     public string RegistrationDeviceFingerprintHash { get; set; } = string.Empty;
+    public DateTime? TermsAcceptedAtUtc { get; set; }
+    public string TermsVersion { get; set; } = string.Empty;
     public decimal ProAvailableCredits { get; set; }
     public decimal PremiumAvailableCredits { get; set; }
     public decimal PremiumNegativeCredits { get; set; }

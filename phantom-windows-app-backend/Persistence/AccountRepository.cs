@@ -133,11 +133,11 @@ WHERE (
         using var command = CreateCommand(connection, transaction);
         command.CommandText = @"
 INSERT INTO desktop_accounts (
-    user_id, email, email_verified, email_verified_at_utc, access_tier, password_hash, phone_number_e164, phone_verified, phone_verified_at_utc, registration_device_fingerprint_hash, pro_available_credits, premium_available_credits,
+    user_id, email, email_verified, email_verified_at_utc, access_tier, password_hash, phone_number_e164, phone_verified, phone_verified_at_utc, registration_device_fingerprint_hash, terms_accepted_at_utc, terms_version, pro_available_credits, premium_available_credits,
     premium_negative_credits, lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
     created_at_utc, updated_at_utc
 ) VALUES (
-    @userId, @email, @emailVerified, @emailVerifiedAtUtc, @accessTier, @passwordHash, @phoneNumberE164, @phoneVerified, @phoneVerifiedAtUtc, @registrationDeviceFingerprintHash, @proCredits, @premiumCredits,
+    @userId, @email, @emailVerified, @emailVerifiedAtUtc, @accessTier, @passwordHash, @phoneNumberE164, @phoneVerified, @phoneVerifiedAtUtc, @registrationDeviceFingerprintHash, @termsAcceptedAtUtc, @termsVersion, @proCredits, @premiumCredits,
     @premiumNegative, @leaseExpiresAt, @offlineModeEnabled, @lastValidatedAt, @createdAt, @updatedAt
 )
 ON CONFLICT(user_id) DO UPDATE SET
@@ -150,6 +150,8 @@ ON CONFLICT(user_id) DO UPDATE SET
     phone_verified = EXCLUDED.phone_verified,
     phone_verified_at_utc = EXCLUDED.phone_verified_at_utc,
     registration_device_fingerprint_hash = EXCLUDED.registration_device_fingerprint_hash,
+    terms_accepted_at_utc = EXCLUDED.terms_accepted_at_utc,
+    terms_version = EXCLUDED.terms_version,
     pro_available_credits = EXCLUDED.pro_available_credits,
     premium_available_credits = EXCLUDED.premium_available_credits,
     premium_negative_credits = EXCLUDED.premium_negative_credits,
@@ -180,6 +182,8 @@ ON CONFLICT(user_id) DO UPDATE SET
         command.Parameters.AddWithValue("phoneVerified", account.PhoneVerified);
         command.Parameters.AddWithValue("phoneVerifiedAtUtc", (object?)account.PhoneVerifiedAtUtc ?? DBNull.Value);
         command.Parameters.AddWithValue("registrationDeviceFingerprintHash", account.RegistrationDeviceFingerprintHash);
+        command.Parameters.AddWithValue("termsAcceptedAtUtc", (object?)account.TermsAcceptedAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("termsVersion", account.TermsVersion);
         command.Parameters.AddWithValue("proCredits", account.ProAvailableCredits);
         command.Parameters.AddWithValue("premiumCredits", account.PremiumAvailableCredits);
         command.Parameters.AddWithValue("premiumNegative", account.PremiumNegativeCredits);
@@ -208,6 +212,10 @@ ON CONFLICT(user_id) DO UPDATE SET
                 ? null
                 : reader.GetDateTime(reader.GetOrdinal("phone_verified_at_utc")),
             RegistrationDeviceFingerprintHash = reader.GetString(reader.GetOrdinal("registration_device_fingerprint_hash")),
+            TermsAcceptedAtUtc = reader.IsDBNull(reader.GetOrdinal("terms_accepted_at_utc"))
+                ? null
+                : reader.GetDateTime(reader.GetOrdinal("terms_accepted_at_utc")),
+            TermsVersion = reader.GetString(reader.GetOrdinal("terms_version")),
             ProAvailableCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits")),
             PremiumAvailableCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits")),
             PremiumNegativeCredits = reader.GetDecimal(reader.GetOrdinal("premium_negative_credits")),

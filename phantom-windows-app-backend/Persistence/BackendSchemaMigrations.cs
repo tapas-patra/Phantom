@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
     phone_verified BOOLEAN NOT NULL,
     phone_verified_at_utc TIMESTAMPTZ NULL,
     registration_device_fingerprint_hash TEXT NOT NULL DEFAULT '',
+    terms_accepted_at_utc TIMESTAMPTZ NULL,
+    terms_version TEXT NOT NULL DEFAULT '',
     pro_available_credits NUMERIC(18,2) NOT NULL,
     premium_available_credits NUMERIC(18,2) NOT NULL,
     premium_negative_credits NUMERIC(18,2) NOT NULL,
@@ -66,6 +68,10 @@ ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS phone_verified_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS registration_device_fingerprint_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS terms_accepted_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS terms_version TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_desktop_accounts_phone_number_e164
     ON desktop_accounts(phone_number_e164);

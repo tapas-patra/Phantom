@@ -305,6 +305,7 @@ p { line-height: 1.68; }
 .status-pill-good { color: #146b50; border-color: #adddcc; background: #eaf9f3; }
 .status-pill-warn { color: #8d5c15; border-color: #e7ca9d; background: #fff6e8; }
 .status-message { margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--mint); color: #2f6253; background: #eef9f5; }
+.status-success { color: #2f6253; border-color: var(--mint); background: #eef9f5; }
 .status-error { color: #8d2e41; border-color: var(--danger); background: #fff0f3; }
 .legal-stack { display: grid; gap: 12px; margin-top: 16px; }
 .legal-card h2 { margin: 0 0 8px; font-size: 1.5rem; }
@@ -334,6 +335,9 @@ textarea { min-height: 100px; resize: vertical; }
 input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 92, 245, 0.13); }
 .inline-note { color: #68778b; font-size: 0.78rem; }
 .link-row { justify-content: space-between; color: var(--blue); font-size: 0.85rem; }
+.auth-form .consent-row { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 10px; color: #566579; line-height: 1.55; }
+.consent-row input { width: 18px; min-height: 18px; margin-top: 2px; accent-color: var(--blue); }
+.consent-row a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Dashboard */
 .surface-user .page, .surface-admin .page { width: min(1500px, calc(100% - 32px)); padding: 28px 0 70px; }
@@ -343,6 +347,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .surface-user .status-pill-good, .surface-admin .status-pill-good { color: #8be5c3; border-color: #2c6554; background: #123629; }
 .surface-user .status-pill-warn, .surface-admin .status-pill-warn { color: #f1c684; border-color: #725d35; background: #342919; }
 .surface-user .status-message, .surface-admin .status-message { color: #9fe2c9; background: #112b25; }
+.surface-user .status-success, .surface-admin .status-success { color: #9fe2c9; border-color: #55c99f; background: #112b25; }
 .surface-user .status-error, .surface-admin .status-error { color: #ff9caf; background: #351c27; }
 .dashboard-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 16px; align-items: start; }
 .dashboard-rail { position: sticky; top: 104px; display: flex; flex-direction: column; min-height: calc(100vh - 128px); padding: 16px !important; }
@@ -374,6 +379,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .table-header, .question-bank-heading, .dashboard-row-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
 .table-header h3, .question-bank-heading h3 { margin: 0; }
 .table-scroll { width: 100%; overflow-x: auto; border: 1px solid var(--night-line); border-radius: 10px; }
+.bounded-table-scroll { max-height: 480px; overflow: auto; scrollbar-gutter: stable; }
+.bounded-table-scroll th { position: sticky; top: 0; z-index: 1; }
 table { width: 100%; border-collapse: collapse; min-width: 700px; }
 th, td { padding: 13px 14px; border-bottom: 1px solid var(--night-line); text-align: left; vertical-align: top; }
 th { color: #b9c8d9; background: #172538; font-family: "IBM Plex Mono", monospace; font-size: 0.68rem; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; }

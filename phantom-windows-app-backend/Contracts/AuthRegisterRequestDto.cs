@@ -11,4 +11,5 @@ public sealed class AuthRegisterRequestDto
     public string DeviceLabel { get; set; } = string.Empty;
     public string DeviceFingerprintHash { get; set; } = string.Empty;
     public string SecretFingerprintHint { get; set; } = string.Empty;
+    public bool AcceptedTerms { get; set; }
 }

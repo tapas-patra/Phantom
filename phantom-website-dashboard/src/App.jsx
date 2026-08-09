@@ -75,11 +75,11 @@ function clearStoredSession(storageKey) {
 }
 
 const publicNav = [
-  { to: "/", label: "Product" },
-  { to: "/#workflow", label: "How it works" },
+  { to: "/", label: "Product", section: "product" },
+  { to: "/#workflow", label: "How it works", section: "workflow" },
   { to: "/pricing", label: "Pricing" },
   { to: "/download", label: "Download" },
-  { to: "/#security", label: "Security" }
+  { to: "/#security", label: "Security", section: "security" }
 ];
 
 const userNav = [
@@ -269,52 +269,57 @@ const privacySections = [
 
 const termsSections = [
   {
-    title: "1. Service boundaries",
+    title: "1. Your agreement and privacy acknowledgement",
+    body:
+      "By creating a Phantom account, you agree to these Terms of Use and acknowledge the Privacy Policy. You understand that Phantom processes the account, verification, device, usage, payment, support, and optional knowledge-base data described there to provide and protect the service."
+  },
+  {
+    title: "2. Service boundaries",
     body:
       "Phantom is a hosted website and dashboard layer paired with a Windows desktop runtime. The website is for registration, verification, payments, hosted knowledge-base management, device visibility, and admin operations. It is not the live interview runtime itself."
   },
   {
-    title: "2. Account responsibility",
+    title: "3. Account responsibility",
     body:
       "You are responsible for the accuracy of registration information, the security of your credentials, and all activity that occurs under your account. You must keep access credentials confidential and notify the deployment operator if you suspect unauthorized access."
   },
   {
-    title: "3. Acceptable use",
+    title: "4. Acceptable use",
     body:
       "You may only use Phantom for lawful, authorized purposes. You must comply with the rules of the interview, exam, employer, institution, or platform where Phantom is used. You must not use Phantom to bypass proctoring, impersonate another person, violate confidentiality obligations, upload unauthorized third-party content, attempt to extract provider secrets, or interfere with system integrity."
   },
   {
-    title: "4. AI output and user judgment",
+    title: "5. AI output and user judgment",
     body:
       "AI outputs can be incomplete, inaccurate, or inappropriate for the situation. You remain responsible for reviewing and deciding whether to rely on any generated content, suggestions, or retrieved knowledge-base material."
   },
   {
-    title: "5. Payments, credits, and debt settlement",
+    title: "6. Payments, credits, and debt settlement",
     body:
       "Credit packs, hosted usage, and debt-settlement flows must follow the wallet rules defined by the deployment operator. Phantom may suspend access or limit premium features when credits are exhausted, balances become negative, or payment confirmation cannot be trusted."
   },
   {
-    title: "6. Hosted content",
+    title: "7. Hosted content",
     body:
       "You represent that you have the right to upload and process any document, prompt, key, note, or other material you submit to Phantom. Do not upload confidential or regulated material unless your deployment is explicitly authorized for that use."
   },
   {
-    title: "7. Suspension and termination",
+    title: "8. Suspension and termination",
     body:
       "Phantom may suspend or terminate access for security incidents, unpaid balances, abuse, fraud risk, policy violations, or system-protection reasons. Admin operators may also correct account state, clear locks, or revoke access when required to preserve service integrity."
   },
   {
-    title: "8. No warranty for uninterrupted availability",
+    title: "9. No warranty for uninterrupted availability",
     body:
       "Phantom aims for reliable service, but hosted components may be interrupted by provider outages, payment failures, verification issues, network disruptions, or maintenance. Availability of the website does not guarantee the availability of any third-party provider lane."
   },
   {
-    title: "9. Limitation and operator terms",
+    title: "10. Limitation and operator terms",
     body:
       "These terms should be read together with any deployment-specific commercial, legal, or support terms published by the operator of your Phantom environment. Where local law requires additional notices, refunds, disclosures, or rights, those rules continue to apply."
   },
   {
-    title: "10. Contact",
+    title: "11. Contact",
     body:
       "For legal, privacy, billing, or support requests, use the support route exposed by the Phantom deployment you use, including the dashboard support surface or the contact details published by the operator."
   }
@@ -632,6 +637,32 @@ function SiteHeader({ surface, userSession, adminSession, onUserLogout, onAdminL
   const location = useLocation();
   const navItems = surface === "admin" ? adminNav : surface === "user" ? userNav : publicNav;
   const session = surface === "admin" ? adminSession : userSession;
+  const [activePublicSection, setActivePublicSection] = useState("product");
+
+  useEffect(() => {
+    if (surface !== "public" || location.pathname !== "/") {
+      return undefined;
+    }
+
+    function updateActiveSection() {
+      const marker = window.scrollY + Math.min(window.innerHeight * 0.35, 280);
+      const activeSection = publicNav
+        .filter((item) => item.section)
+        .reduce((current, item) => {
+          const section = document.getElementById(item.section);
+          return section && section.offsetTop <= marker ? item.section : current;
+        }, "product");
+      setActivePublicSection(activeSection);
+    }
+
+    updateActiveSection();
+    window.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("resize", updateActiveSection);
+    return () => {
+      window.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("resize", updateActiveSection);
+    };
+  }, [location.pathname, surface]);
 
   return (
     <header className="site-header">
@@ -644,16 +675,34 @@ function SiteHeader({ surface, userSession, adminSession, onUserLogout, onAdminL
       </Link>
 
       <nav className="top-nav" aria-label="Primary">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            className={({ isActive }) => `nav-chip ${isActive ? "nav-chip-active" : ""}`}
-            to={item.to}
-            end={item.to === "/" || item.to === "/dashboard" || item.to === "/admin"}
-          >
-            {item.label}
-          </NavLink>
-        ))}
+        {navItems.map((item) => {
+          if (surface === "public") {
+            const isActive = item.section
+              ? location.pathname === "/" && activePublicSection === item.section
+              : location.pathname === item.to;
+            return (
+              <Link
+                key={item.to}
+                className={`nav-chip ${isActive ? "nav-chip-active" : ""}`}
+                to={item.to}
+                aria-current={isActive ? "page" : undefined}
+              >
+                {item.label}
+              </Link>
+            );
+          }
+
+          return (
+            <NavLink
+              key={item.to}
+              className={({ isActive }) => `nav-chip ${isActive ? "nav-chip-active" : ""}`}
+              to={item.to}
+              end={item.to === "/dashboard" || item.to === "/admin"}
+            >
+              {item.label}
+            </NavLink>
+          );
+        })}
       </nav>
 
       <div className="header-actions">
@@ -1153,6 +1202,7 @@ function RegisterPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const deviceFingerprintHash = registerParams.get("deviceFingerprint") || getBrowserRegistrationFingerprint();
 
   async function handleSendOtp() {
@@ -1213,6 +1263,10 @@ function RegisterPage() {
     setStatus("");
 
     try {
+      if (!acceptedTerms) {
+        throw new Error("Accept the Terms of Use and Privacy Policy before creating your account.");
+      }
+
       if (!otpState.verificationToken) {
         throw new Error("Verify your phone number before creating the account.");
       }
@@ -1226,7 +1280,8 @@ function RegisterPage() {
         installId: registerParams.get("installId") || "",
         deviceLabel: registerParams.get("deviceLabel") || "",
         deviceFingerprintHash,
-        secretFingerprintHint: registerParams.get("deviceHint") || ""
+        secretFingerprintHint: registerParams.get("deviceHint") || "",
+        acceptedTerms: true
       });
 
       const deliveryFailed = result.deliveryStatus !== "sent";
@@ -1279,6 +1334,7 @@ function RegisterPage() {
             <span>Email</span>
             <input
               type="email"
+              required
               value={form.email}
               onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
               placeholder="name@example.com"
@@ -1288,6 +1344,7 @@ function RegisterPage() {
             <span>Password</span>
             <input
               type="password"
+              required
               value={form.password}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
               placeholder="Choose a strong password"
@@ -1296,6 +1353,7 @@ function RegisterPage() {
           <label>
             <span>Phone number</span>
             <input
+              required
               value={form.phoneNumber}
               onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
               placeholder="+91 9876543210"
@@ -1321,6 +1379,7 @@ function RegisterPage() {
           <label>
             <span>OTP code</span>
             <input
+              required
               value={form.otpCode}
               onChange={(event) => setForm((current) => ({ ...current, otpCode: event.target.value }))}
               placeholder="6-digit OTP"
@@ -1335,6 +1394,17 @@ function RegisterPage() {
           >
             {otpSubmitting ? "Working..." : otpState.verificationToken ? "Phone Verified" : "Verify OTP"}
           </button>
+          <label className="consent-row">
+            <input
+              type="checkbox"
+              checked={acceptedTerms}
+              onChange={(event) => setAcceptedTerms(event.target.checked)}
+              required
+            />
+            <span>
+              I agree to the <Link to="/terms" target="_blank" rel="noreferrer">Terms of Use</Link> and acknowledge the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Policy</Link>, including what data Phantom collects and why it is used.
+            </span>
+          </label>
           <button className="button button-primary" type="submit" disabled={submitting}>
             {submitting ? "Creating account..." : "Create Account"}
           </button>
@@ -1560,8 +1630,8 @@ function PrivacyPolicyPage() {
       />
       <LegalPage
         eyebrow="Privacy Policy"
-        title="Privacy rules for a desktop-linked, account-controlled product."
-        intro="This policy is written for Phantom's actual architecture: hosted account services, browser dashboards, desktop-linked identity checks, wallet records, hosted knowledge-base uploads, payment reconciliation, and admin operations."
+        title="What Phantom collects, why it is needed, and how it is protected."
+        intro="Phantom collects only the account, verification, device, usage, payment, support, and optional knowledge-base data needed to provide the service. We use reasonable technical and operational safeguards to protect it and explain each category below."
         sections={privacySections}
       />
     </main>
@@ -1577,8 +1647,8 @@ function TermsPage() {
       />
       <LegalPage
         eyebrow="Terms Of Use"
-        title="Product rules that match what Phantom actually does."
-        intro="These terms are designed for a hosted website paired with a Windows runtime, not a generic marketing site. They focus on account responsibility, lawful use, hosted content, payment-linked credits, and operational controls."
+        title="Clear terms for using Phantom responsibly."
+        intro="These terms explain your account responsibilities, acceptable use, AI limitations, payments, and how your agreement works together with Phantom's Privacy Policy."
         sections={termsSections}
       />
     </main>
@@ -2459,6 +2529,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
   const [walletPurchasesPage, setWalletPurchasesPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [paymentCatalog, setPaymentCatalog] = useState(null);
   const [status, setStatus] = useState("");
+  const [statusType, setStatusType] = useState("success");
   const [submittingTarget, setSubmittingTarget] = useState("");
 
   useEffect(() => {
@@ -2485,6 +2556,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
       );
       setPaymentCatalog(catalogResult.status === "fulfilled" ? catalogResult.value : null);
       if (historyResult.status === "rejected" || purchasesResult.status === "rejected") {
+        setStatusType("error");
         setStatus("Some wallet activity could not be loaded. Recharge options remain available.");
       }
     });
@@ -2509,6 +2581,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
   async function handleCheckout(target, packCode) {
     setSubmittingTarget(`${target}:${packCode}`);
     setStatus("");
+    setStatusType("success");
 
     try {
       const checkout = await createPaymentCheckout(accessToken, { target, packCode });
@@ -2520,9 +2593,11 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
           razorpaySignature: response.razorpay_signature
         });
         await refreshWalletState();
+        setStatusType("success");
         setStatus(confirmation?.message || "Payment verified. Wallet refresh complete.");
       });
     } catch (error) {
+      setStatusType("error");
       setStatus(error.message || "Could not start checkout.");
     } finally {
       setSubmittingTarget("");
@@ -2586,7 +2661,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
 
       {status ? (
         <article className="glass-panel table-span-full">
-          <p className={`status-message ${status.toLowerCase().includes("acknowledged") ? "" : "status-error"}`}>
+          <p className={`status-message status-${statusType}`}>
             {status}
           </p>
         </article>
@@ -4028,6 +4103,7 @@ function ManagedAiLatencyPanel({ accessToken, latencyStatus, onRefresh }) {
 
       <DataTable
         title="Latency status by fetched model"
+        scrollClassName="bounded-table-scroll"
         columns={["Provider", "Model", "Chat-capable", "Status", "Latency", "Checked", "Detail"]}
         rows={models.map((item) => [
           item.providerLabel,
@@ -4263,7 +4339,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
                 <h3>{providerModels.length} fetched models</h3>
               </div>
             </div>
-            <TableScroll>
+            <TableScroll className="bounded-table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -5081,7 +5157,7 @@ function PackCard({ label, pack, buttonLabel, loading, onClick }) {
   );
 }
 
-function DataTable({ title, columns, rows, emptyLabel = "No records found.", footer = null }) {
+function DataTable({ title, columns, rows, emptyLabel = "No records found.", footer = null, scrollClassName = "" }) {
   return (
     <div className="glass-panel table-panel table-span-full">
       <div className="table-header">
@@ -5089,7 +5165,7 @@ function DataTable({ title, columns, rows, emptyLabel = "No records found.", foo
           <p className="eyebrow">{title}</p>
         </div>
       </div>
-      <TableScroll>
+      <TableScroll className={scrollClassName}>
         <table>
           <thead>
             <tr>
@@ -5120,8 +5196,8 @@ function DataTable({ title, columns, rows, emptyLabel = "No records found.", foo
   );
 }
 
-function TableScroll({ children }) {
-  return <div className="table-scroll">{children}</div>;
+function TableScroll({ children, className = "" }) {
+  return <div className={`table-scroll ${className}`.trim()}>{children}</div>;
 }
 
 function PaginationBar({ page, hasNextPage, totalCount, onPrevious, onNext }) {

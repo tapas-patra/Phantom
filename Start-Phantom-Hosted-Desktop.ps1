@@ -6,12 +6,20 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $windowsAppDir = Join-Path $repoRoot "phantom-windows-app"
 $hostedConfigPath = Join-Path $windowsAppDir "phantom.hosted.json"
-$hostedConfig = Get-Content $hostedConfigPath -Raw | ConvertFrom-Json
+$hostedConfig = [ordered]@{
+    mode = "remote"
+    websiteBaseUrl = "https://phantom-website-dashboard.vercel.app"
+    desktopBackendBaseUrl = "https://phantom-ai-windows-app-backend.onrender.com"
+}
+
+$hostedConfig | ConvertTo-Json | Set-Content $hostedConfigPath -Encoding UTF8
 
 $env:PHANTOM_HOSTED_MODE = $hostedConfig.mode
 $env:PHANTOM_WINDOWS_BACKEND_BASE_URL = $hostedConfig.desktopBackendBaseUrl
 $env:PHANTOM_WEBSITE_BASE_URL = $hostedConfig.websiteBaseUrl
 $env:RAG_LOG = "true"
+
+Write-Host "Hosted backend: $($hostedConfig.desktopBackendBaseUrl)"
 
 Push-Location $windowsAppDir
 try {

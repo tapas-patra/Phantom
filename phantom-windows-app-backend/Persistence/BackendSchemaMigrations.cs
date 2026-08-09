@@ -21,7 +21,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql),
         new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql),
         new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql),
-        new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql)
+        new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql),
+        new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -31,6 +32,13 @@ public static class BackendSchemaMigrations
         new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql),
         new SchemaMigration("004_dashboard_interview_question_bank_names", DashboardInterviewQuestionBankNamesSql)
     };
+
+    private const string AccountTermsAcceptanceSql = @"
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS terms_accepted_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS terms_version TEXT NOT NULL DEFAULT '';
+";
 
     private const string CoreSchemaSql = @"
 CREATE TABLE IF NOT EXISTS desktop_accounts (

@@ -137,6 +137,7 @@ namespace SecureOverlay
         private string? _forcedManagedExtensionProviderId;
         private DateTime? _lastInterviewActivityUtc;
         private int _interviewLockHeartbeatCount;
+        private Task _managedCatalogRefreshTask = Task.CompletedTask;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -222,7 +223,7 @@ namespace SecureOverlay
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
-            _ = RefreshManagedCatalogCacheAsync();
+            _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
             _ = Task.Run(() =>
             {
                 ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
@@ -951,6 +952,17 @@ namespace SecureOverlay
                         .ToList();
                     ProviderModelCatalogCache.ReplaceCatalog(_settings, catalog);
                     SettingsManager.Save(_settings);
+
+                    var managedProvider = catalog.Providers?.FirstOrDefault();
+                    var managedModel = managedProvider?.Models?.FirstOrDefault();
+                    Log.WriteLine(
+                        $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}");
+
+                    if (_currentAI is HostedManagedAiService && managedProvider != null && managedModel != null)
+                    {
+                        Log.WriteLine("Managed catalog changed - reinitializing AI with the hosted runtime selection");
+                        InitializeAI();
+                    }
                 }
             }
             catch (Exception ex)
@@ -1766,6 +1778,11 @@ namespace SecureOverlay
             if (_sessionExtensionOptInRequired && IsSessionExtensionEnabledForCurrentTier())
             {
                 _sessionExtensionOptInRequired = false;
+            }
+
+            if (_currentAI is HostedManagedAiService)
+            {
+                await _managedCatalogRefreshTask;
             }
 
             RefreshAccountSnapshot();
@@ -3221,7 +3238,7 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
-                _ = RefreshManagedCatalogCacheAsync();
+                _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;

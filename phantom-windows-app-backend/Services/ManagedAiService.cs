@@ -1019,13 +1019,13 @@ public sealed class ManagedAiService
     {
         var question = messages.LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
             ?.ToLowerInvariant() ?? string.Empty;
-        if (ContainsAny(question, "expand", "deeper", "in detail", "step by step")) return 1000;
-        if (ContainsAny(question, "write code", "implement", "algorithm", "complexity", "debug this")) return 450;
-        if (ContainsAny(question, "system design", "design a", "architecture", "scalability", "high availability")) return 550;
-        if (ContainsAny(question, "my project", "your project", "project called", "project named")) return 320;
+        if (ContainsAny(question, "expand", "deeper", "in detail", "step by step")) return 1800;
+        if (ContainsAny(question, "write code", "implement", "algorithm", "complexity", "debug this", "mermaid")) return 1200;
+        if (ContainsAny(question, "system design", "design a", "architecture", "scalability", "high availability")) return 1600;
+        if (ContainsAny(question, "my project", "your project", "project called", "project named")) return 800;
         if (question.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 12
-            && ContainsAny(question, "why", "how", "what about", "give an example", "clarify")) return 160;
-        return 250;
+            && ContainsAny(question, "why", "how", "what about", "give an example", "clarify")) return 320;
+        return 700;
     }
 
     private static bool ContainsAny(string value, params string[] terms)
@@ -1035,9 +1035,10 @@ public sealed class ManagedAiService
     private static void RunOutputBudgetSelfCheck()
     {
         static DesktopAiChatMessageDto User(string content) => new() { Role = "user", Content = content };
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Why?") }) == 160);
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Design a highly available payment system") }) == 550);
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Expand in detail") }) == 1000);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Why?") }) == 320);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Design a highly available payment system") }) == 1600);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Expand in detail") }) == 1800);
+        Debug.Assert(GetLiveOutputBudget(new[] { User("Correct this Mermaid code") }) == 1200);
     }
 
     private static async Task WriteSseJsonAsync(HttpResponse response, object payload, CancellationToken cancellationToken)

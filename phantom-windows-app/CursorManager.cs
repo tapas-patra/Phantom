@@ -20,6 +20,7 @@ namespace SecureOverlay
         private TextBlock? _cursorGlyph;
         private Window? _parentWindow;
         private bool _customCursorActive = false;
+        private bool _embeddedSurfaceCursorActive;
         private CursorVisualMode _cursorVisualMode = CursorVisualMode.Default;
 
         // Fake cursor window (visible to screen share)
@@ -380,6 +381,12 @@ namespace SecureOverlay
             }
         }
 
+        public void SetEmbeddedSurfaceCursorActive(bool active)
+        {
+            _embeddedSurfaceCursorActive = active;
+            UpdateCursorVisualState();
+        }
+
         public void SetResizeCursorHint(string resizeTag)
         {
             _cursorVisualMode = resizeTag switch
@@ -407,6 +414,13 @@ namespace SecureOverlay
             }
 
             if (!_customCursorActive)
+            {
+                _cursorDot.Visibility = Visibility.Collapsed;
+                _cursorBadge.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (_embeddedSurfaceCursorActive)
             {
                 _cursorDot.Visibility = Visibility.Collapsed;
                 _cursorBadge.Visibility = Visibility.Collapsed;

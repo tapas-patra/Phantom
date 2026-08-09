@@ -2883,6 +2883,21 @@ namespace SecureOverlay.Services
             return _fullConversation.Skip(1).ToList();
         }
 
+        public string? RemoveLastExchangeForRegeneration()
+        {
+            if (_fullConversation.Count < 3
+                || !string.Equals(_fullConversation[^1].Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_fullConversation[^2].Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var question = _fullConversation[^2].Content;
+            _fullConversation.RemoveRange(_fullConversation.Count - 2, 2);
+            Log.WriteLine("Removed the last user/assistant exchange for regeneration.");
+            return question;
+        }
+
         /// <summary>
         /// Clear entire conversation and reset to preferred model
         /// </summary>

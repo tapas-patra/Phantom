@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -80,6 +81,7 @@ namespace SecureOverlay
         private string? _streamMessageId;
         private int _streamRenderedLength;
         private bool _streamDeltaInFlight;
+        private bool _mermaidCorrectionInFlight;
         private LiveRequestTrace? _activeRequestTrace;
 
         private bool _autoSendAfterVoice = false;
@@ -361,6 +363,9 @@ namespace SecureOverlay
                             _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(isUser, fullText));
                             rebuilt++;
                         }
+                        RegenerateButton.IsEnabled = displayMessages.Count >= 2
+                            && string.Equals(displayMessages[^1].Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(displayMessages[^2].Role, "user", StringComparison.OrdinalIgnoreCase);
                         await RefreshChatSurfaceAsync();
                         
                         Log.WriteLine($"✓ Rebuilt {rebuilt} messages in chat UI");
@@ -1950,6 +1955,7 @@ namespace SecureOverlay
 
             _currentRequestCancellation = new CancellationTokenSource();
             _isProcessingRequest = true;
+            RegenerateButton.IsEnabled = false;
 
             Log.WriteLine($"Sending message: '{message}'");
             AddToChat($"**You:** {message}", false);
@@ -1997,12 +2003,14 @@ namespace SecureOverlay
                     }
                 };
 
-                var (response, error) = await _conversationManager.SendMessageStreamAsync(
-                    message,
-                    onChunk,
-                    _currentRequestCancellation.Token,
-                    imageBase64,
-                    ResetCurrentStreamingAttempt);
+                var (response, error) = await Task.Run(
+                    () => _conversationManager.SendMessageStreamAsync(
+                        message,
+                        onChunk,
+                        _currentRequestCancellation.Token,
+                        imageBase64,
+                        ResetCurrentStreamingAttempt),
+                    _currentRequestCancellation.Token);
                 
                 _streamUpdateTimer?.Stop();
 
@@ -2037,12 +2045,14 @@ namespace SecureOverlay
                     _streamUpdateTimer.Tick += StreamUpdateTimer_Tick;
                     _streamUpdateTimer.Start();
 
-                    (response, error) = await _conversationManager.SendMessageStreamAsync(
-                        message,
-                        onChunk,
-                        _currentRequestCancellation.Token,
-                        imageBase64,
-                        ResetCurrentStreamingAttempt);
+                    (response, error) = await Task.Run(
+                        () => _conversationManager.SendMessageStreamAsync(
+                            message,
+                            onChunk,
+                            _currentRequestCancellation.Token,
+                            imageBase64,
+                            ResetCurrentStreamingAttempt),
+                        _currentRequestCancellation.Token);
 
                     _streamUpdateTimer?.Stop();
                 }
@@ -2110,6 +2120,7 @@ namespace SecureOverlay
                     await MarkdownHelper.FinalizeAssistantMessageAsync(ChatWebView, _streamMessageId!, finalMarkdown);
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
+                    RegenerateButton.IsEnabled = true;
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
                     if (_conversationManager.HasResume() && string.IsNullOrWhiteSpace(selectedPack.ResumeSummary))
@@ -2282,7 +2293,7 @@ namespace SecureOverlay
             _chatSurfaceInitialized = true;
         }
 
-        private void ChatWebView_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+        private async void ChatWebView_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             if (_isHidden)
             {
@@ -2314,6 +2325,12 @@ namespace SecureOverlay
                 return;
             }
 
+            if (message.StartsWith("CHAT_FIX_MERMAID:", StringComparison.Ordinal))
+            {
+                await CorrectMermaidSyntaxAsync(message["CHAT_FIX_MERMAID:".Length..]);
+                return;
+            }
+
             if (!message.StartsWith("CHAT_CURSOR:", StringComparison.Ordinal))
             {
                 return;
@@ -2329,6 +2346,7 @@ namespace SecureOverlay
             if (string.Equals(payload, "enter", StringComparison.Ordinal))
             {
                 _cursorManager?.ActivateCustomCursor();
+                _cursorManager?.SetEmbeddedSurfaceCursorActive(true);
                 SetChatCursorHidden(true);
                 return;
             }
@@ -2336,6 +2354,7 @@ namespace SecureOverlay
             if (string.Equals(payload, "leave", StringComparison.Ordinal))
             {
                 SetChatCursorHidden(false);
+                _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
                 _cursorManager?.DeactivateCustomCursor();
                 return;
             }
@@ -2356,8 +2375,108 @@ namespace SecureOverlay
             var webViewPoint = new Point(x, y);
             var windowPoint = ChatWebView.TranslatePoint(webViewPoint, this);
             _cursorManager?.ActivateCustomCursor();
+            _cursorManager?.SetEmbeddedSurfaceCursorActive(true);
             _cursorManager?.UpdateCustomCursorPosition(windowPoint);
             SetChatCursorHidden(true);
+        }
+
+        private async Task CorrectMermaidSyntaxAsync(string requestJson)
+        {
+            string diagramId;
+            string source;
+            try
+            {
+                using var request = JsonDocument.Parse(requestJson);
+                diagramId = request.RootElement.GetProperty("diagramId").GetString() ?? string.Empty;
+                source = request.RootElement.GetProperty("source").GetString() ?? string.Empty;
+            }
+            catch
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(diagramId) || string.IsNullOrWhiteSpace(source))
+            {
+                return;
+            }
+
+            if (_isProcessingRequest || _mermaidCorrectionInFlight || _currentAI == null || !_currentAI.IsConfigured())
+            {
+                await MarkdownHelper.SetMermaidCorrectionStateAsync(
+                    ChatWebView,
+                    diagramId,
+                    false,
+                    _isProcessingRequest ? "Wait for response" : "Correct syntax");
+                return;
+            }
+
+            _mermaidCorrectionInFlight = true;
+            try
+            {
+                var correctionMessages = new List<ConversationMessage>
+                {
+                    new()
+                    {
+                        Role = "system",
+                        Content = "You repair Mermaid syntax only. Preserve every node, label, edge, direction, and meaning. Return only corrected Mermaid source without Markdown fences or explanation."
+                    },
+                    new()
+                    {
+                        Role = "user",
+                        Content = $"Correct this Mermaid code without changing its content or design:\n\n{source}"
+                    }
+                };
+                var service = _currentAI;
+                var response = await Task.Run(() => service.SendMessageAsync(correctionMessages));
+                if (response.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(response[6..].Trim());
+                }
+
+                var corrected = ExtractCorrectedMermaidSource(response);
+                if (string.IsNullOrWhiteSpace(corrected))
+                {
+                    throw new InvalidOperationException("The model did not return Mermaid source.");
+                }
+
+                await MarkdownHelper.ReplaceChatMermaidAsync(ChatWebView, diagramId, corrected);
+                StatusText.Text = "✓ Diagram syntax corrected";
+                StatusIndicator.Fill = Brushes.LightGreen;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Mermaid correction failed: {ex.Message}");
+                await MarkdownHelper.SetMermaidCorrectionStateAsync(ChatWebView, diagramId, false, "Try correction again");
+                StatusText.Text = "⚠️ Diagram correction failed";
+                StatusIndicator.Fill = Brushes.Orange;
+            }
+            finally
+            {
+                _mermaidCorrectionInFlight = false;
+            }
+        }
+
+        private static string ExtractCorrectedMermaidSource(string response)
+        {
+            if (MarkdownHelper.TryExtractFirstMermaidBlock(response, out var fencedMermaid))
+            {
+                return fencedMermaid;
+            }
+
+            var corrected = response.Trim();
+            if (corrected.StartsWith("```", StringComparison.Ordinal))
+            {
+                var firstLineEnd = corrected.IndexOf('\n');
+                var closingFence = corrected.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstLineEnd >= 0 && closingFence > firstLineEnd)
+                {
+                    corrected = corrected[(firstLineEnd + 1)..closingFence].Trim();
+                }
+            }
+
+            return corrected.StartsWith("mermaid\n", StringComparison.OrdinalIgnoreCase)
+                ? corrected[8..].Trim()
+                : corrected;
         }
 
         private void SetChatCursorHidden(bool hidden)
@@ -2467,6 +2586,34 @@ namespace SecureOverlay
         private async void SendButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Send button clicked");
+            await SendMessage();
+        }
+
+        private async void RegenerateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isProcessingRequest || _conversationManager == null)
+            {
+                return;
+            }
+
+            var question = _conversationManager.RemoveLastExchangeForRegeneration();
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                RegenerateButton.IsEnabled = false;
+                return;
+            }
+
+            if (_chatMessages.Count > 0 && !_chatMessages[^1].IsUser)
+            {
+                _chatMessages.RemoveAt(_chatMessages.Count - 1);
+            }
+            if (_chatMessages.Count > 0 && _chatMessages[^1].IsUser)
+            {
+                _chatMessages.RemoveAt(_chatMessages.Count - 1);
+            }
+
+            await RefreshChatSurfaceAsync();
+            InputTextBox.Text = question;
             await SendMessage();
         }
 

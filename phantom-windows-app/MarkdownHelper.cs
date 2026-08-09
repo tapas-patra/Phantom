@@ -217,6 +217,38 @@ namespace SecureOverlay
             await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.setCursorHidden({hiddenJson});");
         }
 
+        public static async Task SetMermaidCorrectionStateAsync(
+            WebView2 webView,
+            string diagramId,
+            bool busy,
+            string label)
+        {
+            if (webView.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            var payload = JsonSerializer.Serialize(new { diagramId, busy, label });
+            await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.setMermaidCorrectionState({payload});");
+        }
+
+        public static async Task ReplaceChatMermaidAsync(WebView2 webView, string diagramId, string mermaidCode)
+        {
+            if (webView.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            var normalized = NormalizeMermaidWhitespace(mermaidCode);
+            var payload = JsonSerializer.Serialize(new
+            {
+                diagramId,
+                raw = normalized,
+                candidates = BuildMermaidRenderCandidates(normalized)
+            });
+            await webView.CoreWebView2.ExecuteScriptAsync($"window.phantomChat.replaceMermaid({payload});");
+        }
+
         public static bool TryExtractFirstMermaidBlock(string markdown, out string mermaidCode)
         {
             mermaidCode = string.Empty;
@@ -489,6 +521,7 @@ namespace SecureOverlay
       padding: 6px 8px;
     }
     .mermaid-card {
+      position: relative;
       margin: 8px 0 12px 0;
       padding: 12px;
       border: 1px solid var(--border);
@@ -496,6 +529,33 @@ namespace SecureOverlay
       background: var(--panel);
       overflow: auto;
       max-height: 360px;
+    }
+    .mermaid-card.mermaid-error {
+      padding-top: 48px;
+    }
+    .mermaid-fix-button {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      min-height: 32px;
+      padding: 6px 10px;
+      border: 1px solid rgba(115,184,255,0.7);
+      border-radius: 6px;
+      background: rgba(24,73,122,0.92);
+      color: #ffffff;
+      font: 600 12px "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .mermaid-fix-button:hover {
+      background: rgba(35,95,155,0.96);
+    }
+    .mermaid-fix-button:focus-visible {
+      outline: 2px solid #73b8ff;
+      outline-offset: 2px;
+    }
+    .mermaid-fix-button:disabled {
+      cursor: wait;
+      opacity: 0.65;
     }
     .mermaid-host svg {
       display: block;
@@ -507,16 +567,35 @@ namespace SecureOverlay
       color: var(--code);
       white-space: pre;
     }
+    #chat-cursor {
+      position: fixed;
+      z-index: 2147483647;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      background: rgba(0, 170, 255, 0.78);
+      box-shadow: 0 0 10px #00aaff;
+      pointer-events: none;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+    body.hide-cursor #chat-cursor.is-present {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
   <div id="transcript"></div>
+  <div id="chat-cursor" aria-hidden="true"></div>
   <script src="__MERMAID_SRC__"></script>
   <script>
     const transcript = document.getElementById('transcript');
+    const chatCursor = document.getElementById('chat-cursor');
     let pendingCursorMove = null;
     let cursorMoveQueued = false;
     let cursorBridgeBound = false;
+    let mermaidHostSequence = 0;
 
     function postHostMessage(message) {
       if (window.chrome && window.chrome.webview) {
@@ -535,6 +614,9 @@ namespace SecureOverlay
     }
 
     function queueCursorMove(event) {
+      chatCursor.style.left = `${event.clientX}px`;
+      chatCursor.style.top = `${event.clientY}px`;
+      chatCursor.classList.add('is-present');
       pendingCursorMove = {
         x: Math.round(event.clientX),
         y: Math.round(event.clientY)
@@ -556,10 +638,12 @@ namespace SecureOverlay
       cursorBridgeBound = true;
       window.addEventListener('pointerenter', () => postHostMessage('CHAT_CURSOR:enter'), true);
       window.addEventListener('pointerleave', () => {
+        chatCursor.classList.remove('is-present');
         postHostMessage('CHAT_CURSOR:leave');
       }, true);
       window.addEventListener('pointermove', queueCursorMove, { passive: true });
       window.addEventListener('blur', () => {
+        chatCursor.classList.remove('is-present');
         postHostMessage('CHAT_CURSOR:leave');
       });
       document.addEventListener('visibilitychange', () => {
@@ -576,6 +660,31 @@ namespace SecureOverlay
              /syntax error in text/i.test(svg);
     }
 
+    function findMermaidHost(diagramId) {
+      return Array.from(transcript.querySelectorAll('.mermaid-host'))
+        .find(host => host.dataset.diagramId === diagramId);
+    }
+
+    function showMermaidCorrectionButton(host, raw) {
+      const card = host.closest('.mermaid-card');
+      if (!card) return;
+      card.classList.add('mermaid-error');
+      let button = card.querySelector('.mermaid-fix-button');
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mermaid-fix-button';
+        button.textContent = 'Correct syntax';
+        button.setAttribute('aria-label', 'Ask AI to correct this Mermaid diagram syntax');
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          button.textContent = 'Correcting...';
+          postHostMessage(`CHAT_FIX_MERMAID:${JSON.stringify({ diagramId: host.dataset.diagramId, source: raw })}`);
+        });
+        card.append(button);
+      }
+    }
+
     async function renderMermaidHosts(root) {
       if (!window.mermaid) {
         return;
@@ -585,6 +694,10 @@ namespace SecureOverlay
       const hosts = Array.from(root.querySelectorAll('.mermaid-host'));
       for (let i = 0; i < hosts.length; i += 1) {
         const host = hosts[i];
+        host.dataset.diagramId ||= `phantom-diagram-${++mermaidHostSequence}`;
+        const card = host.closest('.mermaid-card');
+        card?.classList.remove('mermaid-error');
+        card?.querySelector('.mermaid-fix-button')?.remove();
         const raw = host.getAttribute('data-raw') || '';
         let candidates = [];
         try {
@@ -623,6 +736,7 @@ namespace SecureOverlay
           pre.className = 'mermaid-fallback';
           pre.textContent = raw;
           host.replaceChildren(pre);
+          showMermaidCorrectionButton(host, raw);
         }
       }
     }
@@ -630,6 +744,22 @@ namespace SecureOverlay
     window.phantomChat = {
       setCursorHidden: function(hidden) {
         document.body.classList.toggle('hide-cursor', !!hidden);
+        if (!hidden) chatCursor.classList.remove('is-present');
+      },
+      setMermaidCorrectionState: function(payload) {
+        const host = findMermaidHost(payload.diagramId);
+        const button = host && host.closest('.mermaid-card')?.querySelector('.mermaid-fix-button');
+        if (!button) return;
+        button.disabled = !!payload.busy;
+        button.textContent = payload.label || (payload.busy ? 'Correcting...' : 'Correct syntax');
+      },
+      replaceMermaid: async function(payload) {
+        const host = findMermaidHost(payload.diagramId);
+        if (!host) return;
+        host.setAttribute('data-raw', payload.raw || '');
+        host.setAttribute('data-candidates', JSON.stringify(payload.candidates || []));
+        host.replaceChildren();
+        await renderMermaidHosts(host.closest('.mermaid-card'));
       },
       render: async function(payload) {
         transcript.innerHTML = payload && payload.html ? payload.html : '';

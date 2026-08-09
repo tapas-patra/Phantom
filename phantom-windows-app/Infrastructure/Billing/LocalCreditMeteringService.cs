@@ -178,6 +178,30 @@ namespace SecureOverlay.Infrastructure.Billing
             return true;
         }
 
+        public void TrackQuestionInput(string input)
+        {
+            var session = _interviewSessionRepository.Load();
+            if (session == null || (session.State != InterviewSessionState.Active && session.State != InterviewSessionState.Paused))
+            {
+                return;
+            }
+
+            var question = input.Trim();
+            if (question.Length == 0)
+            {
+                return;
+            }
+
+            session.QuestionInputs ??= new List<string>();
+            if (session.QuestionInputs.Count >= 200)
+            {
+                return;
+            }
+
+            session.QuestionInputs.Add(question[..Math.Min(question.Length, 4000)]);
+            _interviewSessionRepository.Save(session);
+        }
+
         public bool PauseActiveSession()
         {
             var session = _interviewSessionRepository.Load();
@@ -364,7 +388,8 @@ namespace SecureOverlay.Infrastructure.Billing
                 ConsumedPremiumCredits = consumedPremiumCredits,
                 PremiumDebtAdded = premiumDebtAdded,
                 RemainingProCredits = snapshot.ProAvailableCredits,
-                RemainingPremiumCredits = snapshot.PremiumAvailableCredits
+                RemainingPremiumCredits = snapshot.PremiumAvailableCredits,
+                QuestionInputs = session.QuestionInputs ?? new List<string>()
             };
         }
 

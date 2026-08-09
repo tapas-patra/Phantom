@@ -197,7 +197,7 @@ Source label: {document.SourceLabelOrFileName()}";
         return TryDeserialize<ProjectExtractionResult>(json);
     }
 
-    private async Task<string?> TryCompleteJsonAsync(
+    public async Task<string?> TryCompleteJsonAsync(
         DesktopAccountRecord account,
         string systemPrompt,
         string userPrompt,

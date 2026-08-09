@@ -20,6 +20,7 @@ namespace SecureOverlay.Domain.Entities
         public string LockTokenHash { get; set; } = string.Empty;
         public int HeartbeatIntervalSeconds { get; set; } = 60;
         public int LockTtlSeconds { get; set; } = 300;
+        public List<string> QuestionInputs { get; set; } = new List<string>();
         public decimal ChargedCredits { get; set; }
         public int ChargedBlocks { get; set; }
         public decimal PremiumDebtAdded { get; set; }

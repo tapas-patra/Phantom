@@ -19,13 +19,15 @@ public static class BackendSchemaMigrations
         new SchemaMigration("011_hosted_kb_variable_embedding_dimensions", HostedKnowledgeBaseVariableEmbeddingDimensionsSql),
         new SchemaMigration("012_hosted_kb_online_hnsw_index", HostedKnowledgeBaseOnlineHnswIndexSql),
         new SchemaMigration("013_hosted_kb_typed_memory", HostedKnowledgeBaseTypedMemorySql),
-        new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql)
+        new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql),
+        new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
     {
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql),
-        new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql)
+        new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql),
+        new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql)
     };
 
     private const string CoreSchemaSql = @"
@@ -1278,5 +1280,57 @@ CREATE TABLE IF NOT EXISTS managed_ai_model_latency_status (
 
 CREATE INDEX IF NOT EXISTS idx_managed_ai_model_latency_status_checked
     ON managed_ai_model_latency_status(checked_at_utc DESC, provider_id, model_id);
+";
+
+    private const string InterviewQuestionBanksSql = @"
+CREATE TABLE IF NOT EXISTS interview_question_bank_jobs (
+    job_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    raw_question_inputs_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    questions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    interview_started_at_utc TIMESTAMPTZ NOT NULL,
+    interview_ended_at_utc TIMESTAMPTZ NOT NULL,
+    requested_at_utc TIMESTAMPTZ NOT NULL,
+    started_at_utc TIMESTAMPTZ NULL,
+    completed_at_utc TIMESTAMPTZ NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_question_bank_jobs_status_requested
+    ON interview_question_bank_jobs(status, requested_at_utc ASC);
+
+CREATE TABLE IF NOT EXISTS dashboard_interview_question_banks (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    questions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    interview_started_at_utc TIMESTAMPTZ NOT NULL,
+    interview_ended_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
+    ON dashboard_interview_question_banks(user_id, interview_ended_at_utc DESC);
+
+DROP TRIGGER IF EXISTS trg_dashboard_projection_outbox_interview_question_banks ON dashboard_interview_question_banks;
+CREATE TRIGGER trg_dashboard_projection_outbox_interview_question_banks
+AFTER INSERT OR UPDATE OR DELETE ON dashboard_interview_question_banks
+FOR EACH ROW EXECUTE FUNCTION enqueue_dashboard_projection_change();
+";
+
+    private const string DashboardInterviewQuestionBanksSql = @"
+CREATE TABLE IF NOT EXISTS dashboard_interview_question_banks (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    questions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    interview_started_at_utc TIMESTAMPTZ NOT NULL,
+    interview_ended_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
+    ON dashboard_interview_question_banks(user_id, interview_ended_at_utc DESC);
 ";
 }

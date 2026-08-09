@@ -249,6 +249,49 @@ LIMIT 1;";
         };
     }
 
+    public object GetInterviewQuestionBanks(string userId, int page, int pageSize)
+    {
+        var normalizedPage = NormalizePage(page);
+        var normalizedPageSize = NormalizePageSize(pageSize);
+        var offset = (normalizedPage - 1) * normalizedPageSize;
+        var items = new List<object>();
+        using var connection = _store.OpenConnection();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+SELECT session_id, questions_json::text, interview_started_at_utc, interview_ended_at_utc
+FROM dashboard_interview_question_banks
+WHERE user_id = @userId
+ORDER BY interview_ended_at_utc DESC
+OFFSET @offset
+LIMIT @pageSize;";
+            command.Parameters.AddWithValue("userId", userId);
+            command.Parameters.AddWithValue("offset", offset);
+            command.Parameters.AddWithValue("pageSize", normalizedPageSize);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                items.Add(new
+                {
+                    sessionId = reader.GetString(reader.GetOrdinal("session_id")),
+                    questions = System.Text.Json.JsonSerializer.Deserialize<string[]>(reader.GetString(reader.GetOrdinal("questions_json")))
+                        ?? Array.Empty<string>(),
+                    interviewStartedAtUtc = reader.GetDateTime(reader.GetOrdinal("interview_started_at_utc")),
+                    interviewEndedAtUtc = reader.GetDateTime(reader.GetOrdinal("interview_ended_at_utc"))
+                });
+            }
+        }
+
+        return CreatePageResult(
+            connection,
+            "dashboard_interview_question_banks",
+            userId,
+            items,
+            normalizedPage,
+            normalizedPageSize,
+            offset);
+    }
+
     private static object CreatePageResult(
         Npgsql.NpgsqlConnection connection,
         string tableName,

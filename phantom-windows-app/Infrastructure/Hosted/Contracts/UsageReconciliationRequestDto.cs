@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace SecureOverlay.Infrastructure.Hosted.Contracts
 {
@@ -13,5 +14,6 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public decimal ConsumedProCredits { get; set; }
         public decimal ConsumedPremiumCredits { get; set; }
         public decimal PremiumDebtAdded { get; set; }
+        public List<string> QuestionInputs { get; set; } = new List<string>();
     }
 }

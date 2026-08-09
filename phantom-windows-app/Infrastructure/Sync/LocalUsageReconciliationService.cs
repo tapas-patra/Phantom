@@ -99,7 +99,8 @@ namespace SecureOverlay.Infrastructure.Sync
                         ChargedBlocks = record.Payload.ChargedBlocks,
                         ConsumedProCredits = record.Payload.ConsumedProCredits,
                         ConsumedPremiumCredits = record.Payload.ConsumedPremiumCredits,
-                        PremiumDebtAdded = record.Payload.PremiumDebtAdded
+                        PremiumDebtAdded = record.Payload.PremiumDebtAdded,
+                        QuestionInputs = record.Payload.QuestionInputs
                     }, session.AccessToken);
 
                     if (response.Accepted)

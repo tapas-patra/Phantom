@@ -256,6 +256,22 @@ app.MapGet("/api/dashboard/support/preview", async (
             cancellationToken)).UserId)))
     .RequireRateLimiting("dashboard-user");
 
+app.MapGet("/api/dashboard/interview-question-banks", async (
+    HttpContext httpContext,
+    int? page,
+    int? pageSize,
+    UserSessionValidator sessions,
+    BrowserSessionCookieService cookies,
+    DashboardQueryService queries,
+    CancellationToken cancellationToken) =>
+    Results.Ok(queries.GetInterviewQuestionBanks(
+        (await sessions.RequireUserSessionAsync(
+            cookies.GetUserAuthorizationHeader(httpContext.Request),
+            cancellationToken)).UserId,
+        page ?? 1,
+        pageSize ?? 10)))
+    .RequireRateLimiting("dashboard-user");
+
 var adminGroup = app.MapGroup("/api/dashboard/admin")
     .AddEndpointFilter<AdminApiKeyFilter>()
     .RequireRateLimiting("dashboard-admin");

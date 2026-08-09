@@ -4,7 +4,8 @@ public static class DashboardSchemaMigrations
 {
     public static IReadOnlyList<SchemaMigration> All { get; } = new[]
     {
-        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionSchemaSql)
+        new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionSchemaSql),
+        new SchemaMigration("002_interview_question_banks", InterviewQuestionBanksSql)
     };
 
     private const string DashboardProjectionSchemaSql = @"
@@ -86,4 +87,18 @@ CREATE TABLE IF NOT EXISTS dashboard_support_previews (
     lease_expires_at_utc TIMESTAMPTZ NOT NULL,
     updated_at_utc TIMESTAMPTZ NOT NULL
 );";
+
+    private const string InterviewQuestionBanksSql = @"
+CREATE TABLE IF NOT EXISTS dashboard_interview_question_banks (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    questions_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    interview_started_at_utc TIMESTAMPTZ NOT NULL,
+    interview_ended_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
+    ON dashboard_interview_question_banks(user_id, interview_ended_at_utc DESC);
+";
 }

@@ -12,15 +12,18 @@ public sealed class UsageReconciliationService
     private readonly PostgresBackendStore _store;
     private readonly UsageLedgerRepository _usageLedger;
     private readonly AccountRepository _accounts;
+    private readonly InterviewQuestionBankJobRepository _questionBankJobs;
 
     public UsageReconciliationService(
         PostgresBackendStore store,
         UsageLedgerRepository usageLedger,
-        AccountRepository accounts)
+        AccountRepository accounts,
+        InterviewQuestionBankJobRepository questionBankJobs)
     {
         _store = store;
         _usageLedger = usageLedger;
         _accounts = accounts;
+        _questionBankJobs = questionBankJobs;
     }
 
     public UsageReconciliationResultDto Reconcile(UsageReconciliationRequestDto request, string authenticatedUserId)
@@ -37,6 +40,23 @@ public sealed class UsageReconciliationService
 
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
+
+        var questionInputs = (request.QuestionInputs ?? new List<string>())
+            .Where(input => !string.IsNullOrWhiteSpace(input))
+            .Select(input => input.Trim()[..Math.Min(input.Trim().Length, 4000)])
+            .Take(200)
+            .ToArray();
+        if (questionInputs.Length > 0)
+        {
+            _questionBankJobs.Enqueue(
+                request.SessionId,
+                request.UserId,
+                questionInputs,
+                request.StartedAtUtc,
+                request.EndedAtUtc,
+                connection,
+                transaction);
+        }
 
         var existing = _usageLedger.FindBySessionId(request.SessionId, connection, transaction);
         if (existing != null)

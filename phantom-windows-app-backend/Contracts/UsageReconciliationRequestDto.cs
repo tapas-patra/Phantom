@@ -11,4 +11,5 @@ public sealed class UsageReconciliationRequestDto
     public decimal ConsumedProCredits { get; set; }
     public decimal ConsumedPremiumCredits { get; set; }
     public decimal PremiumDebtAdded { get; set; }
+    public List<string> QuestionInputs { get; set; } = new();
 }

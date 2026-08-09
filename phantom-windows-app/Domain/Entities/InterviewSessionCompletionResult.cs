@@ -13,5 +13,6 @@ namespace SecureOverlay.Domain.Entities
         public decimal PremiumDebtAdded { get; set; }
         public decimal RemainingProCredits { get; set; }
         public decimal RemainingPremiumCredits { get; set; }
+        public System.Collections.Generic.List<string> QuestionInputs { get; set; } = new System.Collections.Generic.List<string>();
     }
 }

@@ -223,6 +223,14 @@ export async function fetchSupportOverview(accessToken) {
   });
 }
 
+export async function fetchInterviewQuestionBanks(accessToken, page = 1, pageSize = 10) {
+  return request(
+    DASHBOARD_API_BASE,
+    `/api/dashboard/interview-question-banks?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`,
+    { headers: authHeaders(accessToken) }
+  );
+}
+
 export async function fetchUserSupportTickets(accessToken, page = 1, pageSize = 10) {
   return request(
     WINDOWS_BACKEND_API_BASE,

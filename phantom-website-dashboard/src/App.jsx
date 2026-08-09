@@ -23,6 +23,7 @@ import {
   fetchGmailOAuthStatus,
   fetchHostedKnowledgeBase,
   fetchHostedKnowledgeBaseDocument,
+  fetchInterviewQuestionBanks,
   markHostedKnowledgeBaseProjectRecent,
   pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
@@ -117,6 +118,7 @@ const userNav = [
   { to: "/dashboard/wallet", label: "Wallet" },
   { to: "/dashboard/devices", label: "Devices" },
   { to: "/dashboard/history", label: "Usage" },
+  { to: "/dashboard/questions", label: "Questions" },
   { to: "/dashboard/support", label: "Support" }
 ];
 
@@ -1786,6 +1788,7 @@ function UserDashboardPage({ session }) {
             />
             <Route path="devices" element={<DevicesPanel accessToken={session.accessToken} />} />
             <Route path="history" element={<HistoryPanel accessToken={session.accessToken} />} />
+            <Route path="questions" element={<QuestionBanksPanel accessToken={session.accessToken} />} />
             <Route path="support" element={<SupportPanel accessToken={session.accessToken} support={support} />} />
           </Routes>
         </section>
@@ -2737,6 +2740,53 @@ function HistoryPanel({ accessToken }) {
           />
         }
       />
+    </div>
+  );
+}
+
+function QuestionBanksPanel({ accessToken }) {
+  const [banksPage, setBanksPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+
+  useEffect(() => {
+    loadQuestionBanksPage(accessToken, 1, setBanksPage);
+  }, [accessToken]);
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Interview question banks</p>
+        <h1>Review the questions from each completed interview.</h1>
+        <p>Phantom keeps the cleaned, grouped questions only. Interview answers and the full chat are not stored here.</p>
+      </article>
+
+      {(banksPage.items || []).length === 0 ? (
+        <article className="glass-panel table-span-full">
+          <h3>No interview question banks yet.</h3>
+          <p>A bank appears after the desktop session ends and background processing completes.</p>
+        </article>
+      ) : (
+        banksPage.items.map((bank) => (
+          <article className="glass-panel table-span-full" key={bank.sessionId}>
+            <p className="story-tag">Interview · {formatDate(bank.interviewEndedAtUtc)}</p>
+            <h3>{bank.questions.length} grouped question{bank.questions.length === 1 ? "" : "s"}</h3>
+            <ol>
+              {bank.questions.map((question, index) => (
+                <li key={`${bank.sessionId}-${index}`}>{question}</li>
+              ))}
+            </ol>
+          </article>
+        ))
+      )}
+
+      <article className="glass-panel table-span-full">
+        <PaginationBar
+          page={banksPage.page || 1}
+          hasNextPage={Boolean(banksPage.hasNextPage)}
+          totalCount={banksPage.totalCount || 0}
+          onPrevious={() => loadQuestionBanksPage(accessToken, banksPage.page - 1, setBanksPage)}
+          onNext={() => loadQuestionBanksPage(accessToken, (banksPage.page || 1) + 1, setBanksPage)}
+        />
+      </article>
     </div>
   );
 }
@@ -5079,6 +5129,10 @@ async function loadDevicesPage(accessToken, page, setter) {
 
 async function loadSupportTicketsPage(accessToken, page, setter) {
   setter(await fetchUserSupportTickets(accessToken, Math.max(1, page), 10));
+}
+
+async function loadQuestionBanksPage(accessToken, page, setter) {
+  setter(await fetchInterviewQuestionBanks(accessToken, Math.max(1, page), 10));
 }
 
 async function loadAdminUsersPage(accessToken, page, query, setter) {

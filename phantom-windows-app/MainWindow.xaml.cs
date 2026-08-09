@@ -839,7 +839,8 @@ namespace SecureOverlay
                     ChargedBlocks = completion.ChargedBlocks,
                     ConsumedProCredits = completion.ConsumedProCredits,
                     ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
-                    PremiumDebtAdded = completion.PremiumDebtAdded
+                    PremiumDebtAdded = completion.PremiumDebtAdded,
+                    QuestionInputs = completion.QuestionInputs
                 });
                 _usageReconciliationService.FlushPendingInBackground();
                 _interviewLockService.MarkLockReleased();
@@ -1756,7 +1757,7 @@ namespace SecureOverlay
         // MESSAGE SENDING
         // ═══════════════════════════════════════════════════════════════
 
-        private async Task SendMessage()
+        private async Task SendMessage(bool captureQuestion = true)
         {
             if (IsInterviewStartBlocked() && !CanContinueRestrictedInterview())
             {
@@ -1805,6 +1806,13 @@ namespace SecureOverlay
             }
 
             var message = InputTextBox.Text.Trim();
+            var hasQuestionInput = !string.IsNullOrEmpty(message) && message != "Ask me anything...";
+            var questionCaptured = false;
+            if (captureQuestion && hasQuestionInput && activeSessionBeforeSend != null)
+            {
+                _creditMeteringService.TrackQuestionInput(message);
+                questionCaptured = true;
+            }
             
             if (string.IsNullOrEmpty(message) || message == "Ask me anything...") 
             {
@@ -1918,6 +1926,10 @@ namespace SecureOverlay
             if (meteringActivation.Session != null)
             {
                 ActivateInterviewLock(meteringActivation.Session);
+                if (captureQuestion && hasQuestionInput && !questionCaptured)
+                {
+                    _creditMeteringService.TrackQuestionInput(message);
+                }
                 RecordInterviewActivity("session_active");
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
@@ -2623,7 +2635,7 @@ namespace SecureOverlay
 
             await RefreshChatSurfaceAsync();
             InputTextBox.Text = question;
-            await SendMessage();
+            await SendMessage(captureQuestion: false);
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -5155,7 +5167,8 @@ namespace SecureOverlay
                             ChargedBlocks = completion.ChargedBlocks,
                             ConsumedProCredits = completion.ConsumedProCredits,
                             ConsumedPremiumCredits = completion.ConsumedPremiumCredits,
-                            PremiumDebtAdded = completion.PremiumDebtAdded
+                            PremiumDebtAdded = completion.PremiumDebtAdded,
+                            QuestionInputs = completion.QuestionInputs
                         });
                         Log.WriteLine(
                             $"  ✓ Interview finalized: session={completion.SessionId}, blocks={completion.ChargedBlocks}, " +

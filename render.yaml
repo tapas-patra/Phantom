@@ -10,7 +10,9 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
-        value: Development
+        value: Production
+      - key: DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE
+        value: "false"
       - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
         value: https://phantom-website-dashboard.vercel.app
       - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI
@@ -58,6 +60,10 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE
+        value: "false"
       - key: PHANTOM_WINDOWS_BACKEND_BASE_URL
         value: https://phantom-ai-windows-app-backend.onrender.com
       - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL

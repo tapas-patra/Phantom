@@ -72,8 +72,7 @@ namespace SecureOverlay
         private bool _isProcessingRequest = false;
         private readonly List<MarkdownHelper.ChatRenderMessage> _chatMessages = new();
         private string? _streamingChatMarkdown;
-        private bool _chatRenderInFlight;
-        private bool _chatRenderPending;
+        private readonly SemaphoreSlim _chatRenderLock = new(1, 1);
         private bool _chatSurfaceInitialized;
         private bool _chatCursorBridgeInitialized;
         private bool _chatCursorHidden;
@@ -2394,21 +2393,11 @@ namespace SecureOverlay
 
         private async Task RefreshChatSurfaceAsync()
         {
-            if (_chatRenderInFlight)
-            {
-                _chatRenderPending = true;
-                return;
-            }
-
-            _chatRenderInFlight = true;
+            await _chatRenderLock.WaitAsync();
             try
             {
-                do
-                {
-                    _chatRenderPending = false;
-                    await EnsureChatSurfaceReadyAsync();
-                    await MarkdownHelper.RenderChatTranscriptAsync(ChatWebView, BuildDisplayedChatMessages());
-                } while (_chatRenderPending);
+                await EnsureChatSurfaceReadyAsync();
+                await MarkdownHelper.RenderChatTranscriptAsync(ChatWebView, BuildDisplayedChatMessages());
             }
             catch (Exception ex)
             {
@@ -2416,12 +2405,7 @@ namespace SecureOverlay
             }
             finally
             {
-                _chatRenderInFlight = false;
-            }
-
-            if (_chatRenderPending)
-            {
-                await RefreshChatSurfaceAsync();
+                _chatRenderLock.Release();
             }
         }
 

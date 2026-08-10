@@ -29,6 +29,7 @@ import {
   fetchManagedAiAdminInventory,
   fetchManagedAiLatencyStatus,
   fetchPaymentCatalog,
+  fetchRegistrationSettings,
   fetchSupportOverview,
   fetchWalletHistory,
   fetchWalletPurchases,
@@ -58,6 +59,7 @@ import {
   updateInterviewQuestionBank,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
+  updateRegistrationSettings,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
   fetchUserSupportTickets,
@@ -97,7 +99,8 @@ const adminNav = [
   { to: "/admin/users", label: "Users" },
   { to: "/admin/payments", label: "Payments" },
   { to: "/admin/tickets", label: "Tickets" },
-  { to: "/admin/managed-ai", label: "Managed AI" }
+  { to: "/admin/managed-ai", label: "Managed AI" },
+  { to: "/admin/settings", label: "Settings" }
 ];
 
 const plans = [
@@ -1203,7 +1206,27 @@ function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
   const [otpSubmitting, setOtpSubmitting] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [registrationSettings, setRegistrationSettings] = useState(null);
   const deviceFingerprintHash = registerParams.get("deviceFingerprint") || getBrowserRegistrationFingerprint();
+  const phoneVerificationRequired = registrationSettings?.phoneVerificationRequired === true;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRegistrationSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setRegistrationSettings(settings);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStatus(error.message || "Could not load signup requirements.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSendOtp() {
     setOtpSubmitting(true);
@@ -1267,15 +1290,19 @@ function RegisterPage() {
         throw new Error("Accept the Terms of Use and Privacy Policy before creating your account.");
       }
 
-      if (!otpState.verificationToken) {
+      if (!registrationSettings) {
+        throw new Error("Signup requirements are still loading. Try again in a moment.");
+      }
+
+      if (phoneVerificationRequired && !otpState.verificationToken) {
         throw new Error("Verify your phone number before creating the account.");
       }
 
       const result = await registerAccount({
         email: form.email,
         password: form.password,
-        phoneNumber: form.phoneNumber,
-        phoneVerificationToken: otpState.verificationToken,
+        phoneNumber: phoneVerificationRequired ? form.phoneNumber : "",
+        phoneVerificationToken: phoneVerificationRequired ? otpState.verificationToken : "",
         appVersion: registerParams.get("appVersion") || "",
         installId: registerParams.get("installId") || "",
         deviceLabel: registerParams.get("deviceLabel") || "",
@@ -1320,7 +1347,7 @@ function RegisterPage() {
           <p className="eyebrow">Start free</p>
           <h1>Create the workspace that follows you into every round.</h1>
           <p>
-            Create your account here, complete phone and email verification, then download Phantom for Windows.
+            Create your account here, {phoneVerificationRequired ? "complete phone and email verification" : "verify your email"}, then download Phantom for Windows.
           </p>
           <ul>
             <li>Two hosted 15-minute trial blocks</li>
@@ -1350,50 +1377,58 @@ function RegisterPage() {
               placeholder="Choose a strong password"
             />
           </label>
-          <label>
-            <span>Phone number</span>
-            <input
-              required
-              value={form.phoneNumber}
-              onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
-              placeholder="+91 9876543210"
-            />
-          </label>
+          {phoneVerificationRequired ? (
+            <>
+              <label>
+                <span>Phone number</span>
+                <input
+                  required
+                  value={form.phoneNumber}
+                  onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
+                  placeholder="+91 9876543210"
+                />
+              </label>
 
-          <div className="inline-actions">
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={handleSendOtp}
-              disabled={otpSubmitting || submitting}
-            >
-              {otpSubmitting ? "Sending..." : "Send OTP"}
-            </button>
-            <span className="inline-note">
-              {otpState.maskedPhoneNumber
-                ? `OTP challenge active for ${otpState.maskedPhoneNumber}`
-                : "Phone OTP is required"}
-            </span>
-          </div>
+              <div className="inline-actions">
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={handleSendOtp}
+                  disabled={otpSubmitting || submitting}
+                >
+                  {otpSubmitting ? "Sending..." : "Send OTP"}
+                </button>
+                <span className="inline-note">
+                  {otpState.maskedPhoneNumber
+                    ? `OTP challenge active for ${otpState.maskedPhoneNumber}`
+                    : "Phone OTP is required"}
+                </span>
+              </div>
 
-          <label>
-            <span>OTP code</span>
-            <input
-              required
-              value={form.otpCode}
-              onChange={(event) => setForm((current) => ({ ...current, otpCode: event.target.value }))}
-              placeholder="6-digit OTP"
-            />
-          </label>
+              <label>
+                <span>OTP code</span>
+                <input
+                  required
+                  value={form.otpCode}
+                  onChange={(event) => setForm((current) => ({ ...current, otpCode: event.target.value }))}
+                  placeholder="6-digit OTP"
+                />
+              </label>
 
-          <button
-            className="button button-ghost"
-            type="button"
-            onClick={handleVerifyOtp}
-            disabled={otpSubmitting || submitting}
-          >
-            {otpSubmitting ? "Working..." : otpState.verificationToken ? "Phone Verified" : "Verify OTP"}
-          </button>
+              <button
+                className="button button-ghost"
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={otpSubmitting || submitting}
+              >
+                {otpSubmitting ? "Working..." : otpState.verificationToken ? "Phone Verified" : "Verify OTP"}
+              </button>
+            </>
+          ) : registrationSettings ? (
+            <p className="inline-note">Phone verification is currently not required. Email verification still protects account access.</p>
+          ) : (
+            <p className="inline-note">Loading signup requirements…</p>
+          )}
           <label className="consent-row">
             <input
               type="checkbox"
@@ -1405,7 +1440,7 @@ function RegisterPage() {
               I agree to the <Link to="/terms" target="_blank" rel="noreferrer">Terms of Use</Link> and acknowledge the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Policy</Link>, including what data Phantom collects and why it is used.
             </span>
           </label>
-          <button className="button button-primary" type="submit" disabled={submitting}>
+          <button className="button button-primary" type="submit" disabled={submitting || !registrationSettings}>
             {submitting ? "Creating account..." : "Create Account"}
           </button>
 
@@ -3442,10 +3477,97 @@ function AdminDashboardPage({ adminSession }) {
                 />
               }
             />
+            <Route
+              path="settings"
+              element={<AdminSettingsPanel accessToken={adminSession.accessToken} />}
+            />
           </Routes>
         </section>
       </section>
     </main>
+  );
+}
+
+function AdminSettingsPanel({ accessToken }) {
+  const [settings, setSettings] = useState(null);
+  const [phoneVerificationRequired, setPhoneVerificationRequired] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRegistrationSettings()
+      .then((result) => {
+        if (!cancelled) {
+          setSettings(result);
+          setPhoneVerificationRequired(Boolean(result?.phoneVerificationRequired));
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError.message || "Could not load registration settings.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSave() {
+    setSubmitting(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await updateRegistrationSettings(accessToken, { phoneVerificationRequired });
+      setSettings(result);
+      setPhoneVerificationRequired(Boolean(result.phoneVerificationRequired));
+      setSuccess("Signup verification settings saved.");
+    } catch (saveError) {
+      setError(saveError.message || "Could not save registration settings.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Registration settings</p>
+        <h1>Control the signup gate without changing existing accounts.</h1>
+        <p>Email verification remains required. Phone verification can be enabled for future registrations when the additional identity signal justifies the signup friction and SMS cost.</p>
+      </article>
+
+      <article className="glass-panel admin-form-panel table-span-full">
+        <div className="table-header">
+          <div>
+            <p className="eyebrow">New account verification</p>
+            <h3>Require phone verification at signup</h3>
+          </div>
+          <span className={`status-pill ${phoneVerificationRequired ? "status-pill-warn" : "status-pill-good"}`}>
+            {phoneVerificationRequired ? "Required" : "Not required"}
+          </span>
+        </div>
+        <p>Changing this setting only affects registrations completed after the change. Existing phone numbers and existing account access are left untouched.</p>
+        <label className="admin-toggle">
+          <input
+            type="checkbox"
+            checked={phoneVerificationRequired}
+            onChange={(event) => setPhoneVerificationRequired(event.target.checked)}
+            disabled={!settings || submitting}
+          />
+          <span>Ask new users for a phone number and OTP before account creation</span>
+        </label>
+        <div className="inline-actions">
+          <button className="button button-primary" type="button" onClick={handleSave} disabled={!settings || submitting}>
+            {submitting ? "Saving..." : "Save signup setting"}
+          </button>
+          <span className="inline-note">Last updated: {formatDate(settings?.updatedAtUtc)}</span>
+        </div>
+        {error ? <p className="status-message status-error">{error}</p> : null}
+        {success ? <p className="status-message status-success">{success}</p> : null}
+      </article>
+    </div>
   );
 }
 

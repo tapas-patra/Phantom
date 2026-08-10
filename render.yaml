@@ -10,7 +10,7 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
-        value: Development
+        value: Production
       - key: DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE
         value: "false"
       - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
@@ -19,10 +19,6 @@ services:
         value: https://phantom-ai-windows-app-backend.onrender.com/api/admin/integrations/gmail/oauth/callback
       - key: PHANTOM_SHARED_COOKIE_DOMAIN
         value: ""
-      - key: PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER
-        value: mock
-      - key: PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE
-        value: "123321"
       - key: PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP
         value: "false"
       - key: PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING
@@ -60,6 +56,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
       - key: DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE
         value: "false"
       - key: PHANTOM_WINDOWS_BACKEND_BASE_URL

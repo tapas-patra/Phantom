@@ -22,7 +22,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("014_managed_ai_latency_checks", ManagedAiLatencyChecksSql),
         new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql),
         new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql),
-        new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql)
+        new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql),
+        new SchemaMigration("018_registration_settings", RegistrationSettingsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -38,6 +39,18 @@ ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_accepted_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_version TEXT NOT NULL DEFAULT '';
+";
+
+    private const string RegistrationSettingsSql = @"
+CREATE TABLE IF NOT EXISTS registration_settings (
+    settings_id TEXT PRIMARY KEY,
+    phone_verification_required BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+INSERT INTO registration_settings (settings_id, phone_verification_required, updated_at_utc)
+VALUES ('global', FALSE, NOW())
+ON CONFLICT (settings_id) DO NOTHING;
 ";
 
     private const string CoreSchemaSql = @"

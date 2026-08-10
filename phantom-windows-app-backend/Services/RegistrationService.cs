@@ -15,6 +15,7 @@ public sealed class RegistrationService
     private readonly MagicLinkEmailService _emailService;
     private readonly TokenService _tokenService;
     private readonly PhoneVerificationService _phoneVerification;
+    private readonly RegistrationSettingsRepository _settings;
 
     public RegistrationService(
         BackendOptions options,
@@ -23,7 +24,8 @@ public sealed class RegistrationService
         EmailVerificationRepository verifications,
         MagicLinkEmailService emailService,
         TokenService tokenService,
-        PhoneVerificationService phoneVerification)
+        PhoneVerificationService phoneVerification,
+        RegistrationSettingsRepository settings)
     {
         _options = options;
         _accounts = accounts;
@@ -32,6 +34,26 @@ public sealed class RegistrationService
         _emailService = emailService;
         _tokenService = tokenService;
         _phoneVerification = phoneVerification;
+        _settings = settings;
+    }
+
+    public RegistrationSettingsDto GetSettings()
+    {
+        var settings = _settings.Get();
+        return new RegistrationSettingsDto
+        {
+            PhoneVerificationRequired = settings.PhoneVerificationRequired,
+            UpdatedAtUtc = settings.UpdatedAtUtc
+        };
+    }
+
+    public RegistrationSettingsDto UpdateSettings(RegistrationSettingsUpdateRequestDto request)
+    {
+        return new RegistrationSettingsDto
+        {
+            PhoneVerificationRequired = request.PhoneVerificationRequired,
+            UpdatedAtUtc = _settings.Save(request.PhoneVerificationRequired)
+        };
     }
 
     public AuthRegisterResultDto Register(AuthRegisterRequestDto request, string publicBackendBaseUrl)
@@ -58,7 +80,7 @@ public sealed class RegistrationService
         }
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var normalizedPhone = PhoneVerificationService.NormalizePhone(request.PhoneNumber);
+        var phoneVerificationRequired = _settings.Get().PhoneVerificationRequired;
         var deviceFingerprintHash = request.DeviceFingerprintHash?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(deviceFingerprintHash))
         {
@@ -71,18 +93,23 @@ public sealed class RegistrationService
         }
 
         PhoneVerificationChallengeRecord? verifiedPhone = null;
-        var canReuseExistingPhoneVerification = existing != null
-            && !existing.EmailVerified
-            && existing.PhoneVerified
-            && string.Equals(existing.PhoneNumberE164, normalizedPhone, StringComparison.Ordinal)
-            && string.Equals(existing.RegistrationDeviceFingerprintHash, deviceFingerprintHash, StringComparison.Ordinal);
-
-        if (!canReuseExistingPhoneVerification)
+        var normalizedPhone = existing?.PhoneNumberE164 ?? string.Empty;
+        if (phoneVerificationRequired)
         {
-            verifiedPhone = _phoneVerification.ConsumeVerifiedToken(
-                request.PhoneVerificationToken,
-                request.PhoneNumber,
-                deviceFingerprintHash);
+            normalizedPhone = PhoneVerificationService.NormalizePhone(request.PhoneNumber);
+            var canReuseExistingPhoneVerification = existing != null
+                && !existing.EmailVerified
+                && existing.PhoneVerified
+                && string.Equals(existing.PhoneNumberE164, normalizedPhone, StringComparison.Ordinal)
+                && string.Equals(existing.RegistrationDeviceFingerprintHash, deviceFingerprintHash, StringComparison.Ordinal);
+
+            if (!canReuseExistingPhoneVerification)
+            {
+                verifiedPhone = _phoneVerification.ConsumeVerifiedToken(
+                    request.PhoneVerificationToken,
+                    request.PhoneNumber,
+                    deviceFingerprintHash);
+            }
         }
 
         var now = DateTime.UtcNow;
@@ -92,8 +119,8 @@ public sealed class RegistrationService
             Email = normalizedEmail,
             AccessTier = "free",
             PhoneNumberE164 = verifiedPhone?.PhoneNumberE164 ?? normalizedPhone,
-            PhoneVerified = true,
-            PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? now,
+            PhoneVerified = !phoneVerificationRequired || verifiedPhone != null,
+            PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc,
             RegistrationDeviceFingerprintHash = deviceFingerprintHash,
             ProAvailableCredits = 0m,
             PremiumAvailableCredits = 0.5m,
@@ -104,9 +131,17 @@ public sealed class RegistrationService
         };
 
         account.Email = normalizedEmail;
-        account.PhoneNumberE164 = verifiedPhone?.PhoneNumberE164 ?? account.PhoneNumberE164;
-        account.PhoneVerified = true;
-        account.PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? account.PhoneVerifiedAtUtc ?? now;
+        if (phoneVerificationRequired)
+        {
+            account.PhoneNumberE164 = verifiedPhone?.PhoneNumberE164 ?? normalizedPhone;
+            account.PhoneVerified = true;
+            account.PhoneVerifiedAtUtc = verifiedPhone?.VerifiedAtUtc ?? account.PhoneVerifiedAtUtc ?? now;
+        }
+        else
+        {
+            // PhoneVerified also acts as the persisted signup-gate result, grandfathering this account if the setting changes later.
+            account.PhoneVerified = true;
+        }
         account.RegistrationDeviceFingerprintHash = deviceFingerprintHash;
         account.TermsAcceptedAtUtc = now;
         account.TermsVersion = CurrentTermsVersion;

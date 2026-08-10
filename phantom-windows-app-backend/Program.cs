@@ -23,6 +23,7 @@ builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
 builder.Services.AddSingleton<EmailVerificationRepository>();
 builder.Services.AddSingleton<PhoneVerificationRepository>();
+builder.Services.AddSingleton<RegistrationSettingsRepository>();
 builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
@@ -341,19 +342,36 @@ app.MapPost("/api/desktop/auth/register", (
     }
 }).RequireRateLimiting("auth");
 
+app.MapGet("/api/desktop/auth/registration-settings", (RegistrationService registration) =>
+{
+    return Results.Ok(registration.GetSettings());
+}).RequireRateLimiting("auth");
+
 app.MapPost("/api/desktop/auth/phone/send-otp", async (
     PhoneVerificationStartRequestDto request,
     PhoneVerificationService phoneVerification,
+    RegistrationService registration,
     CancellationToken cancellationToken) =>
 {
+    if (!registration.GetSettings().PhoneVerificationRequired)
+    {
+        return Results.BadRequest(new { error = "Phone verification is not required for signup." });
+    }
+
     return Results.Ok(await phoneVerification.StartAsync(request, cancellationToken));
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/auth/phone/verify-otp", async (
     PhoneVerificationConfirmRequestDto request,
     PhoneVerificationService phoneVerification,
+    RegistrationService registration,
     CancellationToken cancellationToken) =>
 {
+    if (!registration.GetSettings().PhoneVerificationRequired)
+    {
+        return Results.BadRequest(new { error = "Phone verification is not required for signup." });
+    }
+
     return Results.Ok(await phoneVerification.ConfirmAsync(request, cancellationToken));
 }).RequireRateLimiting("auth");
 
@@ -1158,6 +1176,18 @@ adminGroup.MapPost("/accounts/update", (
 adminGroup.MapGet("/overview", (AdminService admin) =>
 {
     return Results.Ok(admin.GetOverview());
+});
+
+adminGroup.MapGet("/registration-settings", (RegistrationService registration) =>
+{
+    return Results.Ok(registration.GetSettings());
+});
+
+adminGroup.MapPost("/registration-settings", (
+    RegistrationSettingsUpdateRequestDto request,
+    RegistrationService registration) =>
+{
+    return Results.Ok(registration.UpdateSettings(request));
 });
 
 adminGroup.MapGet("/payments/orders", (int? page, int? pageSize, AdminService admin) =>

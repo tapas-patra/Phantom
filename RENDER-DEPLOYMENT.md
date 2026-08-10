@@ -55,4 +55,5 @@ Dashboard backend:
 
 - SMTP on Render Free is a bad fit because Render documents that Free web services cannot send outbound traffic on ports `25`, `465`, or `587`.
 - This setup keeps Gmail API mail delivery, not SMTP.
-- Mock OTP stays enabled for now via `ASPNETCORE_ENVIRONMENT=Development`, `PHANTOM_WINDOWS_BACKEND_OTP_PROVIDER=mock`, and `PHANTOM_WINDOWS_BACKEND_MOCK_OTP_CODE=123321`.
+- Both deployed backends run with `ASPNETCORE_ENVIRONMENT=Production`.
+- Phone verification is disabled by default through Admin → Settings. Before enabling it, configure a production OTP provider and its credentials; mock OTP remains local-development-only.

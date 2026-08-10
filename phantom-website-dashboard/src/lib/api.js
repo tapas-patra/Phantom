@@ -149,6 +149,18 @@ export async function registerAccount(payload) {
   });
 }
 
+export async function fetchRegistrationSettings() {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/registration-settings");
+}
+
+export async function updateRegistrationSettings(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/registration-settings", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function sendPhoneOtp(payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/auth/phone/send-otp", {
     method: "POST",

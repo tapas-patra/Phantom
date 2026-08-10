@@ -69,6 +69,15 @@ import {
 
 const USER_SESSION_STORAGE_KEY = "phantom.website.user-session";
 const ADMIN_SESSION_STORAGE_KEY = "phantom.website.admin-session";
+const PASSWORD_REQUIREMENTS = "Use 12+ characters with uppercase, lowercase, a number, and a special character. Spaces are not allowed.";
+
+function getPasswordPolicyError(password) {
+  if (!password || password.length < 12) return PASSWORD_REQUIREMENTS;
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9\s]/.test(password) || /\s/.test(password)) {
+    return PASSWORD_REQUIREMENTS;
+  }
+  return "";
+}
 
 function clearStoredSession(storageKey) {
   if (typeof window !== "undefined") {
@@ -1209,6 +1218,7 @@ function RegisterPage() {
   const [registrationSettings, setRegistrationSettings] = useState(null);
   const deviceFingerprintHash = registerParams.get("deviceFingerprint") || getBrowserRegistrationFingerprint();
   const phoneVerificationRequired = registrationSettings?.phoneVerificationRequired === true;
+  const passwordError = getPasswordPolicyError(form.password);
 
   useEffect(() => {
     let cancelled = false;
@@ -1294,6 +1304,10 @@ function RegisterPage() {
         throw new Error("Signup requirements are still loading. Try again in a moment.");
       }
 
+      if (passwordError) {
+        throw new Error(passwordError);
+      }
+
       if (phoneVerificationRequired && !otpState.verificationToken) {
         throw new Error("Verify your phone number before creating the account.");
       }
@@ -1375,8 +1389,12 @@ function RegisterPage() {
               value={form.password}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
               placeholder="Choose a strong password"
+              minLength={12}
             />
           </label>
+          <p className={`inline-note ${form.password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
+            {form.password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
+          </p>
           {phoneVerificationRequired ? (
             <>
               <label>
@@ -1440,7 +1458,7 @@ function RegisterPage() {
               I agree to the <Link to="/terms" target="_blank" rel="noreferrer">Terms of Use</Link> and acknowledge the <Link to="/privacy" target="_blank" rel="noreferrer">Privacy Policy</Link>, including what data Phantom collects and why it is used.
             </span>
           </label>
-          <button className="button button-primary" type="submit" disabled={submitting || !registrationSettings}>
+          <button className="button button-primary" type="submit" disabled={submitting || !registrationSettings || Boolean(passwordError)}>
             {submitting ? "Creating account..." : "Create Account"}
           </button>
 
@@ -1514,6 +1532,7 @@ function UserResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const passwordError = getPasswordPolicyError(password);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -1522,6 +1541,9 @@ function UserResetPasswordPage() {
     try {
       if (!token) {
         throw new Error("Reset token missing from the URL.");
+      }
+      if (passwordError) {
+        throw new Error(passwordError);
       }
       if (password !== confirmPassword) {
         throw new Error("Passwords do not match.");
@@ -1550,13 +1572,16 @@ function UserResetPasswordPage() {
         <form className="glass-panel auth-form" onSubmit={handleSubmit}>
           <label>
             <span>New password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 10 characters" />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" minLength={12} required />
           </label>
+          <p className={`inline-note ${password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
+            {password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
+          </p>
           <label>
             <span>Confirm password</span>
-            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" />
+            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" required />
           </label>
-          <button className="button button-primary" type="submit" disabled={submitting}>
+          <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
           {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p> : null}
@@ -3242,6 +3267,7 @@ function AdminResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const passwordError = getPasswordPolicyError(password);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -3250,6 +3276,9 @@ function AdminResetPasswordPage() {
     try {
       if (!token) {
         throw new Error("Reset token missing from the URL.");
+      }
+      if (passwordError) {
+        throw new Error(passwordError);
       }
       if (password !== confirmPassword) {
         throw new Error("Passwords do not match.");
@@ -3278,13 +3307,16 @@ function AdminResetPasswordPage() {
         <form className="glass-panel auth-form" onSubmit={handleSubmit}>
           <label>
             <span>New password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" minLength={12} required />
           </label>
+          <p className={`inline-note ${password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
+            {password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
+          </p>
           <label>
             <span>Confirm password</span>
-            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" />
+            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" required />
           </label>
-          <button className="button button-primary" type="submit" disabled={submitting}>
+          <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
           {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p> : null}

@@ -8,7 +8,7 @@ $windowsAppDir = Join-Path $repoRoot "phantom-windows-app"
 $hostedConfigPath = Join-Path $windowsAppDir "phantom.hosted.json"
 $hostedConfig = [ordered]@{
     mode = "remote"
-    websiteBaseUrl = "https://phantom-website-dashboard.vercel.app"
+    websiteBaseUrl = "https://phantom-interview.vercel.app"
     desktopBackendBaseUrl = "https://phantom-ai-windows-app-backend.onrender.com"
 }
 

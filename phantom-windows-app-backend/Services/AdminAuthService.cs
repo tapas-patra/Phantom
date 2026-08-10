@@ -163,7 +163,7 @@ public sealed class AdminAuthService
             throw new BackendValidationException("Token is required.");
         }
 
-        ValidatePassword(request.NewPassword);
+        PasswordPolicy.Validate(request.NewPassword);
 
         var tokenRecord = _passwordResets.FindByTokenHash(_tokenService.HashToken(request.Token))
             ?? throw new BackendValidationException("Password reset token not found.");
@@ -294,14 +294,6 @@ public sealed class AdminAuthService
         if (!admin.IsActive)
         {
             throw new BackendValidationException("Admin account is inactive.");
-        }
-    }
-
-    private static void ValidatePassword(string password)
-    {
-        if (string.IsNullOrWhiteSpace(password) || password.Length < 12)
-        {
-            throw new BackendValidationException("Admin password must be at least 12 characters.");
         }
     }
 

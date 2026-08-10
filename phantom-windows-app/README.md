@@ -30,4 +30,4 @@ Local development example:
 
 Hosted deployment example:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://phantom-ai-windows-app-backend.onrender.com`
-- `PHANTOM_WEBSITE_BASE_URL=https://phantom-website-dashboard.vercel.app`
+- `PHANTOM_WEBSITE_BASE_URL=https://phantom-interview.vercel.app`

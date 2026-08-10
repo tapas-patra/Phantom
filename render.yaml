@@ -14,7 +14,7 @@ services:
       - key: DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE
         value: "false"
       - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
-        value: https://phantom-website-dashboard.vercel.app
+        value: https://phantom-interview.vercel.app
       - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI
         value: https://phantom-ai-windows-app-backend.onrender.com/api/admin/integrations/gmail/oauth/callback
       - key: PHANTOM_SHARED_COOKIE_DOMAIN
@@ -63,7 +63,7 @@ services:
       - key: PHANTOM_WINDOWS_BACKEND_BASE_URL
         value: https://phantom-ai-windows-app-backend.onrender.com
       - key: PHANTOM_PUBLIC_WEBSITE_BASE_URL
-        value: https://phantom-website-dashboard.vercel.app
+        value: https://phantom-interview.vercel.app
       - key: PHANTOM_SHARED_COOKIE_DOMAIN
         value: ""
       - key: PHANTOM_DASHBOARD_BACKEND_DATABASE_URL

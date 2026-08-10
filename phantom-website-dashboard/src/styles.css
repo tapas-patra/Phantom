@@ -334,6 +334,8 @@ input, select, textarea {
 textarea { min-height: 100px; resize: vertical; }
 input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 92, 245, 0.13); }
 .inline-note { color: #68778b; font-size: 0.78rem; }
+.inline-note-error { color: #8d2e41; }
+.inline-note-success { color: #146b50; }
 .link-row { justify-content: space-between; color: var(--blue); font-size: 0.85rem; }
 .auth-form .consent-row { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 10px; color: #566579; line-height: 1.55; }
 .consent-row input { width: 18px; min-height: 18px; margin-top: 2px; accent-color: var(--blue); }

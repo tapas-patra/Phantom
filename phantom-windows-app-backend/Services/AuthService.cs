@@ -222,7 +222,7 @@ public sealed class AuthService
             throw new BackendValidationException("Token is required.");
         }
 
-        ValidateUserPassword(request.NewPassword);
+        PasswordPolicy.Validate(request.NewPassword);
 
         var tokenRecord = _passwordResets.FindByTokenHash(_tokenService.HashToken(request.Token))
             ?? throw new BackendValidationException("Password reset token not found.");
@@ -271,14 +271,6 @@ public sealed class AuthService
             ExpiresAtUtc = session.ExpiresAtUtc,
             IsAuthenticated = session.IsAuthenticated
         };
-    }
-
-    private static void ValidateUserPassword(string password)
-    {
-        if (string.IsNullOrWhiteSpace(password) || password.Length < 10)
-        {
-            throw new BackendValidationException("Password must be at least 10 characters.");
-        }
     }
 
     private void SaveSecurityTelemetry(string eventName, string email)

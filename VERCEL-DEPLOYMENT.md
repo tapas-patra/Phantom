@@ -10,7 +10,7 @@ Current hosted URLs from the earlier Vercel-only attempt:
 
 - Windows backend: `https://phantom-ai-windows-app-backend.vercel.app` (not usable for ASP.NET hosting on Vercel)
 - Dashboard backend: `https://phantom-dashboard-backend.vercel.app` (not usable for ASP.NET hosting on Vercel)
-- Website: `https://phantom-website-dashboard.vercel.app`
+- Website: `https://phantom-interview.vercel.app`
 
 Active backend hosting guidance now lives in [RENDER-DEPLOYMENT.md](/Users/tapaskumarpatra/TKP-Other-personal/Phantom/RENDER-DEPLOYMENT.md:1).
 
@@ -24,7 +24,7 @@ Required:
 
 Set for this deployment:
 
-- `PHANTOM_PUBLIC_WEBSITE_BASE_URL=https://phantom-website-dashboard.vercel.app`
+- `PHANTOM_PUBLIC_WEBSITE_BASE_URL=https://phantom-interview.vercel.app`
 
 Usually needed in production:
 
@@ -72,7 +72,7 @@ Required:
 Set for this deployment:
 
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://phantom-ai-windows-app-backend.vercel.app`
-- `PHANTOM_PUBLIC_WEBSITE_BASE_URL=https://phantom-website-dashboard.vercel.app`
+- `PHANTOM_PUBLIC_WEBSITE_BASE_URL=https://phantom-interview.vercel.app`
 
 Optional but recommended:
 

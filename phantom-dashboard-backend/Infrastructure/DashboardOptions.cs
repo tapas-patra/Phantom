@@ -5,7 +5,7 @@ namespace Phantom.Dashboard.Backend.Infrastructure;
 public sealed class DashboardOptions
 {
     public const string DefaultWindowsBackendBaseUrl = "https://phantom-ai-windows-app-backend.onrender.com";
-    public const string DefaultPublicWebsiteBaseUrl = "https://phantom-website-dashboard.vercel.app";
+    public const string DefaultPublicWebsiteBaseUrl = "https://phantom-interview.vercel.app";
 
     public string DatabaseUrl { get; init; } = string.Empty;
     public string AdminApiKey { get; init; } = string.Empty;

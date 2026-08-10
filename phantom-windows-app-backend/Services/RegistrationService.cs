@@ -68,10 +68,7 @@ public sealed class RegistrationService
             throw new BackendValidationException("Email is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 10)
-        {
-            throw new BackendValidationException("Password must be at least 10 characters.");
-        }
+        PasswordPolicy.Validate(request.Password);
 
         var deliveryConfigurationError = _emailService.GetDeliveryConfigurationError();
         if (!string.IsNullOrWhiteSpace(deliveryConfigurationError))

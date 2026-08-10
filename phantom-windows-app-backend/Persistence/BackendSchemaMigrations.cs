@@ -25,7 +25,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql),
         new SchemaMigration("018_registration_settings", RegistrationSettingsSql),
         new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql),
-        new SchemaMigration("020_hosted_kb_experience_cards", HostedKnowledgeBaseExperienceCardsSql)
+        new SchemaMigration("020_hosted_kb_experience_cards", HostedKnowledgeBaseExperienceCardsSql),
+        new SchemaMigration("021_single_experience_current", SingleExperienceCurrentSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1387,6 +1388,19 @@ CREATE INDEX IF NOT EXISTS idx_hosted_kb_experience_cards_kb_order
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hosted_kb_experience_cards_one_current
     ON hosted_kb_experience_cards(knowledge_base_id)
     WHERE is_current;
+";
+
+    private const string SingleExperienceCurrentSql = @"
+UPDATE hosted_kb_experience_cards experience
+SET is_current = TRUE,
+    end_date = '',
+    updated_at_utc = NOW()
+WHERE NOT experience.is_current
+  AND 1 = (
+      SELECT COUNT(*)
+      FROM hosted_kb_experience_cards sibling
+      WHERE sibling.knowledge_base_id = experience.knowledge_base_id
+  );
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

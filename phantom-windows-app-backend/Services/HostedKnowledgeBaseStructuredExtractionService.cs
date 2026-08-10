@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Globalization;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -38,15 +40,19 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
     private readonly ManagedProviderCredentialRepository _credentials;
     private readonly ManagedAiCatalogService _catalogService;
     private readonly SecretProtector _protector;
+    private readonly HostedKnowledgeBaseRepository _knowledgeBases;
 
     public HostedKnowledgeBaseStructuredExtractionService(
         ManagedProviderCredentialRepository credentials,
         ManagedAiCatalogService catalogService,
-        SecretProtector protector)
+        SecretProtector protector,
+        HostedKnowledgeBaseRepository knowledgeBases)
     {
         _credentials = credentials;
         _catalogService = catalogService;
         _protector = protector;
+        _knowledgeBases = knowledgeBases;
+        RunExperienceExtractionSelfCheck();
     }
 
     public async Task<HostedKnowledgeBaseStructuredExtractionResult> ExtractAsync(
@@ -68,31 +74,57 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
             .OrderByDescending(document => document.UploadedAtUtc)
             .ToArray();
 
+        var existingProfile = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
+        var existingProjects = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId);
+        var existingExperiences = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId);
+
         var profileCard = profileDocuments.Length == 0
             ? null
-            : await BuildProfileCardAsync(account, knowledgeBase, profileDocuments, cancellationToken);
+            : RawSourceDocumentIds(existingProfile?.SourceDocumentIdsJson).SetEquals(profileDocuments.Select(document => document.DocumentId))
+                ? existingProfile
+                : await BuildProfileCardAsync(account, knowledgeBase, profileDocuments, cancellationToken);
 
         var projectCards = new List<HostedKnowledgeBaseProjectCardRecord>(projectDocuments.Length);
         for (var index = 0; index < projectDocuments.Length; index++)
         {
-            projectCards.Add(await BuildProjectCardAsync(account, knowledgeBase, projectDocuments[index], index, cancellationToken));
+            var document = projectDocuments[index];
+            var existing = existingProjects.FirstOrDefault(card => RawSourceDocumentIds(card.SourceDocumentIdsJson).Contains(document.DocumentId));
+            projectCards.Add(existing ?? await BuildProjectCardAsync(account, knowledgeBase, document, index, cancellationToken));
         }
 
         var experienceCards = new List<HostedKnowledgeBaseExperienceCardRecord>(experienceDocuments.Length);
+        var experienceSortOrder = 0;
         for (var index = 0; index < experienceDocuments.Length; index++)
         {
-            experienceCards.Add(await BuildExperienceCardAsync(account, knowledgeBase, experienceDocuments[index], index, cancellationToken));
+            var document = experienceDocuments[index];
+            var existing = existingExperiences
+                .Where(card => RawSourceDocumentIds(card.SourceDocumentIdsJson).Contains(document.DocumentId)
+                    && card.ExperienceCardId.StartsWith($"kb-experience-{document.DocumentId}-", StringComparison.Ordinal))
+                .OrderBy(card => card.SortOrder)
+                .ToArray();
+            if (existing.Length > 0)
+            {
+                experienceCards.AddRange(existing);
+                experienceSortOrder += existing.Length;
+                continue;
+            }
+
+            var extracted = await BuildExperienceCardsAsync(account, knowledgeBase, document, experienceSortOrder, cancellationToken);
+            experienceCards.AddRange(extracted);
+            experienceSortOrder += extracted.Count;
         }
 
-        if (experienceCards.Count > 0 && !experienceCards.Any(card => card.IsCurrent))
+        if (experienceCards.Count == 1)
         {
             experienceCards[0].IsCurrent = true;
+            experienceCards[0].EndDate = string.Empty;
         }
         else if (experienceCards.Count(card => card.IsCurrent) > 1)
         {
-            foreach (var card in experienceCards.Skip(1))
+            var currentExperience = experienceCards.First(card => card.IsCurrent);
+            foreach (var card in experienceCards)
             {
-                card.IsCurrent = false;
+                card.IsCurrent = ReferenceEquals(card, currentExperience);
             }
         }
 
@@ -178,33 +210,68 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         };
     }
 
-    private async Task<HostedKnowledgeBaseExperienceCardRecord> BuildExperienceCardAsync(
+    private async Task<IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord>> BuildExperienceCardsAsync(
         DesktopAccountRecord account,
         HostedKnowledgeBaseRecord knowledgeBase,
         HostedKnowledgeBaseDocumentRecord document,
         int sortOrder,
         CancellationToken cancellationToken)
     {
-        var extracted = await TryExtractExperienceWithLlmAsync(account, document, cancellationToken)
-            ?? ExtractExperienceFallback(document, sortOrder);
-        var now = DateTime.UtcNow;
-        return new HostedKnowledgeBaseExperienceCardRecord
+        var extracted = await TryExtractExperiencesWithLlmAsync(account, document, cancellationToken);
+        var fallback = ExtractExperienceFallbacks(document, sortOrder);
+        if (extracted.Count == 0)
         {
-            ExperienceCardId = $"kb-experience-{document.DocumentId}",
+            extracted = fallback;
+        }
+        else
+        {
+            extracted = extracted.Select((item, index) => MergeExperienceExtraction(
+                    item,
+                    index < fallback.Count ? fallback[index] : null))
+                .Concat(fallback.Skip(extracted.Count))
+                .ToArray();
+        }
+
+        var now = DateTime.UtcNow;
+        return extracted.Select((experience, index) => new HostedKnowledgeBaseExperienceCardRecord
+        {
+            ExperienceCardId = $"kb-experience-{document.DocumentId}-{index}",
             KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
             UserId = knowledgeBase.UserId,
-            Company = extracted.Company,
-            Role = extracted.Role,
-            IsCurrent = extracted.IsCurrent,
-            SortOrder = sortOrder,
-            StartDate = extracted.StartDate,
-            EndDate = extracted.EndDate,
-            Summary = extracted.Summary,
-            Responsibilities = extracted.Responsibilities,
-            SkillsJson = SerializeStringList(extracted.Skills),
+            Company = experience.Company,
+            Role = experience.Role,
+            IsCurrent = experience.IsCurrent,
+            SortOrder = sortOrder + index,
+            StartDate = NormalizeExperienceDate(experience.StartDate),
+            EndDate = experience.IsCurrent ? string.Empty : NormalizeExperienceDate(experience.EndDate),
+            Summary = experience.Summary,
+            Responsibilities = experience.Responsibilities,
+            SkillsJson = SerializeStringList(experience.Skills),
             SourceDocumentIdsJson = SerializeStringList(new[] { document.DocumentId }),
             CreatedAtUtc = now,
             UpdatedAtUtc = now
+        }).ToArray();
+    }
+
+    private static ExperienceExtractionResult MergeExperienceExtraction(
+        ExperienceExtractionResult extracted,
+        ExperienceExtractionResult? fallback)
+    {
+        if (fallback == null)
+        {
+            return extracted;
+        }
+
+        return new ExperienceExtractionResult
+        {
+            Company = FirstNonEmpty(extracted.Company, fallback.Company),
+            Role = FirstNonEmpty(extracted.Role, fallback.Role),
+            IsCurrent = extracted.IsCurrent || fallback.IsCurrent,
+            StartDate = FirstNonEmpty(extracted.StartDate, fallback.StartDate),
+            EndDate = FirstNonEmpty(extracted.EndDate, fallback.EndDate),
+            Summary = FirstNonEmpty(extracted.Summary, fallback.Summary),
+            Responsibilities = FirstNonEmpty(extracted.Responsibilities, fallback.Responsibilities),
+            Skills = MergeNonEmpty(extracted.Skills, fallback.Skills)
         };
     }
 
@@ -252,25 +319,30 @@ Source label: {document.SourceLabelOrFileName()}";
         return TryDeserialize<ProjectExtractionResult>(json);
     }
 
-    private async Task<ExperienceExtractionResult?> TryExtractExperienceWithLlmAsync(
+    private async Task<IReadOnlyList<ExperienceExtractionResult>> TryExtractExperiencesWithLlmAsync(
         DesktopAccountRecord account,
         HostedKnowledgeBaseDocumentRecord document,
         CancellationToken cancellationToken)
     {
         var prompt = """
 Return strict JSON only with this shape:
-{"company":"","role":"","isCurrent":false,"startDate":"","endDate":"","summary":"","responsibilities":"","skills":[""]}
+{"experiences":[{"company":"","role":"","isCurrent":false,"startDate":"YYYY-MM","endDate":"YYYY-MM","summary":"","responsibilities":"","skills":[""]}]}
 
-Extract exactly one employment experience from the source text.
+Extract every distinct employment experience from the source text. One company/role period must produce one array item.
 Rules:
 - Use only source text and do not mix responsibilities from another role.
 - Set isCurrent only when the role is explicitly current or present.
+- Normalize dates to YYYY-MM. For present/current roles use an empty endDate.
+- Company and role are required; omit entries where neither can be grounded.
 - Keep responsibilities detailed enough to answer day-to-day interview questions.
 - If unknown, use empty string, empty array, or false.
 """;
 
         var json = await TryCompleteJsonAsync(account, prompt, document.ExtractedText, cancellationToken);
-        return TryDeserialize<ExperienceExtractionResult>(json);
+        return TryDeserialize<ExperienceExtractionEnvelope>(json)?.Experiences?
+            .Where(item => !string.IsNullOrWhiteSpace(item.Company) || !string.IsNullOrWhiteSpace(item.Role))
+            .ToArray()
+            ?? Array.Empty<ExperienceExtractionResult>();
     }
 
     public async Task<string?> TryCompleteJsonAsync(
@@ -561,20 +633,179 @@ Rules:
         };
     }
 
-    private static ExperienceExtractionResult ExtractExperienceFallback(HostedKnowledgeBaseDocumentRecord document, int sortOrder)
+    private static IReadOnlyList<ExperienceExtractionResult> ExtractExperienceFallbacks(
+        HostedKnowledgeBaseDocumentRecord document,
+        int sortOrder)
     {
         var lines = NormalizeLines(document.ExtractedText);
-        return new ExperienceExtractionResult
+        var datePattern = new Regex(
+            @"(?<start>(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)?(?:19|20)\d{2}|(?:19|20)\d{2}[-/]\d{1,2}|\d{1,2}/(?:19|20)\d{2})\s*(?:-|–|—|to)\s*(?<end>present|current|now|(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)?(?:19|20)\d{2}|(?:19|20)\d{2}[-/]\d{1,2}|\d{1,2}/(?:19|20)\d{2})",
+            RegexOptions.IgnoreCase);
+        var datedLines = lines
+            .Select((line, index) => new { Line = line, Index = index, Match = datePattern.Match(line) })
+            .Where(item => item.Match.Success)
+            .ToArray();
+        if (datedLines.Length == 0)
         {
-            Company = FindSectionValue(document.ExtractedText, "company", "employer"),
-            Role = FindSectionValue(document.ExtractedText, "role", "title", "position"),
-            IsCurrent = sortOrder == 0 && Regex.IsMatch(document.ExtractedText, @"\b(current|present)\b", RegexOptions.IgnoreCase),
-            StartDate = FindSectionValue(document.ExtractedText, "start", "start date"),
-            EndDate = FindSectionValue(document.ExtractedText, "end", "end date"),
-            Summary = SummarizeText(document.ExtractedText, 420),
-            Responsibilities = FindSectionValue(document.ExtractedText, "responsibilities", "day-to-day", "duties"),
-            Skills = ExtractKeywords(document.ExtractedText, SkillKeywords, 12)
-        };
+            var role = FirstNonEmpty(
+                FindSectionValue(document.ExtractedText, "role", "title", "position"),
+                lines.FirstOrDefault(IsLikelyRoleLine) ?? string.Empty);
+            var company = FirstNonEmpty(
+                FindSectionValue(document.ExtractedText, "company", "employer"),
+                document.SourceLabelOrFileName());
+            return new[]
+            {
+                new ExperienceExtractionResult
+                {
+                    Company = company,
+                    Role = role,
+                    IsCurrent = Regex.IsMatch(document.ExtractedText, @"\b(current|present)\b", RegexOptions.IgnoreCase),
+                    StartDate = FindSectionValue(document.ExtractedText, "start", "start date"),
+                    EndDate = FindSectionValue(document.ExtractedText, "end", "end date"),
+                    Summary = SummarizeText(document.ExtractedText, 420),
+                    Responsibilities = FirstNonEmpty(
+                        FindSectionValue(document.ExtractedText, "responsibilities", "day-to-day", "duties"),
+                        string.Join("\n", ExtractBulletLikeLines(document.ExtractedText, 12))),
+                    Skills = ExtractKeywords(document.ExtractedText, SkillKeywords, 12)
+                }
+            };
+        }
+
+        var results = new List<ExperienceExtractionResult>(datedLines.Length);
+        for (var itemIndex = 0; itemIndex < datedLines.Length; itemIndex++)
+        {
+            var datedLine = datedLines[itemIndex];
+            var heading = datedLine.Line[..datedLine.Match.Index].Trim(' ', '|', ',', '-', '–', '—');
+            var previous = datedLine.Index > 0 ? lines[datedLine.Index - 1] : string.Empty;
+            var previousTwo = datedLine.Index > 1 ? lines[datedLine.Index - 2] : string.Empty;
+            var (company, role) = ParseCompanyAndRole(heading, previous, previousTwo);
+            var nextDateIndex = itemIndex + 1 < datedLines.Length ? datedLines[itemIndex + 1].Index : lines.Count;
+            var responsibilityEnd = nextDateIndex;
+            if (itemIndex + 1 < datedLines.Length
+                && datedLines[itemIndex + 1].Match.Index == 0
+                && responsibilityEnd - datedLine.Index > 2)
+            {
+                responsibilityEnd = Math.Max(datedLine.Index + 1, responsibilityEnd - 2);
+            }
+            var responsibilities = string.Join("\n", lines
+                .Skip(datedLine.Index + 1)
+                .Take(Math.Max(0, responsibilityEnd - datedLine.Index - 1))
+                .Select(line => line.TrimStart('-', '*', '•', ' '))
+                .Where(line => !string.IsNullOrWhiteSpace(line)));
+            var endText = datedLine.Match.Groups["end"].Value;
+            var isCurrent = Regex.IsMatch(endText, @"^(present|current|now)$", RegexOptions.IgnoreCase);
+            results.Add(new ExperienceExtractionResult
+            {
+                Company = company,
+                Role = role,
+                IsCurrent = isCurrent,
+                StartDate = datedLine.Match.Groups["start"].Value,
+                EndDate = isCurrent ? string.Empty : endText,
+                Summary = SummarizeText(responsibilities, 420),
+                Responsibilities = responsibilities,
+                Skills = ExtractKeywords(responsibilities, SkillKeywords, 12)
+            });
+        }
+
+        return results
+            .Where(item => !string.IsNullOrWhiteSpace(item.Company) || !string.IsNullOrWhiteSpace(item.Role))
+            .ToArray();
+    }
+
+    [Conditional("DEBUG")]
+    private static void RunExperienceExtractionSelfCheck()
+    {
+        var extracted = ExtractExperienceFallbacks(new HostedKnowledgeBaseDocumentRecord
+        {
+            FileName = "experience.txt",
+            SourceLabel = "Work history",
+            ExtractedText = """
+Acme Payments
+Senior QA Engineer
+Jan 2022 - Present
+- Owned API automation and service testing.
+Legacy Labs
+UI Automation Engineer
+Feb 2019 - Dec 2021
+- Built Selenium UI automation.
+"""
+        }, 0);
+        if (extracted.Count != 2
+            || extracted[0].Company != "Acme Payments"
+            || extracted[0].Role != "Senior QA Engineer"
+            || !extracted[0].IsCurrent
+            || extracted[1].Company != "Legacy Labs"
+            || extracted[1].Role != "UI Automation Engineer"
+            || extracted[1].IsCurrent
+            || NormalizeExperienceDate(extracted[0].StartDate) != "2022-01")
+        {
+            throw new InvalidOperationException("Experience extraction self-check failed.");
+        }
+    }
+
+    private static (string Company, string Role) ParseCompanyAndRole(
+        string heading,
+        string previous,
+        string previousTwo)
+    {
+        var atMatch = Regex.Match(heading, @"^(?<role>.+?)\s+at\s+(?<company>.+)$", RegexOptions.IgnoreCase);
+        if (atMatch.Success)
+        {
+            return (atMatch.Groups["company"].Value.Trim(), atMatch.Groups["role"].Value.Trim());
+        }
+
+        var parts = heading.Split(new[] { '|', '•', '—' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2)
+        {
+            return IsLikelyRoleLine(parts[0])
+                ? (parts[1], parts[0])
+                : (parts[0], parts[1]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(heading))
+        {
+            return IsLikelyRoleLine(heading)
+                ? (previous, heading)
+                : (heading, IsLikelyRoleLine(previous) ? previous : previousTwo);
+        }
+
+        if (IsLikelyRoleLine(previous))
+        {
+            return (previousTwo, previous);
+        }
+
+        return IsLikelyRoleLine(previousTwo)
+            ? (previous, previousTwo)
+            : (previousTwo, previous);
+    }
+
+    private static string NormalizeExperienceDate(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized)
+            || Regex.IsMatch(normalized, @"^(present|current|now)$", RegexOptions.IgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        if (DateTime.TryParse(normalized, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var date))
+        {
+            return date.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+        }
+
+        var yearMonth = Regex.Match(normalized, @"^(?<year>(?:19|20)\d{2})[-/](?<month>\d{1,2})$");
+        if (yearMonth.Success)
+        {
+            return $"{yearMonth.Groups["year"].Value}-{int.Parse(yearMonth.Groups["month"].Value, CultureInfo.InvariantCulture):00}";
+        }
+
+        var monthYear = Regex.Match(normalized, @"^(?<month>\d{1,2})/(?<year>(?:19|20)\d{2})$");
+        if (monthYear.Success)
+        {
+            return $"{monthYear.Groups["year"].Value}-{int.Parse(monthYear.Groups["month"].Value, CultureInfo.InvariantCulture):00}";
+        }
+
+        return Regex.IsMatch(normalized, @"^(?:19|20)\d{2}$") ? $"{normalized}-01" : string.Empty;
     }
 
     private static IReadOnlyList<string> NormalizeLines(string value)
@@ -760,6 +991,25 @@ Rules:
                 .ToArray());
     }
 
+    private static HashSet<string> RawSourceDocumentIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        try
+        {
+            return (JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>())
+                .Where(id => !string.IsNullOrWhiteSpace(id) && !id.StartsWith("kb-card-sync-", StringComparison.Ordinal))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+        catch
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
     private static string Slugify(string value)
     {
         var normalized = Regex.Replace(value.ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
@@ -800,6 +1050,12 @@ Rules:
         public string Summary { get; set; } = string.Empty;
         public string Responsibilities { get; set; } = string.Empty;
         public IReadOnlyList<string> Skills { get; set; } = Array.Empty<string>();
+    }
+
+    private sealed class ExperienceExtractionEnvelope
+    {
+        public IReadOnlyList<ExperienceExtractionResult> Experiences { get; set; }
+            = Array.Empty<ExperienceExtractionResult>();
     }
 }
 

@@ -2041,7 +2041,11 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   const [name, setName] = useState(knowledgeBase?.name || "My Premium Knowledge Base");
   const [description, setDescription] = useState(knowledgeBase?.description || "");
   const [status, setStatus] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [savingBase, setSavingBase] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingProject, setSavingProject] = useState(false);
+  const [processingDocuments, setProcessingDocuments] = useState(false);
+  const [savingExperience, setSavingExperience] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [documentLoadingId, setDocumentLoadingId] = useState("");
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
@@ -2102,6 +2106,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
 
   useEffect(() => {
     const experiences = knowledgeBase?.experienceCards || [];
+    if (selectedExperienceId === "new") {
+      return;
+    }
     const nextId = experiences.some((item) => item.experienceCardId === selectedExperienceId)
       ? selectedExperienceId
       : experiences[0]?.experienceCardId || "";
@@ -2167,7 +2174,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
 
   async function handleCreate(event) {
     event.preventDefault();
-    setSubmitting(true);
+    setSavingBase(true);
     setStatus("");
     try {
       const result = await createHostedKnowledgeBase(accessToken, { name, description });
@@ -2176,7 +2183,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not save the knowledge base.");
     } finally {
-      setSubmitting(false);
+      setSavingBase(false);
     }
   }
 
@@ -2186,7 +2193,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       return;
     }
 
-    setSubmitting(true);
+    setProcessingDocuments(true);
     setStatus("");
     try {
       const totalBytes = Array.from(files).reduce((sum, file) => sum + (file.size || 0), 0);
@@ -2200,7 +2207,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not process those documents.");
     } finally {
-      setSubmitting(false);
+      setProcessingDocuments(false);
       event.target.value = "";
     }
   }
@@ -2211,7 +2218,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       return;
     }
 
-    setSubmitting(true);
+    setProcessingDocuments(true);
     setStatus("");
     try {
       const result = await pasteHostedKnowledgeBaseDocument(accessToken, {
@@ -2226,7 +2233,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not process pasted content.");
     } finally {
-      setSubmitting(false);
+      setProcessingDocuments(false);
     }
   }
 
@@ -2272,7 +2279,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
 
   async function handleSaveProfile(event) {
     event.preventDefault();
-    setSubmitting(true);
+    setSavingProfile(true);
     setStatus("");
     try {
       await updateHostedKnowledgeBaseProfile(accessToken, {
@@ -2290,12 +2297,12 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not update the profile card.");
     } finally {
-      setSubmitting(false);
+      setSavingProfile(false);
     }
   }
 
   function handleNewExperience() {
-    setSelectedExperienceId("");
+    setSelectedExperienceId("new");
     setExperienceDraft({
       experienceCardId: "",
       company: "",
@@ -2312,7 +2319,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
 
   async function handleSaveExperience(event) {
     event.preventDefault();
-    setSubmitting(true);
+    setSavingExperience(true);
     setStatus("");
     const payload = {
       company: experienceDraft.company,
@@ -2335,7 +2342,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not update that experience.");
     } finally {
-      setSubmitting(false);
+      setSavingExperience(false);
     }
   }
 
@@ -2343,7 +2350,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     if (!experienceDraft.experienceCardId || !window.confirm(`Delete the ${experienceDraft.role} experience at ${experienceDraft.company}?`)) {
       return;
     }
-    setSubmitting(true);
+    setSavingExperience(true);
     setStatus("");
     try {
       await deleteHostedKnowledgeBaseExperience(accessToken, experienceDraft.experienceCardId);
@@ -2353,7 +2360,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not delete that experience.");
     } finally {
-      setSubmitting(false);
+      setSavingExperience(false);
     }
   }
 
@@ -2363,7 +2370,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       return;
     }
 
-    setSubmitting(true);
+    setSavingProject(true);
     setStatus("");
     try {
       await updateHostedKnowledgeBaseProject(accessToken, projectDraft.projectCardId, {
@@ -2382,12 +2389,12 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not update the project card.");
     } finally {
-      setSubmitting(false);
+      setSavingProject(false);
     }
   }
 
   async function handleMarkRecent(projectCardId) {
-    setSubmitting(true);
+    setSavingProject(true);
     setStatus("");
     try {
       await markHostedKnowledgeBaseProjectRecent(accessToken, projectCardId);
@@ -2396,7 +2403,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     } catch (error) {
       setStatus(error.message || "Could not update the recent project.");
     } finally {
-      setSubmitting(false);
+      setSavingProject(false);
     }
   }
 
@@ -2432,7 +2439,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">Create or rename</p>
         <label>
           <span>Knowledge base name</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} disabled={isPremiumBlocked || submitting} />
+          <input value={name} onChange={(event) => setName(event.target.value)} disabled={isPremiumBlocked || savingBase} />
         </label>
         <label>
           <span>Description</span>
@@ -2440,12 +2447,12 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             rows={4}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
-            disabled={isPremiumBlocked || submitting}
+            disabled={isPremiumBlocked || savingBase}
             placeholder="Role packet, architecture notes, company research, STAR stories"
           />
         </label>
-        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting}>
-          {submitting ? "Saving..." : "Save Knowledge Base"}
+        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingBase || processingDocuments}>
+          {savingBase ? "Saving..." : "Save Knowledge Base"}
         </button>
       </form>
 
@@ -2454,31 +2461,31 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <h3>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h3>
         <p>
           Choose where this content belongs first. The backend extracts structured interview memory immediately,
-          then keeps the raw source for edits and deep retrieval.
+          then keeps the raw source for deep retrieval. Experience documents may contain one or multiple company/role periods.
         </p>
         <label>
           <span>Section</span>
-          <select value={selectedSection} onChange={(event) => setSelectedSection(event.target.value)} disabled={isPremiumBlocked || submitting}>
+          <select value={selectedSection} onChange={(event) => setSelectedSection(event.target.value)} disabled={isPremiumBlocked || processingDocuments}>
             <option value="profile">Profile</option>
             <option value="experience">Experience</option>
             <option value="project">Project</option>
             <option value="general_reference">General preferences</option>
           </select>
         </label>
-        <label className={`button button-secondary button-file ${isPremiumBlocked || submitting ? "button-disabled" : ""}`}>
-          Upload Documents
+        <label className={`button button-secondary button-file ${isPremiumBlocked || processingDocuments ? "button-disabled" : ""}`}>
+          {processingDocuments ? "Processing documents…" : "Upload Documents"}
           <input
             type="file"
             multiple
             onChange={handleUpload}
-            disabled={isPremiumBlocked || submitting}
+            disabled={isPremiumBlocked || processingDocuments}
             accept=".txt,.md,.json,.csv,.log,.docx"
           />
         </label>
         <form className="auth-form" onSubmit={handlePaste}>
           <label>
             <span>Paste title</span>
-            <input value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} disabled={isPremiumBlocked || submitting} placeholder="Senior backend profile / PocketPad project" />
+            <input value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} disabled={isPremiumBlocked || processingDocuments} placeholder="Senior backend profile / PocketPad project" />
           </label>
           <label>
             <span>Paste content</span>
@@ -2486,12 +2493,12 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
               rows={8}
               value={pasteContent}
               onChange={(event) => setPasteContent(event.target.value)}
-              disabled={isPremiumBlocked || submitting}
-            placeholder="Paste candidate information, one company experience, a project note, or interview preferences here."
+              disabled={isPremiumBlocked || processingDocuments}
+              placeholder="Paste candidate information, work history, a project note, or interview preferences here."
             />
           </label>
-          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !pasteContent.trim()}>
-            {submitting ? "Processing..." : "Process Pasted Content"}
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || processingDocuments || !pasteContent.trim()}>
+            {processingDocuments ? "Processing..." : "Process Pasted Content"}
           </button>
         </form>
       </article>
@@ -2500,30 +2507,30 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">Profile</p>
         <label>
           <span>Full name</span>
-          <input value={profileDraft.fullName} onChange={(event) => setProfileDraft((current) => ({ ...current, fullName: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <input value={profileDraft.fullName} onChange={(event) => setProfileDraft((current) => ({ ...current, fullName: event.target.value }))} disabled={isPremiumBlocked || savingProfile} />
         </label>
         <label>
           <span>Short intro</span>
-          <textarea rows={5} value={profileDraft.shortIntro} onChange={(event) => setProfileDraft((current) => ({ ...current, shortIntro: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={5} value={profileDraft.shortIntro} onChange={(event) => setProfileDraft((current) => ({ ...current, shortIntro: event.target.value }))} disabled={isPremiumBlocked || savingProfile} />
         </label>
         <label>
           <span>Strengths</span>
-          <input value={profileDraft.strengths} onChange={(event) => setProfileDraft((current) => ({ ...current, strengths: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Distributed systems, ownership, debugging" />
+          <input value={profileDraft.strengths} onChange={(event) => setProfileDraft((current) => ({ ...current, strengths: event.target.value }))} disabled={isPremiumBlocked || savingProfile} placeholder="Distributed systems, ownership, debugging" />
         </label>
         <label>
           <span>Skills</span>
-          <input value={profileDraft.skills} onChange={(event) => setProfileDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="C#, .NET, PostgreSQL, Redis" />
+          <input value={profileDraft.skills} onChange={(event) => setProfileDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || savingProfile} placeholder="C#, .NET, PostgreSQL, Redis" />
         </label>
         <label>
           <span>Domains</span>
-          <input value={profileDraft.domains} onChange={(event) => setProfileDraft((current) => ({ ...current, domains: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Fintech, SaaS, AI" />
+          <input value={profileDraft.domains} onChange={(event) => setProfileDraft((current) => ({ ...current, domains: event.target.value }))} disabled={isPremiumBlocked || savingProfile} placeholder="Fintech, SaaS, AI" />
         </label>
         <label>
           <span>Candidate info</span>
-          <textarea rows={8} value={profileDraft.candidateInfo} onChange={(event) => setProfileDraft((current) => ({ ...current, candidateInfo: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Education, certifications, location, work preferences, and other useful details. Keep company-specific responsibilities in Experience." />
+          <textarea rows={8} value={profileDraft.candidateInfo} onChange={(event) => setProfileDraft((current) => ({ ...current, candidateInfo: event.target.value }))} disabled={isPremiumBlocked || savingProfile} placeholder="Education, certifications, location, work preferences, and other useful details. Keep company-specific responsibilities in Experience." />
         </label>
-        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !knowledgeBase?.knowledgeBaseId}>
-          {submitting ? "Saving..." : "Save Profile"}
+        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingProfile || processingDocuments || !knowledgeBase?.knowledgeBaseId}>
+          {savingProfile ? "Saving..." : "Save Profile"}
         </button>
       </form>
 
@@ -2533,14 +2540,15 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             <p className="eyebrow">Experience</p>
             <h3>Keep each company and role separate</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={handleNewExperience} disabled={isPremiumBlocked || submitting}>
+          <button className="button button-secondary button-compact" type="button" onClick={handleNewExperience} disabled={isPremiumBlocked || savingExperience}>
             Add experience
           </button>
         </div>
         {(knowledgeBase?.experienceCards || []).length > 0 && (
           <label>
             <span>Selected experience</span>
-            <select value={selectedExperienceId} onChange={(event) => setSelectedExperienceId(event.target.value)} disabled={isPremiumBlocked || submitting}>
+            <select value={selectedExperienceId} onChange={(event) => setSelectedExperienceId(event.target.value)} disabled={isPremiumBlocked || savingExperience}>
+              {selectedExperienceId === "new" && <option value="new">New experience</option>}
               {(knowledgeBase?.experienceCards || []).map((experience) => (
                 <option key={experience.experienceCardId} value={experience.experienceCardId}>
                   {experience.isCurrent ? "Current · " : ""}{experience.role} at {experience.company}
@@ -2552,43 +2560,43 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <div className="form-grid-two">
           <label>
             <span>Company</span>
-            <input value={experienceDraft.company} onChange={(event) => setExperienceDraft((current) => ({ ...current, company: event.target.value }))} disabled={isPremiumBlocked || submitting} required />
+            <input value={experienceDraft.company} onChange={(event) => setExperienceDraft((current) => ({ ...current, company: event.target.value }))} disabled={isPremiumBlocked || savingExperience} required />
           </label>
           <label>
             <span>Role</span>
-            <input value={experienceDraft.role} onChange={(event) => setExperienceDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || submitting} required />
+            <input value={experienceDraft.role} onChange={(event) => setExperienceDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || savingExperience} required />
           </label>
           <label>
             <span>Start date</span>
-            <input type="month" value={experienceDraft.startDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, startDate: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+            <input type="month" value={experienceDraft.startDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, startDate: event.target.value }))} disabled={isPremiumBlocked || savingExperience} />
           </label>
           <label>
             <span>End date</span>
-            <input type="month" value={experienceDraft.endDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, endDate: event.target.value }))} disabled={isPremiumBlocked || submitting || experienceDraft.isCurrent} />
+            <input type="month" value={experienceDraft.endDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, endDate: event.target.value }))} disabled={isPremiumBlocked || savingExperience || experienceDraft.isCurrent} />
           </label>
         </div>
         <label className="checkbox-row">
-          <input type="checkbox" checked={experienceDraft.isCurrent} onChange={(event) => setExperienceDraft((current) => ({ ...current, isCurrent: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))} disabled={isPremiumBlocked || submitting} />
+          <input type="checkbox" checked={experienceDraft.isCurrent} onChange={(event) => setExperienceDraft((current) => ({ ...current, isCurrent: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))} disabled={isPremiumBlocked || savingExperience} />
           <span>Current experience — prioritise this role for general interview answers</span>
         </label>
         <label>
           <span>Role summary</span>
-          <textarea rows={3} value={experienceDraft.summary} onChange={(event) => setExperienceDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={3} value={experienceDraft.summary} onChange={(event) => setExperienceDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || savingExperience} />
         </label>
         <label>
           <span>Responsibilities and achievements</span>
-          <textarea rows={6} value={experienceDraft.responsibilities} onChange={(event) => setExperienceDraft((current) => ({ ...current, responsibilities: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Describe day-to-day work, ownership, outcomes, and examples specific to this role." />
+          <textarea rows={6} value={experienceDraft.responsibilities} onChange={(event) => setExperienceDraft((current) => ({ ...current, responsibilities: event.target.value }))} disabled={isPremiumBlocked || savingExperience} placeholder="Describe day-to-day work, ownership, outcomes, and examples specific to this role." />
         </label>
         <label>
           <span>Skills and tools</span>
-          <input value={experienceDraft.skills} onChange={(event) => setExperienceDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="API automation, Playwright, Selenium, CI/CD" />
+          <input value={experienceDraft.skills} onChange={(event) => setExperienceDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || savingExperience} placeholder="API automation, Playwright, Selenium, CI/CD" />
         </label>
         <div className="table-actions" aria-live="polite">
-          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !experienceDraft.company.trim() || !experienceDraft.role.trim()}>
-            {submitting ? "Saving..." : experienceDraft.experienceCardId ? "Save Experience" : "Create Experience"}
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingExperience || processingDocuments || !experienceDraft.company.trim() || !experienceDraft.role.trim()}>
+            {savingExperience ? "Saving..." : experienceDraft.experienceCardId ? "Save Experience" : "Create Experience"}
           </button>
           {experienceDraft.experienceCardId && (
-            <button className="button button-secondary" type="button" onClick={handleDeleteExperience} disabled={isPremiumBlocked || submitting}>
+            <button className="button button-secondary" type="button" onClick={handleDeleteExperience} disabled={isPremiumBlocked || savingExperience || processingDocuments}>
               Delete
             </button>
           )}
@@ -2599,7 +2607,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">Project card</p>
         <label>
           <span>Selected project</span>
-          <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} disabled={isPremiumBlocked || submitting || !(knowledgeBase?.projectCards || []).length}>
+          <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} disabled={isPremiumBlocked || savingProject || !(knowledgeBase?.projectCards || []).length}>
             {(knowledgeBase?.projectCards || []).map((project) => (
               <option key={project.projectCardId} value={project.projectCardId}>
                 {project.isRecent ? "Recent · " : ""}{project.title}
@@ -2609,37 +2617,37 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         </label>
         <label>
           <span>Title</span>
-          <input value={projectDraft.title} onChange={(event) => setProjectDraft((current) => ({ ...current, title: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <input value={projectDraft.title} onChange={(event) => setProjectDraft((current) => ({ ...current, title: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <label>
           <span>Role</span>
-          <input value={projectDraft.role} onChange={(event) => setProjectDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <input value={projectDraft.role} onChange={(event) => setProjectDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <label>
           <span>Summary</span>
-          <textarea rows={4} value={projectDraft.summary} onChange={(event) => setProjectDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={4} value={projectDraft.summary} onChange={(event) => setProjectDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <label>
           <span>Stack</span>
-          <input value={projectDraft.stack} onChange={(event) => setProjectDraft((current) => ({ ...current, stack: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="React, Node.js, Redis, PostgreSQL" />
+          <input value={projectDraft.stack} onChange={(event) => setProjectDraft((current) => ({ ...current, stack: event.target.value }))} disabled={isPremiumBlocked || savingProject} placeholder="React, Node.js, Redis, PostgreSQL" />
         </label>
         <label>
           <span>Architecture</span>
-          <textarea rows={4} value={projectDraft.architecture} onChange={(event) => setProjectDraft((current) => ({ ...current, architecture: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={4} value={projectDraft.architecture} onChange={(event) => setProjectDraft((current) => ({ ...current, architecture: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <label>
           <span>Challenges</span>
-          <textarea rows={4} value={projectDraft.challenges} onChange={(event) => setProjectDraft((current) => ({ ...current, challenges: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={4} value={projectDraft.challenges} onChange={(event) => setProjectDraft((current) => ({ ...current, challenges: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <label>
           <span>Impact</span>
-          <textarea rows={4} value={projectDraft.impact} onChange={(event) => setProjectDraft((current) => ({ ...current, impact: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <textarea rows={4} value={projectDraft.impact} onChange={(event) => setProjectDraft((current) => ({ ...current, impact: event.target.value }))} disabled={isPremiumBlocked || savingProject} />
         </label>
         <div className="table-actions">
-          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !projectDraft.projectCardId}>
-            {submitting ? "Saving..." : "Save Project Card"}
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingProject || processingDocuments || !projectDraft.projectCardId}>
+            {savingProject ? "Saving..." : "Save Project Card"}
           </button>
-          <button className="button button-secondary" type="button" disabled={isPremiumBlocked || submitting || !projectDraft.projectCardId} onClick={() => handleMarkRecent(projectDraft.projectCardId)}>
+          <button className="button button-secondary" type="button" disabled={isPremiumBlocked || savingProject || processingDocuments || !projectDraft.projectCardId} onClick={() => handleMarkRecent(projectDraft.projectCardId)}>
             Mark as Recent
           </button>
         </div>
@@ -2685,7 +2693,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
                           className="button button-secondary button-compact"
                           type="button"
                           onClick={() => handleViewDocument(document.documentId)}
-                          disabled={submitting || deletingDocumentId === document.documentId}
+                          disabled={processingDocuments || deletingDocumentId === document.documentId}
                         >
                           {documentLoadingId === document.documentId ? "Loading..." : "View"}
                         </button>
@@ -2693,7 +2701,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
                           className="button button-secondary button-compact"
                           type="button"
                           onClick={() => handleDeleteDocument(document.documentId)}
-                          disabled={submitting || deletingDocumentId === document.documentId}
+                          disabled={processingDocuments || deletingDocumentId === document.documentId}
                         >
                           {deletingDocumentId === document.documentId ? "Deleting..." : "Delete"}
                         </button>

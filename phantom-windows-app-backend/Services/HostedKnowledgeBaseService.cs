@@ -254,7 +254,8 @@ public sealed class HostedKnowledgeBaseService
         };
 
         var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
-        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+        var allExistingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId);
+        var existingChunks = allExistingChunks
             .Where(chunk => !IsCardSyncDocumentId(chunk.DocumentId))
             .ToList();
         var nextDocuments = new List<HostedKnowledgeBaseDocumentRecord>();
@@ -355,7 +356,9 @@ public sealed class HostedKnowledgeBaseService
             profileCard,
             structuredMemory.ProjectCards,
             experienceCards,
-            cancellationToken);
+            cancellationToken,
+            allExistingChunks.Where(chunk => IsCardSyncDocumentId(chunk.DocumentId)).ToArray(),
+            now);
         var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
         knowledgeBase.ChunkCount = persistedChunks.Count;
         knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
@@ -414,7 +417,8 @@ public sealed class HostedKnowledgeBaseService
         };
 
         var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
-        var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+        var allExistingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId);
+        var existingChunks = allExistingChunks
             .Where(chunk => !IsCardSyncDocumentId(chunk.DocumentId))
             .ToList();
         var title = string.IsNullOrWhiteSpace(request.Title) ? $"Pasted {normalizedSection}" : request.Title.Trim();
@@ -471,7 +475,9 @@ public sealed class HostedKnowledgeBaseService
             profileCard,
             structuredMemory.ProjectCards,
             experienceCards,
-            cancellationToken);
+            cancellationToken,
+            allExistingChunks.Where(chunk => IsCardSyncDocumentId(chunk.DocumentId)).ToArray(),
+            now);
         var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
         knowledgeBase.ChunkCount = persistedChunks.Count;
         knowledgeBase.Status = persistedChunks.Count > 0 ? "ready" : "empty";
@@ -566,7 +572,8 @@ public sealed class HostedKnowledgeBaseService
         var remainingDocuments = existingDocuments
             .Where(item => !string.Equals(item.DocumentId, document.DocumentId, StringComparison.Ordinal))
             .ToList();
-        var remainingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+        var allExistingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId);
+        var remainingChunks = allExistingChunks
             .Where(chunk =>
                 !IsCardSyncDocumentId(chunk.DocumentId)
                 && !string.Equals(chunk.DocumentId, document.DocumentId, StringComparison.Ordinal))
@@ -596,7 +603,9 @@ public sealed class HostedKnowledgeBaseService
                 profileCard,
                 structuredMemory.ProjectCards,
                 experienceCards,
-                CancellationToken.None)
+                CancellationToken.None,
+                allExistingChunks.Where(chunk => IsCardSyncDocumentId(chunk.DocumentId)).ToArray(),
+                now)
             .GetAwaiter()
             .GetResult();
         var persistedChunks = remainingChunks.Concat(cardSyncChunks).ToList();
@@ -751,6 +760,8 @@ public sealed class HostedKnowledgeBaseService
         var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
             ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
         var experiences = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
+        var changedExperienceIds = new HashSet<string>(StringComparer.Ordinal);
+        var previousCurrent = experiences.FirstOrDefault(item => item.IsCurrent);
         var now = DateTime.UtcNow;
         HostedKnowledgeBaseExperienceCardRecord card;
         if (string.IsNullOrWhiteSpace(experienceCardId))
@@ -775,26 +786,34 @@ public sealed class HostedKnowledgeBaseService
                 ?? throw new BackendValidationException("Hosted knowledge-base experience not found.");
         }
 
-        if (request.IsCurrent)
+        var shouldBeCurrent = request.IsCurrent || experiences.Count == 1;
+        if (shouldBeCurrent)
         {
             foreach (var item in experiences)
             {
                 item.IsCurrent = false;
             }
+
+            if (previousCurrent != null)
+            {
+                previousCurrent.UpdatedAtUtc = now;
+                changedExperienceIds.Add(previousCurrent.ExperienceCardId);
+            }
         }
 
         card.Company = request.Company.Trim();
         card.Role = request.Role.Trim();
-        card.IsCurrent = request.IsCurrent;
+        card.IsCurrent = shouldBeCurrent;
         card.SortOrder = Math.Max(0, request.SortOrder);
         card.StartDate = request.StartDate?.Trim() ?? string.Empty;
-        card.EndDate = request.IsCurrent ? string.Empty : request.EndDate?.Trim() ?? string.Empty;
+        card.EndDate = shouldBeCurrent ? string.Empty : request.EndDate?.Trim() ?? string.Empty;
         card.Summary = request.Summary?.Trim() ?? string.Empty;
         card.Responsibilities = request.Responsibilities?.Trim() ?? string.Empty;
         card.SkillsJson = JsonSerializer.Serialize(request.Skills ?? Array.Empty<string>());
         card.UpdatedAtUtc = now;
+        changedExperienceIds.Add(card.ExperienceCardId);
 
-        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, cancellationToken);
+        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, changedExperienceIds, cancellationToken);
         return MapExperienceCard(card);
     }
 
@@ -808,13 +827,21 @@ public sealed class HostedKnowledgeBaseService
         var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
             ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
         var experiences = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
-        var removed = experiences.RemoveAll(item => string.Equals(item.ExperienceCardId, experienceCardId?.Trim(), StringComparison.Ordinal));
-        if (removed == 0)
+        var removed = experiences.FirstOrDefault(item => string.Equals(item.ExperienceCardId, experienceCardId?.Trim(), StringComparison.Ordinal));
+        if (removed == null)
         {
             throw new BackendValidationException("Hosted knowledge-base experience not found.");
         }
+        experiences.Remove(removed);
+        var changedExperienceIds = new HashSet<string>(StringComparer.Ordinal) { removed.ExperienceCardId };
+        if (experiences.Count == 1 && !experiences[0].IsCurrent)
+        {
+            experiences[0].IsCurrent = true;
+            experiences[0].UpdatedAtUtc = DateTime.UtcNow;
+            changedExperienceIds.Add(experiences[0].ExperienceCardId);
+        }
 
-        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, cancellationToken);
+        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, changedExperienceIds, cancellationToken);
         return experiences.OrderByDescending(item => item.IsCurrent).ThenBy(item => item.SortOrder).Select(MapExperienceCard).ToArray();
     }
 
@@ -822,15 +849,20 @@ public sealed class HostedKnowledgeBaseService
         DesktopAccountRecord account,
         HostedKnowledgeBaseRecord knowledgeBase,
         IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> experiences,
+        IReadOnlySet<string> changedExperienceIds,
         CancellationToken cancellationToken)
     {
         var documents = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
         var chunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
-            .Where(chunk => !chunk.DocumentId.StartsWith($"{CardSyncDocumentIdPrefix}experience-", StringComparison.Ordinal))
+            .Where(chunk => !changedExperienceIds.Any(experienceCardId =>
+                string.Equals(chunk.DocumentId, $"{CardSyncDocumentIdPrefix}experience-{experienceCardId}", StringComparison.Ordinal)))
             .ToList();
         var profile = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
         var projects = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
-        foreach (var experience in experiences.OrderByDescending(item => item.IsCurrent).ThenBy(item => item.SortOrder))
+        foreach (var experience in experiences
+                     .Where(item => changedExperienceIds.Contains(item.ExperienceCardId))
+                     .OrderByDescending(item => item.IsCurrent)
+                     .ThenBy(item => item.SortOrder))
         {
             chunks.AddRange(await BuildExperienceCardSyncChunksAsync(account, knowledgeBase, experience, cancellationToken));
         }
@@ -1336,6 +1368,11 @@ public sealed class HostedKnowledgeBaseService
             .ToList();
         var current = manual.FirstOrDefault(card => card.IsCurrent)
             ?? extracted.FirstOrDefault(card => card.IsCurrent);
+        if (merged.Count == 1)
+        {
+            current = merged[0];
+            current.EndDate = string.Empty;
+        }
         foreach (var card in merged)
         {
             card.IsCurrent = current != null
@@ -1502,25 +1539,62 @@ public sealed class HostedKnowledgeBaseService
         HostedKnowledgeBaseProfileCardRecord? profileCard,
         IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards,
         IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> experienceCards,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<HostedKnowledgeBaseChunkRecord>? reusableChunks = null,
+        DateTime? reuseCardsUpdatedBeforeUtc = null)
     {
         var chunks = new List<HostedKnowledgeBaseChunkRecord>();
         if (profileCard != null)
         {
-            chunks.AddRange(await BuildProfileCardSyncChunksAsync(account, knowledgeBase, profileCard, cancellationToken));
+            var documentId = BuildProfileCardSyncDocumentId(knowledgeBase);
+            chunks.AddRange(TryReuseCardChunks(documentId, profileCard.UpdatedAtUtc, reusableChunks, reuseCardsUpdatedBeforeUtc, out var reused)
+                ? reused
+                : await BuildProfileCardSyncChunksAsync(account, knowledgeBase, profileCard, cancellationToken));
         }
 
         foreach (var projectCard in projectCards)
         {
-            chunks.AddRange(await BuildProjectCardSyncChunksAsync(account, knowledgeBase, projectCard, cancellationToken));
+            var documentId = BuildProjectCardSyncDocumentId(projectCard);
+            chunks.AddRange(TryReuseCardChunks(documentId, projectCard.UpdatedAtUtc, reusableChunks, reuseCardsUpdatedBeforeUtc, out var reused)
+                ? reused
+                : await BuildProjectCardSyncChunksAsync(account, knowledgeBase, projectCard, cancellationToken));
         }
 
         foreach (var experienceCard in experienceCards.OrderByDescending(card => card.IsCurrent).ThenBy(card => card.SortOrder))
         {
-            chunks.AddRange(await BuildExperienceCardSyncChunksAsync(account, knowledgeBase, experienceCard, cancellationToken));
+            var documentId = BuildExperienceCardSyncDocumentId(experienceCard);
+            chunks.AddRange(TryReuseCardChunks(documentId, experienceCard.UpdatedAtUtc, reusableChunks, reuseCardsUpdatedBeforeUtc, out var reused)
+                ? reused
+                : await BuildExperienceCardSyncChunksAsync(account, knowledgeBase, experienceCard, cancellationToken));
         }
 
         return chunks;
+    }
+
+    private bool TryReuseCardChunks(
+        string documentId,
+        DateTime cardUpdatedAtUtc,
+        IReadOnlyList<HostedKnowledgeBaseChunkRecord>? reusableChunks,
+        DateTime? reuseCardsUpdatedBeforeUtc,
+        out IReadOnlyList<HostedKnowledgeBaseChunkRecord> reused)
+    {
+        reused = Array.Empty<HostedKnowledgeBaseChunkRecord>();
+        if (reusableChunks == null
+            || !reuseCardsUpdatedBeforeUtc.HasValue
+            || cardUpdatedAtUtc >= reuseCardsUpdatedBeforeUtc.Value)
+        {
+            return false;
+        }
+
+        var profile = _embeddingService.ActiveProfile;
+        var matches = reusableChunks
+            .Where(chunk => string.Equals(chunk.DocumentId, documentId, StringComparison.Ordinal)
+                && string.Equals(chunk.EmbeddingModel, profile.ModelId, StringComparison.Ordinal)
+                && chunk.EmbeddingVersion == profile.Version
+                && chunk.IndexedAtUtc.HasValue)
+            .ToArray();
+        reused = matches;
+        return matches.Length > 0;
     }
 
     private async Task<IReadOnlyList<HostedKnowledgeBaseChunkRecord>> BuildExperienceCardSyncChunksAsync(

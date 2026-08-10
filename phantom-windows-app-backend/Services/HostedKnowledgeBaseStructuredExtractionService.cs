@@ -11,6 +11,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class HostedKnowledgeBaseStructuredExtractionService
 {
     public const string ProfileSection = "profile";
+    public const string ExperienceSection = "experience";
     public const string ProjectSection = "project";
     public const string GeneralReferenceSection = "general_reference";
 
@@ -62,6 +63,10 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
             .Where(document => string.Equals(document.Section, ProjectSection, StringComparison.OrdinalIgnoreCase))
             .OrderBy(document => document.UploadedAtUtc)
             .ToArray();
+        var experienceDocuments = documents
+            .Where(document => string.Equals(document.Section, ExperienceSection, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(document => document.UploadedAtUtc)
+            .ToArray();
 
         var profileCard = profileDocuments.Length == 0
             ? null
@@ -73,6 +78,24 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
             projectCards.Add(await BuildProjectCardAsync(account, knowledgeBase, projectDocuments[index], index, cancellationToken));
         }
 
+        var experienceCards = new List<HostedKnowledgeBaseExperienceCardRecord>(experienceDocuments.Length);
+        for (var index = 0; index < experienceDocuments.Length; index++)
+        {
+            experienceCards.Add(await BuildExperienceCardAsync(account, knowledgeBase, experienceDocuments[index], index, cancellationToken));
+        }
+
+        if (experienceCards.Count > 0 && !experienceCards.Any(card => card.IsCurrent))
+        {
+            experienceCards[0].IsCurrent = true;
+        }
+        else if (experienceCards.Count(card => card.IsCurrent) > 1)
+        {
+            foreach (var card in experienceCards.Skip(1))
+            {
+                card.IsCurrent = false;
+            }
+        }
+
         if (projectCards.Count > 0 && !projectCards.Any(card => card.IsRecent))
         {
             projectCards[0].IsRecent = true;
@@ -81,7 +104,8 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         return new HostedKnowledgeBaseStructuredExtractionResult
         {
             ProfileCard = profileCard,
-            ProjectCards = projectCards
+            ProjectCards = projectCards,
+            ExperienceCards = experienceCards
         };
     }
 
@@ -106,7 +130,7 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
             KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
             UserId = knowledgeBase.UserId,
             FullName = extracted.FullName,
-            ResumeText = extracted.ResumeText,
+            ResumeText = extracted.CandidateInfo,
             ShortIntro = extracted.ShortIntro,
             CurrentRole = extracted.CurrentRole,
             YearsOfExperience = extracted.YearsOfExperience,
@@ -154,6 +178,36 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         };
     }
 
+    private async Task<HostedKnowledgeBaseExperienceCardRecord> BuildExperienceCardAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        HostedKnowledgeBaseDocumentRecord document,
+        int sortOrder,
+        CancellationToken cancellationToken)
+    {
+        var extracted = await TryExtractExperienceWithLlmAsync(account, document, cancellationToken)
+            ?? ExtractExperienceFallback(document, sortOrder);
+        var now = DateTime.UtcNow;
+        return new HostedKnowledgeBaseExperienceCardRecord
+        {
+            ExperienceCardId = $"kb-experience-{document.DocumentId}",
+            KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
+            UserId = knowledgeBase.UserId,
+            Company = extracted.Company,
+            Role = extracted.Role,
+            IsCurrent = extracted.IsCurrent,
+            SortOrder = sortOrder,
+            StartDate = extracted.StartDate,
+            EndDate = extracted.EndDate,
+            Summary = extracted.Summary,
+            Responsibilities = extracted.Responsibilities,
+            SkillsJson = SerializeStringList(extracted.Skills),
+            SourceDocumentIdsJson = SerializeStringList(new[] { document.DocumentId }),
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+    }
+
     private async Task<ProfileExtractionResult?> TryExtractProfileWithLlmAsync(
         DesktopAccountRecord account,
         string sourceText,
@@ -161,11 +215,12 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
     {
         var prompt = """
 Return strict JSON only with this shape:
-{"full_name":"","resume_text":"","short_intro":"","current_role":"","years_of_experience":0,"strengths":[""],"skills":[""],"domains":[""]}
+{"fullName":"","candidateInfo":"","shortIntro":"","currentRole":"","yearsOfExperience":0,"strengths":[""],"skills":[""],"domains":[""]}
 
 Extract a grounded candidate profile from the source text.
 Rules:
 - Use only source text.
+- candidateInfo may include education, certifications, location, preferences, and other personal context, but must exclude employment history and role responsibilities.
 - Keep short_intro to 2-4 sentences.
 - skills and domains must be concise arrays.
 - If unknown, use empty string, empty array, or 0.
@@ -195,6 +250,27 @@ Source label: {document.SourceLabelOrFileName()}";
 
         var json = await TryCompleteJsonAsync(account, prompt, document.ExtractedText, cancellationToken);
         return TryDeserialize<ProjectExtractionResult>(json);
+    }
+
+    private async Task<ExperienceExtractionResult?> TryExtractExperienceWithLlmAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseDocumentRecord document,
+        CancellationToken cancellationToken)
+    {
+        var prompt = """
+Return strict JSON only with this shape:
+{"company":"","role":"","isCurrent":false,"startDate":"","endDate":"","summary":"","responsibilities":"","skills":[""]}
+
+Extract exactly one employment experience from the source text.
+Rules:
+- Use only source text and do not mix responsibilities from another role.
+- Set isCurrent only when the role is explicitly current or present.
+- Keep responsibilities detailed enough to answer day-to-day interview questions.
+- If unknown, use empty string, empty array, or false.
+""";
+
+        var json = await TryCompleteJsonAsync(account, prompt, document.ExtractedText, cancellationToken);
+        return TryDeserialize<ExperienceExtractionResult>(json);
     }
 
     public async Task<string?> TryCompleteJsonAsync(
@@ -435,7 +511,7 @@ Source label: {document.SourceLabelOrFileName()}";
         return new ProfileExtractionResult
         {
             FullName = fullName ?? string.Empty,
-            ResumeText = sourceText.Trim(),
+            CandidateInfo = string.Empty,
             ShortIntro = intro,
             CurrentRole = currentRole ?? string.Empty,
             YearsOfExperience = yearsMatch.Success && int.TryParse(yearsMatch.Groups[1].Value, out var years) ? years : 0,
@@ -457,7 +533,7 @@ Source label: {document.SourceLabelOrFileName()}";
         return new ProfileExtractionResult
         {
             FullName = FirstNonEmpty(llm.FullName, fallback.FullName),
-            ResumeText = FirstNonEmpty(llm.ResumeText, fallback.ResumeText),
+            CandidateInfo = FirstNonEmpty(llm.CandidateInfo, fallback.CandidateInfo),
             ShortIntro = FirstNonEmpty(llm.ShortIntro, fallback.ShortIntro),
             CurrentRole = FirstNonEmpty(llm.CurrentRole, fallback.CurrentRole),
             YearsOfExperience = llm.YearsOfExperience > 0 ? llm.YearsOfExperience : fallback.YearsOfExperience,
@@ -482,6 +558,22 @@ Source label: {document.SourceLabelOrFileName()}";
             Challenges = FindSectionValue(document.ExtractedText, "challenge", "challenges"),
             Impact = FindSectionValue(document.ExtractedText, "impact", "result", "results"),
             IsRecent = sortOrder == 0
+        };
+    }
+
+    private static ExperienceExtractionResult ExtractExperienceFallback(HostedKnowledgeBaseDocumentRecord document, int sortOrder)
+    {
+        var lines = NormalizeLines(document.ExtractedText);
+        return new ExperienceExtractionResult
+        {
+            Company = FindSectionValue(document.ExtractedText, "company", "employer"),
+            Role = FindSectionValue(document.ExtractedText, "role", "title", "position"),
+            IsCurrent = sortOrder == 0 && Regex.IsMatch(document.ExtractedText, @"\b(current|present)\b", RegexOptions.IgnoreCase),
+            StartDate = FindSectionValue(document.ExtractedText, "start", "start date"),
+            EndDate = FindSectionValue(document.ExtractedText, "end", "end date"),
+            Summary = SummarizeText(document.ExtractedText, 420),
+            Responsibilities = FindSectionValue(document.ExtractedText, "responsibilities", "day-to-day", "duties"),
+            Skills = ExtractKeywords(document.ExtractedText, SkillKeywords, 12)
         };
     }
 
@@ -677,7 +769,7 @@ Source label: {document.SourceLabelOrFileName()}";
     private sealed class ProfileExtractionResult
     {
         public string FullName { get; set; } = string.Empty;
-        public string ResumeText { get; set; } = string.Empty;
+        public string CandidateInfo { get; set; } = string.Empty;
         public string ShortIntro { get; set; } = string.Empty;
         public string CurrentRole { get; set; } = string.Empty;
         public int YearsOfExperience { get; set; }
@@ -697,6 +789,18 @@ Source label: {document.SourceLabelOrFileName()}";
         public string Impact { get; set; } = string.Empty;
         public bool IsRecent { get; set; }
     }
+
+    private sealed class ExperienceExtractionResult
+    {
+        public string Company { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public bool IsCurrent { get; set; }
+        public string StartDate { get; set; } = string.Empty;
+        public string EndDate { get; set; } = string.Empty;
+        public string Summary { get; set; } = string.Empty;
+        public string Responsibilities { get; set; } = string.Empty;
+        public IReadOnlyList<string> Skills { get; set; } = Array.Empty<string>();
+    }
 }
 
 public sealed class HostedKnowledgeBaseStructuredExtractionResult
@@ -704,6 +808,8 @@ public sealed class HostedKnowledgeBaseStructuredExtractionResult
     public HostedKnowledgeBaseProfileCardRecord? ProfileCard { get; init; }
     public IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> ProjectCards { get; init; }
         = Array.Empty<HostedKnowledgeBaseProjectCardRecord>();
+    public IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> ExperienceCards { get; init; }
+        = Array.Empty<HostedKnowledgeBaseExperienceCardRecord>();
 }
 
 internal static class HostedKnowledgeBaseDocumentRecordExtensions

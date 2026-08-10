@@ -32,6 +32,7 @@ namespace SecureOverlay.Services
         private IReadOnlyList<string> _lastRetrievedDocumentIds = Array.Empty<string>();
         private readonly Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
         private readonly Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? _knowledgeBaseLoader;
+        private readonly Func<bool>? _knowledgeRetrievalEnabled;
         private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
         private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
         private Task? _interviewContextPackWarmupTask;
@@ -56,7 +57,8 @@ namespace SecureOverlay.Services
             ModelConfig modelConfig,
             APIRotationManager? rotationManager = null,
             Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null,
-            Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? knowledgeBaseLoader = null)
+            Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? knowledgeBaseLoader = null,
+            Func<bool>? knowledgeRetrievalEnabled = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
@@ -65,6 +67,7 @@ namespace SecureOverlay.Services
             _currentProvider = aiService.GetProviderName();
             _knowledgeRetriever = knowledgeRetriever;
             _knowledgeBaseLoader = knowledgeBaseLoader;
+            _knowledgeRetrievalEnabled = knowledgeRetrievalEnabled;
 
             RunRouterSelfCheck();
 
@@ -584,9 +587,16 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            PrimeKnowledgeBaseSummaryLoad(CancellationToken.None);
-
-            var route = RouteResponse(userMessage);
+            var retrievalEnabled = _knowledgeRetrievalEnabled?.Invoke() ?? true;
+            if (retrievalEnabled)
+            {
+                retrievalEnabled = (await LoadKnowledgeBaseSummaryAsync(CancellationToken.None))?.CanUseInInterview == true;
+            }
+            var route = retrievalEnabled ? RouteResponse(userMessage) : ResponsePlan.Direct(string.Empty, 1d);
+            if (!retrievalEnabled)
+            {
+                RagTraceLogger.WriteLine("router:direct rag_disabled=true");
+            }
             await ApplyRouteAsync(route, userMessage, CancellationToken.None);
 
             var retrievalMissResponse = BuildRetrievalMissResponse(route);
@@ -653,9 +663,16 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            PrimeKnowledgeBaseSummaryLoad(cancellationToken);
-
-            var route = RouteResponse(userMessage);
+            var retrievalEnabled = _knowledgeRetrievalEnabled?.Invoke() ?? true;
+            if (retrievalEnabled)
+            {
+                retrievalEnabled = (await LoadKnowledgeBaseSummaryAsync(cancellationToken))?.CanUseInInterview == true;
+            }
+            var route = retrievalEnabled ? RouteResponse(userMessage) : ResponsePlan.Direct(string.Empty, 1d);
+            if (!retrievalEnabled)
+            {
+                RagTraceLogger.WriteLine("router:direct rag_disabled=true [streaming]");
+            }
             await ApplyRouteAsync(route, userMessage, cancellationToken);
 
             var retrievalMissResponse = BuildRetrievalMissResponse(route);
@@ -839,6 +856,11 @@ namespace SecureOverlay.Services
                 return TraceRoute(plan);
             }
 
+            if (TryBuildHeuristicExperiencePlan(userMessage, normalized, out plan))
+            {
+                return TraceRoute(plan);
+            }
+
             if (LooksLikeExplicitDocumentQuestion(normalized))
             {
                 var scope = _lastRetrievedDocumentIds.Count > 0
@@ -876,9 +898,27 @@ namespace SecureOverlay.Services
                 Slug = "orion-search",
                 Summary = "Search platform"
             };
+            var currentExperience = new HostedKnowledgeBaseExperienceCardDto
+            {
+                ExperienceCardId = "router-check-current-experience",
+                Company = "Current Co",
+                Role = "API Automation Engineer",
+                IsCurrent = true,
+                Responsibilities = "API automation and service testing",
+                Skills = new[] { "API automation" }
+            };
+            var previousExperience = new HostedKnowledgeBaseExperienceCardDto
+            {
+                ExperienceCardId = "router-check-previous-experience",
+                Company = "Previous Co",
+                Role = "UI Automation Engineer",
+                Responsibilities = "UI automation with Selenium",
+                Skills = new[] { "UI automation", "Selenium" }
+            };
             _knowledgeBaseSummaryCache = new HostedKnowledgeBaseSummaryDto
             {
-                ProjectCards = new[] { project, alternateProject }
+                ProjectCards = new[] { project, alternateProject },
+                ExperienceCards = new[] { currentExperience, previousExperience }
             };
             _activeProjectCardId = project.ProjectCardId;
 
@@ -887,6 +927,8 @@ namespace SecureOverlay.Services
                 ("Explain dependency injection", ResponsePlanType.Direct),
                 ("Tell me about yourself", ResponsePlanType.Profile),
                 ("What are my strengths?", ResponsePlanType.Profile),
+                ("What are your day-to-day responsibilities?", ResponsePlanType.Experience),
+                ("Have you worked with UI automation?", ResponsePlanType.Experience),
                 ("Tell me about my recent project", ResponsePlanType.Project),
                 ("Why did you choose that database?", ResponsePlanType.Project),
                 ("Show the exact deployment details from my notes", ResponsePlanType.Retrieve),
@@ -924,6 +966,14 @@ namespace SecureOverlay.Services
                 || SelectProjectCard(new[] { project }, unknownRoute, "Tell me about Orion project") != null)
             {
                 throw new InvalidOperationException("Router self-check failed: unknown project selected an unrelated project.");
+            }
+
+            if (SelectExperienceCard(new[] { currentExperience, previousExperience }, "What are your day-to-day responsibilities?")?.ExperienceCardId
+                    != currentExperience.ExperienceCardId
+                || SelectExperienceCard(new[] { currentExperience, previousExperience }, "Have you worked with UI automation?")?.ExperienceCardId
+                    != previousExperience.ExperienceCardId)
+            {
+                throw new InvalidOperationException("Router self-check failed: experience relevance did not override current-role priority when appropriate.");
             }
 
             _knowledgeBaseSummaryCache = previousSummary;
@@ -973,6 +1023,26 @@ namespace SecureOverlay.Services
                 scope: RetrievalScope.Global,
                 confidence: 1d,
                 source: "heuristic-profile");
+            return true;
+        }
+
+        private bool TryBuildHeuristicExperiencePlan(
+            string userMessage,
+            string normalizedUserMessage,
+            out ResponsePlan plan)
+        {
+            plan = ResponsePlan.Retrieve(userMessage, "heuristic-none");
+            var personalAsk = ContainsAnyToken(
+                normalizedUserMessage,
+                "your experience", "my experience", "did you", "have you", "your role", "my role",
+                "current role", "current position", "day to day", "day-to-day", "responsibilities",
+                "company", "employer", "worked at", "work at");
+            if (!personalAsk)
+            {
+                return false;
+            }
+
+            plan = ResponsePlan.Experience(userMessage, confidence: 1d, source: "heuristic-experience");
             return true;
         }
 
@@ -1161,6 +1231,10 @@ namespace SecureOverlay.Services
                     await PrepareProjectGroundingAsync(route, userMessage, cancellationToken);
                     return;
 
+                case ResponsePlanType.Experience:
+                    await PrepareExperienceGroundingAsync(userMessage, cancellationToken);
+                    return;
+
                 case ResponsePlanType.Retrieve:
                 default:
                     ClearStructuredKnowledgeContext();
@@ -1179,10 +1253,16 @@ namespace SecureOverlay.Services
         {
             var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
             var profileCard = knowledgeBase?.ProfileCard;
+            var currentExperience = knowledgeBase?.ExperienceCards?.FirstOrDefault(card => card.IsCurrent);
             if (!HasProfileGrounding(profileCard))
             {
-                ClearStructuredKnowledgeContext();
-                RagTraceLogger.WriteLine("profile_grounding:missing");
+                _structuredKnowledgeContext = currentExperience == null
+                    ? string.Empty
+                    : BuildExperienceGrounding(currentExperience);
+                RagTraceLogger.WriteLine(currentExperience == null
+                    ? "profile_grounding:missing"
+                    : "profile_grounding:fallback=current_experience");
+                UpdateSystemPromptWithContext();
                 return;
             }
 
@@ -1195,6 +1275,13 @@ namespace SecureOverlay.Services
             }
 
             _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile, packKind);
+            if (packKind == InterviewPackKind.ProfileIntro)
+            {
+                if (currentExperience != null)
+                {
+                    _structuredKnowledgeContext += "\n" + BuildExperienceGrounding(currentExperience);
+                }
+            }
             RagTraceLogger.WriteLine(
                 $"profile_grounding:ready full_name='{TrimForLog(groundedProfile.FullName, 80)}' skills={groundedProfile.Skills.Count} strengths={groundedProfile.Strengths.Count} pack={packKind}");
             UpdateSystemPromptWithContext();
@@ -1267,6 +1354,58 @@ namespace SecureOverlay.Services
                 RagTraceLogger.WriteLine("project_grounding:structured_only=true");
                 ClearRetrievedKnowledgeSnippets();
             }
+        }
+
+        private async Task PrepareExperienceGroundingAsync(string userMessage, CancellationToken cancellationToken)
+        {
+            var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
+            var experience = SelectExperienceCard(
+                knowledgeBase?.ExperienceCards ?? Array.Empty<HostedKnowledgeBaseExperienceCardDto>(),
+                userMessage);
+            if (experience == null)
+            {
+                ClearStructuredKnowledgeContext();
+                ClearRetrievedKnowledgeSnippets();
+                RagTraceLogger.WriteLine("experience_grounding:missing");
+                return;
+            }
+
+            ClearRetrievedKnowledgeSnippets();
+            _structuredKnowledgeContext = BuildExperienceGrounding(experience);
+            RagTraceLogger.WriteLine(
+                $"experience_grounding:selected company='{TrimForLog(experience.Company, 100)}' role='{TrimForLog(experience.Role, 100)}' current={experience.IsCurrent}");
+            UpdateSystemPromptWithContext();
+        }
+
+        private static HostedKnowledgeBaseExperienceCardDto? SelectExperienceCard(
+            IReadOnlyList<HostedKnowledgeBaseExperienceCardDto> experiences,
+            string userMessage)
+        {
+            if (experiences.Count == 0)
+            {
+                return null;
+            }
+
+            var tokens = Regex.Matches(NormalizeText(userMessage), @"[a-z0-9]+")
+                .Select(match => match.Value)
+                .Where(token => token.Length >= 3 || token is "ui" or "qa")
+                .Distinct(StringComparer.Ordinal)
+                .Where(token => token is not "experience" and not "role" and not "company" and not "current" and not "your" and not "have")
+                .ToArray();
+            return experiences
+                .Select(card => new
+                {
+                    Card = card,
+                    Score = (card.IsCurrent ? 4 : 0) + tokens.Count(token => NormalizeText(string.Join(" ",
+                        card.Company,
+                        card.Role,
+                        card.Summary,
+                        card.Responsibilities,
+                        string.Join(" ", card.Skills))).Contains(token, StringComparison.Ordinal)) * 10
+                })
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Card.SortOrder)
+                .First().Card;
         }
 
         private void PrimeKnowledgeBaseSummaryLoad(CancellationToken cancellationToken)
@@ -1643,6 +1782,7 @@ namespace SecureOverlay.Services
             }
 
             return !string.IsNullOrWhiteSpace(profileCard.ShortIntro)
+                || !string.IsNullOrWhiteSpace(profileCard.CandidateInfo)
                 || !string.IsNullOrWhiteSpace(profileCard.ResumeText)
                 || !string.IsNullOrWhiteSpace(profileCard.FullName)
                 || !string.IsNullOrWhiteSpace(profileCard.CurrentRole)
@@ -1655,6 +1795,7 @@ namespace SecureOverlay.Services
             => profileCard != null
                 && (profileCard.YearsOfExperience > 0
                     || !string.IsNullOrWhiteSpace(profileCard.CurrentRole)
+                    || !string.IsNullOrWhiteSpace(profileCard.CandidateInfo)
                     || !string.IsNullOrWhiteSpace(profileCard.ResumeText));
 
         private static bool HasProjectGrounding(HostedKnowledgeBaseProjectCardDto? projectCard)
@@ -1819,11 +1960,6 @@ namespace SecureOverlay.Services
             {
                 case InterviewPackKind.ProfileIntro:
                     AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
-                    AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
-                    if (profileCard.YearsOfExperience > 0)
-                    {
-                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
-                    }
                     AppendGroundingList(lines, "Domains", profileCard.Domains);
                     AppendGroundingList(lines, "Skills", profileCard.Skills.Take(6).ToArray());
                     break;
@@ -1832,7 +1968,9 @@ namespace SecureOverlay.Services
                     AppendGroundingList(lines, "Strengths", profileCard.Strengths);
                     AppendGroundingList(lines, "Skills", profileCard.Skills);
                     AppendGroundingList(lines, "Domains", profileCard.Domains);
-                    AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 600));
+                    AppendGroundingLine(lines, "Candidate information", TruncateMessageStatic(
+                        string.IsNullOrWhiteSpace(profileCard.CandidateInfo) ? profileCard.ResumeText : profileCard.CandidateInfo,
+                        600));
                     break;
 
                 case InterviewPackKind.ProfileRole:
@@ -1847,18 +1985,36 @@ namespace SecureOverlay.Services
 
                 default:
                     AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
-                    AppendGroundingLine(lines, "Current role", profileCard.CurrentRole);
-                    if (profileCard.YearsOfExperience > 0)
-                    {
-                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
-                    }
                     AppendGroundingList(lines, "Strengths", profileCard.Strengths);
                     AppendGroundingList(lines, "Skills", profileCard.Skills);
                     AppendGroundingList(lines, "Domains", profileCard.Domains);
-                    AppendGroundingLine(lines, "Resume details", TruncateMessageStatic(profileCard.ResumeText, 1200));
+                    AppendGroundingLine(lines, "Candidate information", TruncateMessageStatic(
+                        string.IsNullOrWhiteSpace(profileCard.CandidateInfo) ? profileCard.ResumeText : profileCard.CandidateInfo,
+                        1200));
                     break;
             }
 
+            return string.Join("\n", lines);
+        }
+
+        private static string BuildExperienceGrounding(HostedKnowledgeBaseExperienceCardDto experience)
+        {
+            var lines = new List<string>
+            {
+                experience.IsCurrent
+                    ? "Answer from this current role only. Do not mix responsibilities from previous companies."
+                    : "This past role is relevant to the question. Answer from this role only and do not present it as current work."
+            };
+            AppendGroundingLine(lines, "Company", experience.Company);
+            AppendGroundingLine(lines, "Role", experience.Role);
+            AppendGroundingLine(lines, "Period", string.Join(" – ", new[]
+            {
+                experience.StartDate,
+                experience.IsCurrent ? "Present" : experience.EndDate
+            }.Where(value => !string.IsNullOrWhiteSpace(value))));
+            AppendGroundingLine(lines, "Summary", experience.Summary);
+            AppendGroundingLine(lines, "Responsibilities and achievements", experience.Responsibilities);
+            AppendGroundingList(lines, "Skills and tools", experience.Skills);
             return string.Join("\n", lines);
         }
 
@@ -2098,6 +2254,13 @@ namespace SecureOverlay.Services
                     : null;
             }
 
+            if (plannerDecision.Type == ResponsePlanType.Experience)
+            {
+                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
+                    ? "I couldn't find a matching work experience. Add the company and role in your Experience section so I can answer accurately."
+                    : null;
+            }
+
             if (_retrievedKnowledgeSnippets.Count > 0)
             {
                 return null;
@@ -2136,6 +2299,7 @@ namespace SecureOverlay.Services
             Direct,
             Profile,
             Project,
+            Experience,
             Retrieve
         }
 
@@ -2212,6 +2376,18 @@ namespace SecureOverlay.Services
                     Target = target ?? string.Empty,
                     Scope = scope,
                     Confidence = confidence,
+                    Source = source
+                };
+            }
+
+            public static ResponsePlan Experience(string knowledgeQuery, double confidence, string source)
+            {
+                return new ResponsePlan
+                {
+                    Type = ResponsePlanType.Experience,
+                    KnowledgeQuery = knowledgeQuery ?? string.Empty,
+                    Confidence = confidence,
+                    Scope = RetrievalScope.Global,
                     Source = source
                 };
             }

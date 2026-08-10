@@ -807,6 +807,45 @@ app.MapPut("/api/desktop/kb/profile", async (
     return Results.Ok(await knowledgeBases.UpdateProfileCard(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/kb/experiences", (
+    HttpContext httpContext,
+    HostedKnowledgeBaseService knowledgeBases) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(knowledgeBases.ListExperienceCards(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/kb/experiences", async (
+    HttpContext httpContext,
+    HostedKnowledgeBaseExperienceCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.UpsertExperienceCard(account, null, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPut("/api/desktop/kb/experiences/{experienceCardId}", async (
+    HttpContext httpContext,
+    string experienceCardId,
+    HostedKnowledgeBaseExperienceCardUpdateRequestDto request,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.UpsertExperienceCard(account, experienceCardId, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
+app.MapDelete("/api/desktop/kb/experiences/{experienceCardId}", async (
+    HttpContext httpContext,
+    string experienceCardId,
+    HostedKnowledgeBaseService knowledgeBases,
+    CancellationToken cancellationToken) =>
+{
+    var account = knowledgeBases.RequireAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await knowledgeBases.DeleteExperienceCard(account, experienceCardId, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
 app.MapGet("/api/desktop/kb/projects", (
     HttpContext httpContext,
     HostedKnowledgeBaseService knowledgeBases) =>

@@ -129,6 +129,14 @@ public sealed class HostedKnowledgeBaseService
             .ToArray();
     }
 
+    public IReadOnlyList<HostedKnowledgeBaseExperienceCardDto> ListExperienceCards(DesktopAccountRecord account)
+    {
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId);
+        return knowledgeBase == null
+            ? Array.Empty<HostedKnowledgeBaseExperienceCardDto>()
+            : _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).Select(MapExperienceCard).ToArray();
+    }
+
     public HostedKnowledgeBaseProjectCardDto GetProjectCard(DesktopAccountRecord account, string projectCardId)
     {
         if (string.IsNullOrWhiteSpace(projectCardId))
@@ -335,11 +343,18 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        var profileCard = MergeProfileCard(
+            _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ProfileCard);
+        var experienceCards = MergeExperienceCards(
+            _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ExperienceCards);
         var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
             account,
             knowledgeBase,
-            structuredMemory.ProfileCard,
+            profileCard,
             structuredMemory.ProjectCards,
+            experienceCards,
             cancellationToken);
         var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
         knowledgeBase.ChunkCount = persistedChunks.Count;
@@ -348,8 +363,9 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase,
             mergedDocuments,
             persistedChunks,
-            structuredMemory.ProfileCard,
-            structuredMemory.ProjectCards);
+            profileCard,
+            structuredMemory.ProjectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
 
         return new HostedKnowledgeBaseUploadResultDto
@@ -358,8 +374,9 @@ public sealed class HostedKnowledgeBaseService
                 account,
                 knowledgeBase,
                 mergedDocuments,
-                structuredMemory.ProfileCard,
-                structuredMemory.ProjectCards),
+                profileCard,
+                structuredMemory.ProjectCards,
+                experienceCards),
             AddedDocuments = nextDocuments.Select(MapDocument).ToArray()
         };
     }
@@ -442,11 +459,18 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, mergedDocuments, cancellationToken);
+        var profileCard = MergeProfileCard(
+            _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ProfileCard);
+        var experienceCards = MergeExperienceCards(
+            _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ExperienceCards);
         var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
             account,
             knowledgeBase,
-            structuredMemory.ProfileCard,
+            profileCard,
             structuredMemory.ProjectCards,
+            experienceCards,
             cancellationToken);
         var persistedChunks = mergedChunks.Concat(cardSyncChunks).ToList();
         knowledgeBase.ChunkCount = persistedChunks.Count;
@@ -455,8 +479,9 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase,
             mergedDocuments,
             persistedChunks,
-            structuredMemory.ProfileCard,
-            structuredMemory.ProjectCards);
+            profileCard,
+            structuredMemory.ProjectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
 
         return new HostedKnowledgeBaseUploadResultDto
@@ -465,8 +490,9 @@ public sealed class HostedKnowledgeBaseService
                 account,
                 knowledgeBase,
                 mergedDocuments,
-                structuredMemory.ProfileCard,
-                structuredMemory.ProjectCards),
+                profileCard,
+                structuredMemory.ProjectCards,
+                experienceCards),
             AddedDocuments = new[] { MapDocument(document) }
         };
     }
@@ -558,11 +584,18 @@ public sealed class HostedKnowledgeBaseService
         var structuredMemory = _structuredExtraction.ExtractAsync(account, knowledgeBase, remainingDocuments, CancellationToken.None)
             .GetAwaiter()
             .GetResult();
+        var profileCard = MergeProfileCard(
+            _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ProfileCard);
+        var experienceCards = MergeExperienceCards(
+            _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ExperienceCards);
         var cardSyncChunks = BuildStructuredCardSyncChunksAsync(
                 account,
                 knowledgeBase,
-                structuredMemory.ProfileCard,
+                profileCard,
                 structuredMemory.ProjectCards,
+                experienceCards,
                 CancellationToken.None)
             .GetAwaiter()
             .GetResult();
@@ -573,15 +606,17 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase,
             remainingDocuments,
             persistedChunks,
-            structuredMemory.ProfileCard,
-            structuredMemory.ProjectCards);
+            profileCard,
+            structuredMemory.ProjectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         return MapSummary(
             account,
             knowledgeBase,
             remainingDocuments,
-            structuredMemory.ProfileCard,
-            structuredMemory.ProjectCards);
+            profileCard,
+            structuredMemory.ProjectCards,
+            experienceCards);
     }
 
     public async Task<HostedKnowledgeBaseProfileCardDto> UpdateProfileCard(
@@ -594,13 +629,20 @@ public sealed class HostedKnowledgeBaseService
         var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
             ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
         var existing = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId)
-            ?? throw new BackendValidationException("No hosted profile card exists for this account.");
+            ?? new HostedKnowledgeBaseProfileCardRecord
+            {
+                ProfileCardId = $"kb-profile-{knowledgeBase.KnowledgeBaseId}",
+                KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
+                UserId = account.UserId,
+                CreatedAtUtc = DateTime.UtcNow
+            };
         var existingDocuments = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
         var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
         var projectCards = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
+        var experienceCards = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
         var now = DateTime.UtcNow;
         existing.FullName = request.FullName?.Trim() ?? string.Empty;
-        existing.ResumeText = request.ResumeText?.Trim() ?? string.Empty;
+        existing.ResumeText = FirstNonEmpty(request.CandidateInfo, request.ResumeText);
         existing.ShortIntro = request.ShortIntro?.Trim() ?? string.Empty;
         existing.CurrentRole = request.CurrentRole?.Trim() ?? string.Empty;
         existing.YearsOfExperience = Math.Max(0, request.YearsOfExperience);
@@ -624,7 +666,8 @@ public sealed class HostedKnowledgeBaseService
             existingDocuments,
             persistedChunks,
             existing,
-            projectCards);
+            projectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         return MapProfileCard(existing);
     }
@@ -650,6 +693,7 @@ public sealed class HostedKnowledgeBaseService
         var existingChunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId).ToList();
         var profileCard = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
         var projectCards = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
+        var experienceCards = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
         var now = DateTime.UtcNow;
         var title = request.Title?.Trim() ?? string.Empty;
         existing.Title = title;
@@ -685,9 +729,121 @@ public sealed class HostedKnowledgeBaseService
             existingDocuments,
             persistedChunks,
             profileCard,
-            projectCards);
+            projectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         return MapProjectCard(existing);
+    }
+
+    public async Task<HostedKnowledgeBaseExperienceCardDto> UpsertExperienceCard(
+        DesktopAccountRecord account,
+        string? experienceCardId,
+        HostedKnowledgeBaseExperienceCardUpdateRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        EnsureCanManage(account);
+        EnsureEmbeddingsConfigured();
+        if (string.IsNullOrWhiteSpace(request.Company) || string.IsNullOrWhiteSpace(request.Role))
+        {
+            throw new BackendValidationException("Company and role are required for an experience.");
+        }
+
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var experiences = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
+        var now = DateTime.UtcNow;
+        HostedKnowledgeBaseExperienceCardRecord card;
+        if (string.IsNullOrWhiteSpace(experienceCardId))
+        {
+            if (experiences.Count >= 20)
+            {
+                throw new BackendValidationException("A knowledge base supports up to 20 experiences.");
+            }
+
+            card = new HostedKnowledgeBaseExperienceCardRecord
+            {
+                ExperienceCardId = $"kb-experience-{Guid.NewGuid():N}",
+                KnowledgeBaseId = knowledgeBase.KnowledgeBaseId,
+                UserId = account.UserId,
+                CreatedAtUtc = now
+            };
+            experiences.Add(card);
+        }
+        else
+        {
+            card = experiences.FirstOrDefault(item => string.Equals(item.ExperienceCardId, experienceCardId.Trim(), StringComparison.Ordinal))
+                ?? throw new BackendValidationException("Hosted knowledge-base experience not found.");
+        }
+
+        if (request.IsCurrent)
+        {
+            foreach (var item in experiences)
+            {
+                item.IsCurrent = false;
+            }
+        }
+
+        card.Company = request.Company.Trim();
+        card.Role = request.Role.Trim();
+        card.IsCurrent = request.IsCurrent;
+        card.SortOrder = Math.Max(0, request.SortOrder);
+        card.StartDate = request.StartDate?.Trim() ?? string.Empty;
+        card.EndDate = request.IsCurrent ? string.Empty : request.EndDate?.Trim() ?? string.Empty;
+        card.Summary = request.Summary?.Trim() ?? string.Empty;
+        card.Responsibilities = request.Responsibilities?.Trim() ?? string.Empty;
+        card.SkillsJson = JsonSerializer.Serialize(request.Skills ?? Array.Empty<string>());
+        card.UpdatedAtUtc = now;
+
+        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, cancellationToken);
+        return MapExperienceCard(card);
+    }
+
+    public async Task<IReadOnlyList<HostedKnowledgeBaseExperienceCardDto>> DeleteExperienceCard(
+        DesktopAccountRecord account,
+        string experienceCardId,
+        CancellationToken cancellationToken)
+    {
+        EnsureCanManage(account);
+        EnsureEmbeddingsConfigured();
+        var knowledgeBase = _knowledgeBases.FindByUserId(account.UserId)
+            ?? throw new BackendValidationException("No hosted knowledge base exists for this account.");
+        var experiences = _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId).ToList();
+        var removed = experiences.RemoveAll(item => string.Equals(item.ExperienceCardId, experienceCardId?.Trim(), StringComparison.Ordinal));
+        if (removed == 0)
+        {
+            throw new BackendValidationException("Hosted knowledge-base experience not found.");
+        }
+
+        await PersistExperienceCardsAsync(account, knowledgeBase, experiences, cancellationToken);
+        return experiences.OrderByDescending(item => item.IsCurrent).ThenBy(item => item.SortOrder).Select(MapExperienceCard).ToArray();
+    }
+
+    private async Task PersistExperienceCardsAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> experiences,
+        CancellationToken cancellationToken)
+    {
+        var documents = _knowledgeBases.ListDocuments(knowledgeBase.KnowledgeBaseId).ToList();
+        var chunks = _knowledgeBases.ListChunks(knowledgeBase.KnowledgeBaseId)
+            .Where(chunk => !chunk.DocumentId.StartsWith($"{CardSyncDocumentIdPrefix}experience-", StringComparison.Ordinal))
+            .ToList();
+        var profile = _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId);
+        var projects = _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId).ToList();
+        foreach (var experience in experiences.OrderByDescending(item => item.IsCurrent).ThenBy(item => item.SortOrder))
+        {
+            chunks.AddRange(await BuildExperienceCardSyncChunksAsync(account, knowledgeBase, experience, cancellationToken));
+        }
+
+        var now = DateTime.UtcNow;
+        knowledgeBase.ChunkCount = chunks.Count;
+        knowledgeBase.Status = chunks.Count > 0 ? "ready" : "empty";
+        knowledgeBase.EmbeddingModel = _embeddingService.ActiveProfile.ModelId;
+        knowledgeBase.EmbeddingVersion = _embeddingService.ActiveProfile.Version;
+        knowledgeBase.LastProcessedAtUtc = now;
+        knowledgeBase.UpdatedAtUtc = now;
+        _knowledgeBases.ReplaceDocumentsAndChunks(knowledgeBase, documents, chunks, profile, projects, experiences);
+        InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
     }
 
     public IReadOnlyList<HostedKnowledgeBaseProjectCardDto> SetRecentProject(
@@ -916,7 +1072,8 @@ public sealed class HostedKnowledgeBaseService
         HostedKnowledgeBaseRecord? knowledgeBase,
         IReadOnlyList<HostedKnowledgeBaseDocumentRecord>? documents = null,
         HostedKnowledgeBaseProfileCardRecord? profileCard = null,
-        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord>? projectCards = null)
+        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord>? projectCards = null,
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord>? experienceCards = null)
     {
         var canManage = HasPremiumKnowledgeBaseEntitlement(account, out var blockedReason);
         var documentList = documents
@@ -925,6 +1082,8 @@ public sealed class HostedKnowledgeBaseService
             ?? (knowledgeBase == null ? null : _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId));
         var projects = projectCards
             ?? (knowledgeBase == null ? Array.Empty<HostedKnowledgeBaseProjectCardRecord>() : _knowledgeBases.ListProjectCards(knowledgeBase.KnowledgeBaseId));
+        var experiences = experienceCards
+            ?? (knowledgeBase == null ? Array.Empty<HostedKnowledgeBaseExperienceCardRecord>() : _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId));
 
         if (knowledgeBase == null)
         {
@@ -937,6 +1096,7 @@ public sealed class HostedKnowledgeBaseService
                 CanUseInInterview = false,
                 BlockedReason = blockedReason,
                 ProfileCard = new HostedKnowledgeBaseProfileCardDto(),
+                ExperienceCards = Array.Empty<HostedKnowledgeBaseExperienceCardDto>(),
                 ProjectCards = Array.Empty<HostedKnowledgeBaseProjectCardDto>(),
                 Documents = Array.Empty<HostedKnowledgeBaseDocumentDto>()
             };
@@ -960,6 +1120,7 @@ public sealed class HostedKnowledgeBaseService
             LastProcessedAtUtc = knowledgeBase.LastProcessedAtUtc,
             LatestReindexJob = MapReindexJob(_reindexJobs.FindLatestForKnowledgeBase(knowledgeBase.KnowledgeBaseId)),
             ProfileCard = profile == null ? new HostedKnowledgeBaseProfileCardDto() : MapProfileCard(profile),
+            ExperienceCards = experiences.Select(MapExperienceCard).ToArray(),
             ProjectCards = projects.Select(MapProjectCard).ToArray(),
             Documents = documentList.Select(MapDocument).ToArray()
         };
@@ -1019,6 +1180,7 @@ public sealed class HostedKnowledgeBaseService
             ProfileCardId = card.ProfileCardId,
             FullName = card.FullName,
             ResumeText = card.ResumeText,
+            CandidateInfo = card.ResumeText,
             ShortIntro = card.ShortIntro,
             CurrentRole = card.CurrentRole,
             YearsOfExperience = card.YearsOfExperience,
@@ -1045,6 +1207,25 @@ public sealed class HostedKnowledgeBaseService
             Architecture = card.Architecture,
             Challenges = card.Challenges,
             Impact = card.Impact,
+            SourceDocumentIds = DeserializeStringList(card.SourceDocumentIdsJson),
+            UpdatedAtUtc = card.UpdatedAtUtc
+        };
+    }
+
+    private static HostedKnowledgeBaseExperienceCardDto MapExperienceCard(HostedKnowledgeBaseExperienceCardRecord card)
+    {
+        return new HostedKnowledgeBaseExperienceCardDto
+        {
+            ExperienceCardId = card.ExperienceCardId,
+            Company = card.Company,
+            Role = card.Role,
+            IsCurrent = card.IsCurrent,
+            SortOrder = card.SortOrder,
+            StartDate = card.StartDate,
+            EndDate = card.EndDate,
+            Summary = card.Summary,
+            Responsibilities = card.Responsibilities,
+            Skills = DeserializeStringList(card.SkillsJson),
             SourceDocumentIds = DeserializeStringList(card.SourceDocumentIdsJson),
             UpdatedAtUtc = card.UpdatedAtUtc
         };
@@ -1118,6 +1299,7 @@ public sealed class HostedKnowledgeBaseService
         return normalized switch
         {
             HostedKnowledgeBaseStructuredExtractionService.ProfileSection => HostedKnowledgeBaseStructuredExtractionService.ProfileSection,
+            HostedKnowledgeBaseStructuredExtractionService.ExperienceSection => HostedKnowledgeBaseStructuredExtractionService.ExperienceSection,
             HostedKnowledgeBaseStructuredExtractionService.ProjectSection => HostedKnowledgeBaseStructuredExtractionService.ProjectSection,
             _ => HostedKnowledgeBaseStructuredExtractionService.GeneralReferenceSection
         };
@@ -1140,11 +1322,61 @@ public sealed class HostedKnowledgeBaseService
         }
     }
 
+    private static IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> MergeExperienceCards(
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> existing,
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> extracted)
+    {
+        var manual = existing
+            .Where(card => DeserializeStringList(card.SourceDocumentIdsJson).All(IsCardSyncDocumentId))
+            .ToList();
+        var merged = manual
+            .Concat(extracted)
+            .GroupBy(card => card.ExperienceCardId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+        var current = manual.FirstOrDefault(card => card.IsCurrent)
+            ?? extracted.FirstOrDefault(card => card.IsCurrent);
+        foreach (var card in merged)
+        {
+            card.IsCurrent = current != null
+                && string.Equals(card.ExperienceCardId, current.ExperienceCardId, StringComparison.Ordinal);
+        }
+
+        return merged;
+    }
+
+    private static HostedKnowledgeBaseProfileCardRecord? MergeProfileCard(
+        HostedKnowledgeBaseProfileCardRecord? existing,
+        HostedKnowledgeBaseProfileCardRecord? extracted)
+    {
+        if (extracted == null)
+        {
+            return existing;
+        }
+
+        if (existing == null)
+        {
+            return extracted;
+        }
+
+        extracted.ResumeText = FirstNonEmpty(extracted.ResumeText, existing.ResumeText);
+        extracted.FullName = FirstNonEmpty(extracted.FullName, existing.FullName);
+        extracted.ShortIntro = FirstNonEmpty(extracted.ShortIntro, existing.ShortIntro);
+        extracted.StrengthsJson = extracted.StrengthsJson == "[]" ? existing.StrengthsJson : extracted.StrengthsJson;
+        extracted.SkillsJson = extracted.SkillsJson == "[]" ? existing.SkillsJson : extracted.SkillsJson;
+        extracted.DomainsJson = extracted.DomainsJson == "[]" ? existing.DomainsJson : extracted.DomainsJson;
+        extracted.CreatedAtUtc = existing.CreatedAtUtc;
+        return extracted;
+    }
+
     private static string Slugify(string value)
     {
         var normalized = Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
         return string.IsNullOrWhiteSpace(normalized) ? "project" : normalized;
     }
+
+    private static string FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
     private static bool IsCardSyncDocumentId(string? documentId)
     {
@@ -1160,6 +1392,11 @@ public sealed class HostedKnowledgeBaseService
     private static string BuildProjectCardSyncDocumentId(HostedKnowledgeBaseProjectCardRecord projectCard)
     {
         return $"{CardSyncDocumentIdPrefix}project-{projectCard.ProjectCardId}";
+    }
+
+    private static string BuildExperienceCardSyncDocumentId(HostedKnowledgeBaseExperienceCardRecord experienceCard)
+    {
+        return $"{CardSyncDocumentIdPrefix}experience-{experienceCard.ExperienceCardId}";
     }
 
     private static string ResolveDocumentTitle(HostedKnowledgeBaseDocumentRecord document)
@@ -1200,16 +1437,10 @@ public sealed class HostedKnowledgeBaseService
         };
         AppendStructuredLine(lines, "Full name", profileCard.FullName);
         AppendStructuredLine(lines, "Short intro", profileCard.ShortIntro);
-        AppendStructuredLine(lines, "Current role", profileCard.CurrentRole);
-        if (profileCard.YearsOfExperience > 0)
-        {
-            lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
-        }
-
         AppendStructuredList(lines, "Strengths", DeserializeStringList(profileCard.StrengthsJson));
         AppendStructuredList(lines, "Skills", DeserializeStringList(profileCard.SkillsJson));
         AppendStructuredList(lines, "Domains", DeserializeStringList(profileCard.DomainsJson));
-        AppendStructuredLine(lines, "Resume details", profileCard.ResumeText);
+        AppendStructuredLine(lines, "Candidate information", profileCard.ResumeText);
         return string.Join("\n\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
     }
 
@@ -1226,6 +1457,22 @@ public sealed class HostedKnowledgeBaseService
         AppendStructuredLine(lines, "Architecture", projectCard.Architecture);
         AppendStructuredLine(lines, "Challenges", projectCard.Challenges);
         AppendStructuredLine(lines, "Impact", projectCard.Impact);
+        return string.Join("\n\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+    }
+
+    private static string BuildExperienceCardSyncText(HostedKnowledgeBaseExperienceCardRecord experienceCard)
+    {
+        var lines = new List<string>
+        {
+            experienceCard.IsCurrent ? "Current employment experience" : "Previous employment experience"
+        };
+        AppendStructuredLine(lines, "Company", experienceCard.Company);
+        AppendStructuredLine(lines, "Role", experienceCard.Role);
+        AppendStructuredLine(lines, "Start date", experienceCard.StartDate);
+        AppendStructuredLine(lines, "End date", experienceCard.IsCurrent ? "Present" : experienceCard.EndDate);
+        AppendStructuredLine(lines, "Summary", experienceCard.Summary);
+        AppendStructuredLine(lines, "Responsibilities", experienceCard.Responsibilities);
+        AppendStructuredList(lines, "Skills", DeserializeStringList(experienceCard.SkillsJson));
         return string.Join("\n\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
     }
 
@@ -1254,6 +1501,7 @@ public sealed class HostedKnowledgeBaseService
         HostedKnowledgeBaseRecord knowledgeBase,
         HostedKnowledgeBaseProfileCardRecord? profileCard,
         IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards,
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> experienceCards,
         CancellationToken cancellationToken)
     {
         var chunks = new List<HostedKnowledgeBaseChunkRecord>();
@@ -1267,6 +1515,30 @@ public sealed class HostedKnowledgeBaseService
             chunks.AddRange(await BuildProjectCardSyncChunksAsync(account, knowledgeBase, projectCard, cancellationToken));
         }
 
+        foreach (var experienceCard in experienceCards.OrderByDescending(card => card.IsCurrent).ThenBy(card => card.SortOrder))
+        {
+            chunks.AddRange(await BuildExperienceCardSyncChunksAsync(account, knowledgeBase, experienceCard, cancellationToken));
+        }
+
+        return chunks;
+    }
+
+    private async Task<IReadOnlyList<HostedKnowledgeBaseChunkRecord>> BuildExperienceCardSyncChunksAsync(
+        DesktopAccountRecord account,
+        HostedKnowledgeBaseRecord knowledgeBase,
+        HostedKnowledgeBaseExperienceCardRecord experienceCard,
+        CancellationToken cancellationToken)
+    {
+        var documentId = BuildExperienceCardSyncDocumentId(experienceCard);
+        var title = $"{experienceCard.Role} at {experienceCard.Company}".Trim();
+        var text = NormalizeSourceText(BuildExperienceCardSyncText(experienceCard));
+        var chunks = string.IsNullOrWhiteSpace(text)
+            ? new List<HostedKnowledgeBaseChunkRecord>()
+            : BuildChunks(knowledgeBase, account, documentId, title, "card_experience", text, DateTime.UtcNow);
+        experienceCard.SourceDocumentIdsJson = JsonSerializer.Serialize(MergeSourceDocumentIds(
+            experienceCard.SourceDocumentIdsJson,
+            chunks.Count > 0 ? documentId : null));
+        await IndexChunksAsync(Array.Empty<HostedKnowledgeBaseDocumentRecord>(), chunks, cancellationToken);
         return chunks;
     }
 
@@ -1432,11 +1704,18 @@ public sealed class HostedKnowledgeBaseService
         knowledgeBase.UpdatedAtUtc = now;
 
         var structuredMemory = await _structuredExtraction.ExtractAsync(account, knowledgeBase, rebuiltDocuments, cancellationToken);
+        var profileCard = MergeProfileCard(
+            _knowledgeBases.FindProfileCard(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ProfileCard);
+        var experienceCards = MergeExperienceCards(
+            _knowledgeBases.ListExperienceCards(knowledgeBase.KnowledgeBaseId),
+            structuredMemory.ExperienceCards);
         var cardSyncChunks = await BuildStructuredCardSyncChunksAsync(
             account,
             knowledgeBase,
-            structuredMemory.ProfileCard,
+            profileCard,
             structuredMemory.ProjectCards,
+            experienceCards,
             cancellationToken);
         var persistedChunks = rebuiltChunks.Concat(cardSyncChunks).ToList();
         knowledgeBase.ChunkCount = persistedChunks.Count;
@@ -1445,8 +1724,9 @@ public sealed class HostedKnowledgeBaseService
             knowledgeBase,
             rebuiltDocuments,
             persistedChunks,
-            structuredMemory.ProfileCard,
-            structuredMemory.ProjectCards);
+            profileCard,
+            structuredMemory.ProjectCards,
+            experienceCards);
         InvalidateSearchCache(knowledgeBase.KnowledgeBaseId);
         _reindexJobs.MarkCompleted(job.JobId);
     }

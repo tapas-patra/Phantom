@@ -541,6 +541,29 @@ export async function updateHostedKnowledgeBaseProfile(accessToken, payload) {
   });
 }
 
+export async function createHostedKnowledgeBaseExperience(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/experiences", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateHostedKnowledgeBaseExperience(accessToken, experienceCardId, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/experiences/${encodeURIComponent(experienceCardId)}`, {
+    method: "PUT",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteHostedKnowledgeBaseExperience(accessToken, experienceCardId) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/desktop/kb/experiences/${encodeURIComponent(experienceCardId)}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchHostedKnowledgeBaseProjects(accessToken) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/kb/projects", {
     headers: authHeaders(accessToken)

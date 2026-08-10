@@ -4,9 +4,11 @@ import {
   clearAdminLock,
   confirmPaymentCheckout,
   createHostedKnowledgeBase,
+  createHostedKnowledgeBaseExperience,
   createPaymentCheckout,
   createUserSupportTicket,
   deleteHostedKnowledgeBaseDocument,
+  deleteHostedKnowledgeBaseExperience,
   deleteManagedAiCredential,
   fetchAccountSummary,
   fetchAdminOverview,
@@ -55,6 +57,7 @@ import {
   updateAdminUser,
   updateAdminSupportTicket,
   updateHostedKnowledgeBaseProfile,
+  updateHostedKnowledgeBaseExperience,
   updateHostedKnowledgeBaseProject,
   updateKnowledgeBaseEmbeddingConfig,
   updateInterviewQuestionBank,
@@ -2046,15 +2049,26 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
   const [pasteTitle, setPasteTitle] = useState("");
   const [pasteContent, setPasteContent] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedExperienceId, setSelectedExperienceId] = useState("");
   const [profileDraft, setProfileDraft] = useState({
     fullName: "",
-    resumeText: "",
+    candidateInfo: "",
     shortIntro: "",
-    currentRole: "",
-    yearsOfExperience: 0,
     strengths: "",
     skills: "",
     domains: ""
+  });
+  const [experienceDraft, setExperienceDraft] = useState({
+    experienceCardId: "",
+    company: "",
+    role: "",
+    isCurrent: false,
+    sortOrder: 0,
+    startDate: "",
+    endDate: "",
+    summary: "",
+    responsibilities: "",
+    skills: ""
   });
   const [projectDraft, setProjectDraft] = useState({
     projectCardId: "",
@@ -2078,15 +2092,34 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     const profile = knowledgeBase?.profileCard;
     setProfileDraft({
       fullName: profile?.fullName || "",
-      resumeText: profile?.resumeText || "",
+      candidateInfo: profile?.candidateInfo || profile?.resumeText || "",
       shortIntro: profile?.shortIntro || "",
-      currentRole: profile?.currentRole || "",
-      yearsOfExperience: profile?.yearsOfExperience || 0,
       strengths: (profile?.strengths || []).join(", "),
       skills: (profile?.skills || []).join(", "),
       domains: (profile?.domains || []).join(", ")
     });
   }, [knowledgeBase?.profileCard]);
+
+  useEffect(() => {
+    const experiences = knowledgeBase?.experienceCards || [];
+    const nextId = experiences.some((item) => item.experienceCardId === selectedExperienceId)
+      ? selectedExperienceId
+      : experiences[0]?.experienceCardId || "";
+    setSelectedExperienceId(nextId);
+    const selected = experiences.find((item) => item.experienceCardId === nextId);
+    setExperienceDraft({
+      experienceCardId: selected?.experienceCardId || "",
+      company: selected?.company || "",
+      role: selected?.role || "",
+      isCurrent: selected?.isCurrent || false,
+      sortOrder: selected?.sortOrder || 0,
+      startDate: selected?.startDate || "",
+      endDate: selected?.endDate || "",
+      summary: selected?.summary || "",
+      responsibilities: selected?.responsibilities || "",
+      skills: (selected?.skills || []).join(", ")
+    });
+  }, [knowledgeBase?.experienceCards, selectedExperienceId]);
 
   useEffect(() => {
     const projects = knowledgeBase?.projectCards || [];
@@ -2244,10 +2277,10 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     try {
       await updateHostedKnowledgeBaseProfile(accessToken, {
         fullName: profileDraft.fullName,
-        resumeText: profileDraft.resumeText,
+        candidateInfo: profileDraft.candidateInfo,
         shortIntro: profileDraft.shortIntro,
-        currentRole: profileDraft.currentRole,
-        yearsOfExperience: Number(profileDraft.yearsOfExperience) || 0,
+        currentRole: "",
+        yearsOfExperience: 0,
         strengths: parseListInput(profileDraft.strengths),
         skills: parseListInput(profileDraft.skills),
         domains: parseListInput(profileDraft.domains)
@@ -2256,6 +2289,69 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       setStatus("Profile card updated.");
     } catch (error) {
       setStatus(error.message || "Could not update the profile card.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleNewExperience() {
+    setSelectedExperienceId("");
+    setExperienceDraft({
+      experienceCardId: "",
+      company: "",
+      role: "",
+      isCurrent: !(knowledgeBase?.experienceCards || []).some((item) => item.isCurrent),
+      sortOrder: (knowledgeBase?.experienceCards || []).length,
+      startDate: "",
+      endDate: "",
+      summary: "",
+      responsibilities: "",
+      skills: ""
+    });
+  }
+
+  async function handleSaveExperience(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    const payload = {
+      company: experienceDraft.company,
+      role: experienceDraft.role,
+      isCurrent: experienceDraft.isCurrent,
+      sortOrder: Number(experienceDraft.sortOrder) || 0,
+      startDate: experienceDraft.startDate,
+      endDate: experienceDraft.isCurrent ? "" : experienceDraft.endDate,
+      summary: experienceDraft.summary,
+      responsibilities: experienceDraft.responsibilities,
+      skills: parseListInput(experienceDraft.skills)
+    };
+    try {
+      const saved = experienceDraft.experienceCardId
+        ? await updateHostedKnowledgeBaseExperience(accessToken, experienceDraft.experienceCardId, payload)
+        : await createHostedKnowledgeBaseExperience(accessToken, payload);
+      setSelectedExperienceId(saved.experienceCardId);
+      await reloadKnowledgeBase();
+      setStatus("Experience updated.");
+    } catch (error) {
+      setStatus(error.message || "Could not update that experience.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteExperience() {
+    if (!experienceDraft.experienceCardId || !window.confirm(`Delete the ${experienceDraft.role} experience at ${experienceDraft.company}?`)) {
+      return;
+    }
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await deleteHostedKnowledgeBaseExperience(accessToken, experienceDraft.experienceCardId);
+      setSelectedExperienceId("");
+      await reloadKnowledgeBase();
+      setStatus("Experience deleted.");
+    } catch (error) {
+      setStatus(error.message || "Could not delete that experience.");
     } finally {
       setSubmitting(false);
     }
@@ -2310,7 +2406,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">Your knowledge space</p>
         <h1>Turn your experience into context Phantom can retrieve when it matters.</h1>
         <p>
-          Add your resume, project stories, role notes, and company research here. Phantom keeps the structured context ready for your Windows sessions.
+          Add candidate information, company-specific experiences, project stories, and preferences here. Phantom keeps each context source ready for your Windows sessions.
         </p>
       </article>
 
@@ -2364,8 +2460,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
           <span>Section</span>
           <select value={selectedSection} onChange={(event) => setSelectedSection(event.target.value)} disabled={isPremiumBlocked || submitting}>
             <option value="profile">Profile</option>
+            <option value="experience">Experience</option>
             <option value="project">Project</option>
-            <option value="general_reference">General reference</option>
+            <option value="general_reference">General preferences</option>
           </select>
         </label>
         <label className={`button button-secondary button-file ${isPremiumBlocked || submitting ? "button-disabled" : ""}`}>
@@ -2390,7 +2487,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
               value={pasteContent}
               onChange={(event) => setPasteContent(event.target.value)}
               disabled={isPremiumBlocked || submitting}
-              placeholder="Paste resume, project note, or interview context here."
+            placeholder="Paste candidate information, one company experience, a project note, or interview preferences here."
             />
           </label>
           <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !pasteContent.trim()}>
@@ -2400,18 +2497,10 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       </article>
 
       <form className="glass-panel auth-form" onSubmit={handleSaveProfile}>
-        <p className="eyebrow">Profile card</p>
+        <p className="eyebrow">Profile</p>
         <label>
           <span>Full name</span>
           <input value={profileDraft.fullName} onChange={(event) => setProfileDraft((current) => ({ ...current, fullName: event.target.value }))} disabled={isPremiumBlocked || submitting} />
-        </label>
-        <label>
-          <span>Current role</span>
-          <input value={profileDraft.currentRole} onChange={(event) => setProfileDraft((current) => ({ ...current, currentRole: event.target.value }))} disabled={isPremiumBlocked || submitting} />
-        </label>
-        <label>
-          <span>Years of experience</span>
-          <input type="number" min="0" value={profileDraft.yearsOfExperience} onChange={(event) => setProfileDraft((current) => ({ ...current, yearsOfExperience: event.target.value }))} disabled={isPremiumBlocked || submitting} />
         </label>
         <label>
           <span>Short intro</span>
@@ -2430,12 +2519,80 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
           <input value={profileDraft.domains} onChange={(event) => setProfileDraft((current) => ({ ...current, domains: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Fintech, SaaS, AI" />
         </label>
         <label>
-          <span>Resume source text</span>
-          <textarea rows={8} value={profileDraft.resumeText} onChange={(event) => setProfileDraft((current) => ({ ...current, resumeText: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          <span>Candidate info</span>
+          <textarea rows={8} value={profileDraft.candidateInfo} onChange={(event) => setProfileDraft((current) => ({ ...current, candidateInfo: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Education, certifications, location, work preferences, and other useful details. Keep company-specific responsibilities in Experience." />
         </label>
-        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !knowledgeBase?.profileCard}>
-          {submitting ? "Saving..." : "Save Profile Card"}
+        <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !knowledgeBase?.knowledgeBaseId}>
+          {submitting ? "Saving..." : "Save Profile"}
         </button>
+      </form>
+
+      <form className="glass-panel auth-form" onSubmit={handleSaveExperience}>
+        <div className="section-heading-row">
+          <div>
+            <p className="eyebrow">Experience</p>
+            <h3>Keep each company and role separate</h3>
+          </div>
+          <button className="button button-secondary button-compact" type="button" onClick={handleNewExperience} disabled={isPremiumBlocked || submitting}>
+            Add experience
+          </button>
+        </div>
+        {(knowledgeBase?.experienceCards || []).length > 0 && (
+          <label>
+            <span>Selected experience</span>
+            <select value={selectedExperienceId} onChange={(event) => setSelectedExperienceId(event.target.value)} disabled={isPremiumBlocked || submitting}>
+              {(knowledgeBase?.experienceCards || []).map((experience) => (
+                <option key={experience.experienceCardId} value={experience.experienceCardId}>
+                  {experience.isCurrent ? "Current · " : ""}{experience.role} at {experience.company}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="form-grid-two">
+          <label>
+            <span>Company</span>
+            <input value={experienceDraft.company} onChange={(event) => setExperienceDraft((current) => ({ ...current, company: event.target.value }))} disabled={isPremiumBlocked || submitting} required />
+          </label>
+          <label>
+            <span>Role</span>
+            <input value={experienceDraft.role} onChange={(event) => setExperienceDraft((current) => ({ ...current, role: event.target.value }))} disabled={isPremiumBlocked || submitting} required />
+          </label>
+          <label>
+            <span>Start date</span>
+            <input type="month" value={experienceDraft.startDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, startDate: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+          </label>
+          <label>
+            <span>End date</span>
+            <input type="month" value={experienceDraft.endDate} onChange={(event) => setExperienceDraft((current) => ({ ...current, endDate: event.target.value }))} disabled={isPremiumBlocked || submitting || experienceDraft.isCurrent} />
+          </label>
+        </div>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={experienceDraft.isCurrent} onChange={(event) => setExperienceDraft((current) => ({ ...current, isCurrent: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))} disabled={isPremiumBlocked || submitting} />
+          <span>Current experience — prioritise this role for general interview answers</span>
+        </label>
+        <label>
+          <span>Role summary</span>
+          <textarea rows={3} value={experienceDraft.summary} onChange={(event) => setExperienceDraft((current) => ({ ...current, summary: event.target.value }))} disabled={isPremiumBlocked || submitting} />
+        </label>
+        <label>
+          <span>Responsibilities and achievements</span>
+          <textarea rows={6} value={experienceDraft.responsibilities} onChange={(event) => setExperienceDraft((current) => ({ ...current, responsibilities: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="Describe day-to-day work, ownership, outcomes, and examples specific to this role." />
+        </label>
+        <label>
+          <span>Skills and tools</span>
+          <input value={experienceDraft.skills} onChange={(event) => setExperienceDraft((current) => ({ ...current, skills: event.target.value }))} disabled={isPremiumBlocked || submitting} placeholder="API automation, Playwright, Selenium, CI/CD" />
+        </label>
+        <div className="table-actions" aria-live="polite">
+          <button className="button button-primary" type="submit" disabled={isPremiumBlocked || submitting || !experienceDraft.company.trim() || !experienceDraft.role.trim()}>
+            {submitting ? "Saving..." : experienceDraft.experienceCardId ? "Save Experience" : "Create Experience"}
+          </button>
+          {experienceDraft.experienceCardId && (
+            <button className="button button-secondary" type="button" onClick={handleDeleteExperience} disabled={isPremiumBlocked || submitting}>
+              Delete
+            </button>
+          )}
+        </div>
       </form>
 
       <form className="glass-panel auth-form" onSubmit={handleSaveProject}>
@@ -2517,7 +2674,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
                 knowledgeBase.documents.map((document) => (
                   <tr key={document.documentId}>
                     <td>{document.fileName}</td>
-                    <td>{document.section || "general_reference"}</td>
+                    <td>{document.section === "general_reference" ? "General preferences" : document.section || "General preferences"}</td>
                     <td>{document.sourceType || document.contentType || "file"}</td>
                     <td>{document.characterCount}</td>
                     <td>{document.chunkCount}</td>
@@ -2567,7 +2724,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             </button>
           </div>
           <p>
-            {selectedDocument.section || "general_reference"} · {selectedDocument.sourceType || selectedDocument.contentType || "file"} · {selectedDocument.characterCount} chars ·{" "}
+            {selectedDocument.section === "general_reference" ? "General preferences" : selectedDocument.section || "General preferences"} · {selectedDocument.sourceType || selectedDocument.contentType || "file"} · {selectedDocument.characterCount} chars ·{" "}
             {selectedDocument.chunkCount} chunks
           </p>
           <div className="document-preview">

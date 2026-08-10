@@ -1538,7 +1538,8 @@ namespace SecureOverlay
                         }
 
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
-                    });
+                    },
+                    () => !IsByoAccount() && HasPremiumManagedEntitlement());
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;

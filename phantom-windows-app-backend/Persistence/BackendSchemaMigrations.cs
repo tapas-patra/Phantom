@@ -24,7 +24,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql),
         new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql),
         new SchemaMigration("018_registration_settings", RegistrationSettingsSql),
-        new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql)
+        new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql),
+        new SchemaMigration("020_hosted_kb_experience_cards", HostedKnowledgeBaseExperienceCardsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1359,6 +1360,33 @@ CREATE TABLE IF NOT EXISTS hosted_kb_project_cards (
 
 CREATE INDEX IF NOT EXISTS idx_hosted_kb_project_cards_kb_recent_order
     ON hosted_kb_project_cards(knowledge_base_id, is_recent DESC, sort_order ASC, updated_at_utc DESC);
+";
+
+    private const string HostedKnowledgeBaseExperienceCardsSql = @"
+CREATE TABLE IF NOT EXISTS hosted_kb_experience_cards (
+    experience_card_id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    company TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT '',
+    is_current BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    responsibilities TEXT NOT NULL DEFAULT '',
+    skills_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_document_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosted_kb_experience_cards_kb_order
+    ON hosted_kb_experience_cards(knowledge_base_id, is_current DESC, sort_order ASC, updated_at_utc DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hosted_kb_experience_cards_one_current
+    ON hosted_kb_experience_cards(knowledge_base_id)
+    WHERE is_current;
 ";
 
     private const string DashboardProjectionUsageCreditSplitSql = @"

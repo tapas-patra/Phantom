@@ -19,6 +19,8 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public HostedKnowledgeBaseReindexJobDto? LatestReindexJob { get; set; }
         public HostedKnowledgeBaseProfileCardDto ProfileCard { get; set; }
             = new HostedKnowledgeBaseProfileCardDto();
+        public System.Collections.Generic.IReadOnlyList<HostedKnowledgeBaseExperienceCardDto> ExperienceCards { get; set; }
+            = Array.Empty<HostedKnowledgeBaseExperienceCardDto>();
         public System.Collections.Generic.IReadOnlyList<HostedKnowledgeBaseProjectCardDto> ProjectCards { get; set; }
             = System.Array.Empty<HostedKnowledgeBaseProjectCardDto>();
     }

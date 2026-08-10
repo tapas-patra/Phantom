@@ -115,6 +115,40 @@ LIMIT 1;";
         return reader.Read() ? MapProjectCard(reader) : null;
     }
 
+    public IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> ListExperienceCards(string knowledgeBaseId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_experience_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+ORDER BY is_current DESC, sort_order ASC, updated_at_utc DESC;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        using var reader = command.ExecuteReader();
+        var items = new List<HostedKnowledgeBaseExperienceCardRecord>();
+        while (reader.Read())
+        {
+            items.Add(MapExperienceCard(reader));
+        }
+
+        return items;
+    }
+
+    public HostedKnowledgeBaseExperienceCardRecord? FindExperienceCard(string knowledgeBaseId, string experienceCardId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT * FROM hosted_kb_experience_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND experience_card_id = @experienceCardId
+LIMIT 1;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        command.Parameters.AddWithValue("experienceCardId", experienceCardId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? MapExperienceCard(reader) : null;
+    }
+
     public IReadOnlyList<HostedKnowledgeBaseChunkRecord> ListChunks(string knowledgeBaseId)
     {
         using var connection = _store.OpenConnection();
@@ -200,6 +234,10 @@ SELECT
     lexical_score
         + CASE
             WHEN @hasPreferredDocuments AND document_id = ANY(@preferredDocumentIds) THEN 0.12
+            ELSE 0
+        END
+        + CASE
+            WHEN text LIKE 'Current employment experience%' THEN 0.04
             ELSE 0
         END AS fused_score
 FROM lexical
@@ -302,6 +340,10 @@ SELECT
         + CASE
             WHEN @hasPreferredDocuments AND document_id = ANY(@preferredDocumentIds) THEN 0.12
             ELSE 0
+        END
+        + CASE
+            WHEN text LIKE 'Current employment experience%' THEN 0.04
+            ELSE 0
         END AS fused_score
 FROM combined
 GROUP BY chunk_id, document_id, document_title, section_title, text, search_text
@@ -396,7 +438,8 @@ ON CONFLICT (knowledge_base_id) DO UPDATE SET
         IReadOnlyList<HostedKnowledgeBaseDocumentRecord> documents,
         IReadOnlyList<HostedKnowledgeBaseChunkRecord> chunks,
         HostedKnowledgeBaseProfileCardRecord? profileCard,
-        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards)
+        IReadOnlyList<HostedKnowledgeBaseProjectCardRecord> projectCards,
+        IReadOnlyList<HostedKnowledgeBaseExperienceCardRecord> experienceCards)
     {
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -431,6 +474,14 @@ ON CONFLICT (knowledge_base_id) DO UPDATE SET
             deleteProjects.CommandText = "DELETE FROM hosted_kb_project_cards WHERE knowledge_base_id = @knowledgeBaseId;";
             deleteProjects.Parameters.AddWithValue("knowledgeBaseId", knowledgeBase.KnowledgeBaseId);
             deleteProjects.ExecuteNonQuery();
+        }
+
+        using (var deleteExperiences = connection.CreateCommand())
+        {
+            deleteExperiences.Transaction = transaction;
+            deleteExperiences.CommandText = "DELETE FROM hosted_kb_experience_cards WHERE knowledge_base_id = @knowledgeBaseId;";
+            deleteExperiences.Parameters.AddWithValue("knowledgeBaseId", knowledgeBase.KnowledgeBaseId);
+            deleteExperiences.ExecuteNonQuery();
         }
 
         using (var upsertKnowledgeBase = connection.CreateCommand())
@@ -547,6 +598,15 @@ INSERT INTO hosted_kb_project_cards (
             insertProject.ExecuteNonQuery();
         }
 
+        foreach (var experienceCard in experienceCards)
+        {
+            using var insertExperience = connection.CreateCommand();
+            insertExperience.Transaction = transaction;
+            insertExperience.CommandText = ExperienceCardInsertSql;
+            BindExperienceCard(insertExperience, experienceCard);
+            insertExperience.ExecuteNonQuery();
+        }
+
         transaction.Commit();
     }
 
@@ -602,6 +662,66 @@ ON CONFLICT (project_card_id) DO UPDATE SET
         command.ExecuteNonQuery();
     }
 
+    public void SaveExperienceCard(HostedKnowledgeBaseExperienceCardRecord record)
+    {
+        using var connection = _store.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        if (record.IsCurrent)
+        {
+            using var clearCurrent = connection.CreateCommand();
+            clearCurrent.Transaction = transaction;
+            clearCurrent.CommandText = @"
+UPDATE hosted_kb_experience_cards
+SET is_current = FALSE, updated_at_utc = @updatedAtUtc
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND experience_card_id <> @experienceCardId
+  AND is_current;";
+            clearCurrent.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
+            clearCurrent.Parameters.AddWithValue("knowledgeBaseId", record.KnowledgeBaseId);
+            clearCurrent.Parameters.AddWithValue("experienceCardId", record.ExperienceCardId);
+            clearCurrent.ExecuteNonQuery();
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = ExperienceCardInsertSql + @"
+ON CONFLICT (experience_card_id) DO UPDATE SET
+    company = EXCLUDED.company,
+    role = EXCLUDED.role,
+    is_current = EXCLUDED.is_current,
+    sort_order = EXCLUDED.sort_order,
+    start_date = EXCLUDED.start_date,
+    end_date = EXCLUDED.end_date,
+    summary = EXCLUDED.summary,
+    responsibilities = EXCLUDED.responsibilities,
+    skills_json = EXCLUDED.skills_json,
+    source_document_ids_json = EXCLUDED.source_document_ids_json,
+    updated_at_utc = EXCLUDED.updated_at_utc;";
+        BindExperienceCard(command, record);
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    public void DeleteExperienceCard(string knowledgeBaseId, string experienceCardId)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+DELETE FROM hosted_kb_experience_cards
+WHERE knowledge_base_id = @knowledgeBaseId
+  AND experience_card_id = @experienceCardId;";
+        command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
+        command.Parameters.AddWithValue("experienceCardId", experienceCardId);
+        command.ExecuteNonQuery();
+    }
+
+    private const string ExperienceCardInsertSql = @"
+INSERT INTO hosted_kb_experience_cards (
+    experience_card_id, knowledge_base_id, user_id, company, role, is_current, sort_order, start_date, end_date, summary, responsibilities, skills_json, source_document_ids_json, created_at_utc, updated_at_utc
+) VALUES (
+    @experienceCardId, @knowledgeBaseId, @userId, @company, @role, @isCurrent, @sortOrder, @startDate, @endDate, @summary, @responsibilities, CAST(@skillsJson AS jsonb), CAST(@sourceDocumentIdsJson AS jsonb), @createdAtUtc, @updatedAtUtc
+)";
+
     private static void BindKnowledgeBase(NpgsqlCommand command, HostedKnowledgeBaseRecord record)
     {
         command.Parameters.AddWithValue("knowledgeBaseId", record.KnowledgeBaseId);
@@ -651,6 +771,25 @@ ON CONFLICT (project_card_id) DO UPDATE SET
         command.Parameters.AddWithValue("architecture", record.Architecture);
         command.Parameters.AddWithValue("challenges", record.Challenges);
         command.Parameters.AddWithValue("impact", record.Impact);
+        command.Parameters.AddWithValue("sourceDocumentIdsJson", record.SourceDocumentIdsJson);
+        command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
+        command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
+    }
+
+    private static void BindExperienceCard(NpgsqlCommand command, HostedKnowledgeBaseExperienceCardRecord record)
+    {
+        command.Parameters.AddWithValue("experienceCardId", record.ExperienceCardId);
+        command.Parameters.AddWithValue("knowledgeBaseId", record.KnowledgeBaseId);
+        command.Parameters.AddWithValue("userId", record.UserId);
+        command.Parameters.AddWithValue("company", record.Company);
+        command.Parameters.AddWithValue("role", record.Role);
+        command.Parameters.AddWithValue("isCurrent", record.IsCurrent);
+        command.Parameters.AddWithValue("sortOrder", record.SortOrder);
+        command.Parameters.AddWithValue("startDate", record.StartDate);
+        command.Parameters.AddWithValue("endDate", record.EndDate);
+        command.Parameters.AddWithValue("summary", record.Summary);
+        command.Parameters.AddWithValue("responsibilities", record.Responsibilities);
+        command.Parameters.AddWithValue("skillsJson", record.SkillsJson);
         command.Parameters.AddWithValue("sourceDocumentIdsJson", record.SourceDocumentIdsJson);
         command.Parameters.AddWithValue("createdAtUtc", record.CreatedAtUtc);
         command.Parameters.AddWithValue("updatedAtUtc", record.UpdatedAtUtc);
@@ -744,6 +883,28 @@ ON CONFLICT (project_card_id) DO UPDATE SET
             Architecture = ReadString(reader, "architecture"),
             Challenges = ReadString(reader, "challenges"),
             Impact = ReadString(reader, "impact"),
+            SourceDocumentIdsJson = ReadString(reader, "source_document_ids_json"),
+            CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
+            UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))
+        };
+    }
+
+    private static HostedKnowledgeBaseExperienceCardRecord MapExperienceCard(NpgsqlDataReader reader)
+    {
+        return new HostedKnowledgeBaseExperienceCardRecord
+        {
+            ExperienceCardId = reader.GetString(reader.GetOrdinal("experience_card_id")),
+            KnowledgeBaseId = reader.GetString(reader.GetOrdinal("knowledge_base_id")),
+            UserId = reader.GetString(reader.GetOrdinal("user_id")),
+            Company = ReadString(reader, "company"),
+            Role = ReadString(reader, "role"),
+            IsCurrent = reader.GetBoolean(reader.GetOrdinal("is_current")),
+            SortOrder = ReadInt(reader, "sort_order"),
+            StartDate = ReadString(reader, "start_date"),
+            EndDate = ReadString(reader, "end_date"),
+            Summary = ReadString(reader, "summary"),
+            Responsibilities = ReadString(reader, "responsibilities"),
+            SkillsJson = ReadString(reader, "skills_json"),
             SourceDocumentIdsJson = ReadString(reader, "source_document_ids_json"),
             CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
             UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))

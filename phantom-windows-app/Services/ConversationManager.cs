@@ -1078,7 +1078,8 @@ namespace SecureOverlay.Services
                 && (ContainsAnyToken(normalizedUserMessage, "project", "projects", "this", "that", "it", "built", "worked on") || hasActiveProject || namedProjectAsk);
             var activeProjectFollowUp =
                 hasActiveProject
-                && ContainsAnyToken(normalizedUserMessage, "this", "that", "it", "the project", "architecture", "design", "stack", "challenge", "impact", "role")
+                && (Regex.IsMatch(normalizedUserMessage, @"\b(?:this|that|it)\b")
+                    || ContainsAnyToken(normalizedUserMessage, "the project", "architecture", "design", "stack", "challenge", "impact", "role"))
                 && !ContainsAnyToken(normalizedUserMessage, "yourself", "background", "resume", "strength", "weakness", "current role");
             if (!explicitProjectAsk && !projectDetailAsk && !activeProjectFollowUp && !namedProjectAsk)
             {

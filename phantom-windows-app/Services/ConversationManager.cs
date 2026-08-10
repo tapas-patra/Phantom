@@ -519,14 +519,16 @@ namespace SecureOverlay.Services
 
         private string GetStablePromptPrefix()
         {
+            var hasStructuredGrounding = !string.IsNullOrWhiteSpace(_structuredKnowledgeContext);
             var stablePromptKey = string.Join(
                 "\u001f",
                 new[]
                 {
                     _systemPrompt,
-                    _resumeSummary,
+                    hasStructuredGrounding ? "structured" : "global",
+                    hasStructuredGrounding ? string.Empty : _resumeSummary,
                     _jobDescriptionSummary,
-                    _resumeSummarized ? string.Empty : TruncateMessageStatic(_resumeText, 2000),
+                    hasStructuredGrounding || _resumeSummarized ? string.Empty : TruncateMessageStatic(_resumeText, 2000),
                     _jobDescriptionSummarized ? string.Empty : TruncateMessageStatic(_jobDescriptionText, 1200)
                 });
             if (string.Equals(_stablePromptPrefixKey, stablePromptKey, StringComparison.Ordinal))
@@ -537,11 +539,11 @@ namespace SecureOverlay.Services
             var contextParts = new System.Text.StringBuilder();
             contextParts.Append(_systemPrompt);
 
-            if (!string.IsNullOrWhiteSpace(_resumeSummary))
+            if (!hasStructuredGrounding && !string.IsNullOrWhiteSpace(_resumeSummary))
             {
                 contextParts.Append($"\n\nUser Profile: {_resumeSummary}");
             }
-            else if (!string.IsNullOrWhiteSpace(_resumeText))
+            else if (!hasStructuredGrounding && !string.IsNullOrWhiteSpace(_resumeText))
             {
                 contextParts.Append($"\n\nUser Profile (raw fallback): {TruncateMessageStatic(_resumeText, 2000)}");
             }
@@ -904,6 +906,7 @@ namespace SecureOverlay.Services
                 Company = "Current Co",
                 Role = "API Automation Engineer",
                 IsCurrent = true,
+                StartDate = "2023-01",
                 Responsibilities = "API automation and service testing",
                 Skills = new[] { "API automation" }
             };
@@ -912,6 +915,8 @@ namespace SecureOverlay.Services
                 ExperienceCardId = "router-check-previous-experience",
                 Company = "Previous Co",
                 Role = "UI Automation Engineer",
+                StartDate = "2020-01",
+                EndDate = "2022-12",
                 Responsibilities = "UI automation with Selenium",
                 Skills = new[] { "UI automation", "Selenium" }
             };
@@ -975,6 +980,30 @@ namespace SecureOverlay.Services
             {
                 throw new InvalidOperationException("Router self-check failed: experience relevance did not override current-role priority when appropriate.");
             }
+
+            var timeline = BuildExperienceTimelineGrounding(new[] { currentExperience, previousExperience });
+            if (timeline.IndexOf(previousExperience.Company, StringComparison.Ordinal)
+                >= timeline.IndexOf(currentExperience.Company, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Router self-check failed: experience timeline is not oldest-to-newest.");
+            }
+
+            var previousStructuredContext = _structuredKnowledgeContext;
+            var previousResumeSummary = _resumeSummary;
+            var previousStablePromptPrefix = _stablePromptPrefix;
+            var previousStablePromptPrefixKey = _stablePromptPrefixKey;
+            _structuredKnowledgeContext = BuildProjectGrounding(project, InterviewPackKind.ProjectOverview);
+            const string unrelatedProfileMarker = "router-check-unrelated-profile-marker";
+            _resumeSummary = unrelatedProfileMarker;
+            _stablePromptPrefixKey = string.Empty;
+            if (GetStablePromptPrefix().Contains(unrelatedProfileMarker, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Router self-check failed: global profile leaked into project grounding.");
+            }
+            _structuredKnowledgeContext = previousStructuredContext;
+            _resumeSummary = previousResumeSummary;
+            _stablePromptPrefix = previousStablePromptPrefix;
+            _stablePromptPrefixKey = previousStablePromptPrefixKey;
 
             _knowledgeBaseSummaryCache = previousSummary;
             _activeProjectCardId = previousActiveProjectId;
@@ -1278,10 +1307,8 @@ namespace SecureOverlay.Services
             _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile, packKind);
             if (packKind == InterviewPackKind.ProfileIntro)
             {
-                if (currentExperience != null)
-                {
-                    _structuredKnowledgeContext += "\n" + BuildExperienceGrounding(currentExperience);
-                }
+                _structuredKnowledgeContext += "\n" + BuildExperienceTimelineGrounding(
+                    knowledgeBase?.ExperienceCards ?? Array.Empty<HostedKnowledgeBaseExperienceCardDto>());
             }
             RagTraceLogger.WriteLine(
                 $"profile_grounding:ready full_name='{TrimForLog(groundedProfile.FullName, 80)}' skills={groundedProfile.Skills.Count} strengths={groundedProfile.Strengths.Count} pack={packKind}");
@@ -1960,7 +1987,10 @@ namespace SecureOverlay.Services
             switch (packKind)
             {
                 case InterviewPackKind.ProfileIntro:
-                    AppendGroundingLine(lines, "Short intro", profileCard.ShortIntro);
+                    if (profileCard.YearsOfExperience > 0)
+                    {
+                        lines.Add($"Years of experience: {profileCard.YearsOfExperience}");
+                    }
                     AppendGroundingList(lines, "Domains", profileCard.Domains);
                     AppendGroundingList(lines, "Skills", profileCard.Skills.Take(6).ToArray());
                     break;
@@ -2019,13 +2049,40 @@ namespace SecureOverlay.Services
             return string.Join("\n", lines);
         }
 
+        private static string BuildExperienceTimelineGrounding(
+            IReadOnlyList<HostedKnowledgeBaseExperienceCardDto> experiences)
+        {
+            if (experiences.Count == 0)
+            {
+                return "No employment timeline is available. Do not invent employers, roles, or career order.";
+            }
+
+            var lines = new List<string>
+            {
+                "Career chronology below is authoritative and ordered oldest to newest. Never reverse it or infer a different order."
+            };
+            foreach (var experience in experiences
+                         .OrderBy(item => string.IsNullOrWhiteSpace(item.StartDate) ? "9999-99" : item.StartDate, StringComparer.Ordinal)
+                         .ThenBy(item => item.SortOrder))
+            {
+                var period = string.Join(" – ", new[]
+                {
+                    experience.StartDate,
+                    experience.IsCurrent ? "Present" : experience.EndDate
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                lines.Add($"- {period}: {experience.Role} at {experience.Company}{(experience.IsCurrent ? " (CURRENT)" : string.Empty)}");
+            }
+
+            return string.Join("\n", lines);
+        }
+
         private static string BuildProjectGrounding(
             HostedKnowledgeBaseProjectCardDto projectCard,
             InterviewPackKind packKind)
         {
             var lines = new List<string>
             {
-                "Use only this project for the current answer. If the requested detail is missing, say so briefly instead of inventing it."
+                "Use only this project for the current answer. Profile skills, other experiences/projects, and earlier assistant claims are not evidence for this project. If the requested detail is missing, say so briefly instead of inventing it."
             };
 
             AppendGroundingLine(lines, "Project", projectCard.Title);

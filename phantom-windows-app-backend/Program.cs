@@ -1224,6 +1224,13 @@ adminGroup.MapPost("/locks/clear", (
     return Results.Ok(admin.ClearLock(request));
 });
 
+adminGroup.MapPost("/accounts/manual-lock", (
+    AdminManualLockRequestDto request,
+    AdminService admin) =>
+{
+    return Results.Ok(admin.SetManualLock(request));
+});
+
 adminGroup.MapPost("/balance/waive-negative-premium", (
     AdminBalanceWaiverRequestDto request,
     AdminService admin) =>

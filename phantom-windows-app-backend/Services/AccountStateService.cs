@@ -53,6 +53,8 @@ public sealed class AccountStateService
             throw new BackendValidationException("Please verify your email before signing in.");
         }
 
+        EnsureNotManuallyLocked(existing);
+
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.LastValidatedAtUtc = DateTime.UtcNow;
         _accounts.Save(existing);
@@ -82,6 +84,7 @@ public sealed class AccountStateService
             LastLockTokenHash = hasResumableLock ? activeLock!.LockToken : string.Empty,
             LastLockedSessionId = hasResumableLock ? activeLock!.SessionId : string.Empty,
             OfflineModeEnabled = account.OfflineModeEnabled,
+            CanUseDesktopPowerFeatures = account.CanUseDesktopPowerFeatures,
             LastValidatedAtUtc = account.LastValidatedAtUtc,
             HostedKnowledgeBase = _knowledgeBases.GetSummaryForAccount(account),
             Source = source
@@ -142,6 +145,8 @@ public sealed class AccountStateService
             throw new BackendValidationException("Phone verification is incomplete.");
         }
 
+        EnsureNotManuallyLocked(account);
+
         if (!string.Equals(
                 account.RegistrationDeviceFingerprintHash,
                 callbackResult.DeviceFingerprintHash.Trim(),
@@ -151,6 +156,17 @@ public sealed class AccountStateService
         }
 
         return account;
+    }
+
+    private static void EnsureNotManuallyLocked(DesktopAccountRecord account)
+    {
+        if (!account.IsManualLockActive)
+        {
+            return;
+        }
+
+        throw new BackendValidationException(
+            $"This account is temporarily locked until {account.ManualLockExpiresAtUtc:yyyy-MM-dd HH:mm} UTC. {account.ManualLockReason}".Trim());
     }
 
     public void Save(DesktopAccountRecord account)

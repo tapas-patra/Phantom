@@ -134,11 +134,13 @@ WHERE (
         command.CommandText = @"
 INSERT INTO desktop_accounts (
     user_id, email, email_verified, email_verified_at_utc, access_tier, password_hash, phone_number_e164, phone_verified, phone_verified_at_utc, registration_device_fingerprint_hash, terms_accepted_at_utc, terms_version, pro_available_credits, premium_available_credits,
-    premium_negative_credits, lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
+    premium_negative_credits, lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features,
+    manual_lock_expires_at_utc, manual_lock_reason, last_validated_at_utc,
     created_at_utc, updated_at_utc
 ) VALUES (
     @userId, @email, @emailVerified, @emailVerifiedAtUtc, @accessTier, @passwordHash, @phoneNumberE164, @phoneVerified, @phoneVerifiedAtUtc, @registrationDeviceFingerprintHash, @termsAcceptedAtUtc, @termsVersion, @proCredits, @premiumCredits,
-    @premiumNegative, @leaseExpiresAt, @offlineModeEnabled, @lastValidatedAt, @createdAt, @updatedAt
+    @premiumNegative, @leaseExpiresAt, @offlineModeEnabled, @canUseDesktopPowerFeatures,
+    @manualLockExpiresAtUtc, @manualLockReason, @lastValidatedAt, @createdAt, @updatedAt
 )
 ON CONFLICT(user_id) DO UPDATE SET
     email = EXCLUDED.email,
@@ -157,6 +159,9 @@ ON CONFLICT(user_id) DO UPDATE SET
     premium_negative_credits = EXCLUDED.premium_negative_credits,
     lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
     offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+    can_use_desktop_power_features = EXCLUDED.can_use_desktop_power_features,
+    manual_lock_expires_at_utc = EXCLUDED.manual_lock_expires_at_utc,
+    manual_lock_reason = EXCLUDED.manual_lock_reason,
     last_validated_at_utc = EXCLUDED.last_validated_at_utc,
     updated_at_utc = EXCLUDED.updated_at_utc;";
         Bind(command, account);
@@ -189,6 +194,9 @@ ON CONFLICT(user_id) DO UPDATE SET
         command.Parameters.AddWithValue("premiumNegative", account.PremiumNegativeCredits);
         command.Parameters.AddWithValue("leaseExpiresAt", account.LeaseExpiresAtUtc);
         command.Parameters.AddWithValue("offlineModeEnabled", account.OfflineModeEnabled);
+        command.Parameters.AddWithValue("canUseDesktopPowerFeatures", account.CanUseDesktopPowerFeatures);
+        command.Parameters.AddWithValue("manualLockExpiresAtUtc", (object?)account.ManualLockExpiresAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("manualLockReason", account.ManualLockReason);
         command.Parameters.AddWithValue("lastValidatedAt", account.LastValidatedAtUtc);
         command.Parameters.AddWithValue("createdAt", account.CreatedAtUtc);
         command.Parameters.AddWithValue("updatedAt", account.UpdatedAtUtc);
@@ -221,6 +229,11 @@ ON CONFLICT(user_id) DO UPDATE SET
             PremiumNegativeCredits = reader.GetDecimal(reader.GetOrdinal("premium_negative_credits")),
             LeaseExpiresAtUtc = reader.GetDateTime(reader.GetOrdinal("lease_expires_at_utc")),
             OfflineModeEnabled = reader.GetBoolean(reader.GetOrdinal("offline_mode_enabled")),
+            CanUseDesktopPowerFeatures = reader.GetBoolean(reader.GetOrdinal("can_use_desktop_power_features")),
+            ManualLockExpiresAtUtc = reader.IsDBNull(reader.GetOrdinal("manual_lock_expires_at_utc"))
+                ? null
+                : reader.GetDateTime(reader.GetOrdinal("manual_lock_expires_at_utc")),
+            ManualLockReason = reader.GetString(reader.GetOrdinal("manual_lock_reason")),
             LastValidatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_validated_at_utc")),
             CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at_utc")),
             UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at_utc"))

@@ -216,12 +216,12 @@ FOR UPDATE SKIP LOCKED;";
 INSERT INTO dashboard_account_summaries (
     user_id, email, effective_access_tier, plan_label, phone_verified,
     pro_available_credits, premium_available_credits, premium_negative_credits,
-    lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
+    lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features, last_validated_at_utc,
     active_device_count, last_activity_at_utc, updated_at_utc
 ) VALUES (
     @userId, @email, @effectiveAccessTier, @planLabel, @phoneVerified,
     @proCredits, @premiumCredits, @premiumNegativeCredits, @leaseExpiresAtUtc,
-    @offlineModeEnabled, @lastValidatedAtUtc, @activeDeviceCount, @lastActivityAtUtc, @updatedAtUtc
+    @offlineModeEnabled, @canUseDesktopPowerFeatures, @lastValidatedAtUtc, @activeDeviceCount, @lastActivityAtUtc, @updatedAtUtc
 )
 ON CONFLICT (user_id) DO UPDATE SET
     email = EXCLUDED.email,
@@ -233,6 +233,7 @@ ON CONFLICT (user_id) DO UPDATE SET
     premium_negative_credits = EXCLUDED.premium_negative_credits,
     lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
     offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+    can_use_desktop_power_features = EXCLUDED.can_use_desktop_power_features,
     last_validated_at_utc = EXCLUDED.last_validated_at_utc,
     active_device_count = EXCLUDED.active_device_count,
     last_activity_at_utc = EXCLUDED.last_activity_at_utc,
@@ -247,6 +248,9 @@ ON CONFLICT (user_id) DO UPDATE SET
         command.Parameters.AddWithValue("premiumNegativeCredits", root.GetProperty("premium_negative_credits").GetDecimal());
         command.Parameters.AddWithValue("leaseExpiresAtUtc", root.GetProperty("lease_expires_at_utc").GetDateTime());
         command.Parameters.AddWithValue("offlineModeEnabled", root.GetProperty("offline_mode_enabled").GetBoolean());
+        command.Parameters.AddWithValue("canUseDesktopPowerFeatures",
+            root.TryGetProperty("can_use_desktop_power_features", out var powerFeatures)
+                && powerFeatures.GetBoolean());
         command.Parameters.AddWithValue("lastValidatedAtUtc", root.GetProperty("last_validated_at_utc").GetDateTime());
         command.Parameters.AddWithValue("activeDeviceCount", root.GetProperty("active_device_count").GetInt32());
         command.Parameters.AddWithValue("lastActivityAtUtc",

@@ -36,6 +36,13 @@ public sealed class DesktopSessionService
             throw new BackendValidationException("A desktop user session is required.");
         }
 
+        var account = _accounts.FindByUserId(session.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+        if (account.IsManualLockActive)
+        {
+            throw new BackendValidationException("This account is temporarily locked.");
+        }
+
         return session;
     }
 

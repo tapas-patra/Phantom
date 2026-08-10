@@ -224,6 +224,7 @@ namespace SecureOverlay
                 HostedClientFactory.CreateTelemetryClient(_hostedRuntimeOptions),
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
+            UpdateLegacyFallbackButtonState();
             _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
             _ = Task.Run(() =>
             {
@@ -480,6 +481,7 @@ namespace SecureOverlay
         private void RefreshAccountSnapshot()
         {
             _accountSnapshot = _accountCacheRepository.Load();
+            UpdateLegacyFallbackButtonState();
         }
 
         private void ApplyAccountTierChrome()
@@ -3568,12 +3570,20 @@ namespace SecureOverlay
             }
 
             var hasLegacyFallbackPath = !string.IsNullOrWhiteSpace(_settings.LegacyFallbackAppPath);
+            LegacyFallbackButton.Visibility = _accountSnapshot?.CanUseDesktopPowerFeatures == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             LegacyFallbackButton.Opacity = hasLegacyFallbackPath ? 1.0 : 0.55;
             LegacyFallbackButton.ToolTip = null;
         }
 
         private void LegacyFallbackButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures != true)
+            {
+                return;
+            }
+
             try
             {
                 var legacyFallbackAppPath = _settings.LegacyFallbackAppPath?.Trim() ?? string.Empty;

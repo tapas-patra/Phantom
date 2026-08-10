@@ -1336,16 +1336,19 @@ namespace SecureOverlay
                     _settings.AutoPauseOnInactivityMinutes = 10;
                 }
 
-                var legacyFallbackAppPath = LegacyFallbackAppPathTextBox.Text?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(legacyFallbackAppPath) && !File.Exists(legacyFallbackAppPath))
+                if (_accountSnapshot?.CanUseDesktopPowerFeatures == true)
                 {
-                    InvisibleMessageBox.Show(
-                        "The selected legacy app path does not exist.\n\nChoose a valid executable or leave the field empty.",
-                        "Invalid Legacy App Path");
-                    return;
-                }
+                    var legacyFallbackAppPath = LegacyFallbackAppPathTextBox.Text?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(legacyFallbackAppPath) && !File.Exists(legacyFallbackAppPath))
+                    {
+                        InvisibleMessageBox.Show(
+                            "The selected legacy app path does not exist.\n\nChoose a valid executable or leave the field empty.",
+                            "Invalid Legacy App Path");
+                        return;
+                    }
 
-                _settings.LegacyFallbackAppPath = legacyFallbackAppPath;
+                    _settings.LegacyFallbackAppPath = legacyFallbackAppPath;
+                }
 
                 // debug mode:
                 _settings.DebugModeEnabled = HasByoEntitlement() && DebugModeCheckBox.IsChecked == true;
@@ -1618,6 +1621,11 @@ namespace SecureOverlay
             ContextPackSection.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
             DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            var legacyFallbackVisibility = _accountSnapshot?.CanUseDesktopPowerFeatures == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            LegacyFallbackHeading.Visibility = legacyFallbackVisibility;
+            LegacyFallbackPanel.Visibility = legacyFallbackVisibility;
 
             if (!isByo)
             {

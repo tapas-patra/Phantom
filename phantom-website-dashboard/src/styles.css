@@ -125,6 +125,8 @@ img, svg { display: block; max-width: 100%; }
 .button:hover:not(:disabled) { box-shadow: 0 10px 24px rgba(27, 52, 112, 0.12); }
 .button-primary { color: #fff; border-color: var(--blue); background: var(--blue); }
 .button-primary:hover:not(:disabled) { border-color: var(--blue-dark); background: var(--blue-dark); }
+.button-danger { color: #fff; border-color: #b9314b; background: #b9314b; }
+.button-danger:hover:not(:disabled) { border-color: #95263c; background: #95263c; }
 .button-secondary { color: var(--ink); border-color: var(--line-strong); background: transparent; }
 .button-secondary:hover:not(:disabled) { border-color: #9bacbf; background: #fff; }
 .button-ghost { color: #526075; border-color: transparent; background: transparent; }
@@ -304,6 +306,7 @@ p { line-height: 1.68; }
 .status-pill, .header-badge { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border: 1px solid #bfd0ff; border-radius: 99px; color: #3457bd; background: #edf2ff; font-size: 0.76rem; }
 .status-pill-good { color: #146b50; border-color: #adddcc; background: #eaf9f3; }
 .status-pill-warn { color: #8d5c15; border-color: #e7ca9d; background: #fff6e8; }
+.status-pill-power { color: #6149b8; border-color: #c8bcff; background: #f0edff; }
 .status-message { margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--mint); color: #2f6253; background: #eef9f5; }
 .status-success { color: #2f6253; border-color: var(--mint); background: #eef9f5; }
 .status-error { color: #8d2e41; border-color: var(--danger); background: #fff0f3; }
@@ -348,6 +351,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .surface-user .status-pill, .surface-admin .status-pill { color: #b8c8ff; border-color: #3b5279; background: #172a46; }
 .surface-user .status-pill-good, .surface-admin .status-pill-good { color: #8be5c3; border-color: #2c6554; background: #123629; }
 .surface-user .status-pill-warn, .surface-admin .status-pill-warn { color: #f1c684; border-color: #725d35; background: #342919; }
+.surface-user .status-pill-power, .surface-admin .status-pill-power { color: #c9bfff; border-color: #6557a8; background: #28234c; }
 .surface-user .status-message, .surface-admin .status-message { color: #9fe2c9; background: #112b25; }
 .surface-user .status-success, .surface-admin .status-success { color: #9fe2c9; border-color: #55c99f; background: #112b25; }
 .surface-user .status-error, .surface-admin .status-error { color: #ff9caf; background: #351c27; }
@@ -371,8 +375,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .dashboard-hero h1 { max-width: 930px; font-size: clamp(2rem, 4.2vw, 4rem); line-height: 1; }
 .dashboard-hero > p:not(.eyebrow) { max-width: 840px; color: var(--night-muted); }
 .metric-card { min-height: 132px; display: flex; flex-direction: column; justify-content: space-between; }
-.metric-card span { color: var(--night-muted); font-size: 0.8rem; }
-.metric-card strong { color: var(--night-text); font-size: clamp(1.4rem, 2.4vw, 2rem); font-weight: 500; }
+.metric-card span { color: var(--muted); font-size: 0.8rem; }
+.metric-card strong { color: var(--ink); font-size: clamp(1.4rem, 2.4vw, 2rem); font-weight: 500; }
+.surface-user .metric-card span, .surface-admin .metric-card span { color: var(--night-muted); }
+.surface-user .metric-card strong, .surface-admin .metric-card strong { color: var(--night-text); }
 .chart-panel { min-height: 240px; }
 .surface-user .glass-panel p, .surface-admin .glass-panel p { color: var(--night-muted); }
 .surface-user .story-tag, .surface-admin .story-tag { color: #86a5ff; }
@@ -419,6 +425,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .admin-chat-error { color: #ff9caf; border-color: #6b3140; background: #351c27; }
 .admin-toggle { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 10px; }
 .admin-toggle input { width: auto; min-height: auto; }
+.entitlement-control { grid-column: 1 / -1; padding: 14px; border: 1px solid #4a4679; border-radius: 10px; background: #171b39; }
+.entitlement-control p, .account-lock-indicator p { margin: 8px 0 0; color: var(--night-muted); font-size: 0.8rem; }
+.account-lock-indicator { padding: 14px; border: 1px solid var(--night-line); border-radius: 10px; background: #0b1725; }
 
 @keyframes demo-reveal {
   from { opacity: 0; transform: translateY(14px); }

@@ -6,7 +6,8 @@ public static class DashboardSchemaMigrations
     {
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionSchemaSql),
         new SchemaMigration("002_interview_question_banks", InterviewQuestionBanksSql),
-        new SchemaMigration("003_interview_question_bank_names", InterviewQuestionBankNamesSql)
+        new SchemaMigration("003_interview_question_bank_names", InterviewQuestionBankNamesSql),
+        new SchemaMigration("004_power_features", PowerFeaturesSql)
     };
 
     private const string DashboardProjectionSchemaSql = @"
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS dashboard_account_summaries (
     premium_negative_credits NUMERIC(18,2) NOT NULL,
     lease_expires_at_utc TIMESTAMPTZ NOT NULL,
     offline_mode_enabled BOOLEAN NOT NULL,
+    can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE,
     last_validated_at_utc TIMESTAMPTZ NOT NULL,
     active_device_count INTEGER NOT NULL,
     last_activity_at_utc TIMESTAMPTZ NULL,
@@ -106,5 +108,10 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_interview_question_banks_user_ended
     private const string InterviewQuestionBankNamesSql = @"
 ALTER TABLE dashboard_interview_question_banks
     ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
+";
+
+    private const string PowerFeaturesSql = @"
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
 ";
 }

@@ -344,6 +344,14 @@ export async function clearAdminLock(accessToken, payload) {
   });
 }
 
+export async function setAdminManualLock(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/accounts/manual-lock", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function fetchManagedAiAdminInventory(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/credentials", {
     headers: authHeaders(accessToken)

@@ -32,6 +32,7 @@ SELECT
     premium_negative_credits,
     lease_expires_at_utc,
     offline_mode_enabled,
+    can_use_desktop_power_features,
     last_validated_at_utc,
     active_device_count,
     last_activity_at_utc
@@ -61,6 +62,7 @@ LIMIT 1;";
             premiumNegativeCredits = reader.GetDecimal(reader.GetOrdinal("premium_negative_credits")),
             leaseExpiresAtUtc = reader.GetDateTime(reader.GetOrdinal("lease_expires_at_utc")),
             offlineModeEnabled = reader.GetBoolean(reader.GetOrdinal("offline_mode_enabled")),
+            canUseDesktopPowerFeatures = reader.GetBoolean(reader.GetOrdinal("can_use_desktop_power_features")),
             lastValidatedAtUtc = reader.GetDateTime(reader.GetOrdinal("last_validated_at_utc")),
             activeDeviceCount = reader.GetInt32(reader.GetOrdinal("active_device_count")),
             lastActivityAtUtc = reader.IsDBNull(reader.GetOrdinal("last_activity_at_utc"))

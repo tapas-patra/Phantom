@@ -124,6 +124,7 @@ public sealed class RegistrationService
             PremiumNegativeCredits = 0m,
             LeaseExpiresAtUtc = now.AddHours(_options.DefaultLeaseHours),
             OfflineModeEnabled = false,
+            CanUseDesktopPowerFeatures = false,
             CreatedAtUtc = now
         };
 

@@ -8,5 +8,6 @@ public sealed class AdminAccountUpdateRequestDto
     public decimal PremiumAvailableCredits { get; set; }
     public decimal PremiumNegativeCredits { get; set; }
     public bool OfflineModeEnabled { get; set; }
+    public bool CanUseDesktopPowerFeatures { get; set; }
     public string Reason { get; set; } = string.Empty;
 }

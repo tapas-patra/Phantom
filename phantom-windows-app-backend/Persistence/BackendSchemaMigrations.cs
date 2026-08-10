@@ -23,7 +23,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("015_interview_question_banks", InterviewQuestionBanksSql),
         new SchemaMigration("016_interview_question_bank_names", InterviewQuestionBankNamesSql),
         new SchemaMigration("017_account_terms_acceptance", AccountTermsAcceptanceSql),
-        new SchemaMigration("018_registration_settings", RegistrationSettingsSql)
+        new SchemaMigration("018_registration_settings", RegistrationSettingsSql),
+        new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -31,7 +32,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionReplicaSchemaSql),
         new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql),
         new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql),
-        new SchemaMigration("004_dashboard_interview_question_bank_names", DashboardInterviewQuestionBankNamesSql)
+        new SchemaMigration("004_dashboard_interview_question_bank_names", DashboardInterviewQuestionBankNamesSql),
+        new SchemaMigration("005_dashboard_power_features", DashboardPowerFeaturesSql)
     };
 
     private const string AccountTermsAcceptanceSql = @"
@@ -53,6 +55,90 @@ VALUES ('global', FALSE, NOW())
 ON CONFLICT (settings_id) DO NOTHING;
 ";
 
+    private const string DashboardPowerFeaturesSql = @"
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+";
+
+    private const string PowerFeaturesAndManualLocksSql = @"
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS manual_lock_expires_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS manual_lock_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE OR REPLACE FUNCTION refresh_dashboard_account_summary(p_user_id TEXT)
+RETURNS VOID AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM desktop_accounts WHERE user_id = p_user_id) THEN
+        DELETE FROM dashboard_account_summaries WHERE user_id = p_user_id;
+        RETURN;
+    END IF;
+
+    INSERT INTO dashboard_account_summaries (
+        user_id, email, effective_access_tier, plan_label, phone_verified,
+        pro_available_credits, premium_available_credits, premium_negative_credits,
+        lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features,
+        last_validated_at_utc, active_device_count, last_activity_at_utc, updated_at_utc
+    )
+    SELECT
+        a.user_id,
+        a.email,
+        CASE
+            WHEN a.premium_available_credits > 0 THEN 'premium'
+            WHEN a.pro_available_credits > 0 THEN 'pro_byo'
+            ELSE 'free'
+        END,
+        CASE
+            WHEN a.premium_available_credits > 0 THEN 'Premium'
+            WHEN a.pro_available_credits > 0 THEN 'Pro BYO'
+            ELSE 'Free'
+        END,
+        a.phone_verified,
+        a.pro_available_credits,
+        a.premium_available_credits,
+        a.premium_negative_credits,
+        a.lease_expires_at_utc,
+        a.offline_mode_enabled,
+        a.can_use_desktop_power_features,
+        a.last_validated_at_utc,
+        COALESCE((
+            SELECT COUNT(*)
+            FROM dashboard_device_inventory d
+            WHERE d.user_id = a.user_id
+        ), 0),
+        (
+            SELECT MAX(h.created_at_utc)
+            FROM dashboard_wallet_history h
+            WHERE h.user_id = a.user_id
+        ),
+        NOW()
+    FROM desktop_accounts a
+    WHERE a.user_id = p_user_id
+    ON CONFLICT (user_id) DO UPDATE SET
+        email = EXCLUDED.email,
+        effective_access_tier = EXCLUDED.effective_access_tier,
+        plan_label = EXCLUDED.plan_label,
+        phone_verified = EXCLUDED.phone_verified,
+        pro_available_credits = EXCLUDED.pro_available_credits,
+        premium_available_credits = EXCLUDED.premium_available_credits,
+        premium_negative_credits = EXCLUDED.premium_negative_credits,
+        lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
+        offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+        can_use_desktop_power_features = EXCLUDED.can_use_desktop_power_features,
+        last_validated_at_utc = EXCLUDED.last_validated_at_utc,
+        active_device_count = EXCLUDED.active_device_count,
+        last_activity_at_utc = EXCLUDED.last_activity_at_utc,
+        updated_at_utc = EXCLUDED.updated_at_utc;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT refresh_dashboard_account_summary(user_id) FROM desktop_accounts;
+";
+
     private const string CoreSchemaSql = @"
 CREATE TABLE IF NOT EXISTS desktop_accounts (
     user_id TEXT PRIMARY KEY,
@@ -72,6 +158,9 @@ CREATE TABLE IF NOT EXISTS desktop_accounts (
     premium_negative_credits NUMERIC(18,2) NOT NULL,
     lease_expires_at_utc TIMESTAMPTZ NOT NULL,
     offline_mode_enabled BOOLEAN NOT NULL,
+    can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE,
+    manual_lock_expires_at_utc TIMESTAMPTZ NULL,
+    manual_lock_reason TEXT NOT NULL DEFAULT '',
     last_validated_at_utc TIMESTAMPTZ NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL,
     updated_at_utc TIMESTAMPTZ NOT NULL
@@ -93,6 +182,12 @@ ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_accepted_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS manual_lock_expires_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE desktop_accounts
+    ADD COLUMN IF NOT EXISTS manual_lock_reason TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_desktop_accounts_phone_number_e164
     ON desktop_accounts(phone_number_e164);
@@ -483,6 +578,7 @@ CREATE TABLE IF NOT EXISTS dashboard_account_summaries (
     premium_negative_credits NUMERIC(18,2) NOT NULL,
     lease_expires_at_utc TIMESTAMPTZ NOT NULL,
     offline_mode_enabled BOOLEAN NOT NULL,
+    can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE,
     last_validated_at_utc TIMESTAMPTZ NOT NULL,
     active_device_count INTEGER NOT NULL,
     last_activity_at_utc TIMESTAMPTZ NULL,
@@ -568,7 +664,7 @@ BEGIN
     INSERT INTO dashboard_account_summaries (
         user_id, email, effective_access_tier, plan_label, phone_verified,
         pro_available_credits, premium_available_credits, premium_negative_credits,
-        lease_expires_at_utc, offline_mode_enabled, last_validated_at_utc,
+        lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features, last_validated_at_utc,
         active_device_count, last_activity_at_utc, updated_at_utc
     )
     SELECT
@@ -590,6 +686,7 @@ BEGIN
         a.premium_negative_credits,
         a.lease_expires_at_utc,
         a.offline_mode_enabled,
+        a.can_use_desktop_power_features,
         a.last_validated_at_utc,
         COALESCE((
             SELECT COUNT(*)
@@ -614,6 +711,7 @@ BEGIN
         premium_negative_credits = EXCLUDED.premium_negative_credits,
         lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
         offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+        can_use_desktop_power_features = EXCLUDED.can_use_desktop_power_features,
         last_validated_at_utc = EXCLUDED.last_validated_at_utc,
         active_device_count = EXCLUDED.active_device_count,
         last_activity_at_utc = EXCLUDED.last_activity_at_utc,
@@ -903,6 +1001,7 @@ CREATE TABLE IF NOT EXISTS dashboard_account_summaries (
     premium_negative_credits NUMERIC(18,2) NOT NULL,
     lease_expires_at_utc TIMESTAMPTZ NOT NULL,
     offline_mode_enabled BOOLEAN NOT NULL,
+    can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE,
     last_validated_at_utc TIMESTAMPTZ NOT NULL,
     active_device_count INTEGER NOT NULL,
     last_activity_at_utc TIMESTAMPTZ NULL,

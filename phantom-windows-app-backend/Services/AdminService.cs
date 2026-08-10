@@ -9,6 +9,7 @@ public sealed class AdminService
     private readonly PostgresBackendStore _store;
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
+    private readonly AuthSessionRepository _sessions;
     private readonly UsageLedgerRepository _usageLedger;
     private readonly PaymentOrderRepository _payments;
 
@@ -16,12 +17,14 @@ public sealed class AdminService
         PostgresBackendStore store,
         AccountRepository accounts,
         LockRepository locks,
+        AuthSessionRepository sessions,
         UsageLedgerRepository usageLedger,
         PaymentOrderRepository payments)
     {
         _store = store;
         _accounts = accounts;
         _locks = locks;
+        _sessions = sessions;
         _usageLedger = usageLedger;
         _payments = payments;
     }
@@ -46,6 +49,10 @@ public sealed class AdminService
             PremiumNegativeCredits = account.PremiumNegativeCredits,
             LeaseExpiresAtUtc = account.LeaseExpiresAtUtc,
             OfflineModeEnabled = account.OfflineModeEnabled,
+            CanUseDesktopPowerFeatures = account.CanUseDesktopPowerFeatures,
+            IsManualLockActive = account.IsManualLockActive,
+            ManualLockExpiresAtUtc = account.ManualLockExpiresAtUtc,
+            ManualLockReason = account.ManualLockReason,
             LastValidatedAtUtc = account.LastValidatedAtUtc,
             ActiveLockSessionId = activeLock?.SessionId ?? string.Empty,
             ActiveLockDeviceId = activeLock?.DeviceId ?? string.Empty,
@@ -82,6 +89,9 @@ public sealed class AdminService
                 account.PremiumNegativeCredits,
                 account.LeaseExpiresAtUtc,
                 account.OfflineModeEnabled,
+                account.CanUseDesktopPowerFeatures,
+                isManualLockActive = account.IsManualLockActive,
+                account.ManualLockExpiresAtUtc,
                 account.LastValidatedAtUtc
             })
             .ToList();
@@ -127,9 +137,42 @@ public sealed class AdminService
         account.PremiumAvailableCredits = request.PremiumAvailableCredits;
         account.PremiumNegativeCredits = request.PremiumNegativeCredits;
         account.OfflineModeEnabled = request.OfflineModeEnabled;
+        account.CanUseDesktopPowerFeatures = request.CanUseDesktopPowerFeatures;
         account.LastValidatedAtUtc = DateTime.UtcNow;
         account.UpdatedAtUtc = DateTime.UtcNow;
         _accounts.Save(account);
+
+        return GetAccountSnapshot(account.UserId);
+    }
+
+    public AdminAccountSnapshotDto SetManualLock(AdminManualLockRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.UserId))
+        {
+            throw new BackendValidationException("UserId is required.");
+        }
+
+        if (request.ExpiresAtUtc.HasValue && request.ExpiresAtUtc.Value <= DateTime.UtcNow)
+        {
+            throw new BackendValidationException("Temporary lock expiry must be in the future.");
+        }
+
+        if (request.ExpiresAtUtc.HasValue && string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new BackendValidationException("A reason is required when temporarily locking an account.");
+        }
+
+        var account = _accounts.FindByUserId(request.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+        account.ManualLockExpiresAtUtc = request.ExpiresAtUtc?.ToUniversalTime();
+        account.ManualLockReason = request.ExpiresAtUtc.HasValue ? request.Reason.Trim() : string.Empty;
+        account.UpdatedAtUtc = DateTime.UtcNow;
+        _accounts.Save(account);
+
+        if (account.IsManualLockActive)
+        {
+            _sessions.RevokeAllByUserId(account.UserId);
+        }
 
         return GetAccountSnapshot(account.UserId);
     }

@@ -13,6 +13,10 @@ public sealed class AdminAccountSnapshotDto
     public decimal PremiumNegativeCredits { get; set; }
     public DateTime LeaseExpiresAtUtc { get; set; }
     public bool OfflineModeEnabled { get; set; }
+    public bool CanUseDesktopPowerFeatures { get; set; }
+    public bool IsManualLockActive { get; set; }
+    public DateTime? ManualLockExpiresAtUtc { get; set; }
+    public string ManualLockReason { get; set; } = string.Empty;
     public DateTime LastValidatedAtUtc { get; set; }
     public string ActiveLockSessionId { get; set; } = string.Empty;
     public string ActiveLockDeviceId { get; set; } = string.Empty;

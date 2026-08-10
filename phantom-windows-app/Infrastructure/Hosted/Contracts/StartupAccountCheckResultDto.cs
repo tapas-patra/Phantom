@@ -15,6 +15,7 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public string LastLockTokenHash { get; set; } = string.Empty;
         public string LastLockedSessionId { get; set; } = string.Empty;
         public bool OfflineModeEnabled { get; set; }
+        public bool CanUseDesktopPowerFeatures { get; set; }
         public DateTime LastValidatedAtUtc { get; set; }
         public HostedKnowledgeBaseSummaryDto HostedKnowledgeBase { get; set; } = new HostedKnowledgeBaseSummaryDto();
         public string Source { get; set; } = string.Empty;

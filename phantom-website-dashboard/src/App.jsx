@@ -47,6 +47,7 @@ import {
   resetAdminPassword,
   resetUserPassword,
   sendPhoneOtp,
+  setAdminManualLock,
   startGmailOAuth,
   sendManagedAiAdminTest,
   triggerManagedAiCatalogRefresh,
@@ -1863,6 +1864,7 @@ function UserDashboardPage({ session }) {
           </nav>
           <div className="status-band">
             <span className="status-pill">{summary.planLabel}</span>
+            {summary.canUseDesktopPowerFeatures ? <span className="status-pill status-pill-power">Power user</span> : null}
             <span className={`status-pill ${summary.phoneVerified ? "status-pill-good" : "status-pill-warn"}`}>
               {summary.phoneVerified ? "Phone verified" : "Verification required"}
             </span>
@@ -4548,6 +4550,7 @@ function AdminUsersPanel({ accessToken }) {
     premiumAvailableCredits: "0",
     premiumNegativeCredits: "0",
     offlineModeEnabled: false,
+    canUseDesktopPowerFeatures: false,
     reason: ""
   });
   const [creditForm, setCreditForm] = useState({
@@ -4555,7 +4558,11 @@ function AdminUsersPanel({ accessToken }) {
     premiumCreditsToAdd: "0",
     reason: ""
   });
-  const [lockReason, setLockReason] = useState("Admin manual lock clear");
+  const [interviewLockReason, setInterviewLockReason] = useState("Admin interview lock clear");
+  const [manualLockForm, setManualLockForm] = useState(() => ({
+    expiresAtLocal: toDateTimeLocal(new Date(Date.now() + 24 * 60 * 60 * 1000)),
+    reason: "Temporary account suspension"
+  }));
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -4597,7 +4604,12 @@ function AdminUsersPanel({ accessToken }) {
             premiumAvailableCredits: String(detail.premiumAvailableCredits ?? 0),
             premiumNegativeCredits: String(detail.premiumNegativeCredits ?? 0),
             offlineModeEnabled: Boolean(detail.offlineModeEnabled),
+            canUseDesktopPowerFeatures: Boolean(detail.canUseDesktopPowerFeatures),
             reason: ""
+          });
+          setManualLockForm({
+            expiresAtLocal: toDateTimeLocal(detail.isManualLockActive ? detail.manualLockExpiresAtUtc : new Date(Date.now() + 24 * 60 * 60 * 1000)),
+            reason: detail.manualLockReason || "Temporary account suspension"
           });
           setCreditForm({
             proCreditsToAdd: "0",
@@ -4646,9 +4658,10 @@ function AdminUsersPanel({ accessToken }) {
         premiumAvailableCredits: Number(accountForm.premiumAvailableCredits) || 0,
         premiumNegativeCredits: Number(accountForm.premiumNegativeCredits) || 0,
         offlineModeEnabled: accountForm.offlineModeEnabled,
+        canUseDesktopPowerFeatures: accountForm.canUseDesktopPowerFeatures,
         reason: accountForm.reason
       });
-      await onUsersChanged();
+      await syncSelectedUser();
       setSelectedUser(updated);
       setStatus("User account settings updated.");
     } catch (updateError) {
@@ -4721,12 +4734,39 @@ function AdminUsersPanel({ accessToken }) {
     try {
       await clearAdminLock(accessToken, {
         userId: selectedUserId,
-        reason: lockReason
+        reason: interviewLockReason
       });
       await syncSelectedUser();
       setStatus("Active lock cleared.");
     } catch (lockError) {
       setError(lockError.message || "Could not clear the active lock.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleManualLock(shouldLock) {
+    if (!selectedUserId) {
+      return;
+    }
+
+    setBusyAction("manual-lock");
+    setStatus("");
+    setError("");
+    try {
+      const expiresAtUtc = shouldLock ? new Date(manualLockForm.expiresAtLocal) : null;
+      if (shouldLock && (!manualLockForm.expiresAtLocal || Number.isNaN(expiresAtUtc.getTime()))) {
+        throw new Error("Choose a valid future lock expiry.");
+      }
+      await setAdminManualLock(accessToken, {
+        userId: selectedUserId,
+        expiresAtUtc: shouldLock ? expiresAtUtc.toISOString() : null,
+        reason: shouldLock ? manualLockForm.reason : ""
+      });
+      await syncSelectedUser();
+      setStatus(shouldLock ? "User temporarily locked and active sessions revoked." : "Temporary account lock removed.");
+    } catch (lockError) {
+      setError(lockError.message || "Could not update the temporary account lock.");
     } finally {
       setBusyAction("");
     }
@@ -4758,16 +4798,15 @@ function AdminUsersPanel({ accessToken }) {
 
       <DataTable
         title="Accounts"
-        columns={["User", "Tier", "Pro", "Premium", "Debt", "Phone", "Detail"]}
+        columns={["User", "Tier", "Power", "Account lock", "Phone", "Detail"]}
         rows={
           (usersPage.items || []).length === 0
             ? null
             : usersPage.items.map((item) => [
                 item.email,
                 item.planLabel,
-                item.proAvailableCredits,
-                item.premiumAvailableCredits,
-                item.premiumNegativeCredits,
+                item.canUseDesktopPowerFeatures ? "Enabled" : "Standard",
+                item.isManualLockActive ? "Locked" : "Open",
                 item.phoneVerified ? "Verified" : "Pending",
                 <button className="table-action" type="button" onClick={() => setSelectedUserId(item.userId)}>
                   Inspect
@@ -4807,7 +4846,9 @@ function AdminUsersPanel({ accessToken }) {
                   <tr><th>Premium credits</th><td>{selectedUser.premiumAvailableCredits}</td></tr>
                   <tr><th>Premium debt</th><td>{selectedUser.premiumNegativeCredits}</td></tr>
                   <tr><th>Offline mode</th><td>{selectedUser.offlineModeEnabled ? "Enabled" : "Disabled"}</td></tr>
-                  <tr><th>Active lock</th><td>{selectedUser.activeLockSessionId || "No active lock"}</td></tr>
+                  <tr><th>Power features</th><td>{selectedUser.canUseDesktopPowerFeatures ? "Enabled" : "Disabled"}</td></tr>
+                  <tr><th>Temporary account lock</th><td>{selectedUser.isManualLockActive ? `Active until ${formatDate(selectedUser.manualLockExpiresAtUtc)}` : "Not active"}</td></tr>
+                  <tr><th>Interview lock</th><td>{selectedUser.activeLockSessionId || "No active lock"}</td></tr>
                   <tr><th>Last validated</th><td>{formatDate(selectedUser.lastValidatedAtUtc)}</td></tr>
                 </tbody>
               </table>
@@ -4841,6 +4882,13 @@ function AdminUsersPanel({ accessToken }) {
                 <input type="checkbox" checked={accountForm.offlineModeEnabled} onChange={(event) => setAccountForm((current) => ({ ...current, offlineModeEnabled: event.target.checked }))} />
                 <span>Offline mode enabled</span>
               </label>
+              <div className="entitlement-control">
+                <label className="admin-toggle">
+                  <input type="checkbox" checked={accountForm.canUseDesktopPowerFeatures} onChange={(event) => setAccountForm((current) => ({ ...current, canUseDesktopPowerFeatures: event.target.checked }))} />
+                  <span>Desktop power features</span>
+                </label>
+                <p>Shows the Legacy handoff button and its executable-path settings in the Windows app.</p>
+              </div>
               <label>
                 Reason
                 <input value={accountForm.reason} onChange={(event) => setAccountForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Why this manual update is needed" />
@@ -4874,15 +4922,41 @@ function AdminUsersPanel({ accessToken }) {
 
           <article className="glass-panel admin-form-panel">
             <p className="eyebrow">Recovery controls</p>
+            <div className="account-lock-indicator">
+              <span className={`status-pill ${selectedUser.isManualLockActive ? "status-pill-warn" : "status-pill-good"}`}>
+                {selectedUser.isManualLockActive ? "Account temporarily locked" : "Account access open"}
+              </span>
+              <p>
+                {selectedUser.isManualLockActive
+                  ? `${selectedUser.manualLockReason || "No reason recorded"} · expires ${formatDate(selectedUser.manualLockExpiresAtUtc)}`
+                  : "A temporary lock revokes active sessions and blocks new login until its expiry."}
+              </p>
+            </div>
             <div className="admin-form">
               <label>
-                Lock clear reason
-                <input value={lockReason} onChange={(event) => setLockReason(event.target.value)} />
+                Temporary lock expiry
+                <input type="datetime-local" value={manualLockForm.expiresAtLocal} onChange={(event) => setManualLockForm((current) => ({ ...current, expiresAtLocal: event.target.value }))} />
+              </label>
+              <label>
+                Temporary lock reason
+                <input value={manualLockForm.reason} onChange={(event) => setManualLockForm((current) => ({ ...current, reason: event.target.value }))} />
+              </label>
+              <label>
+                Interview lock clear reason
+                <input value={interviewLockReason} onChange={(event) => setInterviewLockReason(event.target.value)} />
               </label>
             </div>
             <div className="inline-actions">
+              <button className="button button-danger" type="button" onClick={() => handleManualLock(true)} disabled={busyAction === "manual-lock" || !manualLockForm.expiresAtLocal || !manualLockForm.reason.trim()}>
+                {busyAction === "manual-lock" ? "Updating..." : "Temporarily Lock User"}
+              </button>
+              {selectedUser.isManualLockActive ? (
+                <button className="button button-secondary" type="button" onClick={() => handleManualLock(false)} disabled={busyAction === "manual-lock"}>
+                  Remove Account Lock
+                </button>
+              ) : null}
               <button className="button button-secondary" type="button" onClick={handleClearLock} disabled={busyAction === "lock"}>
-                {busyAction === "lock" ? "Clearing..." : "Clear Active Lock"}
+                {busyAction === "lock" ? "Clearing..." : "Clear Interview Lock"}
               </button>
               <button className="button button-ghost" type="button" onClick={handleWaiveDebt} disabled={busyAction === "waive"}>
                 {busyAction === "waive" ? "Waiving..." : "Waive Premium Debt"}
@@ -5601,6 +5675,15 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function toDateTimeLocal(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 function formatInr(value) {

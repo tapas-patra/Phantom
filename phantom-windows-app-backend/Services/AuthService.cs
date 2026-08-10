@@ -87,6 +87,13 @@ public sealed class AuthService
             throw new BackendValidationException("Refresh token device mismatch.");
         }
 
+        var account = _accounts.FindByUserId(existing.UserId)
+            ?? throw new BackendValidationException("Account not found.");
+        if (account.IsManualLockActive)
+        {
+            throw new BackendValidationException("This account is temporarily locked.");
+        }
+
         _sessions.RevokeBySessionId(existing.SessionId, connection, transaction);
 
         var accessToken = _tokenService.GenerateOpaqueToken();

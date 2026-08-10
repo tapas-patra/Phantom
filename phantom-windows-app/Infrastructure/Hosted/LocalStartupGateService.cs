@@ -532,6 +532,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 LastLockTokenHash = dto.LastLockTokenHash,
                 LastLockedSessionId = dto.LastLockedSessionId,
                 OfflineModeEnabled = dto.OfflineModeEnabled,
+                CanUseDesktopPowerFeatures = dto.CanUseDesktopPowerFeatures,
                 LastValidatedAtUtc = dto.LastValidatedAtUtc,
                 HostedKnowledgeBase = dto.HostedKnowledgeBase ?? new HostedKnowledgeBaseSummaryDto()
             };

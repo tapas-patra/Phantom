@@ -19,6 +19,10 @@ public sealed class DesktopAccountRecord
     public decimal PremiumNegativeCredits { get; set; }
     public DateTime LeaseExpiresAtUtc { get; set; }
     public bool OfflineModeEnabled { get; set; }
+    public bool CanUseDesktopPowerFeatures { get; set; }
+    public DateTime? ManualLockExpiresAtUtc { get; set; }
+    public string ManualLockReason { get; set; } = string.Empty;
+    public bool IsManualLockActive => ManualLockExpiresAtUtc.HasValue && ManualLockExpiresAtUtc.Value > DateTime.UtcNow;
     public DateTime LastValidatedAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; }

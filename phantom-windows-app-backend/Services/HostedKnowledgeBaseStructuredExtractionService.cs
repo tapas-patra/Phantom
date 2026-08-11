@@ -36,6 +36,10 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         "fintech", "payments", "e-commerce", "healthcare", "education", "saas", "ai",
         "analytics", "security", "recruitment", "interview", "gaming", "social", "crm"
     };
+    private static readonly HashSet<string> EvidenceStopWords = new(StringComparer.Ordinal)
+    {
+        "and", "for", "from", "into", "the", "that", "this", "with", "using", "worked", "built"
+    };
 
     private readonly ManagedProviderCredentialRepository _credentials;
     private readonly ManagedAiCatalogService _catalogService;
@@ -53,6 +57,7 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         _protector = protector;
         _knowledgeBases = knowledgeBases;
         RunExperienceExtractionSelfCheck();
+        RunGroundingValidationSelfCheck();
     }
 
     public async Task<HostedKnowledgeBaseStructuredExtractionResult> ExtractAsync(
@@ -152,7 +157,9 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
             documents.Select(document => $"[Source: {document.SourceLabelOrFileName()}]\n{document.ExtractedText}".Trim()));
         var cleanedText = NormalizeProfileSourceText(combinedText);
         var fallback = ExtractProfileFallback(cleanedText);
-        var llm = await TryExtractProfileWithLlmAsync(account, cleanedText, cancellationToken);
+        var llm = ValidateProfileExtraction(
+            await TryExtractProfileWithLlmAsync(account, cleanedText, cancellationToken),
+            cleanedText);
         var extracted = MergeProfileExtraction(llm, fallback);
         var now = DateTime.UtcNow;
 
@@ -182,8 +189,12 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         int sortOrder,
         CancellationToken cancellationToken)
     {
-        var extracted = await TryExtractProjectWithLlmAsync(account, document, cancellationToken)
-            ?? ExtractProjectFallback(document, sortOrder);
+        var fallback = ExtractProjectFallback(document, sortOrder);
+        var extracted = MergeProjectExtraction(
+            ValidateProjectExtraction(
+                await TryExtractProjectWithLlmAsync(account, document, cancellationToken),
+                document.ExtractedText),
+            fallback);
         var now = DateTime.UtcNow;
         var title = string.IsNullOrWhiteSpace(extracted.Title)
             ? document.SourceLabelOrFileName()
@@ -217,7 +228,10 @@ public sealed class HostedKnowledgeBaseStructuredExtractionService
         int sortOrder,
         CancellationToken cancellationToken)
     {
-        var extracted = await TryExtractExperiencesWithLlmAsync(account, document, cancellationToken);
+        IReadOnlyList<ExperienceExtractionResult> extracted = (await TryExtractExperiencesWithLlmAsync(account, document, cancellationToken))
+            .Select(item => ValidateExperienceExtraction(item, document.ExtractedText))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Company) || !string.IsNullOrWhiteSpace(item.Role))
+            .ToArray();
         var fallback = ExtractExperienceFallbacks(document, sortOrder);
         if (extracted.Count == 0)
         {
@@ -615,6 +629,100 @@ Rules:
         };
     }
 
+    private static ProfileExtractionResult? ValidateProfileExtraction(ProfileExtractionResult? value, string source)
+    {
+        if (value == null) return null;
+        return new ProfileExtractionResult
+        {
+            FullName = Grounded(value.FullName, source),
+            CandidateInfo = Grounded(value.CandidateInfo, source),
+            ShortIntro = Grounded(value.ShortIntro, source),
+            CurrentRole = Grounded(value.CurrentRole, source),
+            YearsOfExperience = Regex.IsMatch(source, $@"\b{value.YearsOfExperience}\s*\+?\s*(?:years?|yrs?)\b", RegexOptions.IgnoreCase)
+                ? value.YearsOfExperience
+                : 0,
+            Strengths = Grounded(value.Strengths, source),
+            Skills = Grounded(value.Skills, source),
+            Domains = Grounded(value.Domains, source)
+        };
+    }
+
+    private static ProjectExtractionResult MergeProjectExtraction(ProjectExtractionResult? value, ProjectExtractionResult fallback)
+    {
+        if (value == null) return fallback;
+        return new ProjectExtractionResult
+        {
+            Title = FirstNonEmpty(value.Title, fallback.Title),
+            Role = FirstNonEmpty(value.Role, fallback.Role),
+            Summary = FirstNonEmpty(value.Summary, fallback.Summary),
+            Stack = MergeNonEmpty(value.Stack, fallback.Stack),
+            Architecture = FirstNonEmpty(value.Architecture, fallback.Architecture),
+            Challenges = FirstNonEmpty(value.Challenges, fallback.Challenges),
+            Impact = FirstNonEmpty(value.Impact, fallback.Impact),
+            IsRecent = value.IsRecent || fallback.IsRecent
+        };
+    }
+
+    private static ProjectExtractionResult? ValidateProjectExtraction(ProjectExtractionResult? value, string source)
+    {
+        if (value == null) return null;
+        return new ProjectExtractionResult
+        {
+            Title = Grounded(value.Title, source),
+            Role = Grounded(value.Role, source),
+            Summary = Grounded(value.Summary, source),
+            Stack = Grounded(value.Stack, source),
+            Architecture = Grounded(value.Architecture, source),
+            Challenges = Grounded(value.Challenges, source),
+            Impact = Grounded(value.Impact, source),
+            IsRecent = value.IsRecent && Regex.IsMatch(source, @"\b(recent|latest|current)\b", RegexOptions.IgnoreCase)
+        };
+    }
+
+    private static ExperienceExtractionResult ValidateExperienceExtraction(ExperienceExtractionResult value, string source)
+    {
+        return new ExperienceExtractionResult
+        {
+            Company = Grounded(value.Company, source),
+            Role = Grounded(value.Role, source),
+            IsCurrent = value.IsCurrent && Regex.IsMatch(source, @"\b(current|present|now)\b", RegexOptions.IgnoreCase),
+            StartDate = Grounded(value.StartDate, source),
+            EndDate = Grounded(value.EndDate, source),
+            Summary = Grounded(value.Summary, source),
+            Responsibilities = Grounded(value.Responsibilities, source),
+            Skills = Grounded(value.Skills, source)
+        };
+    }
+
+    private static string Grounded(string? claim, string source)
+        => IsGrounded(claim, source) ? claim!.Trim() : string.Empty;
+
+    private static IReadOnlyList<string> Grounded(IReadOnlyList<string>? claims, string source)
+        => (claims ?? Array.Empty<string>())
+            .Where(claim => IsGrounded(claim, source))
+            .Select(claim => claim.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static bool IsGrounded(string? claim, string source)
+    {
+        if (string.IsNullOrWhiteSpace(claim)) return false;
+        var normalizedClaim = NormalizeEvidence(claim);
+        var normalizedSource = NormalizeEvidence(source);
+        if (normalizedSource.Contains(normalizedClaim, StringComparison.Ordinal)) return true;
+        var tokens = normalizedClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(token => token.Length >= 3 && !EvidenceStopWords.Contains(token))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (tokens.Length == 0) return false;
+        var sourceTokens = normalizedSource.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var matches = tokens.Count(sourceTokens.Contains);
+        return matches >= Math.Min(2, tokens.Length) && matches / (double)tokens.Length >= 0.90d;
+    }
+
+    private static string NormalizeEvidence(string? value)
+        => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[^a-z0-9+#.]+", " ").Trim();
+
     private static ProjectExtractionResult ExtractProjectFallback(HostedKnowledgeBaseDocumentRecord document, int sortOrder)
     {
         var lines = NormalizeLines(document.ExtractedText);
@@ -740,6 +848,18 @@ Feb 2019 - Dec 2021
             || NormalizeExperienceDate(extracted[0].StartDate) != "2022-01")
         {
             throw new InvalidOperationException("Experience extraction self-check failed.");
+        }
+    }
+
+    [Conditional("DEBUG")]
+    private static void RunGroundingValidationSelfCheck()
+    {
+        const string source = "Built payment retries with C# and PostgreSQL for Acme Payments.";
+        if (!IsGrounded("payment retries with PostgreSQL", source)
+            || IsGrounded("payment retries with Kubernetes", source)
+            || IsGrounded("designed Kubernetes autoscaling for healthcare workloads", source))
+        {
+            throw new InvalidOperationException("Structured grounding validation self-check failed.");
         }
     }
 

@@ -64,7 +64,7 @@ namespace SecureOverlay.Helpers
                 InterviewTypes.General =>
                     ComposePrompt(
                         "You are an interview copilot.",
-                        "Answer as the candidate in first person unless the user asks otherwise. Keep answers concise, accurate, and grounded in the provided context. Prefer direct spoken responses over polished explanations. If context is missing, make a reasonable assumption and state it plainly instead of inventing facts."),
+                        "Answer as the candidate in first person unless the user asks otherwise. Keep answers concise, accurate, and grounded in the provided context. Prefer direct spoken responses over polished explanations. For personal experience, projects, employers, achievements, or background, never assume missing facts; say the information is not available."),
                 _ =>
                     ComposePrompt(
                         "You are an interview copilot for technical interviews.",

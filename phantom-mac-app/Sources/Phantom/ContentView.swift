@@ -104,6 +104,7 @@ private struct ChatView: View {
 
     @ObservedObject var store: PhantomStore
     @State private var confirmation: Confirmation?
+    @State private var promptHeight: CGFloat = 24
 
     var body: some View {
         ZStack {
@@ -150,6 +151,7 @@ private struct ChatView: View {
             }
         }
         .background(PhantomColors.obsidian.opacity(0.96))
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var chatHeader: some View {
@@ -189,6 +191,10 @@ private struct ChatView: View {
                     .accessibilityLabel("Clear chat and context")
             }
 
+            Button(action: store.toggleClickThrough) {
+                Image(systemName: "cursorarrow.rays")
+            }
+            .accessibilityLabel("Click through Phantom")
             Button(action: store.showSettings) { Image(systemName: "gearshape") }
                 .accessibilityLabel("Open settings")
             Button(action: store.toggleCompact) {
@@ -266,9 +272,7 @@ private struct ChatView: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextEditor(text: $store.prompt)
-                    .font(.system(size: 14))
-                    .frame(minHeight: 54, maxHeight: 100)
+                promptEditor
                     .padding(6)
                     .background(PhantomColors.graphite)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -319,6 +323,21 @@ private struct ChatView: View {
         .background(PhantomColors.graphite.opacity(0.9))
     }
 
+    private var promptEditor: some View {
+        ZStack(alignment: .topLeading) {
+            PromptTextView(text: $store.prompt, height: $promptHeight)
+                .frame(height: promptHeight)
+            if store.prompt.isEmpty {
+                Text("Ask an interview question")
+                    .font(.system(size: 14))
+                    .foregroundColor(PhantomColors.dim)
+                    .padding(.top, 3)
+                    .padding(.leading, 5)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
     @ViewBuilder
     private func protectedConfirmation(_ value: Confirmation) -> some View {
         let isClear = value == .clear
@@ -335,6 +354,63 @@ private struct ChatView: View {
             },
             onCancel: { confirmation = nil }
         )
+    }
+}
+
+private struct PromptTextView: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var height: CGFloat
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.font = .systemFont(ofSize: 14)
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainerInset = NSSize(width: 3, height: 3)
+        textView.textContainer?.widthTracksTextView = true
+        textView.autoresizingMask = [.width]
+        scrollView.documentView = textView
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if textView.string != text { textView.string = text }
+        context.coordinator.resize(textView)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: PromptTextView
+
+        init(_ parent: PromptTextView) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+            resize(textView)
+        }
+
+        func resize(_ textView: NSTextView) {
+            guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
+            layout.ensureLayout(for: container)
+            let contentHeight = ceil(layout.usedRect(for: container).height + textView.textContainerInset.height * 2)
+            let nextHeight = min(96, max(24, contentHeight))
+            textView.enclosingScrollView?.hasVerticalScroller = contentHeight > 96
+            if abs(parent.height - nextHeight) > 0.5 {
+                DispatchQueue.main.async { self.parent.height = nextHeight }
+            }
+        }
     }
 }
 

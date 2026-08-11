@@ -181,6 +181,9 @@ final class PhantomStore: ObservableObject {
         let legacyPath: String, debug: Bool, simulation: String
     }
     private var voicePromptPrefix = ""
+    private var previousVoiceTranscript = ""
+    private var lastVoiceRenderedPrompt = ""
+    private var preserveVoiceEdits = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -241,7 +244,8 @@ final class PhantomStore: ObservableObject {
     }
 
     var selectedModelSupportsVision: Bool {
-        selectedProvider?.models.first(where: { $0.modelId == selectedModelId })?.supportsVision == true
+        (!useBYOProvider && isPremiumAccount)
+            || selectedProvider?.models.first(where: { $0.modelId == selectedModelId })?.supportsVision == true
     }
 
     var isFreeTrialAccount: Bool { AccountAccess.isFree(account?.accessTier) }
@@ -743,6 +747,9 @@ final class PhantomStore: ObservableObject {
         } else {
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             voicePromptPrefix = existing.isEmpty ? "" : existing + " "
+            previousVoiceTranscript = ""
+            lastVoiceRenderedPrompt = prompt
+            preserveVoiceEdits = false
             Task {
                 await speechInput.start()
                 isListening = speechInput.isListening
@@ -840,9 +847,13 @@ final class PhantomStore: ObservableObject {
                 }
                 var snippets: [KnowledgeSnippet] = []
                 let preferredDocuments = conversationManager.preferredDocumentIds(for: text, knowledgeBase: hostedKnowledgeBase)
+                let shouldSearchKnowledge = conversationManager.shouldSearchKnowledge(
+                    for: text,
+                    preferredDocumentIds: preferredDocuments
+                )
                 if isPremiumAccount,
                    hostedKnowledgeBase?.canUseInInterview == true,
-                   conversationManager.shouldRetrieveKnowledge(for: text),
+                   shouldSearchKnowledge,
                    let found = try? await backend.knowledgeSnippets(
                     accessToken: session.accessToken,
                     query: text,
@@ -850,7 +861,7 @@ final class PhantomStore: ObservableObject {
                 ) {
                     snippets = found
                 }
-                if snippets.isEmpty, conversationManager.shouldRetrieveKnowledge(for: text) {
+                if snippets.isEmpty, shouldSearchKnowledge {
                     snippets = conversationManager.localKnowledgeSnippets(
                         question: text,
                         resume: resumeText,
@@ -1149,6 +1160,7 @@ final class PhantomStore: ObservableObject {
         clickThrough = false
         account = nil
         hostedKnowledgeBase = nil
+        conversationManager.reset()
         providers = []
         contextPacks = []
         selectedContextPackId = ""
@@ -1314,13 +1326,40 @@ final class PhantomStore: ObservableObject {
     private func configureSpeechInput() {
         speechInput.onTranscript = { [weak self] transcript in
             guard let self else { return }
-            self.prompt = self.voicePromptPrefix + transcript
+            let merged = Self.mergeTranscript(
+                current: self.prompt,
+                lastRendered: self.lastVoiceRenderedPrompt,
+                previous: self.previousVoiceTranscript,
+                next: transcript,
+                prefix: self.voicePromptPrefix,
+                preservingEdits: self.preserveVoiceEdits
+            )
+            self.prompt = merged.text
+            self.preserveVoiceEdits = merged.preservingEdits
+            self.previousVoiceTranscript = transcript
+            self.lastVoiceRenderedPrompt = merged.text
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
             self.voiceStatus = state
             self.isListening = self.speechInput.isListening
         }
+    }
+
+    static func mergeTranscript(
+        current: String,
+        lastRendered: String,
+        previous: String,
+        next: String,
+        prefix: String,
+        preservingEdits: Bool
+    ) -> (text: String, preservingEdits: Bool) {
+        let edited = preservingEdits || current != lastRendered
+        guard edited else { return (prefix + next, false) }
+        let oldWordCount = previous.split(whereSeparator: { $0.isWhitespace }).count
+        let added = next.split(whereSeparator: { $0.isWhitespace }).dropFirst(oldWordCount).joined(separator: " ")
+        guard !added.isEmpty else { return (current, true) }
+        return (current + (current.last?.isWhitespace == true || current.isEmpty ? "" : " ") + added, true)
     }
 
     private func loadBYOKey() {

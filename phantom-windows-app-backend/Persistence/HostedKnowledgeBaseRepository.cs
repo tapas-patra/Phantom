@@ -176,6 +176,7 @@ ORDER BY document_id ASC, chunk_index ASC;";
 
     // ponytail: soft doc boost only; never hard-pin previous docs, because topic switches are real.
     public IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> SearchHybridCandidates(
+        string userId,
         string knowledgeBaseId,
         string query,
         IReadOnlyList<string>? preferredDocumentIds,
@@ -188,7 +189,7 @@ ORDER BY document_id ASC, chunk_index ASC;";
         int semanticLimit,
         int finalLimit)
     {
-        if (string.IsNullOrWhiteSpace(knowledgeBaseId) || string.IsNullOrWhiteSpace(query) || finalLimit <= 0)
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(knowledgeBaseId) || string.IsNullOrWhiteSpace(query) || finalLimit <= 0)
         {
             return Array.Empty<HostedKnowledgeBaseSearchCandidateRecord>();
         }
@@ -216,6 +217,11 @@ WITH lexical AS (
         ) AS lexical_score
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND EXISTS (
+          SELECT 1 FROM hosted_knowledge_bases owner
+          WHERE owner.knowledge_base_id = hosted_kb_chunks.knowledge_base_id
+            AND owner.user_id = @userId
+      )
       AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
           @@ websearch_to_tsquery('simple', @lexicalQuery)
@@ -269,6 +275,11 @@ WITH lexical AS (
         ) AS lexical_rank
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND EXISTS (
+          SELECT 1 FROM hosted_knowledge_bases owner
+          WHERE owner.knowledge_base_id = hosted_kb_chunks.knowledge_base_id
+            AND owner.user_id = @userId
+      )
       AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND to_tsvector('simple', coalesce(document_title, '') || ' ' || search_text)
           @@ websearch_to_tsquery('simple', @lexicalQuery)
@@ -291,6 +302,11 @@ semantic AS (
         ) AS semantic_rank
     FROM hosted_kb_chunks
     WHERE knowledge_base_id = @knowledgeBaseId
+      AND EXISTS (
+          SELECT 1 FROM hosted_knowledge_bases owner
+          WHERE owner.knowledge_base_id = hosted_kb_chunks.knowledge_base_id
+            AND owner.user_id = @userId
+      )
       AND (NOT @restrictToPreferredDocuments OR document_id = ANY(@preferredDocumentIds))
       AND indexed_at_utc IS NOT NULL
       AND embedding IS NOT NULL
@@ -351,6 +367,7 @@ ORDER BY fused_score DESC, semantic_similarity DESC, lexical_score DESC
 LIMIT @finalLimit;";
         }
 
+        command.Parameters.AddWithValue("userId", userId);
         command.Parameters.AddWithValue("knowledgeBaseId", knowledgeBaseId);
         command.Parameters.AddWithValue(
             "lexicalQuery",

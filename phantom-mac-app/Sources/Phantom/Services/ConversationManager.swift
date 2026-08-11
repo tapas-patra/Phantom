@@ -74,13 +74,19 @@ final class ConversationManager {
     func shouldRetrieveKnowledge(for question: String) -> Bool {
         let text = question.lowercased()
         let directTechnical = ["what is ", "explain dependency", "write code", "algorithm", "difference between"]
-        let personal = ["my ", "your experience", "candidate", "resume", "profile", "project", "current role", "previous role"].contains(where: text.contains)
+        let personal = isPersonalQuestion(question)
         if !personal, directTechnical.contains(where: text.hasPrefix) { return false }
         return [
             "my resume", "my profile", "my strength", "my experience", "my project", "recent project",
             "previous project", "current role", "previous role", "day-to-day", "tell me about yourself",
-            "worked with", "from my notes", "document", "deployment", "implementation", "low-level detail", "why did you choose"
-        ].contains(where: text.contains)
+            "worked with", "from my notes", "document", "deployment", "implementation", "low-level detail", "why did you choose",
+            "personally own", "personally owned", "your contribution", "my contribution", "achievement", "accomplishment",
+            "why should we hire", "career history", "employment history", "education", "certification"
+        ].contains(where: text.contains) || personal
+    }
+
+    func shouldSearchKnowledge(for question: String, preferredDocumentIds: [String]) -> Bool {
+        shouldRetrieveKnowledge(for: question) && (!preferredDocumentIds.isEmpty || !isPersonalQuestion(question))
     }
 
     func preferredDocumentIds(for question: String, knowledgeBase: StartupSnapshot.KnowledgeBase?) -> [String] {
@@ -88,15 +94,34 @@ final class ConversationManager {
             lastTrace = "route=Retrieve scope=PreviousDocuments documents=\(previousDocumentIds.joined(separator: ","))"
             return previousDocumentIds
         }
-        guard isProjectQuestion(question), let projects = knowledgeBase?.projectCards else {
-            lastTrace = shouldRetrieveKnowledge(for: question) ? "route=Retrieve scope=Global" : "route=Direct scope=None"
-            return []
+        let text = question.lowercased()
+        if isProjectQuestion(question), let projects = knowledgeBase?.projectCards {
+            let alternate = ["another project", "other project", "different project", "any other project"].contains(where: text.contains)
+            let followUp = !activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains)
+            let generic = ["my project", "your project", "recent project", "a project", "any project"].contains(where: text.contains)
+            let project = selectProject(question, projects: projects)
+                ?? (alternate ? projects.first(where: { $0.projectCardId != activeProjectId }) : nil)
+                ?? (followUp ? projects.first(where: { $0.projectCardId == activeProjectId }) : nil)
+                ?? (generic ? projects.first(where: \.isRecent) : nil)
+                ?? (generic ? projects.sorted(by: { $0.sortOrder < $1.sortOrder }).first : nil)
+            let ids = project?.sourceDocumentIds ?? []
+            lastTrace = "route=Project scope=ActiveProject target=\(project?.title ?? "missing") documents=\(ids.joined(separator: ","))"
+            return ids
         }
-        let project = selectProject(question, projects: projects)
-            ?? projects.first(where: { $0.projectCardId == activeProjectId })
-        let ids = project?.sourceDocumentIds ?? []
-        lastTrace = "route=Project scope=ActiveProject target=\(project?.title ?? "missing") documents=\(ids.joined(separator: ","))"
-        return ids
+        if let experiences = knowledgeBase?.experienceCards,
+           isExperienceQuestion(question) || selectExperience(question, experiences: experiences) != nil {
+            let ids = isExperienceTimelineQuestion(question)
+                ? experiences.flatMap(\.sourceDocumentIds)
+                : selectExperience(question, experiences: experiences)?.sourceDocumentIds ?? []
+            lastTrace = "route=Experience scope=Structured documents=\(ids.joined(separator: ","))"
+            return Array(Set(ids)).sorted()
+        }
+        if isProfileQuestion(question), let profile = knowledgeBase?.profileCard {
+            lastTrace = "route=Profile scope=Structured documents=\(profile.sourceDocumentIds.joined(separator: ","))"
+            return profile.sourceDocumentIds
+        }
+        lastTrace = shouldRetrieveKnowledge(for: question) ? "route=Retrieve scope=Global" : "route=Direct scope=None"
+        return []
     }
 
     func warm(_ knowledgeBase: StartupSnapshot.KnowledgeBase) {
@@ -118,14 +143,18 @@ final class ConversationManager {
     func localKnowledgeSnippets(question: String, resume: String, jobDescription: String, preferredDocumentIds: [String]) -> [KnowledgeSnippet] {
         let query = tokens(question)
         guard !query.isEmpty else { return [] }
-        let documents = [("local-resume", "Resume", resume), ("local-job-description", "Job description", jobDescription)]
+        var documents = [("local-resume", "Resume", resume)]
+        if !isPersonalQuestion(question) {
+            documents.append(("local-job-description", "Job description", jobDescription))
+        }
+        let eligibleDocuments = documents
             .filter { preferredDocumentIds.isEmpty || preferredDocumentIds.contains($0.0) }
-        return documents.flatMap { id, title, text in
+        return eligibleDocuments.flatMap { id, title, text in
             text.components(separatedBy: "\n\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map { chunk in
                 let overlap = query.intersection(tokens(chunk)).count
                 return KnowledgeSnippet(documentId: id, documentTitle: title, text: String(chunk.prefix(1_200)), score: Double(overlap) / Double(max(1, query.count)))
             }
-        }.filter { $0.score > 0 }.sorted { $0.score > $1.score }.prefix(3).map { $0 }
+        }.filter { $0.score >= 0.20 }.sorted { $0.score > $1.score }.prefix(3).map { $0 }
     }
 
     func reset() {
@@ -167,11 +196,13 @@ final class ConversationManager {
         let projectAsk = isProjectQuestion(question)
         if projectAsk {
             let alternate = ["another project", "other project", "different project", "any other project"].contains(where: text.contains)
+            let followUp = !activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains)
+            let generic = ["my project", "your project", "recent project", "a project", "any project"].contains(where: text.contains)
             let selected = selectProject(question, projects: projects)
                 ?? (alternate ? projects.first(where: { $0.projectCardId != activeProjectId }) : nil)
-                ?? projects.first(where: { $0.projectCardId == activeProjectId })
-                ?? projects.first(where: \.isRecent)
-                ?? projects.sorted(by: { $0.sortOrder < $1.sortOrder }).first
+                ?? (followUp ? projects.first(where: { $0.projectCardId == activeProjectId }) : nil)
+                ?? (generic ? projects.first(where: \.isRecent) : nil)
+                ?? (generic ? projects.sorted(by: { $0.sortOrder < $1.sortOrder }).first : nil)
             if let selected {
                 activeProjectId = selected.projectCardId
                 let variant = ["architecture", "stack", "challenge", "impact"].first(where: text.contains) ?? "overview"
@@ -181,21 +212,20 @@ final class ConversationManager {
             return "No grounded candidate project evidence is available. Give only a clearly labelled example that the candidate must adapt; do not present it as real experience."
         }
 
-        let experienceAsk = ["my experience", "your experience", "current role", "previous role", "responsibilities", "day-to-day", "worked at", "company", "employer"].contains(where: text.contains)
-        if experienceAsk, let experiences = knowledgeBase.experienceCards, !experiences.isEmpty {
-            if ["timeline", "career journey", "career path", "all experience"].contains(where: text.contains) {
+        if let experiences = knowledgeBase.experienceCards,
+           !experiences.isEmpty,
+           isExperienceQuestion(question) || selectExperience(question, experiences: experiences) != nil {
+            if isExperienceTimelineQuestion(question) {
                 return "Career chronology below is authoritative and ordered oldest to newest. Never reverse it.\n\n" + experiences.sorted(by: { $0.sortOrder < $1.sortOrder }).map(experienceGrounding).joined(separator: "\n\n")
             }
-            let selected = experiences.first(where: {
-                text.contains($0.company.lowercased()) || text.contains($0.role.lowercased())
-                    || $0.skills.contains(where: { text.contains($0.lowercased()) })
-            }) ?? experiences.first(where: \.isCurrent) ?? experiences.sorted(by: { $0.sortOrder < $1.sortOrder }).last!
+            guard let selected = selectExperience(question, experiences: experiences) else {
+                return "No grounded candidate work experience matches this question. Say that the requested experience is not available; do not invent it."
+            }
             lastTrace = "route=Experience scope=Structured target=\(selected.company)"
             return groundingCache["experience:\(selected.experienceCardId)"] ?? experienceGrounding(selected)
         }
 
-        let profileAsk = ["tell me about yourself", "introduce yourself", "my profile", "my resume", "my strength", "my weakness", "background", "current position"].contains(where: text.contains)
-        if profileAsk, let profile = knowledgeBase.profileCard {
+        if isProfileQuestion(question), let profile = knowledgeBase.profileCard {
             let variant = text.contains("strength") ? "strength" : "general"
             lastTrace = "route=Profile scope=Structured variant=\(variant)"
             return groundingCache["profile:\(variant)"] ?? profileGrounding(profile, question: text)
@@ -253,6 +283,54 @@ final class ConversationManager {
         let text = question.lowercased()
         return ["project", "architecture", "system design", "tech stack", "stack", "challenge", "impact", "implementation", "deployment"].contains(where: text.contains)
             || (!activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains))
+    }
+
+    private func isPersonalQuestion(_ question: String) -> Bool {
+        let text = question.lowercased()
+        return [
+            "my ", "your experience", "your background", "your role", "your project", "project", "candidate", "resume", "profile",
+            "current role", "previous role", "tell me about yourself", "personally own", "personally owned", "your contribution",
+            "achievement", "accomplishment", "why should we hire", "career history", "employment history", "education", "certification"
+        ].contains(where: text.contains)
+    }
+
+    private func isExperienceQuestion(_ question: String) -> Bool {
+        let text = question.lowercased()
+        return [
+            "experience", "company", "employer", "current role", "previous role", "day-to-day", "responsibilit",
+            "personally own", "personally owned", "contribution", "achievement", "accomplishment", "career history", "employment history"
+        ].contains(where: text.contains)
+    }
+
+    private func isExperienceTimelineQuestion(_ question: String) -> Bool {
+        let text = question.lowercased()
+        return ["career history", "employment history", "work history", "chronolog", "career journey"].contains(where: text.contains)
+    }
+
+    private func selectExperience(_ question: String, experiences: [KnowledgeExperience]) -> KnowledgeExperience? {
+        let text = question.lowercased()
+        let query = tokens(text)
+        let match = experiences.map { experience -> (KnowledgeExperience, Int) in
+            let identity = [experience.company, experience.role].joined(separator: " ")
+            var score = text.contains(experience.company.lowercased()) ? 12 : 0
+            if !experience.role.isEmpty, text.contains(experience.role.lowercased()) { score += 10 }
+            score += query.intersection(tokens(identity + " " + experience.skills.joined(separator: " "))).count
+            return (experience, score)
+        }.filter { $0.1 >= 2 }.max(by: { $0.1 < $1.1 })?.0
+        if let match { return match }
+        let generic = ["my experience", "your experience", "current role", "previous role", "day-to-day", "responsibilit"].contains(where: text.contains)
+        guard generic else { return nil }
+        if text.contains("previous role") {
+            return experiences.filter { !$0.isCurrent }.sorted(by: { $0.sortOrder > $1.sortOrder }).first
+        }
+        return experiences.first(where: \.isCurrent) ?? experiences.sorted(by: { $0.sortOrder > $1.sortOrder }).first
+    }
+
+    private func isProfileQuestion(_ question: String) -> Bool {
+        let text = question.lowercased()
+        return [
+            "tell me about yourself", "profile", "background", "strength", "skill", "education", "certification", "why should we hire"
+        ].contains(where: text.contains)
     }
 
     private func isDocumentFollowUp(_ question: String) -> Bool {

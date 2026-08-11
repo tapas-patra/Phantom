@@ -4,7 +4,8 @@ import Speech
 
 @MainActor
 final class SpeechInputService {
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-IN"))
+        ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -16,14 +17,7 @@ final class SpeechInputService {
 
     func start() async {
         guard !isListening else { return }
-        guard await requestMicrophoneAccess() else {
-            onStateChange?("Microphone access denied — open Settings below")
-            return
-        }
-        guard await requestSpeechAccess() == .authorized else {
-            onStateChange?("Speech Recognition access denied — open Settings below")
-            return
-        }
+        guard await requestPermissions() else { return }
         guard let recognizer, recognizer.isAvailable else {
             onStateChange?("Speech recognition is unavailable")
             return
@@ -69,14 +63,24 @@ final class SpeechInputService {
     }
 
     func requestPermissions() async -> Bool {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .denied {
+            onStateChange?("Microphone access is denied — enable Phantom in System Settings")
+            openMicrophoneSettings()
+            return false
+        }
         onStateChange?("Requesting microphone access…")
         guard await requestMicrophoneAccess() else {
-            onStateChange?("Microphone access denied — open System Settings")
+            onStateChange?("Microphone access is restricted by macOS")
+            return false
+        }
+        if SFSpeechRecognizer.authorizationStatus() == .denied {
+            onStateChange?("Speech Recognition is denied — enable Phantom in System Settings")
+            openSpeechSettings()
             return false
         }
         onStateChange?("Requesting speech recognition access…")
         guard await requestSpeechAccess() == .authorized else {
-            onStateChange?("Speech Recognition access denied — open System Settings")
+            onStateChange?("Speech Recognition is restricted by macOS")
             return false
         }
         onStateChange?("Microphone and Speech Recognition are allowed")
@@ -133,8 +137,14 @@ final class SpeechInputService {
     }
 
     private func openPrivacyPane(_ pane: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
-        NSWorkspace.shared.open(url)
+        let links = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)",
+            "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+        ]
+        for link in links {
+            if let url = URL(string: link), NSWorkspace.shared.open(url) { return }
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     private func label(_ status: AVAuthorizationStatus) -> String {

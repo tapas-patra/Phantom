@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diagnostics.install()
         NSApp.setActivationPolicy(.accessory)
+        installMainMenu()
         window.contentView = NSHostingView(rootView: PhantomRootView(store: store))
         window.delegate = self
         window.center()
@@ -46,6 +47,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         showWindow()
         store.bootstrap()
+    }
+
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -184,6 +198,15 @@ enum PhantomMain {
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")
             precondition(MermaidDiagram.html("flowchart TD\nA[\"quoted\"] --> B", hasLocalRuntime: true).contains("mermaid.min.js"))
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
+            let ragRouter = ConversationManager()
+            precondition(ragRouter.shouldRetrieveKnowledge(for: "What did you personally own?"))
+            precondition(ragRouter.shouldRetrieveKnowledge(for: "Why should we hire you?"))
+            precondition(!ragRouter.shouldRetrieveKnowledge(for: "What is dependency injection?"))
+            precondition(!ragRouter.shouldSearchKnowledge(for: "What is my favorite color?", preferredDocumentIds: []))
+            precondition(!ragRouter.shouldSearchKnowledge(for: "Tell me about the Atlas project", preferredDocumentIds: []))
+            precondition(ragRouter.shouldSearchKnowledge(for: "What is my recent project?", preferredDocumentIds: ["resume-1"]))
+            precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
+            precondition(PhantomStore.mergeTranscript(current: "Question: ", lastRendered: "Question: ", previous: "", next: "Tell me", prefix: "Question: ", preservingEdits: false).text == "Question: Tell me")
             precondition(SSEParser.parse("data: {\"delta\":\"hello\"}") == .delta("hello"))
             precondition(SSEParser.parse("data: {\"error\":\"stopped\"}") == .failure("stopped"))
             precondition(SSEParser.parse("data: [DONE]") == .done)

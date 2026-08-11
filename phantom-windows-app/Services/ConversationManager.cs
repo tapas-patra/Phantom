@@ -37,6 +37,7 @@ namespace SecureOverlay.Services
         private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
         private Task? _interviewContextPackWarmupTask;
         private string _knowledgeBaseRevision = string.Empty;
+        private int _knowledgeContextGeneration;
         private readonly Dictionary<string, CachedInterviewContextPack> _interviewContextPacks = new(StringComparer.Ordinal);
         private string _stablePromptPrefix = string.Empty;
         private string _stablePromptPrefixKey = string.Empty;
@@ -550,7 +551,7 @@ namespace SecureOverlay.Services
 
             if (!string.IsNullOrWhiteSpace(_jobDescriptionSummary))
             {
-                contextParts.Append("\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n");
+                contextParts.Append("\n\nInterview Context: This job description contains target-role requirements only and is never evidence of the candidate's experience. Use it for relevant advice, practice questions, and feedback:\n");
                 contextParts.Append(_jobDescriptionSummary);
             }
             else if (!string.IsNullOrWhiteSpace(_jobDescriptionText))
@@ -933,6 +934,8 @@ namespace SecureOverlay.Services
                 ("Tell me about yourself", ResponsePlanType.Profile),
                 ("What are my strengths?", ResponsePlanType.Profile),
                 ("What are your day-to-day responsibilities?", ResponsePlanType.Experience),
+                ("What did you personally own?", ResponsePlanType.Experience),
+                ("What was your biggest achievement?", ResponsePlanType.Experience),
                 ("Have you worked with UI automation?", ResponsePlanType.Experience),
                 ("Tell me about my recent project", ResponsePlanType.Project),
                 ("Why did you choose that database?", ResponsePlanType.Project),
@@ -1065,7 +1068,9 @@ namespace SecureOverlay.Services
                 normalizedUserMessage,
                 "your experience", "my experience", "did you", "have you", "your role", "my role",
                 "current role", "current position", "day to day", "day-to-day", "responsibilities",
-                "company", "employer", "worked at", "work at");
+                "company", "employer", "worked at", "work at", "personally own", "personally owned",
+                "your contribution", "my contribution", "achievement", "achievements", "accomplishment",
+                "career history", "employment history");
             if (!personalAsk)
             {
                 return false;
@@ -1172,6 +1177,9 @@ namespace SecureOverlay.Services
                     "biggest strength",
                     "biggest weakness",
                     "your skills",
+                    "your education",
+                    "my education",
+                    "certification",
                     "why should we hire you"))
             {
                 return true;
@@ -1495,9 +1503,11 @@ namespace SecureOverlay.Services
 
         private async Task<HostedKnowledgeBaseSummaryDto?> RefreshKnowledgeBaseSummaryAsync(CancellationToken cancellationToken)
         {
+            var generation = _knowledgeContextGeneration;
             try
             {
                 var summary = await _knowledgeBaseLoader!(cancellationToken);
+                if (generation != _knowledgeContextGeneration) return _knowledgeBaseSummaryCache;
                 var revision = BuildKnowledgeBaseRevision(summary);
                 if (!string.Equals(_knowledgeBaseRevision, revision, StringComparison.Ordinal))
                 {
@@ -3150,6 +3160,12 @@ namespace SecureOverlay.Services
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
             _activeProjectCardId = string.Empty;
+            _knowledgeContextGeneration++;
+            _knowledgeBaseSummaryCache = null;
+            _knowledgeBaseSummaryLoadTask = null;
+            _interviewContextPackWarmupTask = null;
+            _knowledgeBaseRevision = string.Empty;
+            _interviewContextPacks.Clear();
             
             UpdateSystemPromptWithContext();
             
@@ -3319,7 +3335,7 @@ namespace SecureOverlay.Services
         private void RestoreEmbeddedContextFromSystemPrompt(string systemPromptContent)
         {
             const string resumeMarker = "\n\nUser Profile: ";
-            const string jdMarker = "\n\nInterview Context: You are helping the user prepare for an interview for the following position. Provide relevant advice, practice questions, and feedback based on this job description:\n";
+            const string jdMarker = "\n\nInterview Context: This job description contains target-role requirements only and is never evidence of the candidate's experience. Use it for relevant advice, practice questions, and feedback:\n";
 
             int resumeStart = systemPromptContent.IndexOf(resumeMarker, StringComparison.Ordinal);
             int jdStart = systemPromptContent.IndexOf(jdMarker, StringComparison.Ordinal);

@@ -31,6 +31,6 @@ cp "$ROOT_DIR/phantom.hosted.json" "$APP_BUNDLE/Contents/Resources/phantom.hoste
 cp "$ROOT_DIR/../phantom-windows-app/Assets/brand/phantom-logo-512.png" "$APP_BUNDLE/Contents/Resources/phantom-logo.png"
 cp "$ROOT_DIR/../phantom-windows-app/assets/mermaid/mermaid.min.js" "$APP_BUNDLE/Contents/Resources/mermaid.min.js"
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
-codesign --force --sign - --options runtime "$APP_BUNDLE"
+codesign --force --sign - --options runtime --entitlements "$ROOT_DIR/Packaging/Phantom.entitlements" "$APP_BUNDLE"
 
 print "$APP_BUNDLE"

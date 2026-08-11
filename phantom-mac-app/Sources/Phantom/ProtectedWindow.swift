@@ -22,6 +22,7 @@ final class ProtectedWindow: NSPanel {
         minSize = NSSize(width: 820, height: 560)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isMovableByWindowBackground = true
+        acceptsMouseMovedEvents = true
         animationBehavior = .none
 
         // Requested legacy AppKit exclusion. Apple no longer guarantees that
@@ -39,4 +40,14 @@ final class ProtectedWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        switch event.type {
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .cursorUpdate:
+            NSCursor.arrow.set()
+        default:
+            break
+        }
+    }
 }

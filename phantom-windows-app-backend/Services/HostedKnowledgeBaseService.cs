@@ -36,7 +36,6 @@ public sealed class HostedKnowledgeBaseService
     private const int MaxSearchCacheEntries = 256;
     private const double MinSnippetScore = 0.18d;
     private const double MinSemanticSimilarity = 0.45d;
-    private const int FallbackSnippetCount = 2;
     private const int MaxSnippetLength = 480;
     private const int MaxSnippetsPerDocument = 2;
     private const string CardSyncDocumentIdPrefix = "kb-card-sync-";
@@ -70,6 +69,7 @@ public sealed class HostedKnowledgeBaseService
         _embeddingService = embeddingService;
         _structuredExtraction = structuredExtraction;
         _logger = logger;
+        RunSearchIsolationSelfCheck();
     }
 
     public DesktopAccountRecord RequireAccountFromAccessToken(string? authorizationHeader)
@@ -988,6 +988,7 @@ public sealed class HostedKnowledgeBaseService
         var profile = _embeddingService.ActiveProfile;
         var activeEmbeddingProfile = $"{profile.ModelId}:{profile.Version}:{profile.Dimensions}";
         var cacheKey = BuildSearchCacheKey(
+            account.UserId,
             knowledgeBase.KnowledgeBaseId,
             knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
             activeEmbeddingProfile,
@@ -1046,6 +1047,7 @@ public sealed class HostedKnowledgeBaseService
             MaxSearchCandidateCount);
         var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var candidates = _knowledgeBases.SearchHybridCandidates(
+            userId: account.UserId,
             knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
             query: normalizedQuery,
             preferredDocumentIds: normalizedPreferredDocumentIds,
@@ -2139,29 +2141,6 @@ public sealed class HostedKnowledgeBaseService
             }
         }
 
-        if (snippets.Count > 0 || candidates.Count == 0)
-        {
-            return snippets;
-        }
-
-        // ponytail: broad prompts like "introduce yourself" can have weak term overlap; use the best semantic candidates instead of returning nothing.
-        foreach (var candidate in candidates.Take(Math.Min(snippetLimit, FallbackSnippetCount)))
-        {
-            var snippetText = TrimSnippetText(candidate.Text, terms);
-            if (string.IsNullOrWhiteSpace(snippetText))
-            {
-                continue;
-            }
-
-            snippets.Add(new HostedKnowledgeBaseSnippetDto
-            {
-                DocumentId = candidate.DocumentId,
-                DocumentTitle = candidate.DocumentTitle,
-                Text = snippetText,
-                Score = Math.Max(candidate.FusedScore, candidate.SemanticSimilarity)
-            });
-        }
-
         return snippets;
     }
 
@@ -2239,6 +2218,7 @@ public sealed class HostedKnowledgeBaseService
     }
 
     private static string BuildSearchCacheKey(
+        string userId,
         string knowledgeBaseId,
         long knowledgeBaseRevision,
         string embeddingProfileKey,
@@ -2249,7 +2229,33 @@ public sealed class HostedKnowledgeBaseService
         var preferredDocKey = preferredDocumentIds.Count == 0
             ? "-"
             : string.Join(",", preferredDocumentIds);
-        return $"{knowledgeBaseId}:{knowledgeBaseRevision}:{embeddingProfileKey}:{maxSnippets}:{preferredDocKey}:{normalizedQuery}";
+        return $"{userId}:{knowledgeBaseId}:{knowledgeBaseRevision}:{embeddingProfileKey}:{maxSnippets}:{preferredDocKey}:{normalizedQuery}";
+    }
+
+    [Conditional("DEBUG")]
+    private static void RunSearchIsolationSelfCheck()
+    {
+        var first = BuildSearchCacheKey("user-a", "same-kb", 1, "model:1", "project", Array.Empty<string>(), 3);
+        var second = BuildSearchCacheKey("user-b", "same-kb", 1, "model:1", "project", Array.Empty<string>(), 3);
+        var irrelevant = BuildSearchSnippets(new[]
+        {
+            new HostedKnowledgeBaseSearchCandidateRecord
+            {
+                ChunkId = "chunk",
+                DocumentId = "document",
+                DocumentTitle = "Unrelated",
+                SectionTitle = "Other",
+                Text = "Unrelated material",
+                SearchText = "unrelated material",
+                FusedScore = 0.01,
+                SemanticSimilarity = 0.10,
+                LexicalScore = 0
+            }
+        }, new[] { "project" }, 3, usedSemanticSearch: true);
+        if (first == second || irrelevant.Count != 0)
+        {
+            throw new InvalidOperationException("Hosted knowledge search isolation self-check failed.");
+        }
     }
 
     private bool TryGetCachedSearch(string cacheKey, out IReadOnlyList<HostedKnowledgeBaseSnippetDto> snippets)

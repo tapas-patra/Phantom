@@ -38,7 +38,7 @@ enum InterviewPrompt {
             round = "Answer as the candidate in first person unless the user asks otherwise. Sound practical and business-aware. State the goal, key assumptions, options, and recommendation in a clean flow. Quantify when possible, focus on tradeoffs and decision quality, and avoid consultant-style fluff."
         case "General Interview":
             role = "You are an interview copilot."
-            round = "Answer as the candidate in first person unless the user asks otherwise. Keep answers concise, accurate, and grounded in the provided context. Prefer direct spoken responses over polished explanations. If context is missing, make a reasonable assumption and state it plainly instead of inventing facts."
+            round = "Answer as the candidate in first person unless the user asks otherwise. Keep answers concise, accurate, and grounded in the provided context. Prefer direct spoken responses over polished explanations. For personal experience, projects, employers, achievements, or background, never assume missing facts; say the information is not available."
         default:
             role = "You are an interview copilot for technical interviews."
             round = "Answer as the candidate in first person unless the user asks otherwise. Start with the direct answer in plain English, then explain like an engineer talking to another engineer. Prefer practical examples, quick analogies, explicit assumptions, and concrete tradeoffs over textbook wording. Use the provided resume, job description, and conversation context when relevant, and do not invent experience or facts."
@@ -51,7 +51,7 @@ enum InterviewPrompt {
         }
         let jobDescription = jobDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !jobDescription.isEmpty {
-            prompt += "\n\nInterview Context (raw fallback):\n\(String(jobDescription.prefix(1_200)))"
+            prompt += "\n\nInterview Context (raw fallback; target-role requirements only, never evidence of the candidate's experience):\n\(String(jobDescription.prefix(1_200)))"
         }
         return prompt
     }

@@ -168,7 +168,7 @@ const publicFeatureRows = [
   { label: "Input", value: "Voice, text, and screenshots" },
   { label: "Context", value: "Resume, projects, and role research" },
   { label: "AI lane", value: "Managed models or your own providers" },
-  { label: "Runtime", value: "Focused Windows desktop workspace" }
+  { label: "Runtime", value: "Focused Windows and macOS workspace" }
 ];
 
 const publicJourney = [
@@ -201,7 +201,7 @@ const publicValueProps = [
       "Begin with Phantom-managed AI, connect supported provider accounts for more control, or use the full Premium workflow."
   },
   {
-    title: "Built around a Windows runtime",
+    title: "Built for Windows and macOS",
     detail:
       "The website prepares the account and context. The live experience stays in Phantom's focused desktop application."
   }
@@ -211,12 +211,12 @@ const publicFaqs = [
   {
     question: "What is Phantom?",
     answer:
-      "Phantom is a Windows interview workspace that helps you stay prepared and responsive in live rounds. It combines a focused desktop experience with account, wallet, and context management on the web."
+      "Phantom is a Windows and macOS interview workspace that helps you stay prepared and responsive in live rounds. It combines a focused desktop experience with account, wallet, and context management on the web."
   },
   {
     question: "Is Phantom browser-based?",
     answer:
-      "The core interview workspace runs on Windows. The website is where you create your account, manage access, compare plans, review wallet activity, and handle premium knowledge-base setup."
+      "The core interview workspace runs on Windows and macOS. The website is where you create your account, manage access, compare plans, review wallet activity, and handle premium knowledge-base setup."
   },
   {
     question: "Do I need my own API keys?",
@@ -292,7 +292,7 @@ const termsSections = [
   {
     title: "2. Service boundaries",
     body:
-      "Phantom is a hosted website and dashboard layer paired with a Windows desktop runtime. The website is for registration, verification, payments, hosted knowledge-base management, device visibility, and admin operations. It is not the live interview runtime itself."
+      "Phantom is a hosted website and dashboard layer paired with Windows and macOS desktop runtimes. The website is for registration, verification, payments, hosted knowledge-base management, device visibility, and admin operations. It is not the live interview runtime itself."
   },
   {
     title: "3. Account responsibility",
@@ -305,37 +305,42 @@ const termsSections = [
       "You may only use Phantom for lawful, authorized purposes. You must comply with the rules of the interview, exam, employer, institution, or platform where Phantom is used. You must not use Phantom to bypass proctoring, impersonate another person, violate confidentiality obligations, upload unauthorized third-party content, attempt to extract provider secrets, or interfere with system integrity."
   },
   {
-    title: "5. AI output and user judgment",
+    title: "5. Screen-sharing visibility and user responsibility",
+    body:
+      "Phantom requests platform-level capture exclusion, but invisibility is not guaranteed on every operating-system version, meeting client, capture tool, display mode, or configuration. You must verify the actual meeting, recording, and screen-sharing preview before use. If Phantom is visible, you must stop sharing or close it; if you continue, you accept responsibility for that exposure. Phantom and its operators are not responsible for exposure caused by unsupported or ineffective capture protection, except where liability cannot legally be excluded."
+  },
+  {
+    title: "6. AI output and user judgment",
     body:
       "AI outputs can be incomplete, inaccurate, or inappropriate for the situation. You remain responsible for reviewing and deciding whether to rely on any generated content, suggestions, or retrieved knowledge-base material."
   },
   {
-    title: "6. Payments, credits, and debt settlement",
+    title: "7. Payments, credits, and debt settlement",
     body:
       "Credit packs, hosted usage, and debt-settlement flows must follow the wallet rules defined by the deployment operator. Phantom may suspend access or limit premium features when credits are exhausted, balances become negative, or payment confirmation cannot be trusted."
   },
   {
-    title: "7. Hosted content",
+    title: "8. Hosted content",
     body:
       "You represent that you have the right to upload and process any document, prompt, key, note, or other material you submit to Phantom. Do not upload confidential or regulated material unless your deployment is explicitly authorized for that use."
   },
   {
-    title: "8. Suspension and termination",
+    title: "9. Suspension and termination",
     body:
       "Phantom may suspend or terminate access for security incidents, unpaid balances, abuse, fraud risk, policy violations, or system-protection reasons. Admin operators may also correct account state, clear locks, or revoke access when required to preserve service integrity."
   },
   {
-    title: "9. No warranty for uninterrupted availability",
+    title: "10. No warranty for uninterrupted availability",
     body:
       "Phantom aims for reliable service, but hosted components may be interrupted by provider outages, payment failures, verification issues, network disruptions, or maintenance. Availability of the website does not guarantee the availability of any third-party provider lane."
   },
   {
-    title: "10. Limitation and operator terms",
+    title: "11. Limitation and operator terms",
     body:
       "These terms should be read together with any deployment-specific commercial, legal, or support terms published by the operator of your Phantom environment. Where local law requires additional notices, refunds, disclosures, or rights, those rules continue to apply."
   },
   {
-    title: "11. Contact",
+    title: "12. Contact",
     body:
       "For legal, privacy, billing, or support requests, use the support route exposed by the Phantom deployment you use, including the dashboard support surface or the contact details published by the operator."
   }
@@ -686,7 +691,7 @@ function SiteHeader({ surface, userSession, adminSession, onUserLogout, onAdminL
         <img className="brandmark-mark brandmark-logo" src="/brand/phantom-mark.svg" alt="" />
         <span>
           <strong>Phantom</strong>
-          <small>{surface === "public" ? "Interview intelligence for Windows" : surface === "admin" ? "Operations" : "Workspace"}</small>
+          <small>{surface === "public" ? "Interview intelligence for Windows + macOS" : surface === "admin" ? "Operations" : "Workspace"}</small>
         </span>
       </Link>
 
@@ -765,7 +770,7 @@ function PublicFooter() {
         <div className="footer-brand">
           <Link className="brandmark" to="/">
             <img className="brandmark-mark brandmark-logo" src="/brand/phantom-mark.svg" alt="" />
-            <span><strong>Phantom</strong><small>Interview intelligence for Windows</small></span>
+            <span><strong>Phantom</strong><small>Interview intelligence for Windows + macOS</small></span>
           </Link>
           <p className="footer-copy">
             Prepare deeply. Stay present. Bring the right context into every live round.
@@ -791,7 +796,7 @@ function PublicFooter() {
       </div>
       <div className="footer-bottom">
         <span>© {new Date().getFullYear()} Phantom</span>
-        <span>Windows desktop application · AI output requires human judgement</span>
+        <span>Windows and macOS desktop applications · AI output requires human judgement</span>
       </div>
     </footer>
   );
@@ -840,14 +845,14 @@ function MarketingPage({ userSession }) {
     "@type": "SoftwareApplication",
     name: "Phantom",
     applicationCategory: "ProductivityApplication",
-    operatingSystem: "Windows"
+    operatingSystem: ["Windows 10", "macOS 12.3"]
   };
 
   return (
     <main className="page marketing-page">
       <Seo
         title="Phantom | Think clearly when the room gets loud"
-        description="Bring your preparation, project stories, and AI support into one focused Windows interview workspace."
+        description="Bring your preparation, project stories, and AI support into one focused Windows and macOS interview workspace."
         structuredData={structuredData}
       />
 
@@ -856,7 +861,7 @@ function MarketingPage({ userSession }) {
           <p className="eyebrow">A calmer way to show up prepared</p>
           <h1>Think clearly when the room gets <em>loud.</em></h1>
           <p className="lead-copy">
-            Phantom brings your preparation, project stories, and AI support into one focused Windows workspace—ready when the interview changes direction.
+            Phantom brings your preparation, project stories, and AI support into one focused Windows or macOS workspace—ready when the interview changes direction.
           </p>
           <div className="hero-actions">
             <Link className="button button-primary" to={userSession?.isAuthenticated ? "/dashboard" : "/register"}>
@@ -866,6 +871,7 @@ function MarketingPage({ userSession }) {
           </div>
           <div className="hero-meta" aria-label="Product facts">
             <span>Windows 10/11</span>
+            <span>macOS 12.3+</span>
             <span>Hosted or BYO AI</span>
             <span>Voice + screenshots</span>
           </div>
@@ -894,7 +900,7 @@ function MarketingPage({ userSession }) {
           <p className="eyebrow">One continuous workflow</p>
           <h2>From preparation to live support, without the tab chaos.</h2>
         </div>
-        <p>Phantom is designed around the interview itself. The website organises access and context; the Windows app keeps both close when the conversation starts moving.</p>
+        <p>Phantom is designed around the interview itself. The website organises access and context; the Windows and macOS apps keep both close when the conversation starts moving.</p>
       </section>
 
       <section className="triple-grid journey-grid">
@@ -937,7 +943,7 @@ function MarketingPage({ userSession }) {
         <div className="comparison-grid">
           {publicValueProps.map((item) => <MetricDefinition key={item.title} title={item.title} detail={item.detail} />)}
         </div>
-        <p className="responsible-note">Phantom supports preparation and authorised live assistance. Always follow the rules of the interview, employer, institution, or platform you are using.</p>
+        <p className="responsible-note">Phantom supports preparation and authorised live assistance. Always follow the applicable rules. Capture invisibility is not guaranteed: verify the actual meeting and screen-sharing preview before use, and do not continue if Phantom is visible.</p>
       </section>
 
       <section className="triple-grid marketing-pricing">
@@ -1065,17 +1071,17 @@ function DownloadPage({ userSession }) {
     <main className="page">
       <Seo
         title="Download | Phantom"
-        description="Download Phantom for Windows and check your account's installer eligibility."
+        description="Download Phantom for Windows or macOS and check your account's installer eligibility."
       />
       <section className="hero-grid">
         <article className="glass-panel hero-panel hero-panel-primary">
-          <p className="eyebrow">Phantom for Windows</p>
+          <p className="eyebrow">Phantom for Windows and macOS</p>
           <h1>Your live workspace belongs on the desktop.</h1>
           <p className="lead-copy">
-            Prepare on the web, then move into the focused Windows experience for voice, screenshots, context retrieval, and live AI support.
+            Prepare on the web, then move into the focused desktop experience on Windows or macOS for voice, screenshots, context retrieval, and live AI support.
           </p>
           <div className="stats-grid">
-            <MetricCard label="System" value="Windows 10/11" />
+            <MetricCard label="System" value="Windows 10/11 · macOS 12.3+" />
             <MetricCard label="Account" value="Verified sign-in" />
             <MetricCard label="Channel" value={entitlement?.releaseChannel || "Account gated"} />
           </div>
@@ -1116,7 +1122,7 @@ function DownloadPage({ userSession }) {
         <div className="timeline-grid">
           <TimelineStep index="01" title="Create account" body="Register on the website and complete phone OTP plus email verification." />
           <TimelineStep index="02" title="Check your workspace" body="Confirm your plan, credits, device status, and download access in the dashboard." />
-          <TimelineStep index="03" title="Launch Phantom" body="Sign in on Windows, choose your AI lane, and enter the interview ready." />
+          <TimelineStep index="03" title="Launch Phantom" body="Sign in on Windows or macOS, choose your AI lane, and enter the interview ready." />
         </div>
       </section>
     </main>
@@ -1365,7 +1371,7 @@ function RegisterPage() {
           <p className="eyebrow">Start free</p>
           <h1>Create the workspace that follows you into every round.</h1>
           <p>
-            Create your account here, {phoneVerificationRequired ? "complete phone and email verification" : "verify your email"}, then download Phantom for Windows.
+            Create your account here, {phoneVerificationRequired ? "complete phone and email verification" : "verify your email"}, then download Phantom for Windows or macOS.
           </p>
           <ul>
             <li>Two hosted 15-minute trial blocks</li>
@@ -1970,7 +1976,7 @@ function UserOverviewPanel({ accessToken, summary, download, support, knowledgeB
       <article className="glass-panel dashboard-hero">
         <p className="eyebrow">{summary.phoneVerified && download?.canDownload ? "Ready to launch" : "Action required"}</p>
         <h1>{summary.phoneVerified && download?.canDownload ? "Your Phantom workspace is ready." : "Complete account verification to unlock Phantom."}</h1>
-        <p>{summary.phoneVerified ? "Your account is verified. Review context, credits, and recent interview activity before opening the desktop app." : "Verify your phone and email, then return here to download and launch the Windows app."}</p>
+        <p>{summary.phoneVerified ? "Your account is verified. Review context, credits, and recent interview activity before opening the desktop app." : "Verify your phone and email, then return here to download and launch the Windows or macOS app."}</p>
         <div className="hero-actions">
           <Link className="button button-primary" to="/download">{download?.canDownload ? "Download Phantom" : "Check download access"}</Link>
           <Link className="button button-secondary" to="/dashboard/knowledge-base">Review knowledge</Link>
@@ -2413,7 +2419,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <p className="eyebrow">Your knowledge space</p>
         <h1>Turn your experience into context Phantom can retrieve when it matters.</h1>
         <p>
-          Add candidate information, company-specific experiences, project stories, and preferences here. Phantom keeps each context source ready for your Windows sessions.
+          Add candidate information, company-specific experiences, project stories, and preferences here. Phantom keeps each context source ready for your desktop sessions.
         </p>
       </article>
 
@@ -2965,7 +2971,7 @@ function DevicesPanel({ accessToken }) {
       <article className="glass-panel dashboard-hero table-span-full">
         <p className="eyebrow">Your devices</p>
         <h1>Know exactly where your Phantom account has been used.</h1>
-        <p>Review active and previous browser or Windows sessions, including their sign-in method and last activity.</p>
+        <p>Review active and previous browser or desktop sessions, including their sign-in method and last activity.</p>
       </article>
       {devices.length === 0 ? (
         <article className="glass-panel">

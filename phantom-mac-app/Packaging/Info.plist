@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Phantom</string>
+    <key>CFBundleExecutable</key>
+    <string>Phantom</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.phantom.desktop</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Phantom</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.4.0</string>
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>LSMinimumSystemVersion</key>
+	<string>12.3</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Phantom uses the microphone to transcribe interview questions into the chat composer.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Phantom captures a display screenshot only when you press the screenshot attachment button.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Phantom converts microphone audio into text for interview questions.</string>
+</dict>
+</plist>

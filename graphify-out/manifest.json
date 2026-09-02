@@ -216,9 +216,9 @@
     "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/Persistence.swift": {
-    "mtime": 1788333104.9439209,
-    "seen": 1788389546.907323,
-    "ast_hash": "dccefac82575dabe157d8995d19be371",
+    "mtime": 1788391075.995138,
+    "seen": 1788391134.153428,
+    "ast_hash": "da34370f8a5946259316445a7ae13114",
     "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/PhantomMain.swift": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/PhantomStore.swift": {
-    "mtime": 1788386877.9139624,
-    "seen": 1788389546.9073238,
-    "ast_hash": "17718416eacad13f6d8b7395d6aee92a",
+    "mtime": 1788391076.1140673,
+    "seen": 1788391134.153444,
+    "ast_hash": "6ed74258ff2da03dca3ecffde616814d",
     "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/ProtectedWindow.swift": {

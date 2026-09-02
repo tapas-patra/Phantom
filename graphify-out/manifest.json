@@ -102,10 +102,10 @@
     "semantic_hash": "4d2aa82b177743741d2b5717c15c904a"
   },
   "phantom-dashboard-backend/Services/DashboardQueryService.cs": {
-    "mtime": 1786355524.1401336,
-    "seen": 1788316872.8483021,
-    "ast_hash": "53e4609b5569140a26475a965fdd2948",
-    "semantic_hash": "53e4609b5569140a26475a965fdd2948"
+    "mtime": 1788389428.8568707,
+    "seen": 1788389546.907068,
+    "ast_hash": "f4524e31b59d96c3b0a223abbb275e77",
+    "semantic_hash": ""
   },
   "phantom-dashboard-backend/Services/ManagedAiAdminService.cs": {
     "mtime": 1782897581.3361337,
@@ -156,16 +156,16 @@
     "semantic_hash": "09bd01aaa72fe7a85f6e47c987967d9e"
   },
   "phantom-mac-app/Sources/Phantom/BackendClient.swift": {
-    "mtime": 1786461341.732456,
-    "seen": 1788316872.848305,
-    "ast_hash": "215a0997bbca58da1fe2b843e45936bb",
-    "semantic_hash": "215a0997bbca58da1fe2b843e45936bb"
+    "mtime": 1788385283.512277,
+    "seen": 1788389546.907221,
+    "ast_hash": "e73c71826b200d7a320d6039bc45e7a8",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/ContentView.swift": {
-    "mtime": 1786486239.1841862,
-    "seen": 1788316872.848306,
-    "ast_hash": "269f4c5aa10a883197845fcd4850d9c9",
-    "semantic_hash": "269f4c5aa10a883197845fcd4850d9c9"
+    "mtime": 1788386884.2035747,
+    "seen": 1788389546.907221,
+    "ast_hash": "b980a02a94be35f6d27d5cf169a08fc9",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/Domain/RuntimeModels.swift": {
     "mtime": 1786459952.8242438,
@@ -210,28 +210,28 @@
     "semantic_hash": "f96404a52c4acb4f5342d91de9b944cd"
   },
   "phantom-mac-app/Sources/Phantom/MermaidView.swift": {
-    "mtime": 1786465316.6783068,
-    "seen": 1788316872.848308,
-    "ast_hash": "98395fb3e7a580392c1975f977d233f3",
-    "semantic_hash": "98395fb3e7a580392c1975f977d233f3"
+    "mtime": 1788386877.7384708,
+    "seen": 1788389546.9073222,
+    "ast_hash": "3190b7963a9082a6c18c5c8a8142f7dd",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/Persistence.swift": {
-    "mtime": 1786460007.9588082,
-    "seen": 1788316872.848309,
-    "ast_hash": "14a12f1bf73e768d5be8d78fa760dc24",
-    "semantic_hash": "14a12f1bf73e768d5be8d78fa760dc24"
+    "mtime": 1788333104.9439209,
+    "seen": 1788389546.907323,
+    "ast_hash": "dccefac82575dabe157d8995d19be371",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/PhantomMain.swift": {
-    "mtime": 1786487661.871319,
-    "seen": 1788316872.848309,
-    "ast_hash": "599ebc5c80cc9cedd3fcfa0e3c8fcbd7",
-    "semantic_hash": "599ebc5c80cc9cedd3fcfa0e3c8fcbd7"
+    "mtime": 1788385470.378373,
+    "seen": 1788389546.907323,
+    "ast_hash": "fe907bd0c6459a6115af52442a68c569",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/PhantomStore.swift": {
-    "mtime": 1786487525.8098505,
-    "seen": 1788316872.848309,
-    "ast_hash": "582d4ddacfe69c9a48edac68d323fb88",
-    "semantic_hash": "582d4ddacfe69c9a48edac68d323fb88"
+    "mtime": 1788386877.9139624,
+    "seen": 1788389546.9073238,
+    "ast_hash": "17718416eacad13f6d8b7395d6aee92a",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/ProtectedWindow.swift": {
     "mtime": 1786481897.2062142,
@@ -252,10 +252,10 @@
     "semantic_hash": "3e585492f6cf4236ed8b667fc8d6a6fd"
   },
   "phantom-mac-app/Sources/Phantom/Services/ConversationManager.swift": {
-    "mtime": 1786487650.5051684,
-    "seen": 1788316872.848311,
-    "ast_hash": "96ca0e8aa8a6e34940d186f4e287a203",
-    "semantic_hash": "96ca0e8aa8a6e34940d186f4e287a203"
+    "mtime": 1788386053.8076217,
+    "seen": 1788389546.9073658,
+    "ast_hash": "afb7619699929670ac2ee0efa01e5d42",
+    "semantic_hash": ""
   },
   "phantom-mac-app/Sources/Phantom/SpeechInputService.swift": {
     "mtime": 1786483527.249048,
@@ -276,10 +276,10 @@
     "semantic_hash": "e3cec7efc455ff5f015c26f209205ca6"
   },
   "phantom-website-dashboard/src/App.jsx": {
-    "mtime": 1786465368.701757,
-    "seen": 1788316872.8483121,
-    "ast_hash": "d148978597a51b575cb3e08515c117b1",
-    "semantic_hash": "d148978597a51b575cb3e08515c117b1"
+    "mtime": 1788389414.958524,
+    "seen": 1788389546.9074008,
+    "ast_hash": "ad3a43b1b9fe24eff6667f3119eb8099",
+    "semantic_hash": ""
   },
   "phantom-website-dashboard/src/lib/api.js": {
     "mtime": 1786361089.0539923,
@@ -1290,10 +1290,10 @@
     "semantic_hash": "46607a71e79e4eb4cbfff8d188184f7e"
   },
   "phantom-windows-app-backend/Program.cs": {
-    "mtime": 1786361063.7749825,
-    "seen": 1788316872.8483672,
-    "ast_hash": "e2d5881b24c1eb80dd48dd059207ad9d",
-    "semantic_hash": "e2d5881b24c1eb80dd48dd059207ad9d"
+    "mtime": 1788350710.6819844,
+    "seen": 1788389546.909586,
+    "ast_hash": "416bc98631f4ec2f6bc5d5f2573f9ca9",
+    "semantic_hash": ""
   },
   "phantom-windows-app-backend/Services/AccessModeResolver.cs": {
     "mtime": 1781895484.979276,
@@ -1374,10 +1374,10 @@
     "semantic_hash": "6741208d9265cc945d01d5895ab7fb5c"
   },
   "phantom-windows-app-backend/Services/HostedKnowledgeBaseService.cs": {
-    "mtime": 1786486886.392317,
-    "seen": 1788316872.848371,
-    "ast_hash": "d1705a0da84121c4971facd590f2cd18",
-    "semantic_hash": "d1705a0da84121c4971facd590f2cd18"
+    "mtime": 1788335104.8643806,
+    "seen": 1788389546.909766,
+    "ast_hash": "9a93731382ded451194b637ba6cd27c4",
+    "semantic_hash": ""
   },
   "phantom-windows-app-backend/Services/HostedKnowledgeBaseStructuredExtractionService.cs": {
     "mtime": 1786487249.5804908,
@@ -1458,10 +1458,10 @@
     "semantic_hash": "7f112bd828b135b28576cb617fb0ee9a"
   },
   "phantom-windows-app-backend/Services/ManagedAiService.cs": {
-    "mtime": 1786286522.9206064,
-    "seen": 1788316872.848375,
-    "ast_hash": "460979dd5220b4c1a0cc596cc3718228",
-    "semantic_hash": "460979dd5220b4c1a0cc596cc3718228"
+    "mtime": 1788351364.6790154,
+    "seen": 1788389546.9099772,
+    "ast_hash": "a1f1a81cc84c2b8a5178109ab1db00e1",
+    "semantic_hash": ""
   },
   "phantom-windows-app-backend/Services/OperationalMetricsService.cs": {
     "mtime": 1781936968.8614209,
@@ -1896,10 +1896,10 @@
     "semantic_hash": "11a75156eb3d796c9dcc4b9a30353a2b"
   },
   "phantom-windows-app/Infrastructure/Context/HostedKnowledgeRetrievalService.cs": {
-    "mtime": 1786259925.2623746,
-    "seen": 1788316872.8483992,
-    "ast_hash": "45ec6c37bda5128c33ce6d18b90e47d4",
-    "semantic_hash": "45ec6c37bda5128c33ce6d18b90e47d4"
+    "mtime": 1788334266.8713727,
+    "seen": 1788389546.911007,
+    "ast_hash": "5039a260e4a348b92ba8945b50684fd1",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Infrastructure/Context/LocalContextPackService.cs": {
     "mtime": 1781895485.0191085,
@@ -2124,10 +2124,10 @@
     "semantic_hash": "1e66ee5543947ae1745339063f66a959"
   },
   "phantom-windows-app/Infrastructure/Hosted/HttpHostedAccountClient.cs": {
-    "mtime": 1786259539.9200163,
-    "seen": 1788316872.8484118,
-    "ast_hash": "e56d2ad8e72c7e5425e1fa02cc333d6b",
-    "semantic_hash": "e56d2ad8e72c7e5425e1fa02cc333d6b"
+    "mtime": 1788350907.100122,
+    "seen": 1788389546.911547,
+    "ast_hash": "fe335667fa54308dc55443a230808ba3",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Infrastructure/Hosted/HttpHostedAuthClient.cs": {
     "mtime": 1781713326.5414677,
@@ -2160,10 +2160,10 @@
     "semantic_hash": "95d7e77caafb78b66c378d0ccff4e4e5"
   },
   "phantom-windows-app/Infrastructure/Hosted/IHostedAccountClient.cs": {
-    "mtime": 1786259539.8690262,
-    "seen": 1788316872.848414,
-    "ast_hash": "2b6c10d41fb633e11adcc7ba261bf46a",
-    "semantic_hash": "2b6c10d41fb633e11adcc7ba261bf46a"
+    "mtime": 1788350907.017151,
+    "seen": 1788389546.911613,
+    "ast_hash": "1793face189c971d5ce15d8caef0b622",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Infrastructure/Hosted/IHostedAuthClient.cs": {
     "mtime": 1781713326.54653,
@@ -2322,16 +2322,16 @@
     "semantic_hash": "8100170a73f4f40bc9bccd00f1d4b998"
   },
   "phantom-windows-app/MainWindow.xaml": {
-    "mtime": 1786287689.2513962,
-    "seen": 1788316872.8484218,
-    "ast_hash": "024500cd779cbd41d8e24e1423e9777d",
-    "semantic_hash": "024500cd779cbd41d8e24e1423e9777d"
+    "mtime": 1788384111.681264,
+    "seen": 1788389546.9119518,
+    "ast_hash": "1390726af80c9c79f3054f53ffe87c91",
+    "semantic_hash": ""
   },
   "phantom-windows-app/MainWindow.xaml.cs": {
-    "mtime": 1786361186.1642563,
-    "seen": 1788316872.848423,
-    "ast_hash": "264103c760f27aba96f712309357a339",
-    "semantic_hash": "264103c760f27aba96f712309357a339"
+    "mtime": 1788387460.3408468,
+    "seen": 1788389546.911953,
+    "ast_hash": "3c0ef1669bc7a8552336efc7bf8ef017",
+    "semantic_hash": ""
   },
   "phantom-windows-app/MarkdownHelper.cs": {
     "mtime": 1786287689.407491,
@@ -2418,10 +2418,10 @@
     "semantic_hash": "258f1598350518e667610a768c068bed"
   },
   "phantom-windows-app/SecureOverlay.csproj": {
-    "mtime": 1786265889.2889938,
-    "seen": 1788316872.848428,
-    "ast_hash": "edf52f05a63f35c40dacc8f42832d95b",
-    "semantic_hash": "edf52f05a63f35c40dacc8f42832d95b"
+    "mtime": 1788322521.842689,
+    "seen": 1788389546.912128,
+    "ast_hash": "9b2e15cf5b2792655a1568a0dbf94959",
+    "semantic_hash": ""
   },
   "phantom-windows-app/SecureOverlay.sln": {
     "mtime": 1781713326.5760655,
@@ -2460,16 +2460,16 @@
     "semantic_hash": "509ebd5e4fbb56c74f99d18f5b62baa1"
   },
   "phantom-windows-app/Services/ConversationManager.cs": {
-    "mtime": 1786487120.8483007,
-    "seen": 1788316872.8484302,
-    "ast_hash": "5ce61c3405ad6117afbb0adde7e8da9b",
-    "semantic_hash": "5ce61c3405ad6117afbb0adde7e8da9b"
+    "mtime": 1788386053.902382,
+    "seen": 1788389546.912214,
+    "ast_hash": "1c6f62f8b30402253ea7d0ab054c552d",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Services/ConversationMessage.cs": {
-    "mtime": 1783768024.2768395,
-    "seen": 1788316872.8484302,
-    "ast_hash": "a3e0ab71451d67fc3cf7d2b2773b5332",
-    "semantic_hash": "a3e0ab71451d67fc3cf7d2b2773b5332"
+    "mtime": 1788321966.1822135,
+    "seen": 1788389546.912214,
+    "ast_hash": "32ab9a6d9d75f288037c27400352760b",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Services/ErrorSimulator.cs": {
     "mtime": 1781713326.579471,
@@ -2590,5 +2590,545 @@
     "seen": 1788316872.848437,
     "ast_hash": "4557259facbae2a6941361d5b3ab5e3a",
     "semantic_hash": "4557259facbae2a6941361d5b3ab5e3a"
+  },
+  "phantom-windows-app-backend/Contracts/InterviewAnswerPlanDto.cs": {
+    "mtime": 1788385283.3332646,
+    "seen": 1788389546.9081311,
+    "ast_hash": "2e32ba43b093fd6dc667ecfaac2077e1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app-backend/Contracts/InterviewAnswerPlanRequestDto.cs": {
+    "mtime": 1788350710.3499281,
+    "seen": 1788389546.908132,
+    "ast_hash": "0b708168d35a969dfbd467775b185cc1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app-backend/Services/InterviewAnswerPlanningService.cs": {
+    "mtime": 1788388074.4084666,
+    "seen": 1788389546.909801,
+    "ast_hash": "3817ce1979b3129476a5d2baf4155b8d",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/Infrastructure/Hosted/Contracts/InterviewAnswerPlanDto.cs": {
+    "mtime": 1788385283.4246073,
+    "seen": 1788389546.911378,
+    "ast_hash": "e0aa22751dd2958efdf39ac4d198cd20",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/Infrastructure/Hosted/Contracts/InterviewAnswerPlanRequestDto.cs": {
+    "mtime": 1788350906.8572521,
+    "seen": 1788389546.9113789,
+    "ast_hash": "036cfd7e454d3dbc1f198b17c77848a1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/Program.cs": {
+    "mtime": 1788322364.0522058,
+    "seen": 1788389546.912139,
+    "ast_hash": "6420f77aa20330c43e78107c53830823",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj": {
+    "mtime": 1788322576.4846017,
+    "seen": 1788389546.9121401,
+    "ast_hash": "9fd9708dd38458605a07d4c6c716a0ce",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/SemanticRoutingChecks.deps.json": {
+    "mtime": 1788322563.0174105,
+    "seen": 1788389546.9121401,
+    "ast_hash": "dffe758f558a456abf7e7a73443db408",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/SemanticRoutingChecks.runtimeconfig.json": {
+    "mtime": 1788322563.1042612,
+    "seen": 1788389546.912141,
+    "ast_hash": "e3e0cb8d5df8f2b3c69a9d62594a19d6",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/assets/mermaid/mermaid.min.js": {
+    "mtime": 1782897581.3855526,
+    "seen": 1788389546.912142,
+    "ast_hash": "1dd12fadbfa258c3ac600e9e7f1d6a3d",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/phantom.hosted.json": {
+    "mtime": 1786349200.469414,
+    "seen": 1788389546.912142,
+    "ast_hash": "4557259facbae2a6941361d5b3ab5e3a",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/svchost-shell.deps.json": {
+    "mtime": 1788322536.5460732,
+    "seen": 1788389546.912143,
+    "ast_hash": "ed170deb6e595fb7cce4de4cebbe3ff4",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0-windows/svchost-shell.runtimeconfig.json": {
+    "mtime": 1783768739.5814273,
+    "seen": 1788389546.912143,
+    "ast_hash": "99a453b2098ada3538e3177397f0b211",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/SemanticRoutingChecks.deps.json": {
+    "mtime": 1788322615.8648143,
+    "seen": 1788389546.912144,
+    "ast_hash": "d0e3502747cbda7aa6d391dafdb0fcb0",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/SemanticRoutingChecks.runtimeconfig.json": {
+    "mtime": 1788322615.951729,
+    "seen": 1788389546.912144,
+    "ast_hash": "fea67d1af84e4e5faf705578a8a38ac1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/assets/mermaid/mermaid.min.js": {
+    "mtime": 1782897581.3855526,
+    "seen": 1788389546.912145,
+    "ast_hash": "1dd12fadbfa258c3ac600e9e7f1d6a3d",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/phantom.hosted.json": {
+    "mtime": 1786349200.469414,
+    "seen": 1788389546.912145,
+    "ast_hash": "4557259facbae2a6941361d5b3ab5e3a",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/svchost-shell.deps.json": {
+    "mtime": 1788322536.5460732,
+    "seen": 1788389546.9121459,
+    "ast_hash": "ed170deb6e595fb7cce4de4cebbe3ff4",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/bin/Debug/net8.0-windows/svchost-shell.runtimeconfig.json": {
+    "mtime": 1783768739.5814273,
+    "seen": 1788389546.9121459,
+    "ast_hash": "99a453b2098ada3538e3177397f0b211",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs": {
+    "mtime": 1788322538.9525442,
+    "seen": 1788389546.912147,
+    "ast_hash": "27b0818ca661f08691d52b53159889a6",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/SemanticRoutingChecks.AssemblyInfo.cs": {
+    "mtime": 1788322538.9795427,
+    "seen": 1788389546.912148,
+    "ast_hash": "9aa79a950bca3c1980499f3c74f50d58",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/SemanticRoutingChecks.GlobalUsings.g.cs": {
+    "mtime": 1788322499.5224068,
+    "seen": 1788389546.912148,
+    "ast_hash": "98926837ba69930b8428d861944bcd0a",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/SemanticRoutingChecks.sourcelink.json": {
+    "mtime": 1788322538.9922829,
+    "seen": 1788389546.912149,
+    "ast_hash": "eb3994eefb53da257089521077a82b71",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net8.0-windows/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs": {
+    "mtime": 1788322419.800614,
+    "seen": 1788389546.912149,
+    "ast_hash": "b35d66657a259714f6d50974a720b5fa",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net8.0-windows/SemanticRoutingChecks.AssemblyInfo.cs": {
+    "mtime": 1788322419.8704739,
+    "seen": 1788389546.91215,
+    "ast_hash": "9aa79a950bca3c1980499f3c74f50d58",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net8.0-windows/SemanticRoutingChecks.GlobalUsings.g.cs": {
+    "mtime": 1788322372.0039148,
+    "seen": 1788389546.91215,
+    "ast_hash": "98926837ba69930b8428d861944bcd0a",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net8.0-windows/SemanticRoutingChecks.sourcelink.json": {
+    "mtime": 1788322419.8904722,
+    "seen": 1788389546.912151,
+    "ast_hash": "eb3994eefb53da257089521077a82b71",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/SemanticRoutingChecks.csproj.nuget.dgspec.json": {
+    "mtime": 1788322590.742777,
+    "seen": 1788389546.912151,
+    "ast_hash": "2eeedbd50b29c9d568ed2f6db64f14b1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/project.assets.json": {
+    "mtime": 1788322590.7294157,
+    "seen": 1788389546.912152,
+    "ast_hash": "97c197b1c7516a5c52b60b111b8cef79",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/SKILL.md": {
+    "mtime": 1788316713.9922814,
+    "seen": 1788389546.9124491,
+    "ast_hash": "212b55d95333d84e14262f8ec83faa2b",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/add-watch.md": {
+    "mtime": 1788316690.2532246,
+    "seen": 1788389546.91245,
+    "ast_hash": "d59d027fe449f06aa03905a01184e779",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/exports.md": {
+    "mtime": 1788316690.2576125,
+    "seen": 1788389546.912451,
+    "ast_hash": "9da2a2152e60a22f07f05fed5158f287",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/extraction-spec.md": {
+    "mtime": 1788316690.2581136,
+    "seen": 1788389546.912451,
+    "ast_hash": "bf895ec4d4e40f5f66f7d31c2a9bd4a7",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/github-and-merge.md": {
+    "mtime": 1788316690.25834,
+    "seen": 1788389546.912452,
+    "ast_hash": "cde13df085e4c492aeb7ba298a996d0d",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/hooks.md": {
+    "mtime": 1788316690.258577,
+    "seen": 1788389546.912452,
+    "ast_hash": "3f545db6ce646650bb9de588f5512a27",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/query.md": {
+    "mtime": 1788316690.2588673,
+    "seen": 1788389546.9124532,
+    "ast_hash": "3c46f8ad006874260614ed8657d02307",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/transcribe.md": {
+    "mtime": 1788316690.2590764,
+    "seen": 1788389546.9124532,
+    "ast_hash": "67b6a5fa6c0974e18f60db9f8932fbd8",
+    "semantic_hash": ""
+  },
+  ".codex/skills/graphify/references/update.md": {
+    "mtime": 1788316690.2593994,
+    "seen": 1788389546.912454,
+    "ast_hash": "9378bd03d56baaf78bd738ab3848f142",
+    "semantic_hash": ""
+  },
+  ".codex/skills/ui-ux-pro-max/SKILL.md": {
+    "mtime": 1782224821.8472657,
+    "seen": 1788389546.912454,
+    "ast_hash": "e745b5a6c71379800b232a1ba32d16ec",
+    "semantic_hash": ""
+  },
+  ".github/workflows/desktop-release.yml": {
+    "mtime": 1788389414.8617587,
+    "seen": 1788389546.9124548,
+    "ast_hash": "61c0d63b32a0c7f08b3eb09d3e617a94",
+    "semantic_hash": ""
+  },
+  ".github/workflows/render-keepalive.yml": {
+    "mtime": 1786349200.329687,
+    "seen": 1788389546.9124548,
+    "ast_hash": "f7fad080384804e700d67526dded792a",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1788316713.9978025,
+    "seen": 1788389546.912456,
+    "ast_hash": "48bce005b05435bb6ab1b480a4b4a172",
+    "semantic_hash": ""
+  },
+  "PHANTOM-WINDOWS-PERFORMANCE-RAG-FIX-PLAN.md": {
+    "mtime": 1786289686.786345,
+    "seen": 1788389546.912456,
+    "ast_hash": "da9fe79d587f54cd49769d6dee268df0",
+    "semantic_hash": ""
+  },
+  "RENDER-DEPLOYMENT.md": {
+    "mtime": 1786345408.3156025,
+    "seen": 1788389546.912457,
+    "ast_hash": "f87fd686729993b44781c9bc689e1548",
+    "semantic_hash": ""
+  },
+  "VERCEL-DEPLOYMENT.md": {
+    "mtime": 1786349200.4410794,
+    "seen": 1788389546.912457,
+    "ast_hash": "188a59579355d6848e1ffdc04e5cd6a8",
+    "semantic_hash": ""
+  },
+  "WINDOWS-TO-MAC-PARITY-CHECKLIST.md": {
+    "mtime": 1786460825.142201,
+    "seen": 1788389546.912458,
+    "ast_hash": "4ec9199e8d09f845c78d1ef30116c4cd",
+    "semantic_hash": ""
+  },
+  "design-system/phantom-website/MASTER.md": {
+    "mtime": 1782224821.9439814,
+    "seen": 1788389546.912458,
+    "ast_hash": "5fbeccc5fa7a51db0b262a35d6e1a7e0",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260902_030557_analyze_answer_generation__kb_fallback__context_ha.md": {
+    "mtime": 1788318357.1738331,
+    "seen": 1788389546.912459,
+    "ast_hash": "87a488b51fa441ea06da1a328cd0673a",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260902_032931_don_t_care_what_current_system_has__suggest_what_w.md": {
+    "mtime": 1788319771.3558586,
+    "seen": 1788389546.912459,
+    "ast_hash": "35b2ffaf569bdd64bd9f53923e0f6cae",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260902_033530_have_you_reviewed_the_kb_part_how_it_s_designed_an.md": {
+    "mtime": 1788320130.2986073,
+    "seen": 1788389546.91246,
+    "ast_hash": "f315839b81bad00205eb95bcabd67846",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260902_041805_let_s_implement_the_semantic_routing__give_me_the.md": {
+    "mtime": 1788322685.4097593,
+    "seen": 1788389546.91246,
+    "ast_hash": "6f706ce39b89eb9ed850f89680c71600",
+    "semantic_hash": ""
+  },
+  "phantom-dashboard-backend/DOMAIN-HANDOFF.md": {
+    "mtime": 1781713325.9483829,
+    "seen": 1788389546.912461,
+    "ast_hash": "9b20f3ba64f623608663a8ed68dce742",
+    "semantic_hash": ""
+  },
+  "phantom-dashboard-backend/README.md": {
+    "mtime": 1782897581.3355627,
+    "seen": 1788389546.912461,
+    "ast_hash": "7b69b180545c9bbdf226a99368988145",
+    "semantic_hash": ""
+  },
+  "phantom-mac-app/README.md": {
+    "mtime": 1786455951.7095807,
+    "seen": 1788389546.912462,
+    "ast_hash": "c64b335678cf8809aa6de5f63266d0ed",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/IMPLEMENTATION-HANDOFF.md": {
+    "mtime": 1781713325.9651988,
+    "seen": 1788389546.912462,
+    "ast_hash": "538e294eb1460b25fc1608f76fa7cc16",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/README.md": {
+    "mtime": 1788389428.946383,
+    "seen": 1788389546.9124632,
+    "ast_hash": "7882d9f3c123074e0a628157af7f69db",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/index.html": {
+    "mtime": 1786465368.6488879,
+    "seen": 1788389546.9124632,
+    "ast_hash": "5e1889b96f0d7217bbc9df97c959f58e",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/public/robots.txt": {
+    "mtime": 1782224822.0047956,
+    "seen": 1788389546.912464,
+    "ast_hash": "5e0bd1c281a62a380d7a948085bfe2d1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app-backend/CONTRACT-HANDOFF.md": {
+    "mtime": 1781713325.9839141,
+    "seen": 1788389546.912464,
+    "ast_hash": "342a19c9522e0a108d1a5fe4180e5047",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app-backend/Diagnostics/rag-evaluation-results.md": {
+    "mtime": 1786259967.4572122,
+    "seen": 1788389546.9124649,
+    "ast_hash": "961d2c60013b845a3c7837656dc201b6",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app-backend/README.md": {
+    "mtime": 1786289670.9968352,
+    "seen": 1788389546.9124649,
+    "ast_hash": "6047784f1584f0a02dc058f3eab0192c",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/AGENTS.md": {
+    "mtime": 1781713326.2241473,
+    "seen": 1788389546.9124658,
+    "ast_hash": "7c716d48d7fb7ab452ef158c07ae438c",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/Diagnostics/performance-baseline-questions.txt": {
+    "mtime": 1786258842.6616793,
+    "seen": 1788389546.9124658,
+    "ast_hash": "d36535fd249b36cc067c95eec43f4e70",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/Diagnostics/performance-results.md": {
+    "mtime": 1786260413.797187,
+    "seen": 1788389546.912467,
+    "ast_hash": "bc9ba8205460f45d9151f00b42e8384c",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/EXTRACTION-MANIFEST.md": {
+    "mtime": 1781713326.329019,
+    "seen": 1788389546.912467,
+    "ast_hash": "56d0a0c4b6f923b6b9f80dda80dfb9df",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/MIGRATION.md": {
+    "mtime": 1781713326.5672286,
+    "seen": 1788389546.912468,
+    "ast_hash": "6765b6b2f966f15c5533a060c3fe9516",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/README.md": {
+    "mtime": 1786349200.4667737,
+    "seen": 1788389546.912468,
+    "ast_hash": "4e6bfb4e9c2fe8d197539eacd3703f2b",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/SemanticRoutingChecks.csproj.FileListAbsolute.txt": {
+    "mtime": 1788322563.127811,
+    "seen": 1788389546.9124732,
+    "ast_hash": "87241a5ede5894c973dd5348731859d6",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net8.0-windows/SemanticRoutingChecks.csproj.FileListAbsolute.txt": {
+    "mtime": 1788322444.673067,
+    "seen": 1788389546.9124732,
+    "ast_hash": "ea6d21c74611fbb02f2171f7e1875b6c",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/01-system-design.md": {
+    "mtime": 1781713326.5968685,
+    "seen": 1788389546.9124742,
+    "ast_hash": "112710c3ff4eb96a446b2d5192af96a5",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/02-system-architecture.md": {
+    "mtime": 1781713326.5974092,
+    "seen": 1788389546.9124742,
+    "ast_hash": "05862c256089e20a1c6579e8d032012e",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/03-implementation-plan.md": {
+    "mtime": 1781713326.5978913,
+    "seen": 1788389546.9124749,
+    "ast_hash": "84f8a7bf215d22b45935ea263f3eb921",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/04-web-platform.md": {
+    "mtime": 1781713326.5984232,
+    "seen": 1788389546.9124749,
+    "ast_hash": "936ad08e2ee7593e5796804ec8edbec1",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/05-pricing-and-billing.md": {
+    "mtime": 1781713326.5989778,
+    "seen": 1788389546.9124758,
+    "ast_hash": "99ea0e7bc1cd2a172e1bcede31f7995e",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/06-implementation-handoff.md": {
+    "mtime": 1781713326.5994766,
+    "seen": 1788389546.9124758,
+    "ast_hash": "e83854c5706b143a4dc63b47439a2988",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/07-repo-split-plan.md": {
+    "mtime": 1781713326.5999494,
+    "seen": 1788389546.912477,
+    "ast_hash": "d672a7bdcccdec04b9888279ae9695df",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/08-current-root-ownership.md": {
+    "mtime": 1781713326.6003363,
+    "seen": 1788389546.912477,
+    "ast_hash": "6f139165c87e1c8e174921cfb08b1737",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/09-rag-latency-and-human-answering.md": {
+    "mtime": 1782897581.4699783,
+    "seen": 1788389546.912478,
+    "ast_hash": "7ad15b825632770ecb3c3c000b2e2cc5",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/10-production-rag-implementation.md": {
+    "mtime": 1782897581.4701276,
+    "seen": 1788389546.912478,
+    "ast_hash": "a0d52db681efa5e47ae411d5ba2b4899",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/README.md": {
+    "mtime": 1781713326.6007025,
+    "seen": 1788389546.912479,
+    "ast_hash": "b0c75285714f6984ec8024f03bcd5b15",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/repo-split/README.md": {
+    "mtime": 1781713326.601177,
+    "seen": 1788389546.912479,
+    "ast_hash": "2ddddc42c0d721be86c68cc73dc7505a",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/docs/repo-split/split-checklist.md": {
+    "mtime": 1781713326.6019418,
+    "seen": 1788389546.91248,
+    "ast_hash": "099e31d9b6df097630b3d7ef296c4370",
+    "semantic_hash": ""
+  },
+  "render.yaml": {
+    "mtime": 1786349200.4726732,
+    "seen": 1788389546.91248,
+    "ast_hash": "575136142c69565982822074761bc388",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/public/brand/phantom-logo-192.png": {
+    "mtime": 1782224821.9971967,
+    "seen": 1788389546.912481,
+    "ast_hash": "80ee9ed0b758143c3e591e37e9a5d94e",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/public/brand/phantom-logo-32.png": {
+    "mtime": 1782224822.0009153,
+    "seen": 1788389546.912481,
+    "ast_hash": "4dc2751200f62375b90b3f8df1a80a9e",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/public/brand/phantom-logo-512.png": {
+    "mtime": 1782224822.001614,
+    "seen": 1788389546.912482,
+    "ast_hash": "4d1de9726c7b7f21318898083402b60f",
+    "semantic_hash": ""
+  },
+  "phantom-website-dashboard/public/brand/phantom-mark.svg": {
+    "mtime": 1786310851.742148,
+    "seen": 1788389546.912482,
+    "ast_hash": "b836ea5c8cfc2194e9b2e5f43a5b374e",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/assets/brand/phantom-logo-512.png": {
+    "mtime": 1782897581.3766756,
+    "seen": 1788389546.912483,
+    "ast_hash": "4d1de9726c7b7f21318898083402b60f",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/assets/brand/phantom-logo-source.png": {
+    "mtime": 1782897581.3775983,
+    "seen": 1788389546.912483,
+    "ast_hash": "180cbc1976103ff52420394360d440a8",
+    "semantic_hash": ""
+  },
+  "phantom-windows-app/assets/brand/phantom-logo.png": {
+    "mtime": 1782897581.379921,
+    "seen": 1788389546.9124842,
+    "ast_hash": "e899a1571efe0c8fee7c14f5ee891a6d",
+    "semantic_hash": ""
   }
 }

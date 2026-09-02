@@ -74,6 +74,8 @@ import {
 const USER_SESSION_STORAGE_KEY = "phantom.website.user-session";
 const ADMIN_SESSION_STORAGE_KEY = "phantom.website.admin-session";
 const PASSWORD_REQUIREMENTS = "Use 12+ characters with uppercase, lowercase, a number, and a special character. Spaces are not allowed.";
+const RELEASE_REPOSITORY = "tapas-patra/phantom-release-repo";
+const RELEASE_BASE_URL = `https://github.com/${RELEASE_REPOSITORY}/releases/download/desktop-latest`;
 
 function getPasswordPolicyError(password) {
   if (!password || password.length < 12) return PASSWORD_REQUIREMENTS;
@@ -1111,6 +1113,12 @@ function DownloadPage({ userSession }) {
             <InfoRow label="Version" value={entitlement?.installerVersion || "Pending"} />
             <InfoRow label="Eligibility" value={entitlement?.canDownload ? "Ready" : "Verification required"} />
           </div>
+          {entitlement?.canDownload ? (
+            <div className="hero-actions">
+              <a className="button button-primary" href={`${RELEASE_BASE_URL}/Phantom-Windows-x64.zip`}>Download for Windows</a>
+              <a className="button button-secondary" href={`${RELEASE_BASE_URL}/Phantom-macOS.zip`}>Download for macOS</a>
+            </div>
+          ) : null}
         </article>
       </section>
 

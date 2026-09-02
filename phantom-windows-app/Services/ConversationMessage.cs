@@ -10,6 +10,8 @@ namespace SecureOverlay.Services
         public DateTime Timestamp { get; set; } = DateTime.Now;
         public bool HasCode { get; set; } = false;
         public int EstimatedTokens { get; set; } = 0;
+        public string AnswerSource { get; set; } = ""; // KB, Universal, KB + Universal, or Template
+        public string InterviewIntent { get; set; } = ""; // Personal, General, Hybrid, or Ambiguous
     }
 
     public class ModelConfig

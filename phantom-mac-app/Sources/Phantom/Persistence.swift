@@ -231,6 +231,7 @@ enum ContextSummaryStore {
 }
 
 enum Diagnostics {
+    private static let maxLogBytes = 1_000_000
     private static var root: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Phantom", isDirectory: true)
@@ -252,6 +253,7 @@ enum Diagnostics {
         defer { try? handle.close() }
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: Data(line.utf8))
+        trimIfNeeded(logURL)
     }
 
     static func recordCrash(_ message: String) {
@@ -275,6 +277,13 @@ enum Diagnostics {
     static func clear() {
         guard let logURL else { return }
         try? FileManager.default.removeItem(at: logURL)
+    }
+
+    private static func trimIfNeeded(_ logURL: URL) {
+        guard let values = try? logURL.resourceValues(forKeys: [.fileSizeKey]),
+              (values.fileSize ?? 0) > maxLogBytes,
+              let data = try? Data(contentsOf: logURL) else { return }
+        try? data.suffix(maxLogBytes / 2).write(to: logURL, options: .atomic)
     }
 }
 

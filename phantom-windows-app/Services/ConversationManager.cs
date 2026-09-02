@@ -27,12 +27,14 @@ namespace SecureOverlay.Services
         private bool _jobDescriptionSummarized = false;
         private Task<bool>? _jobDescriptionSummaryTask;
         private string _structuredKnowledgeContext = string.Empty;
+        private bool _hasStructuredCandidateEvidence;
         private string _activeProjectCardId = string.Empty;
         private IReadOnlyList<RetrievedContextSnippet> _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
         private IReadOnlyList<string> _lastRetrievedDocumentIds = Array.Empty<string>();
         private readonly Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? _knowledgeRetriever;
         private readonly Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? _knowledgeBaseLoader;
         private readonly Func<bool>? _knowledgeRetrievalEnabled;
+        private readonly Func<InterviewAnswerPlanRequestDto, CancellationToken, Task<InterviewAnswerPlanDto>>? _interviewPlanner;
         private HostedKnowledgeBaseSummaryDto? _knowledgeBaseSummaryCache;
         private Task<HostedKnowledgeBaseSummaryDto?>? _knowledgeBaseSummaryLoadTask;
         private Task? _interviewContextPackWarmupTask;
@@ -41,6 +43,8 @@ namespace SecureOverlay.Services
         private readonly Dictionary<string, CachedInterviewContextPack> _interviewContextPacks = new(StringComparer.Ordinal);
         private string _stablePromptPrefix = string.Empty;
         private string _stablePromptPrefixKey = string.Empty;
+        private AnswerResolution _activeAnswerResolution = AnswerResolution.Universal(InterviewIntent.General, "default");
+        public IReadOnlyList<ClarificationOption> PendingClarificationOptions { get; private set; } = Array.Empty<ClarificationOption>();
 
         
         private ModelConfig _modelConfig;
@@ -59,7 +63,8 @@ namespace SecureOverlay.Services
             APIRotationManager? rotationManager = null,
             Func<string, IReadOnlyList<string>?, CancellationToken, Task<IReadOnlyList<RetrievedContextSnippet>>>? knowledgeRetriever = null,
             Func<CancellationToken, Task<HostedKnowledgeBaseSummaryDto>>? knowledgeBaseLoader = null,
-            Func<bool>? knowledgeRetrievalEnabled = null)
+            Func<bool>? knowledgeRetrievalEnabled = null,
+            Func<InterviewAnswerPlanRequestDto, CancellationToken, Task<InterviewAnswerPlanDto>>? interviewPlanner = null)
         {
             _aiService = aiService;
             _systemPrompt = systemPrompt;
@@ -69,8 +74,7 @@ namespace SecureOverlay.Services
             _knowledgeRetriever = knowledgeRetriever;
             _knowledgeBaseLoader = knowledgeBaseLoader;
             _knowledgeRetrievalEnabled = knowledgeRetrievalEnabled;
-
-            RunRouterSelfCheck();
+            _interviewPlanner = interviewPlanner;
 
             _fullConversation.Add(new ConversationMessage
             {
@@ -495,6 +499,9 @@ namespace SecureOverlay.Services
                 }
             }
 
+            contextParts.Append("\n\nAnswer Source Contract:\n");
+            contextParts.Append(_activeAnswerResolution.Instruction);
+
             var finalContent = contextParts.ToString();
 
             if (_fullConversation.Count == 0)
@@ -571,6 +578,7 @@ namespace SecureOverlay.Services
 
         public async Task<(string response, string error)> SendMessageAsync(string userMessage, string? imageBase64 = null)
         {
+            PendingClarificationOptions = Array.Empty<ClarificationOption>();
             // Add user message to full conversation
             var userMsg = new ConversationMessage
             {
@@ -590,29 +598,22 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            var retrievalEnabled = _knowledgeRetrievalEnabled?.Invoke() ?? true;
-            if (retrievalEnabled)
-            {
-                retrievalEnabled = (await LoadKnowledgeBaseSummaryAsync(CancellationToken.None))?.CanUseInInterview == true;
-            }
-            var route = retrievalEnabled ? RouteResponse(userMessage) : ResponsePlan.Direct(string.Empty, 1d);
-            if (!retrievalEnabled)
-            {
-                RagTraceLogger.WriteLine("router:direct rag_disabled=true");
-            }
+            var route = await PlanResponseAsync(userMessage, CancellationToken.None);
             await ApplyRouteAsync(route, userMessage, CancellationToken.None);
+            SetActiveAnswerResolution(ResolveAnswerResolution(route));
 
-            var retrievalMissResponse = BuildRetrievalMissResponse(route);
-            if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
+            if (_activeAnswerResolution.Source == "Clarification"
+                && !string.IsNullOrWhiteSpace(route.ClarificationQuestion)
+                && route.ClarificationOptions.Count >= 2)
             {
-                RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true");
-                return CompleteAssistantResponse(retrievalMissResponse);
+                PendingClarificationOptions = route.ClarificationOptions;
+                return CompleteAssistantResponse(route.ClarificationQuestion, _activeAnswerResolution);
             }
 
             if (route.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(route.DirectAnswer))
             {
-                return CompleteAssistantResponse(route.DirectAnswer);
+                return CompleteAssistantResponse(route.DirectAnswer, _activeAnswerResolution);
             }
 
             // Build optimized context for API
@@ -635,7 +636,7 @@ namespace SecureOverlay.Services
             }
 
             // Extract summary from response
-            return CompleteAssistantResponse(response);
+            return CompleteAssistantResponse(response, _activeAnswerResolution);
         }
 
 
@@ -647,6 +648,7 @@ namespace SecureOverlay.Services
             string? imageBase64 = null,
             Action? onRetryCleanup = null)
         {
+            PendingClarificationOptions = Array.Empty<ClarificationOption>();
             // Add user message to full conversation
             var userMsg = new ConversationMessage
             {
@@ -666,31 +668,24 @@ namespace SecureOverlay.Services
             }
             Log.WriteLine("─────────────────────────────────────────────────────");
 
-            var retrievalEnabled = _knowledgeRetrievalEnabled?.Invoke() ?? true;
-            if (retrievalEnabled)
-            {
-                retrievalEnabled = (await LoadKnowledgeBaseSummaryAsync(cancellationToken))?.CanUseInInterview == true;
-            }
-            var route = retrievalEnabled ? RouteResponse(userMessage) : ResponsePlan.Direct(string.Empty, 1d);
-            if (!retrievalEnabled)
-            {
-                RagTraceLogger.WriteLine("router:direct rag_disabled=true [streaming]");
-            }
+            var route = await PlanResponseAsync(userMessage, cancellationToken);
             await ApplyRouteAsync(route, userMessage, cancellationToken);
+            SetActiveAnswerResolution(ResolveAnswerResolution(route));
 
-            var retrievalMissResponse = BuildRetrievalMissResponse(route);
-            if (!string.IsNullOrWhiteSpace(retrievalMissResponse))
+            if (_activeAnswerResolution.Source == "Clarification"
+                && !string.IsNullOrWhiteSpace(route.ClarificationQuestion)
+                && route.ClarificationOptions.Count >= 2)
             {
-                RagTraceLogger.WriteLine("retrieval:miss short_circuit_response=true [streaming]");
-                onChunkReceived?.Invoke(retrievalMissResponse);
-                return CompleteAssistantResponse(retrievalMissResponse);
+                PendingClarificationOptions = route.ClarificationOptions;
+                onChunkReceived?.Invoke(route.ClarificationQuestion);
+                return CompleteAssistantResponse(route.ClarificationQuestion, _activeAnswerResolution);
             }
 
             if (route.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(route.DirectAnswer))
             {
                 onChunkReceived?.Invoke(route.DirectAnswer);
-                return CompleteAssistantResponse(route.DirectAnswer);
+                return CompleteAssistantResponse(route.DirectAnswer, _activeAnswerResolution);
             }
 
             // Build optimized context for API
@@ -714,7 +709,7 @@ namespace SecureOverlay.Services
                 return ("", error);
             }
 
-            return CompleteAssistantResponse(response);
+            return CompleteAssistantResponse(response, _activeAnswerResolution);
         }
 
 
@@ -830,7 +825,7 @@ namespace SecureOverlay.Services
             return validatedContext;
         }
 
-        private (string response, string error) CompleteAssistantResponse(string response)
+        private (string response, string error) CompleteAssistantResponse(string response, AnswerResolution answerResolution)
         {
             var (fullResponse, summary, hasCode) = ParseAIResponse(response);
             _fullConversation.Add(new ConversationMessage
@@ -839,11 +834,52 @@ namespace SecureOverlay.Services
                 Content = fullResponse,
                 Summary = summary,
                 HasCode = hasCode,
-                EstimatedTokens = EstimateTokens(fullResponse)
+                EstimatedTokens = EstimateTokens(fullResponse),
+                AnswerSource = answerResolution.Source,
+                InterviewIntent = answerResolution.Intent.ToString()
             });
 
             Log.WriteLine($"✓ Response added to conversation ({_fullConversation.Count} total messages)");
             return (fullResponse, "");
+        }
+
+        private async Task<ResponsePlan> PlanResponseAsync(string userMessage, CancellationToken cancellationToken)
+        {
+            if (_interviewPlanner == null)
+            {
+                RagTraceLogger.WriteLine("planner:unavailable");
+                return ResponsePlan.Clarification();
+            }
+
+            try
+            {
+                var recentMessages = _fullConversation
+                    .Where(message => message.Role == "user" || message.Role == "assistant")
+                    .TakeLast(6)
+                    .Select(message => new DesktopAiChatMessageDto
+                    {
+                        Role = message.Role,
+                        Content = TruncateMessageStatic(message.Content, 700)
+                    })
+                    .ToArray();
+                var plan = await _interviewPlanner(new InterviewAnswerPlanRequestDto
+                {
+                    RequestId = Guid.NewGuid().ToString("N"),
+                    Provider = _currentProvider,
+                    Model = _rotationManager?.GetCurrentModel(_currentProvider) ?? _modelConfig.Name,
+                    Question = userMessage,
+                    ActiveEntityId = _activeProjectCardId,
+                    RecentMessages = recentMessages
+                }, cancellationToken);
+                RagTraceLogger.WriteLine($"planner:resolved intent={plan.Intent} entity={plan.EntityType}:{plan.EntityId} retrieve={plan.Retrieve} mode={plan.AnswerMode}");
+                return ResponsePlan.FromBackendPlan(plan);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.WriteLine($"Interview planner failed: {ex.Message}");
+                RagTraceLogger.WriteLine("planner:failed");
+                return ResponsePlan.Clarification();
+            }
         }
 
         private ResponsePlan RouteResponse(string userMessage)
@@ -878,7 +914,47 @@ namespace SecureOverlay.Services
                 return TraceRoute(plan);
             }
 
-            return TraceRoute(ResponsePlan.Direct(string.Empty, 1d));
+            return TraceRoute(ResponsePlan.Clarification());
+        }
+
+        private static bool LooksLikeClearlyGeneralQuestion(string normalizedUserMessage)
+        {
+            return normalizedUserMessage.StartsWith("what is ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("define ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("explain ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("compare ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("difference between ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("how does ", StringComparison.Ordinal)
+                || normalizedUserMessage.StartsWith("why does ", StringComparison.Ordinal);
+        }
+
+        private AnswerResolution ResolveAnswerResolution(ResponsePlan route)
+        {
+            var source = route.SourceContract;
+            if (source == "Clarification"
+                && (string.IsNullOrWhiteSpace(route.ClarificationQuestion) || route.ClarificationOptions.Count < 2))
+            {
+                return AnswerResolution.Universal(InterviewIntent.General, route.Source);
+            }
+            if ((source == "KB" || source == "KB + Universal") && !HasGroundedCandidateEvidence())
+            {
+                source = "Template";
+            }
+            return AnswerResolution.FromBackendPlan(source, route.Intent, route.AnswerMode, route.AllowCode, route.AnswerOutline, route.Source);
+        }
+
+        private bool HasGroundedCandidateEvidence()
+        {
+            return _hasStructuredCandidateEvidence
+                || _retrievedKnowledgeSnippets.Any(snippet => !string.IsNullOrWhiteSpace(snippet.Text));
+        }
+
+        private void SetActiveAnswerResolution(AnswerResolution resolution)
+        {
+            _activeAnswerResolution = resolution;
+            RagTraceLogger.WriteLine(
+                $"answer_resolution:source={resolution.Source} intent={resolution.Intent} evidence={HasGroundedCandidateEvidence()} decision='{resolution.Decision}'");
+            UpdateSystemPromptWithContext();
         }
 
         [Conditional("DEBUG")]
@@ -939,8 +1015,11 @@ namespace SecureOverlay.Services
                 ("Have you worked with UI automation?", ResponsePlanType.Experience),
                 ("Tell me about my recent project", ResponsePlanType.Project),
                 ("Why did you choose that database?", ResponsePlanType.Project),
+                ("Architecture?", ResponsePlanType.Project),
+                ("What guardrails did you use?", ResponsePlanType.Project),
                 ("Show the exact deployment details from my notes", ResponsePlanType.Retrieve),
                 ("Give me an example", ResponsePlanType.Direct),
+                ("Tell me about Kubernetes", ResponsePlanType.Direct),
                 ("Tell me about Atlas Payments", ResponsePlanType.Project),
                 ("Tell me about any project you worked on", ResponsePlanType.Project),
                 ("Tell me about any other project you worked on", ResponsePlanType.Project)
@@ -984,6 +1063,16 @@ namespace SecureOverlay.Services
                 throw new InvalidOperationException("Router self-check failed: experience relevance did not override current-role priority when appropriate.");
             }
 
+            if (SelectExperienceCard(new[] { currentExperience, previousExperience }, "Have you worked with Kubernetes?") != null)
+            {
+                throw new InvalidOperationException("Router self-check failed: unsupported skill selected an unrelated experience.");
+            }
+
+            if (!AnswerResolution.Template(InterviewIntent.Personal, "router-check").Instruction.Contains("do not present it as the candidate's real experience", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Router self-check failed: missing-evidence template lost its grounding guardrail.");
+            }
+
             var timeline = BuildExperienceTimelineGrounding(new[] { currentExperience, previousExperience });
             if (timeline.IndexOf(previousExperience.Company, StringComparison.Ordinal)
                 >= timeline.IndexOf(currentExperience.Company, StringComparison.Ordinal))
@@ -992,10 +1081,12 @@ namespace SecureOverlay.Services
             }
 
             var previousStructuredContext = _structuredKnowledgeContext;
+            var previousHasStructuredCandidateEvidence = _hasStructuredCandidateEvidence;
             var previousResumeSummary = _resumeSummary;
             var previousStablePromptPrefix = _stablePromptPrefix;
             var previousStablePromptPrefixKey = _stablePromptPrefixKey;
             _structuredKnowledgeContext = BuildProjectGrounding(project, InterviewPackKind.ProjectOverview);
+            _hasStructuredCandidateEvidence = true;
             const string unrelatedProfileMarker = "router-check-unrelated-profile-marker";
             _resumeSummary = unrelatedProfileMarker;
             _stablePromptPrefixKey = string.Empty;
@@ -1004,6 +1095,7 @@ namespace SecureOverlay.Services
                 throw new InvalidOperationException("Router self-check failed: global profile leaked into project grounding.");
             }
             _structuredKnowledgeContext = previousStructuredContext;
+            _hasStructuredCandidateEvidence = previousHasStructuredCandidateEvidence;
             _resumeSummary = previousResumeSummary;
             _stablePromptPrefix = previousStablePromptPrefix;
             _stablePromptPrefixKey = previousStablePromptPrefixKey;
@@ -1108,12 +1200,12 @@ namespace SecureOverlay.Services
                     "tell me about your project")
                 || namedProjectAsk;
             var projectDetailAsk =
-                ContainsAnyToken(normalizedUserMessage, "architecture", "system design", "tech stack", "stack", "challenge", "challenges", "impact", "role")
+                ContainsAnyToken(normalizedUserMessage, "architecture", "system design", "tech stack", "stack", "challenge", "challenges", "impact", "role", "guardrail", "guardrails", "implementation", "deployment")
                 && (ContainsAnyToken(normalizedUserMessage, "project", "projects", "this", "that", "it", "built", "worked on") || hasActiveProject || namedProjectAsk);
             var activeProjectFollowUp =
                 hasActiveProject
                 && (Regex.IsMatch(normalizedUserMessage, @"\b(?:this|that|it)\b")
-                    || ContainsAnyToken(normalizedUserMessage, "the project", "architecture", "design", "stack", "challenge", "impact", "role"))
+                    || ContainsAnyToken(normalizedUserMessage, "the project", "architecture", "design", "stack", "challenge", "impact", "role", "guardrail", "guardrails", "implementation", "deployment"))
                 && !ContainsAnyToken(normalizedUserMessage, "yourself", "background", "resume", "strength", "weakness", "current role");
             if (!explicitProjectAsk && !projectDetailAsk && !activeProjectFollowUp && !namedProjectAsk)
             {
@@ -1122,7 +1214,7 @@ namespace SecureOverlay.Services
 
             var scope = activeProjectFollowUp ? RetrievalScope.ActiveProject : RetrievalScope.Global;
             var knowledgeQuery =
-                ContainsAnyToken(normalizedUserMessage, "challenge", "challenges", "difficult", "problem", "tradeoff")
+                ContainsAnyToken(normalizedUserMessage, "challenge", "challenges", "difficult", "problem", "tradeoff", "guardrail", "guardrails")
                     ? "project challenges tradeoffs impact role"
                     : ContainsAnyToken(normalizedUserMessage, "architecture", "design", "system design", "scalability", "performance", "security")
                         ? "project architecture technologies design tradeoffs impact"
@@ -1263,6 +1355,10 @@ namespace SecureOverlay.Services
                 case ResponsePlanType.Profile:
                     ClearRetrievedKnowledgeSnippets();
                     await PrepareProfileGroundingAsync(route, userMessage, cancellationToken);
+                    if (route.ShouldRetrieve)
+                    {
+                        await RefreshRetrievedKnowledgeSnippetsAsync(route.KnowledgeQuery, route.PreferredDocumentIds, cancellationToken);
+                    }
                     return;
 
                 case ResponsePlanType.Project:
@@ -1270,7 +1366,11 @@ namespace SecureOverlay.Services
                     return;
 
                 case ResponsePlanType.Experience:
-                    await PrepareExperienceGroundingAsync(userMessage, cancellationToken);
+                    await PrepareExperienceGroundingAsync(route, userMessage, cancellationToken);
+                    if (route.ShouldRetrieve)
+                    {
+                        await RefreshRetrievedKnowledgeSnippetsAsync(route.KnowledgeQuery, route.PreferredDocumentIds, cancellationToken);
+                    }
                     return;
 
                 case ResponsePlanType.Retrieve:
@@ -1278,7 +1378,9 @@ namespace SecureOverlay.Services
                     ClearStructuredKnowledgeContext();
                     await RefreshRetrievedKnowledgeSnippetsAsync(
                         route.KnowledgeQuery,
-                        route.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
+                        route.PreferredDocumentIds.Count > 0
+                            ? route.PreferredDocumentIds
+                            : route.Scope == RetrievalScope.PreviousDocuments ? _lastRetrievedDocumentIds : null,
                         cancellationToken);
                     return;
             }
@@ -1297,6 +1399,7 @@ namespace SecureOverlay.Services
                 _structuredKnowledgeContext = currentExperience == null
                     ? string.Empty
                     : BuildExperienceGrounding(currentExperience);
+                _hasStructuredCandidateEvidence = currentExperience != null;
                 RagTraceLogger.WriteLine(currentExperience == null
                     ? "profile_grounding:missing"
                     : "profile_grounding:fallback=current_experience");
@@ -1313,6 +1416,7 @@ namespace SecureOverlay.Services
             }
 
             _structuredKnowledgeContext = BuildProfileGrounding(groundedProfile, packKind);
+            _hasStructuredCandidateEvidence = true;
             if (packKind == InterviewPackKind.ProfileIntro)
             {
                 _structuredKnowledgeContext += "\n" + BuildExperienceTimelineGrounding(
@@ -1343,6 +1447,7 @@ namespace SecureOverlay.Services
                     _structuredKnowledgeContext = HasProfileWorkEvidence(profile)
                         ? BuildProfileProjectFallbackGrounding(profile!)
                         : BuildGenericProjectFallbackGrounding();
+                    _hasStructuredCandidateEvidence = HasProfileWorkEvidence(profile);
                     RagTraceLogger.WriteLine(
                         HasProfileWorkEvidence(profile)
                             ? "project_grounding:fallback=profile_work"
@@ -1374,15 +1479,18 @@ namespace SecureOverlay.Services
             }
 
             _structuredKnowledgeContext = BuildProjectGrounding(groundedProject, packKind);
+            _hasStructuredCandidateEvidence = true;
             RagTraceLogger.WriteLine(
                 $"project_grounding:selected project='{TrimForLog(groundedProject.Title, 120)}' scope={plannerDecision.Scope} target='{TrimForLog(plannerDecision.Target, 120)}' pack={packKind}");
             UpdateSystemPromptWithContext();
 
-            if (ShouldRetrieveProjectSnippets(plannerDecision, groundedProject, packKind))
+            if (plannerDecision.ShouldRetrieve)
             {
                 await RefreshRetrievedKnowledgeSnippetsAsync(
                     plannerDecision.KnowledgeQuery,
-                    groundedProject.SourceDocumentIds,
+                    plannerDecision.PreferredDocumentIds.Count > 0
+                        ? plannerDecision.PreferredDocumentIds
+                        : groundedProject.SourceDocumentIds,
                     cancellationToken);
             }
             else
@@ -1392,12 +1500,13 @@ namespace SecureOverlay.Services
             }
         }
 
-        private async Task PrepareExperienceGroundingAsync(string userMessage, CancellationToken cancellationToken)
+        private async Task PrepareExperienceGroundingAsync(ResponsePlan plannerDecision, string userMessage, CancellationToken cancellationToken)
         {
             var knowledgeBase = await LoadKnowledgeBaseSummaryAsync(cancellationToken);
-            var experience = SelectExperienceCard(
-                knowledgeBase?.ExperienceCards ?? Array.Empty<HostedKnowledgeBaseExperienceCardDto>(),
-                userMessage);
+            var experiences = knowledgeBase?.ExperienceCards ?? Array.Empty<HostedKnowledgeBaseExperienceCardDto>();
+            var experience = !string.IsNullOrWhiteSpace(plannerDecision.Target)
+                ? experiences.FirstOrDefault(item => string.Equals(item.ExperienceCardId, plannerDecision.Target, StringComparison.Ordinal))
+                : SelectExperienceCard(experiences, userMessage);
             if (experience == null)
             {
                 ClearStructuredKnowledgeContext();
@@ -1408,6 +1517,7 @@ namespace SecureOverlay.Services
 
             ClearRetrievedKnowledgeSnippets();
             _structuredKnowledgeContext = BuildExperienceGrounding(experience);
+            _hasStructuredCandidateEvidence = true;
             RagTraceLogger.WriteLine(
                 $"experience_grounding:selected company='{TrimForLog(experience.Company, 100)}' role='{TrimForLog(experience.Role, 100)}' current={experience.IsCurrent}");
             UpdateSystemPromptWithContext();
@@ -1426,12 +1536,20 @@ namespace SecureOverlay.Services
                 .Select(match => match.Value)
                 .Where(token => token.Length >= 3 || token is "ui" or "qa")
                 .Distinct(StringComparer.Ordinal)
-                .Where(token => token is not "experience" and not "role" and not "company" and not "current" and not "your" and not "have")
+                .Where(token => token is not "experience" and not "role" and not "company" and not "current"
+                    and not "your" and not "have" and not "worked" and not "with" and not "about"
+                    and not "what" and not "tell" and not "day" and not "responsibilities")
                 .ToArray();
-            return experiences
+            var scoredExperiences = experiences
                 .Select(card => new
                 {
                     Card = card,
+                    Matches = tokens.Count(token => NormalizeText(string.Join(" ",
+                        card.Company,
+                        card.Role,
+                        card.Summary,
+                        card.Responsibilities,
+                        string.Join(" ", card.Skills))).Contains(token, StringComparison.Ordinal)),
                     Score = (card.IsCurrent ? 4 : 0) + tokens.Count(token => NormalizeText(string.Join(" ",
                         card.Company,
                         card.Role,
@@ -1441,8 +1559,33 @@ namespace SecureOverlay.Services
                 })
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.Card.SortOrder)
-                .First().Card;
+                .ToArray();
+
+            if (scoredExperiences[0].Matches > 0)
+            {
+                return scoredExperiences[0].Card;
+            }
+
+            // A generic role question may use the current role; a named skill may not.
+            return LooksLikeGenericExperienceQuestion(NormalizeText(userMessage))
+                ? experiences.FirstOrDefault(card => card.IsCurrent) ?? experiences.OrderBy(card => card.SortOrder).First()
+                : null;
         }
+
+        private static bool LooksLikeGenericExperienceQuestion(string normalizedUserMessage)
+            => ContainsAnyToken(
+                normalizedUserMessage,
+                "your role",
+                "your experience",
+                "my experience",
+                "work experience",
+                "current role",
+                "current position",
+                "day to day",
+                "day-to-day",
+                "responsibilities",
+                "career history",
+                "employment history");
 
         private void PrimeKnowledgeBaseSummaryLoad(CancellationToken cancellationToken)
         {
@@ -1654,6 +1797,7 @@ namespace SecureOverlay.Services
             }
 
             _structuredKnowledgeContext = pack.StructuredContext;
+            _hasStructuredCandidateEvidence = !string.IsNullOrWhiteSpace(pack.StructuredContext);
             _retrievedKnowledgeSnippets = pack.Snippets;
             _lastRetrievedDocumentIds = pack.Snippets
                 .Select(snippet => snippet.DocumentId)
@@ -1694,6 +1838,12 @@ namespace SecureOverlay.Services
             var requestedTarget = NormalizeText(plannerDecision.Target);
             if (!string.IsNullOrWhiteSpace(requestedTarget))
             {
+                var exactId = projectCards.FirstOrDefault(card =>
+                    string.Equals(card.ProjectCardId, plannerDecision.Target, StringComparison.Ordinal));
+                if (exactId != null)
+                {
+                    return exactId;
+                }
                 return projectCards.FirstOrDefault(card =>
                 {
                     var title = NormalizeText(card.Title);
@@ -2193,10 +2343,12 @@ namespace SecureOverlay.Services
         {
             if (string.IsNullOrWhiteSpace(_structuredKnowledgeContext))
             {
+                _hasStructuredCandidateEvidence = false;
                 return;
             }
 
             _structuredKnowledgeContext = string.Empty;
+            _hasStructuredCandidateEvidence = false;
             RagTraceLogger.WriteLine("structured_grounding:clear");
             UpdateSystemPromptWithContext();
         }
@@ -2301,43 +2453,6 @@ namespace SecureOverlay.Services
             UpdateSystemPromptWithContext();
         }
 
-        private string? BuildRetrievalMissResponse(ResponsePlan plannerDecision)
-        {
-            if (plannerDecision.Type == ResponsePlanType.Direct)
-            {
-                return null;
-            }
-
-            if (plannerDecision.Type == ResponsePlanType.Profile)
-            {
-                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
-                    ? "I couldn't find your profile details in the selected knowledge base. Add or review your profile section so I can answer personal interview questions accurately."
-                    : null;
-            }
-
-            if (plannerDecision.Type == ResponsePlanType.Project)
-            {
-                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
-                    ? "I couldn't find a grounded project match in the selected knowledge base. Add a project section, mark the right project as recent, or ask with the exact project name."
-                    : null;
-            }
-
-            if (plannerDecision.Type == ResponsePlanType.Experience)
-            {
-                return string.IsNullOrWhiteSpace(_structuredKnowledgeContext)
-                    ? "I couldn't find a matching work experience. Add the company and role in your Experience section so I can answer accurately."
-                    : null;
-            }
-
-            if (_retrievedKnowledgeSnippets.Count > 0)
-            {
-                return null;
-            }
-
-            return "I couldn't find relevant information for that in your selected knowledge base or context. Please mention the exact project or topic, or verify that the document is indexed and interview-usable.";
-        }
-
-
         private (string fullResponse, string summary, bool hasCode) ParseAIResponse(string response)
         {
             // Check if response contains code blocks
@@ -2371,6 +2486,14 @@ namespace SecureOverlay.Services
             Retrieve
         }
 
+        private enum InterviewIntent
+        {
+            Personal,
+            General,
+            Hybrid,
+            Ambiguous
+        }
+
         private enum RetrievalScope
         {
             Global,
@@ -2400,6 +2523,64 @@ namespace SecureOverlay.Services
             public RetrievalScope Scope { get; init; }
             public string Target { get; init; } = string.Empty;
             public double Confidence { get; init; }
+            public string SourceContract { get; init; } = "Clarification";
+            public InterviewIntent Intent { get; init; } = InterviewIntent.Ambiguous;
+            public string AnswerMode { get; init; } = "clarification";
+            public bool AllowCode { get; init; }
+            public bool ShouldRetrieve { get; init; }
+            public IReadOnlyList<string> AnswerOutline { get; init; } = Array.Empty<string>();
+            public IReadOnlyList<string> PreferredDocumentIds { get; init; } = Array.Empty<string>();
+            public string ClarificationQuestion { get; init; } = string.Empty;
+            public IReadOnlyList<ClarificationOption> ClarificationOptions { get; init; } = Array.Empty<ClarificationOption>();
+
+            public static ResponsePlan Clarification() => new()
+            {
+                Type = ResponsePlanType.Direct,
+                Source = "planner-unavailable",
+                SourceContract = "Clarification",
+                Intent = InterviewIntent.Ambiguous,
+                AnswerMode = "clarification"
+            };
+
+            public static ResponsePlan FromBackendPlan(InterviewAnswerPlanDto plan)
+            {
+                var type = plan.EntityType?.ToLowerInvariant() switch
+                {
+                    "profile" => ResponsePlanType.Profile,
+                    "project" => ResponsePlanType.Project,
+                    "experience" => ResponsePlanType.Experience,
+                    _ when plan.Retrieve => ResponsePlanType.Retrieve,
+                    _ => ResponsePlanType.Direct
+                };
+                var intent = plan.Intent?.ToLowerInvariant() switch
+                {
+                    "personal" => InterviewIntent.Personal,
+                    "general" => InterviewIntent.General,
+                    "hybrid" => InterviewIntent.Hybrid,
+                    _ => InterviewIntent.Ambiguous
+                };
+                return new ResponsePlan
+                {
+                    Type = type,
+                    KnowledgeQuery = plan.RetrievalQuery ?? string.Empty,
+                    Target = plan.EntityId ?? string.Empty,
+                    Source = "backend-ai",
+                    SourceContract = plan.Source ?? "Clarification",
+                    Intent = intent,
+                    AnswerMode = plan.AnswerMode ?? "clarification",
+                    AllowCode = plan.AllowCode,
+                    ShouldRetrieve = plan.Retrieve,
+                    AnswerOutline = plan.AnswerOutline ?? Array.Empty<string>(),
+                    Confidence = plan.Confidence,
+                    PreferredDocumentIds = plan.PreferredDocumentIds ?? Array.Empty<string>(),
+                    ClarificationQuestion = plan.ClarificationQuestion ?? string.Empty,
+                    ClarificationOptions = (plan.ClarificationOptions ?? Array.Empty<InterviewClarificationOptionDto>())
+                        .Where(option => !string.IsNullOrWhiteSpace(option.Label) && !string.IsNullOrWhiteSpace(option.Question))
+                        .Select(option => new ClarificationOption(option.Label, option.Question))
+                        .ToArray(),
+                    Scope = RetrievalScope.Global
+                };
+            }
 
             public static ResponsePlan Direct(string directAnswer, double confidence)
             {
@@ -2478,6 +2659,46 @@ namespace SecureOverlay.Services
                 };
             }
         }
+
+        private sealed class AnswerResolution
+        {
+            public string Source { get; init; } = "Universal";
+            public InterviewIntent Intent { get; init; }
+            public string Decision { get; init; } = string.Empty;
+            public string AnswerMode { get; init; } = string.Empty;
+            public bool AllowCode { get; init; }
+            public IReadOnlyList<string> AnswerOutline { get; init; } = Array.Empty<string>();
+
+            public string Instruction => (!AnswerOutline.Any()
+                    ? string.Empty
+                    : "Interview Answer Plan:\n" + string.Join("\n", AnswerOutline.Select(item => "- " + item)) + "\n") + (AnswerMode == "system_design"
+                    ? "System Design Response Mode: Lead with requirements and assumptions, then APIs, components, data model, request flow, scaling, reliability, and tradeoffs. Keep it concise and spoken. " + (AllowCode ? "Code is allowed because the interviewer explicitly requested it.\n" : "Do not provide implementation code unless explicitly requested.\n")
+                    : string.Empty) + (Source switch
+            {
+                "KB" => "Source: KB. Candidate-specific claims must be supported by Interview Grounding or Relevant Local Context. Do not invent projects, roles, outcomes, metrics, employers, or technologies.",
+                "KB + Universal" => "Source: KB + Universal. Use Interview Grounding or Relevant Local Context for candidate-specific facts. Use general knowledge only to explain concepts and tradeoffs; do not turn it into a claim about the candidate.",
+                "Template" => "Source: Template. There is no verified candidate evidence for this personal question. Provide a concise interview-ready template with placeholders or conditional wording, and do not present it as the candidate's real experience.",
+                "Clarification" => "Source: Clarification. Ask one concise question to establish the intended scope. Do not guess or invent a personal answer.",
+                _ => "Source: Universal. Answer the general interview question directly. Do not claim the candidate has used a project, employer, technology, metric, or achievement unless it appears in grounded context."
+            });
+
+            public static AnswerResolution FromBackendPlan(string source, InterviewIntent intent, string answerMode, bool allowCode, IReadOnlyList<string> answerOutline, string decision)
+                => new() { Source = source, Intent = intent, AnswerMode = answerMode, AllowCode = allowCode, AnswerOutline = answerOutline, Decision = decision };
+
+            public static AnswerResolution KnowledgeBase(InterviewIntent intent, string decision)
+                => new() { Source = "KB", Intent = intent, Decision = decision };
+
+            public static AnswerResolution Universal(InterviewIntent intent, string decision)
+                => new() { Source = "Universal", Intent = intent, Decision = decision };
+
+            public static AnswerResolution Mixed(InterviewIntent intent, string decision)
+                => new() { Source = "KB + Universal", Intent = intent, Decision = decision };
+
+            public static AnswerResolution Template(InterviewIntent intent, string decision)
+                => new() { Source = "Template", Intent = intent, Decision = decision };
+        }
+
+        public sealed record ClarificationOption(string Label, string Question);
 
         private sealed class CachedInterviewContextPack
         {
@@ -3157,6 +3378,8 @@ namespace SecureOverlay.Services
             _resumeSummarized = false;
             _jobDescriptionSummarized = false;
             _structuredKnowledgeContext = string.Empty;
+            _hasStructuredCandidateEvidence = false;
+            _activeAnswerResolution = AnswerResolution.Universal(InterviewIntent.General, "conversation-cleared");
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
             _activeProjectCardId = string.Empty;
@@ -3194,6 +3417,8 @@ namespace SecureOverlay.Services
             // Clear conversation history (but keep summarization flags)
             _fullConversation.Clear();
             _structuredKnowledgeContext = string.Empty;
+            _hasStructuredCandidateEvidence = false;
+            _activeAnswerResolution = AnswerResolution.Universal(InterviewIntent.General, "new-topic");
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
             _activeProjectCardId = string.Empty;
@@ -3295,6 +3520,8 @@ namespace SecureOverlay.Services
             // IMPORTANT: Clear current conversation first
             _fullConversation.Clear();
             _structuredKnowledgeContext = string.Empty;
+            _hasStructuredCandidateEvidence = false;
+            _activeAnswerResolution = AnswerResolution.Universal(InterviewIntent.General, "conversation-imported");
             _retrievedKnowledgeSnippets = Array.Empty<RetrievedContextSnippet>();
             _lastRetrievedDocumentIds = Array.Empty<string>();
             _activeProjectCardId = string.Empty;

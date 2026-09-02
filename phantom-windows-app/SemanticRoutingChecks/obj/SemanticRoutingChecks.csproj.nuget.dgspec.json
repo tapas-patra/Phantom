@@ -1,0 +1,195 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj": {}
+  },
+  "projects": {
+    "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj",
+        "projectName": "svchost-shell",
+        "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj",
+        "packagesPath": "/Users/tapaskumarpatra/.nuget/packages/",
+        "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/tapaskumarpatra/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows": {
+            "framework": "net8.0-windows7.0",
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows": {
+          "framework": "net8.0-windows7.0",
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Markdig.Wpf": {
+              "target": "Package",
+              "version": "[0.5.0.1, )"
+            },
+            "Microsoft.Data.Sqlite": {
+              "target": "Package",
+              "version": "[8.0.8, )"
+            },
+            "Microsoft.Web.WebView2": {
+              "target": "Package",
+              "version": "[1.0.2739.15, )"
+            },
+            "Newtonsoft.Json": {
+              "target": "Package",
+              "version": "[13.0.3, )"
+            },
+            "System.Drawing.Common": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.osx-x64",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            },
+            "Microsoft.WindowsDesktop.App": {
+              "privateAssets": "none"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/x64/sdk/10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
+        "projectName": "SemanticRoutingChecks",
+        "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
+        "packagesPath": "/Users/tapaskumarpatra/.nuget/packages/",
+        "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/tapaskumarpatra/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows": {
+            "framework": "net8.0-windows7.0",
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj": {
+                "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SecureOverlay.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows": {
+          "framework": "net8.0-windows7.0",
+          "targetAlias": "net8.0-windows",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.osx-x64",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/x64/sdk/10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

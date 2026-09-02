@@ -46,6 +46,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="SemanticRoutingChecks/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="assets\brand\phantom-logo.ico">
       <Link>phantom-logo.ico</Link>
     </Resource>

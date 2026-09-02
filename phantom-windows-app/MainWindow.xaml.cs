@@ -225,6 +225,7 @@ namespace SecureOverlay
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
+            UpdateDebugPanelAccess();
             _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
             _ = Task.Run(() =>
             {
@@ -482,6 +483,18 @@ namespace SecureOverlay
         {
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
+            UpdateDebugPanelAccess();
+        }
+
+        private void UpdateDebugPanelAccess()
+        {
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures == true)
+            {
+                return;
+            }
+
+            DebugPanel.Visibility = Visibility.Collapsed;
+            _debugLogger.SetUiCollectionEnabled(false);
         }
 
         private void ApplyAccountTierChrome()
@@ -1539,7 +1552,20 @@ namespace SecureOverlay
 
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
                     },
-                    () => !IsByoAccount() && HasPremiumManagedEntitlement());
+                    () => !IsByoAccount() && HasPremiumManagedEntitlement(),
+                    async (request, cancellationToken) =>
+                    {
+                        var session = _authSessionRepository.Load();
+                        if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+                        {
+                            throw new InvalidOperationException("Account validation is required for interview planning.");
+                        }
+
+                        return await _hostedAccountClient.GetInterviewAnswerPlanAsync(
+                            session.AccessToken,
+                            request,
+                            cancellationToken);
+                    });
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
@@ -1762,6 +1788,8 @@ namespace SecureOverlay
 
         private async Task SendMessage(bool captureQuestion = true)
         {
+            ClarificationOptionsPanel.Children.Clear();
+            ClarificationOptionsPanel.Visibility = Visibility.Collapsed;
             if (IsInterviewStartBlocked() && !CanContinueRestrictedInterview())
             {
                 Log.WriteLine($"Interview start blocked by launch context: {_launchContext.Title}");
@@ -2144,6 +2172,7 @@ namespace SecureOverlay
                     await MarkdownHelper.FinalizeAssistantMessageAsync(ChatWebView, _streamMessageId!, finalMarkdown);
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
+                    ShowClarificationOptions(_conversationManager.PendingClarificationOptions);
                     RegenerateButton.IsEnabled = true;
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
@@ -2421,11 +2450,13 @@ namespace SecureOverlay
 
             if (string.IsNullOrWhiteSpace(diagramId) || string.IsNullOrWhiteSpace(source))
             {
+                Log.WriteLine("mermaid:correction:ignored reason=invalid_payload");
                 return;
             }
 
             if (_isProcessingRequest || _mermaidCorrectionInFlight || _currentAI == null || !_currentAI.IsConfigured())
             {
+                Log.WriteLine($"mermaid:correction:blocked processing={_isProcessingRequest} in_flight={_mermaidCorrectionInFlight} configured={_currentAI?.IsConfigured() == true}");
                 await MarkdownHelper.SetMermaidCorrectionStateAsync(
                     ChatWebView,
                     diagramId,
@@ -2435,6 +2466,7 @@ namespace SecureOverlay
             }
 
             _mermaidCorrectionInFlight = true;
+            Log.WriteLine($"mermaid:correction:start id={diagramId} chars={source.Length}");
             try
             {
                 var correctionMessages = new List<ConversationMessage>
@@ -2464,12 +2496,13 @@ namespace SecureOverlay
                 }
 
                 await MarkdownHelper.ReplaceChatMermaidAsync(ChatWebView, diagramId, corrected);
+                Log.WriteLine($"mermaid:correction:success id={diagramId} chars={corrected.Length} changed={!string.Equals(source.Trim(), corrected.Trim(), StringComparison.Ordinal)}");
                 StatusText.Text = "✓ Diagram syntax corrected";
                 StatusIndicator.Fill = Brushes.LightGreen;
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Mermaid correction failed: {ex.Message}");
+                Log.WriteLine($"mermaid:correction:failed id={diagramId} error={ex.Message}");
                 await MarkdownHelper.SetMermaidCorrectionStateAsync(ChatWebView, diagramId, false, "Try correction again");
                 StatusText.Text = "⚠️ Diagram correction failed";
                 StatusIndicator.Fill = Brushes.Orange;
@@ -2611,6 +2644,35 @@ namespace SecureOverlay
         {
             Log.WriteLine("Send button clicked");
             await SendMessage();
+        }
+
+        private void ShowClarificationOptions(IReadOnlyList<ConversationManager.ClarificationOption> options)
+        {
+            ClarificationOptionsPanel.Children.Clear();
+            if (options.Count == 0)
+            {
+                ClarificationOptionsPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            foreach (var option in options)
+            {
+                var button = new Button
+                {
+                    Content = option.Label,
+                    Tag = option.Question,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    Padding = new Thickness(12, 6, 12, 6),
+                    Style = (Style)FindResource("ButtonStyle")
+                };
+                button.Click += async (_, _) =>
+                {
+                    InputTextBox.Text = (string)button.Tag;
+                    await SendMessage();
+                };
+                ClarificationOptionsPanel.Children.Add(button);
+            }
+            ClarificationOptionsPanel.Visibility = Visibility.Visible;
         }
 
         private async void RegenerateButton_Click(object sender, RoutedEventArgs e)
@@ -3214,6 +3276,14 @@ namespace SecureOverlay
 
         private void DebugButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures != true)
+            {
+                Log.WriteLine("Debug panel access denied: desktop power features are disabled.");
+                DebugPanel.Visibility = Visibility.Collapsed;
+                _debugLogger.SetUiCollectionEnabled(false);
+                return;
+            }
+
             Log.WriteLine("─────────────────────────────────────────────────────");
             Log.WriteLine("Debug button clicked");
             

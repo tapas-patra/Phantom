@@ -198,13 +198,6 @@ enum PhantomMain {
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")
             precondition(MermaidDiagram.html("flowchart TD\nA[\"quoted\"] --> B", hasLocalRuntime: true).contains("mermaid.min.js"))
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
-            let ragRouter = ConversationManager()
-            precondition(ragRouter.shouldRetrieveKnowledge(for: "What did you personally own?"))
-            precondition(ragRouter.shouldRetrieveKnowledge(for: "Why should we hire you?"))
-            precondition(!ragRouter.shouldRetrieveKnowledge(for: "What is dependency injection?"))
-            precondition(!ragRouter.shouldSearchKnowledge(for: "What is my favorite color?", preferredDocumentIds: []))
-            precondition(!ragRouter.shouldSearchKnowledge(for: "Tell me about the Atlas project", preferredDocumentIds: []))
-            precondition(ragRouter.shouldSearchKnowledge(for: "What is my recent project?", preferredDocumentIds: ["resume-1"]))
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
             precondition(PhantomStore.mergeTranscript(current: "Question: ", lastRendered: "Question: ", previous: "", next: "Tell me", prefix: "Question: ", preservingEdits: false).text == "Question: Tell me")
             precondition(SSEParser.parse("data: {\"delta\":\"hello\"}") == .delta("hello"))
@@ -244,13 +237,39 @@ enum PhantomMain {
                 modelId: "gpt-4",
                 knowledgeEnabled: false,
                 knowledgeBase: nil,
-                knowledgeSnippets: []
+                knowledgeSnippets: [],
+                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "technical_concept", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "next", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
             )
             precondition(built.first?.role == "system" && built.count == 15)
+            let designBuilt = ConversationManager().requestMessages(
+                question: "Build a link shortener",
+                interviewType: InterviewPrompt.types[0],
+                resume: "",
+                jobDescription: "",
+                conversation: [],
+                modelId: "gpt-4",
+                knowledgeEnabled: false,
+                knowledgeBase: nil,
+                knowledgeSnippets: [],
+                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "system_design", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Build a link shortener", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
+            )
+            precondition(designBuilt.first?.content.contains("System Design Response Mode") == true)
+            let missingPersonalEvidence = ConversationManager()
+            _ = missingPersonalEvidence.requestMessages(
+                question: "Tell me about yourself",
+                interviewType: InterviewPrompt.types[0],
+                resume: "",
+                jobDescription: "",
+                conversation: [],
+                modelId: "gpt-4",
+                knowledgeEnabled: true,
+                knowledgeBase: nil,
+                knowledgeSnippets: [],
+                plan: InterviewAnswerPlan(intent: "personal", source: "Template", entityType: "none", entityId: "", retrieve: false, answerMode: "profile", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Tell me about yourself", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
+            )
+            precondition(missingPersonalEvidence.lastAnswerResolution.source == .template)
             let parsed = ConversationManager().finalizeAssistantResponse("Answer\nSUMMARY: concise")
             precondition(parsed.content == "Answer" && parsed.summary == "concise")
-            let local = ConversationManager().localKnowledgeSnippets(question: "Swift concurrency", resume: "Built Swift concurrency services", jobDescription: "", preferredDocumentIds: [])
-            precondition(local.first?.documentId == "local-resume")
             print("Phantom self-check passed.")
             return
         }

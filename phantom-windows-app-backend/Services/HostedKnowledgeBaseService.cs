@@ -34,6 +34,7 @@ public sealed class HostedKnowledgeBaseService
     private const int MinSearchCandidateCount = 12;
     private const int MaxSearchCandidateCount = 36;
     private const int MaxSearchCacheEntries = 256;
+    private static readonly TimeSpan QueryEmbeddingDeadline = TimeSpan.FromMilliseconds(600);
     private const double MinSnippetScore = 0.18d;
     private const double MinSemanticSimilarity = 0.45d;
     private const int MaxSnippetLength = 480;
@@ -1015,9 +1016,11 @@ public sealed class HostedKnowledgeBaseService
         string? queryVectorLiteral = null;
         if (_embeddingService.IsConfigured)
         {
+            using var embeddingDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            embeddingDeadline.CancelAfter(QueryEmbeddingDeadline);
             try
             {
-                var queryVector = await _embeddingService.GenerateQueryEmbeddingAsync(normalizedQuery, cancellationToken);
+                var queryVector = await _embeddingService.GenerateQueryEmbeddingAsync(normalizedQuery, embeddingDeadline.Token);
                 if (queryVector.Length == profile.Dimensions)
                 {
                     queryVectorLiteral = ToVectorLiteral(queryVector);
@@ -1034,6 +1037,14 @@ public sealed class HostedKnowledgeBaseService
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation(
+                    "Hosted KB query embedding exceeded its {DeadlineMs}ms budget for knowledgeBaseId={KnowledgeBaseId}; using lexical search.",
+                    QueryEmbeddingDeadline.TotalMilliseconds,
+                    knowledgeBase.KnowledgeBaseId);
+                queryVectorLiteral = null;
             }
             catch
             {

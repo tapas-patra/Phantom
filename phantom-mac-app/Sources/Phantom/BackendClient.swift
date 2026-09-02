@@ -164,6 +164,38 @@ struct ManagedCatalog: Codable {
     let providers: [ManagedProvider]
 }
 
+struct InterviewAnswerPlan: Codable {
+    let intent: String
+    let source: String
+    let entityType: String
+    let entityId: String
+    let retrieve: Bool
+    let answerMode: String
+    let answerOutline: [String]
+    let allowCode: Bool
+    let confidence: Double
+    let retrievalQuery: String
+    let preferredDocumentIds: [String]
+    let clarificationQuestion: String?
+    let clarificationOptions: [ClarificationOption]?
+
+    static let clarification = InterviewAnswerPlan(
+        intent: "ambiguous",
+        source: "Clarification",
+        entityType: "none",
+        entityId: "",
+        retrieve: false,
+        answerMode: "clarification",
+        answerOutline: ["Ask one concise clarifying question."],
+        allowCode: false,
+        confidence: 0,
+        retrievalQuery: "",
+        preferredDocumentIds: [],
+        clarificationQuestion: nil,
+        clarificationOptions: nil
+    )
+}
+
 struct ManagedProvider: Codable, Identifiable, Hashable {
     let providerId: String
     let label: String
@@ -331,6 +363,11 @@ private struct KnowledgeSearchResult: Decodable {
     let snippets: [KnowledgeSnippet]
 }
 
+struct ClarificationOption: Codable, Equatable {
+    let label: String
+    let question: String
+}
+
 struct ChatMessage: Codable, Identifiable, Equatable {
     let id: UUID
     let role: String
@@ -339,8 +376,11 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var createdAtUtc: Date?
     var estimatedTokens: Int?
     var hasCode: Bool?
+    var answerSource: String?
+    var interviewIntent: String?
+    var clarificationOptions: [ClarificationOption]?
 
-    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil) {
+    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil, clarificationOptions: [ClarificationOption]? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -348,6 +388,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.createdAtUtc = createdAtUtc
         self.estimatedTokens = estimatedTokens ?? max(1, content.count / 4)
         self.hasCode = hasCode ?? content.contains("```")
+        self.answerSource = answerSource
+        self.interviewIntent = interviewIntent
+        self.clarificationOptions = clarificationOptions
     }
 }
 
@@ -506,10 +549,48 @@ struct BackendClient {
             URLQueryItem(name: "preferredDocumentIds", value: preferredDocumentIds.prefix(8).joined(separator: ","))
         ]
         var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 0.65
+        request.timeoutInterval = 1.5
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let result: KnowledgeSearchResult = try await send(request)
         return result.snippets
+    }
+
+    func interviewPlan(
+        accessToken: String,
+        requestId: String,
+        provider: String,
+        model: String,
+        allowPaidSessionExtension: Bool,
+        question: String,
+        activeEntityId: String,
+        recentMessages: [ChatMessage]
+    ) async throws -> InterviewAnswerPlan {
+        struct Body: Encodable {
+            struct Message: Encodable {
+                let role: String
+                let content: String
+            }
+            let requestId: String
+            let provider: String
+            let model: String
+            let allowPaidSessionExtension: Bool
+            let question: String
+            let activeEntityId: String
+            let recentMessages: [Message]
+        }
+        return try await post(
+            "/api/desktop/interview/plan",
+            body: Body(
+                requestId: requestId,
+                provider: provider,
+                model: model,
+                allowPaidSessionExtension: allowPaidSessionExtension,
+                question: question,
+                activeEntityId: activeEntityId,
+                recentMessages: recentMessages.suffix(6).map { Body.Message(role: $0.role, content: $0.content) }
+            ),
+            bearer: accessToken
+        )
     }
 
     func knowledgeBase(accessToken: String) async throws -> StartupSnapshot.KnowledgeBase {

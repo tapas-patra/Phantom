@@ -229,7 +229,7 @@ private struct ChatView: View {
                     }
 
                     ForEach(store.messages) { message in
-                        MessageBubble(message: message, onCorrectMermaid: store.correctMermaidSyntax).id(message.id)
+                        MessageBubble(message: message, onCorrectMermaid: store.correctMermaidSyntax, onChooseClarification: store.chooseClarification).id(message.id)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -620,6 +620,7 @@ private struct SettingsView: View {
                         ReadOnlyRow(label: "Quit Phantom", value: "F14")
                     }
 
+                    if store.canViewDiagnostics {
                     SettingsSection(title: "Diagnostics", systemImage: "stethoscope") {
                         HStack {
                             Button("Refresh", action: store.refreshDiagnostics)
@@ -629,6 +630,7 @@ private struct SettingsView: View {
                         ScrollView {
                             Text(store.diagnosticsText).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         }.frame(minHeight: 140, maxHeight: 240)
+                    }
                     }
                 }
                 .padding(24)
@@ -714,6 +716,7 @@ private struct ScreenshotPreview: View {
 private struct MessageBubble: View {
     let message: ChatMessage
     let onCorrectMermaid: (String) async throws -> String
+    let onChooseClarification: (ClarificationOption, UUID) -> Void
 
     var body: some View {
         HStack {
@@ -724,6 +727,14 @@ private struct MessageBubble: View {
                     .foregroundColor(message.role == "assistant" ? PhantomColors.blue : PhantomColors.green)
                 MarkdownMessageText(content: message.content, onCorrectMermaid: onCorrectMermaid)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let options = message.clarificationOptions, !options.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(options, id: \.label) { option in
+                            Button(option.label) { onChooseClarification(option, message.id) }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                }
             }
             .padding(14)
             .background(message.role == "assistant" ? PhantomColors.graphite : PhantomColors.blue.opacity(0.16))
@@ -739,6 +750,7 @@ private struct MarkdownMessageText: View {
     let content: String
     let onCorrectMermaid: (String) async throws -> String
     @State private var correctedDiagram: String?
+    @State private var diagramReloadID = UUID()
     @State private var renderFailed = false
     @State private var isCorrecting = false
     @State private var correctionError = ""
@@ -753,7 +765,7 @@ private struct MarkdownMessageText: View {
                         .textSelection(.enabled)
                         .foregroundColor(PhantomColors.frost)
                 }
-                MermaidDiagram(source: correctedDiagram ?? mermaid.diagram) { renderFailed = $0 }
+                MermaidDiagram(source: correctedDiagram ?? mermaid.diagram, reloadID: diagramReloadID) { renderFailed = $0 }
                     .frame(minHeight: 220, maxHeight: 420)
                 if renderFailed {
                     HStack {
@@ -763,9 +775,11 @@ private struct MarkdownMessageText: View {
                             Task {
                                 do {
                                     correctedDiagram = try await onCorrectMermaid(correctedDiagram ?? mermaid.diagram)
+                                    diagramReloadID = UUID()
                                     renderFailed = false
                                 } catch {
                                     correctionError = error.localizedDescription
+                                    Diagnostics.log("mermaid:correction:failed error=\(error.localizedDescription)")
                                 }
                                 isCorrecting = false
                             }

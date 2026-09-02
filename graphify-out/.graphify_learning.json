@@ -1,0 +1,85 @@
+{
+  "generated_at": "2026-09-02T04:27:02.490359+00:00",
+  "nodes": {
+    "phantom_windows_app_backend_services_hostedknowledgebaseservice_phantom_windowsapp_backend_services_hostedknowledgebaseservice": {
+      "code_fingerprint": "46806e91fad51544cb996f3c14ce0159457b1207af4c8f4b7605296054cb0f6c",
+      "label": "HostedKnowledgeBaseService",
+      "last": "2026-09-02T03:05:57.172959+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-02T03:05:57.172959+00:00",
+          "outcome": "useful",
+          "q": "Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo"
+        }
+      ],
+      "score": 0.998699773,
+      "source_file": "phantom-windows-app-backend/Services/HostedKnowledgeBaseService.cs",
+      "status": "tentative",
+      "uses": 1
+    },
+    "phantom_windows_app_backend_services_knowledgebaseembeddingservice_phantom_windowsapp_backend_services_knowledgebaseembeddingservice": {
+      "code_fingerprint": "9609a3ca2673bf3f2c24327231f2f01b6c2cdd479dadd927a00a9af8ba62b652",
+      "label": "KnowledgeBaseEmbeddingService",
+      "last": "2026-09-02T03:35:30.297903+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-02T03:35:30.297903+00:00",
+          "outcome": "useful",
+          "q": "have you reviewed the KB part how it's designed and do we need any improvement on that side to accomodate this?"
+        },
+        {
+          "date": "2026-09-02T03:29:31.355168+00:00",
+          "outcome": "useful",
+          "q": "don't care what current system has. suggest what would be best for the app. draw me the full architecture and explain how we can achieve the desired outcome we want"
+        }
+      ],
+      "score": 1.998250965,
+      "source_file": "phantom-windows-app-backend/Services/KnowledgeBaseEmbeddingService.cs",
+      "status": "preferred",
+      "uses": 2
+    },
+    "phantom_windows_app_domain_entities_retrievedcontextsnippet_secureoverlay_domain_entities_retrievedcontextsnippet": {
+      "code_fingerprint": "7e126467f245b71038d3e259986ec252c867f744038968813b1658717f9b0ecb",
+      "label": "RetrievedContextSnippet",
+      "last": "2026-09-02T03:35:30.297903+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-02T03:35:30.297903+00:00",
+          "outcome": "useful",
+          "q": "have you reviewed the KB part how it's designed and do we need any improvement on that side to accomodate this?"
+        },
+        {
+          "date": "2026-09-02T03:29:31.355168+00:00",
+          "outcome": "useful",
+          "q": "don't care what current system has. suggest what would be best for the app. draw me the full architecture and explain how we can achieve the desired outcome we want"
+        },
+        {
+          "date": "2026-09-02T03:05:57.172959+00:00",
+          "outcome": "useful",
+          "q": "Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo"
+        }
+      ],
+      "score": 2.996950738,
+      "source_file": "phantom-windows-app/Domain/Entities/RetrievedContextSnippet.cs",
+      "status": "preferred",
+      "uses": 3
+    },
+    "phantom_windows_app_infrastructure_context_hostedknowledgeretrievalservice_secureoverlay_infrastructure_context_hostedknowledgeretrievalservice": {
+      "code_fingerprint": "b8d16f72bd99678c784a6a68bfbd3e1bc5c16fc20754da96726ffe26153ea020",
+      "label": "HostedKnowledgeRetrievalService",
+      "last": "2026-09-02T03:05:57.172959+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-02T03:05:57.172959+00:00",
+          "outcome": "useful",
+          "q": "Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo"
+        }
+      ],
+      "score": 0.998699773,
+      "source_file": "phantom-windows-app/Infrastructure/Context/HostedKnowledgeRetrievalService.cs",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

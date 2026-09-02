@@ -218,8 +218,8 @@ LIMIT 1;";
         return new
         {
             canDownload = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
-            installerLabel = "Phantom Desktop for Windows",
-            installerVersion = "0.9.0-preview",
+            installerLabel = "Phantom Desktop for Windows and macOS",
+            installerVersion = "Latest automated build",
             installerUrl = "/download",
             releaseChannel = hasCredits ? "Hosted Preview" : "Verification Pending"
         };

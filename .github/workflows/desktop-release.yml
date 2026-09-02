@@ -1,0 +1,73 @@
+name: Desktop release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "phantom-windows-app/**"
+      - "phantom-mac-app/**"
+      - ".github/workflows/desktop-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build standalone Windows app
+        shell: pwsh
+        run: >-
+          dotnet publish phantom-windows-app/SecureOverlay.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o release/windows
+      - name: Package Windows app
+        shell: pwsh
+        run: Compress-Archive -Path release/windows/* -DestinationPath Phantom-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: Phantom-Windows-x64.zip
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS app
+        run: ./phantom-mac-app/Scripts/build-app.sh
+      - name: Package macOS app
+        run: ditto -c -k --sequesterRsrc --keepParent phantom-mac-app/dist/Phantom.app Phantom-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: Phantom-macOS.zip
+
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish rolling desktop release
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
+          RELEASE_REPOSITORY: tapas-patra/phantom-release-repo
+        run: |
+          gh release view desktop-latest --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create desktop-latest --repo "$RELEASE_REPOSITORY" --title "Phantom Desktop (latest)" --notes "Automated unsigned desktop build from $GITHUB_SHA."
+          gh release upload desktop-latest release/* --repo "$RELEASE_REPOSITORY" --clobber
+          gh release edit desktop-latest --repo "$RELEASE_REPOSITORY" --notes "Automated unsigned desktop build from $GITHUB_SHA."

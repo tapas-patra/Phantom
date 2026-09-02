@@ -3,10 +3,12 @@ import WebKit
 
 struct MermaidDiagram: NSViewRepresentable {
     let source: String
+    let reloadID: UUID
     let onRenderFailed: (Bool) -> Void
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
         var source = ""
+        var reloadID = UUID()
         var onRenderFailed: (Bool) -> Void
 
         init(onRenderFailed: @escaping (Bool) -> Void) {
@@ -33,7 +35,7 @@ struct MermaidDiagram: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.onRenderFailed = onRenderFailed
-        guard context.coordinator.source != source else { return }
+        guard context.coordinator.source != source || context.coordinator.reloadID != reloadID else { return }
         load(source, in: view, coordinator: context.coordinator)
     }
 
@@ -43,6 +45,7 @@ struct MermaidDiagram: NSViewRepresentable {
 
     private func load(_ source: String, in view: WKWebView, coordinator: Coordinator) {
         coordinator.source = source
+        coordinator.reloadID = reloadID
         let script = Bundle.main.url(forResource: "mermaid.min", withExtension: "js")
         view.loadHTMLString(Self.html(source, hasLocalRuntime: script != nil), baseURL: script?.deletingLastPathComponent())
     }

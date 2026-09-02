@@ -65,6 +65,7 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
+builder.Services.AddSingleton<InterviewAnswerPlanningService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
@@ -779,6 +780,17 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/interview/plan", async (
+    HttpContext httpContext,
+    InterviewAnswerPlanRequestDto request,
+    ManagedAiService managedAi,
+    InterviewAnswerPlanningService planner,
+    CancellationToken cancellationToken) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await planner.PlanAsync(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb", (

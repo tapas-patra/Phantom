@@ -210,6 +210,32 @@ public sealed class ManagedAiService
                 : $"Managed AI request failed: {lastError.Message}");
     }
 
+    public async Task<string> GenerateManagedResponseAsync(
+        DesktopAccountRecord account,
+        string provider,
+        string model,
+        bool allowPaidSessionExtension,
+        IReadOnlyList<DesktopAiChatMessageDto> messages,
+        CancellationToken cancellationToken,
+        int maxOutputTokens = 64)
+    {
+        EnsureManagedAccess(account, allowPaidSessionExtension);
+        if (string.IsNullOrWhiteSpace(provider) || !ManagedAiCatalog.IsAllowedProvider(provider))
+        {
+            throw new BackendValidationException("Unsupported managed provider.");
+        }
+        if (string.IsNullOrWhiteSpace(model) || !_catalogService.IsAllowedModel(provider, model))
+        {
+            throw new BackendValidationException("Unsupported managed model.");
+        }
+        if (messages == null || messages.Count == 0)
+        {
+            throw new BackendValidationException("At least one chat message is required.");
+        }
+
+        return await GenerateProviderResponseWithFallbackAsync(provider, model, messages, null, cancellationToken, maxOutputTokens);
+    }
+
     private void LogTiming(DesktopAiChatRequestDto request, string milestone, Stopwatch stopwatch)
     {
         _logger.LogInformation(
@@ -339,7 +365,8 @@ public sealed class ManagedAiService
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
         string? imageBase64,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxOutputTokens = 64)
     {
         var providerCredentials = GetEnabledProviderCredentials(providerId);
         Exception? lastError = null;
@@ -355,7 +382,8 @@ public sealed class ManagedAiService
                     messages,
                     imageBase64,
                     apiKey,
-                    cancellationToken);
+                    cancellationToken,
+                    maxOutputTokens);
             }
             catch (OperationCanceledException)
             {
@@ -433,7 +461,8 @@ public sealed class ManagedAiService
         IReadOnlyList<DesktopAiChatMessageDto> messages,
         string? imageBase64,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxOutputTokens)
     {
         return providerId switch
         {
@@ -442,27 +471,31 @@ public sealed class ManagedAiService
                 BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
-                cancellationToken),
+                cancellationToken,
+                maxOutputTokens),
             ManagedAiCatalog.Mistral => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.mistral.ai/v1/chat/completions",
                 BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: true),
                 modelId,
                 apiKey,
-                cancellationToken),
+                cancellationToken,
+                maxOutputTokens),
             ManagedAiCatalog.Groq => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.groq.com/openai/v1/chat/completions",
                 BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
-                cancellationToken),
-            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken),
-            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken),
+                cancellationToken,
+                maxOutputTokens),
+            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken, maxOutputTokens),
+            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken, maxOutputTokens),
             ManagedAiCatalog.Nvidia => await GenerateOpenAiCompatibleResponseAsync(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
-                cancellationToken),
+                cancellationToken,
+                maxOutputTokens),
             _ => throw new BackendValidationException("Unsupported managed provider.")
         };
     }
@@ -542,13 +575,14 @@ public sealed class ManagedAiService
         object[] messages,
         string model,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxOutputTokens)
     {
         var payload = JsonSerializer.Serialize(new
         {
             model,
             messages,
-            max_tokens = 64,
+            max_tokens = maxOutputTokens,
             stream = false
         });
 
@@ -655,7 +689,8 @@ public sealed class ManagedAiService
         IReadOnlyList<DesktopAiChatMessageDto> messages,
         string? imageBase64,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxOutputTokens)
     {
         var systemPrompt = messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
         var filteredMessages = messages
@@ -665,7 +700,7 @@ public sealed class ManagedAiService
         var payload = JsonSerializer.Serialize(new
         {
             model = modelId,
-            max_tokens = 64,
+            max_tokens = maxOutputTokens,
             system = systemPrompt,
             messages = BuildClaudeMessages(filteredMessages, imageBase64)
         });
@@ -772,14 +807,15 @@ public sealed class ManagedAiService
         IReadOnlyList<DesktopAiChatMessageDto> messages,
         string? imageBase64,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxOutputTokens)
     {
         var payload = JsonSerializer.Serialize(new
         {
             contents = BuildGeminiContents(messages, imageBase64),
             generationConfig = new
             {
-                maxOutputTokens = 64,
+                maxOutputTokens,
                 temperature = 0.2
             }
         });

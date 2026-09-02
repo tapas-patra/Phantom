@@ -1552,7 +1552,20 @@ namespace SecureOverlay
 
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
                     },
-                    () => !IsByoAccount() && HasPremiumManagedEntitlement());
+                    () => !IsByoAccount() && HasPremiumManagedEntitlement(),
+                    async (request, cancellationToken) =>
+                    {
+                        var session = _authSessionRepository.Load();
+                        if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+                        {
+                            throw new InvalidOperationException("Account validation is required for interview planning.");
+                        }
+
+                        return await _hostedAccountClient.GetInterviewAnswerPlanAsync(
+                            session.AccessToken,
+                            request,
+                            cancellationToken);
+                    });
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;

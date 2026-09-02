@@ -11,6 +11,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         StartupAccountCheckResultDto GetStartupAccountCheck(AuthCallbackResultDto callbackResult);
         ManagedAiCatalogDto GetManagedCatalog(string accessToken);
         Task<ManagedAiCatalogDto> GetManagedCatalogAsync(string accessToken, CancellationToken cancellationToken = default);
+        Task<InterviewAnswerPlanDto> GetInterviewAnswerPlanAsync(string accessToken, InterviewAnswerPlanRequestDto request, CancellationToken cancellationToken = default);
         HostedKnowledgeBaseSummaryDto GetKnowledgeBase(string accessToken);
         HostedKnowledgeBaseSearchResultDto SearchKnowledgeBase(
             string accessToken,

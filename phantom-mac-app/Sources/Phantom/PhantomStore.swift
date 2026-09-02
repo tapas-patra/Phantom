@@ -871,45 +871,43 @@ final class PhantomStore: ObservableObject {
                 } else if isPremiumAccount {
                     Diagnostics.log("rag:kb_refresh:skipped reason=cached_ready")
                 }
+                var plan = InterviewAnswerPlan.clarification
+                if usesBYO {
+                    Diagnostics.log("planner:skipped reason=byo_lane")
+                } else {
+                    do {
+                        plan = try await backend.interviewPlan(
+                            accessToken: session.accessToken,
+                            requestId: requestId,
+                            provider: provider,
+                            model: model,
+                            allowPaidSessionExtension: extensionEnabled,
+                            question: text,
+                            activeEntityId: conversationManager.activeEntityId,
+                            recentMessages: Array(messages.dropLast())
+                        )
+                        Diagnostics.log("planner:resolved intent=\(plan.intent) entity=\(plan.entityType):\(plan.entityId) retrieve=\(plan.retrieve) mode=\(plan.answerMode) confidence=\(plan.confidence)")
+                    } catch {
+                        Diagnostics.log("planner:failed error=\(error.localizedDescription)")
+                    }
+                }
                 var snippets: [KnowledgeSnippet] = []
-                let semanticIntent = conversationManager.semanticIntent(for: text, knowledgeBase: hostedKnowledgeBase)
-                let preferredDocuments = conversationManager.preferredDocumentIds(
-                    for: text,
-                    intent: semanticIntent,
-                    knowledgeBase: hostedKnowledgeBase
-                )
-                let shouldSearchKnowledge = conversationManager.shouldSearchKnowledge(
-                    for: text,
-                    preferredDocumentIds: preferredDocuments,
-                    intent: semanticIntent,
-                    knowledgeBase: hostedKnowledgeBase
-                )
                 let knowledgeReady = isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true
-                Diagnostics.log("rag:route intent=\(semanticIntent.rawValue) should_search=\(shouldSearchKnowledge) preferred_docs=\(preferredDocuments.count) kb_ready=\(knowledgeReady)")
-                if shouldSearchKnowledge, knowledgeReady {
+                Diagnostics.log("rag:route intent=\(plan.intent) should_search=\(plan.retrieve) preferred_docs=\(plan.preferredDocumentIds.count) kb_ready=\(knowledgeReady)")
+                if plan.retrieve, knowledgeReady {
                     do {
                         snippets = try await backend.knowledgeSnippets(
                             accessToken: session.accessToken,
-                            query: text,
-                            preferredDocumentIds: preferredDocuments
+                            query: plan.retrievalQuery,
+                            preferredDocumentIds: plan.preferredDocumentIds
                         )
                         Diagnostics.log("rag:hosted_search:success snippets=\(snippets.count)")
                     } catch {
                         Diagnostics.log("rag:hosted_search:failed error=\(error.localizedDescription)")
                     }
-                } else if shouldSearchKnowledge {
+                } else if plan.retrieve {
                     let reason = isPremiumAccount ? (hostedKnowledgeBase?.status ?? "missing_kb") : "not_premium"
                     Diagnostics.log("rag:hosted_search:skipped reason=\(reason)")
-                }
-                if snippets.isEmpty, shouldSearchKnowledge {
-                    snippets = conversationManager.localKnowledgeSnippets(
-                        question: text,
-                        resume: resumeText,
-                        jobDescription: jobDescriptionText,
-                        preferredDocumentIds: preferredDocuments,
-                        intent: semanticIntent
-                    )
-                    Diagnostics.log("rag:local_fallback snippets=\(snippets.count)")
                 }
                 let outbound = conversationManager.requestMessages(
                     question: text,
@@ -922,7 +920,7 @@ final class PhantomStore: ObservableObject {
                         || !snippets.isEmpty,
                     knowledgeBase: hostedKnowledgeBase,
                     knowledgeSnippets: snippets,
-                    semanticIntent: semanticIntent
+                    plan: plan
                 )
                 await runtime.track(
                     category: "rag",

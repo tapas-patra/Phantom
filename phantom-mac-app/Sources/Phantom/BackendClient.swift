@@ -164,6 +164,34 @@ struct ManagedCatalog: Codable {
     let providers: [ManagedProvider]
 }
 
+struct InterviewAnswerPlan: Codable {
+    let intent: String
+    let source: String
+    let entityType: String
+    let entityId: String
+    let retrieve: Bool
+    let answerMode: String
+    let answerOutline: [String]
+    let allowCode: Bool
+    let confidence: Double
+    let retrievalQuery: String
+    let preferredDocumentIds: [String]
+
+    static let clarification = InterviewAnswerPlan(
+        intent: "ambiguous",
+        source: "Clarification",
+        entityType: "none",
+        entityId: "",
+        retrieve: false,
+        answerMode: "clarification",
+        answerOutline: ["Ask one concise clarifying question."],
+        allowCode: false,
+        confidence: 0,
+        retrievalQuery: "",
+        preferredDocumentIds: []
+    )
+}
+
 struct ManagedProvider: Codable, Identifiable, Hashable {
     let providerId: String
     let label: String
@@ -514,6 +542,44 @@ struct BackendClient {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let result: KnowledgeSearchResult = try await send(request)
         return result.snippets
+    }
+
+    func interviewPlan(
+        accessToken: String,
+        requestId: String,
+        provider: String,
+        model: String,
+        allowPaidSessionExtension: Bool,
+        question: String,
+        activeEntityId: String,
+        recentMessages: [ChatMessage]
+    ) async throws -> InterviewAnswerPlan {
+        struct Body: Encodable {
+            struct Message: Encodable {
+                let role: String
+                let content: String
+            }
+            let requestId: String
+            let provider: String
+            let model: String
+            let allowPaidSessionExtension: Bool
+            let question: String
+            let activeEntityId: String
+            let recentMessages: [Message]
+        }
+        return try await post(
+            "/api/desktop/interview/plan",
+            body: Body(
+                requestId: requestId,
+                provider: provider,
+                model: model,
+                allowPaidSessionExtension: allowPaidSessionExtension,
+                question: question,
+                activeEntityId: activeEntityId,
+                recentMessages: recentMessages.suffix(6).map { Body.Message(role: $0.role, content: $0.content) }
+            ),
+            bearer: accessToken
+        )
     }
 
     func knowledgeBase(accessToken: String) async throws -> StartupSnapshot.KnowledgeBase {

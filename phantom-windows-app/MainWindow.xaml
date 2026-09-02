@@ -264,6 +264,10 @@
                 <!-- INPUT AREA (Grid.Row="2") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
                 <Grid Grid.Row="2" Margin="0,0,0,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>      <!-- Input box -->
                         <ColumnDefinition Width="Auto"/>   <!-- Screenshot button -->
@@ -274,8 +278,11 @@
                         <ColumnDefinition Width="Auto"/>   <!-- Send button -->
                     </Grid.ColumnDefinitions>
 
+                    <StackPanel x:Name="ClarificationOptionsPanel" Grid.Row="0" Grid.ColumnSpan="7"
+                                Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed"/>
+
                     <!-- Input Text Box -->
-                    <Border Grid.Column="0" Background="#40000000" BorderBrush="#70FFFFFF" 
+                    <Border Grid.Row="1" Grid.Column="0" Background="#40000000" BorderBrush="#70FFFFFF"
                             BorderThickness="1.5" CornerRadius="8" Padding="12,8"
                             MouseDown="InputBorder_MouseDown"
                             x:Name="InputBorder"
@@ -305,7 +312,7 @@
                     </Border>
 
                     <!-- Screenshot Button (Grid.Column="1") -->
-                    <Button Grid.Column="1" x:Name="ScreenshotButton"
+                    <Button Grid.Row="1" Grid.Column="1" x:Name="ScreenshotButton"
                             Width="50" Height="40"
                             Margin="10,0,0,0"
                             Background="#5000AAFF" 
@@ -319,7 +326,7 @@
                         <TextBlock x:Name="ScreenshotButtonText" Text="📸" FontSize="18"/>
                     </Button>
 
-                    <Border Grid.Column="2" Background="#50FFD700" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
+                    <Border Grid.Row="1" Grid.Column="2" Background="#50FFD700" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
                             Cursor="Hand" MouseLeftButtonDown="ProviderSelector_Click"
                             x:Name="ProviderSelectorBorder" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
@@ -330,7 +337,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="3" Background="#5000AAFF" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
+                    <Border Grid.Row="1" Grid.Column="3" Background="#5000AAFF" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
                             Cursor="Hand" MouseLeftButtonDown="ModelSelector_Click"
                             x:Name="ModelSelectorBorder" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
@@ -342,7 +349,7 @@
                     </Border>
 
                     <!-- Voice Button (Grid.Column="4") -->
-                    <Button Grid.Column="4" x:Name="VoiceButton" 
+                    <Button Grid.Row="1" Grid.Column="4" x:Name="VoiceButton"
                             Content="🎤" 
                             Width="50" Height="40"
                             Click="VoiceButton_Click" 
@@ -354,7 +361,7 @@
                             FontSize="20" 
                             Style="{StaticResource ButtonStyle}"/>
 
-                    <Button Grid.Column="5" x:Name="RegenerateButton"
+                    <Button Grid.Row="1" Grid.Column="5" x:Name="RegenerateButton"
                             Width="42" Height="40"
                             Click="RegenerateButton_Click"
                             Margin="10,0,0,0"
@@ -377,7 +384,7 @@
                     </Button>
 
                     <!-- Send Button (Grid.Column="6") -->
-                    <Button Grid.Column="6" x:Name="SendButton"
+                    <Button Grid.Row="1" Grid.Column="6" x:Name="SendButton"
                             Content="➜" 
                             Width="42" Height="40"
                             Click="SendButton_Click" 

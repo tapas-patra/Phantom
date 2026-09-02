@@ -238,7 +238,7 @@ enum PhantomMain {
                 knowledgeEnabled: false,
                 knowledgeBase: nil,
                 knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "technical_concept", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "next", preferredDocumentIds: [])
+                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "technical_concept", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "next", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
             )
             precondition(built.first?.role == "system" && built.count == 15)
             let designBuilt = ConversationManager().requestMessages(
@@ -251,7 +251,7 @@ enum PhantomMain {
                 knowledgeEnabled: false,
                 knowledgeBase: nil,
                 knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "system_design", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Build a link shortener", preferredDocumentIds: [])
+                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "system_design", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Build a link shortener", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
             )
             precondition(designBuilt.first?.content.contains("System Design Response Mode") == true)
             let missingPersonalEvidence = ConversationManager()
@@ -265,7 +265,7 @@ enum PhantomMain {
                 knowledgeEnabled: true,
                 knowledgeBase: nil,
                 knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "personal", source: "Template", entityType: "none", entityId: "", retrieve: false, answerMode: "profile", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Tell me about yourself", preferredDocumentIds: [])
+                plan: InterviewAnswerPlan(intent: "personal", source: "Template", entityType: "none", entityId: "", retrieve: false, answerMode: "profile", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Tell me about yourself", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
             )
             precondition(missingPersonalEvidence.lastAnswerResolution.source == .template)
             let parsed = ConversationManager().finalizeAssistantResponse("Answer\nSUMMARY: concise")

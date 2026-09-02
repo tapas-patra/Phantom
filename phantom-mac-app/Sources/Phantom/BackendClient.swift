@@ -176,6 +176,8 @@ struct InterviewAnswerPlan: Codable {
     let confidence: Double
     let retrievalQuery: String
     let preferredDocumentIds: [String]
+    let clarificationQuestion: String?
+    let clarificationOptions: [ClarificationOption]?
 
     static let clarification = InterviewAnswerPlan(
         intent: "ambiguous",
@@ -188,7 +190,9 @@ struct InterviewAnswerPlan: Codable {
         allowCode: false,
         confidence: 0,
         retrievalQuery: "",
-        preferredDocumentIds: []
+        preferredDocumentIds: [],
+        clarificationQuestion: nil,
+        clarificationOptions: nil
     )
 }
 
@@ -359,6 +363,11 @@ private struct KnowledgeSearchResult: Decodable {
     let snippets: [KnowledgeSnippet]
 }
 
+struct ClarificationOption: Codable, Equatable {
+    let label: String
+    let question: String
+}
+
 struct ChatMessage: Codable, Identifiable, Equatable {
     let id: UUID
     let role: String
@@ -369,8 +378,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var hasCode: Bool?
     var answerSource: String?
     var interviewIntent: String?
+    var clarificationOptions: [ClarificationOption]?
 
-    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil) {
+    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil, clarificationOptions: [ClarificationOption]? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -380,6 +390,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.hasCode = hasCode ?? content.contains("```")
         self.answerSource = answerSource
         self.interviewIntent = interviewIntent
+        self.clarificationOptions = clarificationOptions
     }
 }
 

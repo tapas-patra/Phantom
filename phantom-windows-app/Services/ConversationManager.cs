@@ -44,6 +44,7 @@ namespace SecureOverlay.Services
         private string _stablePromptPrefix = string.Empty;
         private string _stablePromptPrefixKey = string.Empty;
         private AnswerResolution _activeAnswerResolution = AnswerResolution.Universal(InterviewIntent.General, "default");
+        public IReadOnlyList<ClarificationOption> PendingClarificationOptions { get; private set; } = Array.Empty<ClarificationOption>();
 
         
         private ModelConfig _modelConfig;
@@ -577,6 +578,7 @@ namespace SecureOverlay.Services
 
         public async Task<(string response, string error)> SendMessageAsync(string userMessage, string? imageBase64 = null)
         {
+            PendingClarificationOptions = Array.Empty<ClarificationOption>();
             // Add user message to full conversation
             var userMsg = new ConversationMessage
             {
@@ -599,6 +601,14 @@ namespace SecureOverlay.Services
             var route = await PlanResponseAsync(userMessage, CancellationToken.None);
             await ApplyRouteAsync(route, userMessage, CancellationToken.None);
             SetActiveAnswerResolution(ResolveAnswerResolution(route));
+
+            if (_activeAnswerResolution.Source == "Clarification"
+                && !string.IsNullOrWhiteSpace(route.ClarificationQuestion)
+                && route.ClarificationOptions.Count >= 2)
+            {
+                PendingClarificationOptions = route.ClarificationOptions;
+                return CompleteAssistantResponse(route.ClarificationQuestion, _activeAnswerResolution);
+            }
 
             if (route.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(route.DirectAnswer))
@@ -638,6 +648,7 @@ namespace SecureOverlay.Services
             string? imageBase64 = null,
             Action? onRetryCleanup = null)
         {
+            PendingClarificationOptions = Array.Empty<ClarificationOption>();
             // Add user message to full conversation
             var userMsg = new ConversationMessage
             {
@@ -660,6 +671,15 @@ namespace SecureOverlay.Services
             var route = await PlanResponseAsync(userMessage, cancellationToken);
             await ApplyRouteAsync(route, userMessage, cancellationToken);
             SetActiveAnswerResolution(ResolveAnswerResolution(route));
+
+            if (_activeAnswerResolution.Source == "Clarification"
+                && !string.IsNullOrWhiteSpace(route.ClarificationQuestion)
+                && route.ClarificationOptions.Count >= 2)
+            {
+                PendingClarificationOptions = route.ClarificationOptions;
+                onChunkReceived?.Invoke(route.ClarificationQuestion);
+                return CompleteAssistantResponse(route.ClarificationQuestion, _activeAnswerResolution);
+            }
 
             if (route.Type == ResponsePlanType.Direct
                 && !string.IsNullOrWhiteSpace(route.DirectAnswer))
@@ -911,6 +931,11 @@ namespace SecureOverlay.Services
         private AnswerResolution ResolveAnswerResolution(ResponsePlan route)
         {
             var source = route.SourceContract;
+            if (source == "Clarification"
+                && (string.IsNullOrWhiteSpace(route.ClarificationQuestion) || route.ClarificationOptions.Count < 2))
+            {
+                return AnswerResolution.Universal(InterviewIntent.General, route.Source);
+            }
             if ((source == "KB" || source == "KB + Universal") && !HasGroundedCandidateEvidence())
             {
                 source = "Template";
@@ -2505,6 +2530,8 @@ namespace SecureOverlay.Services
             public bool ShouldRetrieve { get; init; }
             public IReadOnlyList<string> AnswerOutline { get; init; } = Array.Empty<string>();
             public IReadOnlyList<string> PreferredDocumentIds { get; init; } = Array.Empty<string>();
+            public string ClarificationQuestion { get; init; } = string.Empty;
+            public IReadOnlyList<ClarificationOption> ClarificationOptions { get; init; } = Array.Empty<ClarificationOption>();
 
             public static ResponsePlan Clarification() => new()
             {
@@ -2546,6 +2573,11 @@ namespace SecureOverlay.Services
                     AnswerOutline = plan.AnswerOutline ?? Array.Empty<string>(),
                     Confidence = plan.Confidence,
                     PreferredDocumentIds = plan.PreferredDocumentIds ?? Array.Empty<string>(),
+                    ClarificationQuestion = plan.ClarificationQuestion ?? string.Empty,
+                    ClarificationOptions = (plan.ClarificationOptions ?? Array.Empty<InterviewClarificationOptionDto>())
+                        .Where(option => !string.IsNullOrWhiteSpace(option.Label) && !string.IsNullOrWhiteSpace(option.Question))
+                        .Select(option => new ClarificationOption(option.Label, option.Question))
+                        .ToArray(),
                     Scope = RetrievalScope.Global
                 };
             }
@@ -2665,6 +2697,8 @@ namespace SecureOverlay.Services
             public static AnswerResolution Template(InterviewIntent intent, string decision)
                 => new() { Source = "Template", Intent = intent, Decision = decision };
         }
+
+        public sealed record ClarificationOption(string Label, string Question);
 
         private sealed class CachedInterviewContextPack
         {

@@ -65,7 +65,7 @@ final class ConversationManager {
         if plan.answerMode == "system_design" {
             system += "\n\nSystem Design Response Mode: Treat this as a live design interview. Lead with requirements and assumptions, then cover APIs, components, data model, request flow, scaling, reliability, and tradeoffs. Keep it concise and spoken. \(plan.allowCode ? "Code is allowed because the interviewer explicitly requested it." : "Do not provide implementation code unless the interviewer explicitly asks for code.")"
         }
-        if !plan.answerOutline.isEmpty {
+        if plan.answerMode != "clarification", !plan.answerOutline.isEmpty {
             system += "\n\nInterview Answer Plan:\n" + plan.answerOutline.map { "- \($0)" }.joined(separator: "\n")
         }
         var grounding = knowledgeEnabled ? structuredGrounding(for: plan, question: question, knowledgeBase: knowledgeBase) : nil
@@ -142,6 +142,11 @@ final class ConversationManager {
     private func resolveAnswerResolution(plan: InterviewAnswerPlan, hasEvidence: Bool) -> AnswerResolution {
         let intent = InterviewIntent(rawValue: plan.intent.capitalized) ?? .ambiguous
         let requested = AnswerSource(rawValue: plan.source) ?? .clarification
+        let hasClarification = !(plan.clarificationQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            && (plan.clarificationOptions?.count ?? 0) >= 2
+        if requested == .clarification && !hasClarification {
+            return AnswerResolution(source: .universal, intent: .general)
+        }
         let source: AnswerSource
         if (requested == .knowledgeBase || requested == .mixed) && !hasEvidence {
             source = .template

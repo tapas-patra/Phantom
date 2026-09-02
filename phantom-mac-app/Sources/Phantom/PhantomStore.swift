@@ -468,6 +468,7 @@ final class PhantomStore: ObservableObject {
         guard let session, !selectedProviderId.isEmpty, !selectedModelId.isEmpty else {
             throw BackendError.server("AI access is not ready.")
         }
+        Diagnostics.log("mermaid:correction:start chars=\(source.count)")
         let response = try await contextSummaryResponse(
             session: session,
             provider: selectedProviderId,
@@ -480,6 +481,7 @@ final class PhantomStore: ObservableObject {
         )
         let corrected = Self.extractCorrectedMermaidSource(response)
         guard !corrected.isEmpty else { throw BackendError.server("The model did not return Mermaid source.") }
+        Diagnostics.log("mermaid:correction:success chars=\(corrected.count)")
         return corrected
     }
 
@@ -934,6 +936,26 @@ final class PhantomStore: ObservableObject {
                     accessToken: session.accessToken
                 )
                 Diagnostics.log("rag:resolved intent=\(conversationManager.lastAnswerResolution.intent.rawValue) source=\(conversationManager.lastAnswerResolution.source.rawValue) snippets=\(snippets.count)")
+                let clarificationOptions = plan.clarificationOptions ?? []
+                if conversationManager.lastAnswerResolution.source == .clarification,
+                   let clarificationQuestion = plan.clarificationQuestion?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !clarificationQuestion.isEmpty,
+                   clarificationOptions.count >= 2 {
+                    if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
+                        messages[index].content = clarificationQuestion
+                        messages[index].summary = clarificationQuestion
+                        messages[index].estimatedTokens = ConversationManager.estimate(messages[index].content)
+                        messages[index].answerSource = AnswerSource.clarification.rawValue
+                        messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
+                        messages[index].clarificationOptions = clarificationOptions
+                    }
+                    ConversationStore.save(messages)
+                    Diagnostics.log("request_completed id=\(requestId) source=Clarification options=\(clarificationOptions.count)")
+                    try await runtime.metering.resume()
+                    lastInterviewActivityAt = Date()
+                    status = "Choose an answer direction"
+                    return
+                }
                 if usesBYO {
                     do {
                         let rotatedModel = try await byoResponseWithRotation(
@@ -1021,6 +1043,16 @@ final class PhantomStore: ObservableObject {
             attachedScreenshot = nil
             ConversationStore.save(messages)
         }
+    }
+
+    func chooseClarification(_ option: ClarificationOption, on messageId: UUID) {
+        guard !isSending else { return }
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[index].clarificationOptions = nil
+            ConversationStore.save(messages)
+        }
+        prompt = option.question
+        send()
     }
 
     func cancelCurrentRequest() {

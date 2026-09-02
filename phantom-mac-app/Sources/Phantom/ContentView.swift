@@ -620,6 +620,7 @@ private struct SettingsView: View {
                         ReadOnlyRow(label: "Quit Phantom", value: "F14")
                     }
 
+                    if store.canViewDiagnostics {
                     SettingsSection(title: "Diagnostics", systemImage: "stethoscope") {
                         HStack {
                             Button("Refresh", action: store.refreshDiagnostics)
@@ -629,6 +630,7 @@ private struct SettingsView: View {
                         ScrollView {
                             Text(store.diagnosticsText).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         }.frame(minHeight: 140, maxHeight: 240)
+                    }
                     }
                 }
                 .padding(24)

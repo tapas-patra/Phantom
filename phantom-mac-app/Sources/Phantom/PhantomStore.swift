@@ -276,6 +276,7 @@ final class PhantomStore: ObservableObject {
     }
 
     var hasBothPaidLanes: Bool { hasPremiumManagedEntitlement && hasBYOEntitlement }
+    var canViewDiagnostics: Bool { account?.canUseDesktopPowerFeatures == true }
 
     var knowledgeBaseStatus: String {
         guard isPremiumAccount, let knowledge = hostedKnowledgeBase else {
@@ -318,23 +319,28 @@ final class PhantomStore: ObservableObject {
     var jobDescriptionWordCount: Int { jobDescriptionText.split(whereSeparator: \Character.isWhitespace).count }
 
     func bootstrap() {
+        Diagnostics.log("bootstrap:start")
         onWindowPreferencesChanged?(opacity, clickThrough)
         if let error = runtime.storageFailure {
+            Diagnostics.log("bootstrap:storage_unavailable error=\(error)")
             status = error
             launchContext = AppLaunchContext(state: .backendUnavailable, title: "Read-Only Safe Mode", message: error, canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
             return
         }
         if let error = configuration.validationError {
+            Diagnostics.log("bootstrap:configuration_invalid error=\(error)")
             status = error
             launchContext = AppLaunchContext(state: .backendUnavailable, title: "Configuration Error", message: error, canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
             return
         }
         guard let saved = SessionStore.load() else {
+            Diagnostics.log("bootstrap:no_saved_session")
             clickThrough = false
             status = "Sign in with your Phantom account."
             return
         }
         guard saved.isAuthenticated else {
+            Diagnostics.log("bootstrap:saved_session_invalid")
             SessionStore.clear()
             AccountSnapshotStore.clear()
             status = "Your saved session is no longer authenticated. Sign in again."
@@ -347,6 +353,7 @@ final class PhantomStore: ObservableObject {
             do {
                 var authenticated = saved
                 if saved.expiresAtUtc == nil || saved.expiresAtUtc! <= Date().addingTimeInterval(120) {
+                    Diagnostics.log("bootstrap:refreshing_session")
                     authenticated = try await backend.refresh(saved, device: device)
                     try SessionStore.save(authenticated)
                 }
@@ -357,13 +364,16 @@ final class PhantomStore: ObservableObject {
                     try SessionStore.save(refreshed)
                     try await enterApp(with: refreshed)
                 } catch {
+                    Diagnostics.log("bootstrap:session_refresh_failed error=\(error.localizedDescription)")
                     await handleAuthenticationFailure("Your saved session expired. Sign in again.")
                 }
             } catch {
                 do {
                     guard let cached = try AccountSnapshotStore.load(), cached.userId == saved.userId else { throw error }
+                    Diagnostics.log("bootstrap:using_cached_snapshot")
                     try await enterApp(with: saved, cachedSnapshot: cached)
                 } catch {
+                    Diagnostics.log("bootstrap:failed error=\(error.localizedDescription)")
                     launchContext = AppLaunchContext(state: .backendUnavailable, title: "Backend Unavailable", message: "Reconnect and press Retry. Offline launch requires a valid cached lease or resumable interview.", canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
                     status = launchContext.message
                 }
@@ -380,6 +390,7 @@ final class PhantomStore: ObservableObject {
 
         isBusy = true
         status = "Authenticating with Phantom…"
+        Diagnostics.log("login:start")
         Task {
             defer { isBusy = false }
             do {
@@ -388,6 +399,7 @@ final class PhantomStore: ObservableObject {
                 password = ""
                 try await enterApp(with: authenticated)
             } catch {
+                Diagnostics.log("login:failed error=\(error.localizedDescription)")
                 status = error.localizedDescription
             }
         }
@@ -418,7 +430,7 @@ final class PhantomStore: ObservableObject {
             preferBYO: preferBYOCreditsFirst, voice: voiceEnabled, autoVoice: autoSendAfterVoiceStop,
             legacyPath: legacyAppPath, debug: debugModeEnabled, simulation: debugErrorSimulation
         )
-        refreshDiagnostics()
+        if canViewDiagnostics { refreshDiagnostics() }
         screen = .settings
     }
 
@@ -517,13 +529,18 @@ final class PhantomStore: ObservableObject {
     }
 
     func refreshDiagnostics() {
+        guard canViewDiagnostics else { diagnosticsText = ""; return }
         Task {
             let queue = await runtime.diagnostics()
             let deadLetters = queue.deadLetters.map { "\($0.recordId): \($0.lastError)" }.joined(separator: "\n")
             diagnosticsText = "Usage pending: \(queue.pendingUsage) | failed: \(queue.failedUsage) | dead-letter: \(queue.deadLetters.count)\nTelemetry queued: \(queue.queuedTelemetry)\nRAG: \(conversationManager.lastTrace)\n\(deadLetters)\n\n\(Diagnostics.text())"
         }
     }
-    func clearDiagnostics() { Diagnostics.clear(); diagnosticsText = Diagnostics.text() }
+    func clearDiagnostics() {
+        guard canViewDiagnostics else { return }
+        Diagnostics.clear()
+        diagnosticsText = Diagnostics.text()
+    }
 
     func selectContextPack(_ packId: String) {
         selectedContextPackId = packId
@@ -805,6 +822,7 @@ final class PhantomStore: ObservableObject {
         firstChunkRecorded = false
         isSending = true
         status = "Starting interview session…"
+        Diagnostics.log("request_started id=\(requestId) provider=\(provider) model=\(model) lane=\(usesBYO ? "byo" : "managed")")
 
         chatTask = Task {
             defer { isSending = false }
@@ -840,41 +858,59 @@ final class PhantomStore: ObservableObject {
                 ConversationStore.save(messages)
                 status = "Thinking…"
 
-                if isPremiumAccount,
-                   let refreshedKnowledge = try? await backend.knowledgeBase(accessToken: session.accessToken) {
-                    hostedKnowledgeBase = refreshedKnowledge
-                    conversationManager.warm(refreshedKnowledge)
+                if isPremiumAccount, hostedKnowledgeBase?.canUseInInterview != true {
+                    Diagnostics.log("rag:kb_refresh:start")
+                    do {
+                        let refreshedKnowledge = try await backend.knowledgeBase(accessToken: session.accessToken)
+                        hostedKnowledgeBase = refreshedKnowledge
+                        conversationManager.warm(refreshedKnowledge)
+                        Diagnostics.log("rag:kb_refresh:success status=\(refreshedKnowledge.status) usable=\(refreshedKnowledge.canUseInInterview) documents=\(refreshedKnowledge.documentCount) chunks=\(refreshedKnowledge.chunkCount) profile=\(refreshedKnowledge.profileCard != nil) experiences=\(refreshedKnowledge.experienceCards?.count ?? 0) projects=\(refreshedKnowledge.projectCards?.count ?? 0)")
+                    } catch {
+                        Diagnostics.log("rag:kb_refresh:failed error=\(error.localizedDescription)")
+                    }
+                } else if isPremiumAccount {
+                    Diagnostics.log("rag:kb_refresh:skipped reason=cached_ready")
                 }
                 var snippets: [KnowledgeSnippet] = []
-                let preferredDocuments = conversationManager.preferredDocumentIds(for: text, knowledgeBase: hostedKnowledgeBase)
+                let semanticIntent = conversationManager.semanticIntent(for: text, knowledgeBase: hostedKnowledgeBase)
+                let preferredDocuments = conversationManager.preferredDocumentIds(
+                    for: text,
+                    intent: semanticIntent,
+                    knowledgeBase: hostedKnowledgeBase
+                )
                 let shouldSearchKnowledge = conversationManager.shouldSearchKnowledge(
                     for: text,
-                    preferredDocumentIds: preferredDocuments
+                    preferredDocumentIds: preferredDocuments,
+                    intent: semanticIntent,
+                    knowledgeBase: hostedKnowledgeBase
                 )
-                if isPremiumAccount,
-                   hostedKnowledgeBase?.canUseInInterview == true,
-                   shouldSearchKnowledge,
-                   let found = try? await backend.knowledgeSnippets(
-                    accessToken: session.accessToken,
-                    query: text,
-                    preferredDocumentIds: preferredDocuments
-                ) {
-                    snippets = found
+                let knowledgeReady = isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true
+                Diagnostics.log("rag:route intent=\(semanticIntent.rawValue) should_search=\(shouldSearchKnowledge) preferred_docs=\(preferredDocuments.count) kb_ready=\(knowledgeReady)")
+                if shouldSearchKnowledge, knowledgeReady {
+                    do {
+                        snippets = try await backend.knowledgeSnippets(
+                            accessToken: session.accessToken,
+                            query: text,
+                            preferredDocumentIds: preferredDocuments
+                        )
+                        Diagnostics.log("rag:hosted_search:success snippets=\(snippets.count)")
+                    } catch {
+                        Diagnostics.log("rag:hosted_search:failed error=\(error.localizedDescription)")
+                    }
+                } else if shouldSearchKnowledge {
+                    let reason = isPremiumAccount ? (hostedKnowledgeBase?.status ?? "missing_kb") : "not_premium"
+                    Diagnostics.log("rag:hosted_search:skipped reason=\(reason)")
                 }
                 if snippets.isEmpty, shouldSearchKnowledge {
                     snippets = conversationManager.localKnowledgeSnippets(
                         question: text,
                         resume: resumeText,
                         jobDescription: jobDescriptionText,
-                        preferredDocumentIds: preferredDocuments
+                        preferredDocumentIds: preferredDocuments,
+                        intent: semanticIntent
                     )
+                    Diagnostics.log("rag:local_fallback snippets=\(snippets.count)")
                 }
-                await runtime.track(
-                    category: "rag",
-                    event: "route",
-                    attributes: ["trace": conversationManager.lastTrace, "snippetCount": "\(snippets.count)"],
-                    accessToken: session.accessToken
-                )
                 let outbound = conversationManager.requestMessages(
                     question: text,
                     interviewType: interviewType,
@@ -885,8 +921,21 @@ final class PhantomStore: ObservableObject {
                     knowledgeEnabled: (isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true)
                         || !snippets.isEmpty,
                     knowledgeBase: hostedKnowledgeBase,
-                    knowledgeSnippets: snippets
+                    knowledgeSnippets: snippets,
+                    semanticIntent: semanticIntent
                 )
+                await runtime.track(
+                    category: "rag",
+                    event: "route",
+                    attributes: [
+                        "trace": conversationManager.lastTrace,
+                        "snippetCount": "\(snippets.count)",
+                        "intent": conversationManager.lastAnswerResolution.intent.rawValue,
+                        "source": conversationManager.lastAnswerResolution.source.rawValue
+                    ],
+                    accessToken: session.accessToken
+                )
+                Diagnostics.log("rag:resolved intent=\(conversationManager.lastAnswerResolution.intent.rawValue) source=\(conversationManager.lastAnswerResolution.source.rawValue) snippets=\(snippets.count)")
                 if usesBYO {
                     do {
                         let rotatedModel = try await byoResponseWithRotation(
@@ -934,7 +983,10 @@ final class PhantomStore: ObservableObject {
                     messages[index].summary = finalized.summary
                     messages[index].estimatedTokens = ConversationManager.estimate(finalized.content)
                     messages[index].hasCode = finalized.content.contains("```")
+                    messages[index].answerSource = conversationManager.lastAnswerResolution.source.rawValue
+                    messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
                 }
+                Diagnostics.log("request_completed id=\(requestId) source=\(conversationManager.lastAnswerResolution.source.rawValue)")
                 try await runtime.metering.resume()
                 await runtime.track(category: "billing", event: "interview_session_resumed", attributes: ["reason": "response_succeeded"], accessToken: session.accessToken)
                 lastInterviewActivityAt = Date()
@@ -947,7 +999,9 @@ final class PhantomStore: ObservableObject {
                 status = "Ready"
             } catch is CancellationError {
                 status = "Request cancelled."
+                Diagnostics.log("request_cancelled id=\(requestId)")
             } catch {
+                Diagnostics.log("request_failed id=\(requestId) error=\(error.localizedDescription)")
                 if let backendError = error as? BackendError, case .http(401, _) = backendError {
                     await handleAuthenticationFailure("Your session expired. Sign in again.")
                     return
@@ -1231,6 +1285,7 @@ final class PhantomStore: ObservableObject {
         if let cachedSnapshot { snapshot = cachedSnapshot }
         else { snapshot = try await backend.startupCheck(authenticated) }
         launchContext = AppLaunchContext.evaluate(snapshot, offline: offline)
+        Diagnostics.log("startup_snapshot offline=\(offline) tier=\(snapshot.accessTier) power_features=\(snapshot.canUseDesktopPowerFeatures) kb_status=\(snapshot.hostedKnowledgeBase.status) kb_usable=\(snapshot.hostedKnowledgeBase.canUseInInterview) kb_documents=\(snapshot.hostedKnowledgeBase.documentCount) kb_chunks=\(snapshot.hostedKnowledgeBase.chunkCount) profile=\(snapshot.hostedKnowledgeBase.profileCard != nil) experiences=\(snapshot.hostedKnowledgeBase.experienceCards?.count ?? 0) projects=\(snapshot.hostedKnowledgeBase.projectCards?.count ?? 0)")
         guard snapshot.emailVerified else {
             status = "Verify your email on the Phantom website, then sign in again."
             return
@@ -1258,6 +1313,7 @@ final class PhantomStore: ObservableObject {
         )
         hostedKnowledgeBase = snapshot.hostedKnowledgeBase
         conversationManager.warm(snapshot.hostedKnowledgeBase)
+        Diagnostics.log("enter_app:ready offline=\(offline) launch_state=\(launchContext.state.rawValue)")
         if let crash = Diagnostics.consumeCrash() {
             await runtime.track(category: "crash", event: "previous_unhandled_exception", attributes: ["message": String(crash.prefix(500))], accessToken: authenticated.accessToken)
         }

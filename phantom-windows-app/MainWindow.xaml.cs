@@ -225,6 +225,7 @@ namespace SecureOverlay
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
+            UpdateDebugPanelAccess();
             _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
             _ = Task.Run(() =>
             {
@@ -482,6 +483,18 @@ namespace SecureOverlay
         {
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
+            UpdateDebugPanelAccess();
+        }
+
+        private void UpdateDebugPanelAccess()
+        {
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures == true)
+            {
+                return;
+            }
+
+            DebugPanel.Visibility = Visibility.Collapsed;
+            _debugLogger.SetUiCollectionEnabled(false);
         }
 
         private void ApplyAccountTierChrome()
@@ -3214,6 +3227,14 @@ namespace SecureOverlay
 
         private void DebugButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures != true)
+            {
+                Log.WriteLine("Debug panel access denied: desktop power features are disabled.");
+                DebugPanel.Visibility = Visibility.Collapsed;
+                _debugLogger.SetUiCollectionEnabled(false);
+                return;
+            }
+
             Log.WriteLine("─────────────────────────────────────────────────────");
             Log.WriteLine("Debug button clicked");
             

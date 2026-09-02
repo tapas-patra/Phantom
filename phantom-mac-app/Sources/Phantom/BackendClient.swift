@@ -339,8 +339,10 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var createdAtUtc: Date?
     var estimatedTokens: Int?
     var hasCode: Bool?
+    var answerSource: String?
+    var interviewIntent: String?
 
-    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil) {
+    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -348,6 +350,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.createdAtUtc = createdAtUtc
         self.estimatedTokens = estimatedTokens ?? max(1, content.count / 4)
         self.hasCode = hasCode ?? content.contains("```")
+        self.answerSource = answerSource
+        self.interviewIntent = interviewIntent
     }
 }
 
@@ -506,7 +510,7 @@ struct BackendClient {
             URLQueryItem(name: "preferredDocumentIds", value: preferredDocumentIds.prefix(8).joined(separator: ","))
         ]
         var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 0.65
+        request.timeoutInterval = 1.5
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let result: KnowledgeSearchResult = try await send(request)
         return result.snippets

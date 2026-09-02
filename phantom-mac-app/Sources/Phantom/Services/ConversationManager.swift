@@ -1,4 +1,40 @@
 import Foundation
+import NaturalLanguage
+
+enum InterviewIntent: String, Equatable {
+    case personal = "Personal"
+    case general = "General"
+    case hybrid = "Hybrid"
+    case ambiguous = "Ambiguous"
+}
+
+enum AnswerSource: String, Equatable {
+    case knowledgeBase = "KB"
+    case universal = "Universal"
+    case mixed = "KB + Universal"
+    case template = "Template"
+    case clarification = "Clarification"
+}
+
+struct AnswerResolution {
+    let source: AnswerSource
+    let intent: InterviewIntent
+
+    var instruction: String {
+        switch source {
+        case .knowledgeBase:
+            return "Source: KB. Candidate-specific claims must be supported by Interview Grounding or Relevant account knowledge. Do not invent projects, roles, outcomes, metrics, employers, or technologies."
+        case .mixed:
+            return "Source: KB + Universal. Use grounded knowledge for candidate-specific facts. Use general knowledge only to explain concepts and tradeoffs; do not turn it into a claim about the candidate."
+        case .template:
+            return "Source: Template. There is no verified candidate evidence for this personal question. Provide a concise interview-ready template with placeholders or conditional wording, and do not present it as the candidate's real experience."
+        case .universal:
+            return "Source: Universal. Answer the general interview question directly. Do not claim the candidate used a project, employer, technology, metric, or achievement unless it appears in grounded context."
+        case .clarification:
+            return "Source: Clarification. Ask one concise question to establish whether the interviewer wants the candidate's real experience or a general explanation. Do not guess or invent a personal answer."
+        }
+    }
+}
 
 @MainActor
 final class ConversationManager {
@@ -9,6 +45,7 @@ final class ConversationManager {
     private var knowledgeRevision = ""
     private var groundingCache: [String: String] = [:]
     private(set) var lastTrace = "route=Direct scope=None"
+    private(set) var lastAnswerResolution = AnswerResolution(source: .universal, intent: .general)
 
     func requestMessages(
         question: String,
@@ -19,16 +56,22 @@ final class ConversationManager {
         modelId: String,
         knowledgeEnabled: Bool,
         knowledgeBase: StartupSnapshot.KnowledgeBase?,
-        knowledgeSnippets: [KnowledgeSnippet]
+        knowledgeSnippets: [KnowledgeSnippet],
+        semanticIntent: InterviewIntent
     ) -> [ChatMessage] {
         if let knowledgeBase { updateRevision(knowledgeBase) }
-        let projectScoped = isProjectQuestion(question)
+        let projectScoped = requiresCandidateProjectGrounding(question, intent: semanticIntent)
         var system = InterviewPrompt.resolve(interviewType, resume: projectScoped ? "" : resume, jobDescription: jobDescription)
-        let grounding = knowledgeEnabled ? structuredGrounding(for: question, knowledgeBase: knowledgeBase) : nil
-        if let grounding, !grounding.isEmpty {
-            system += "\n\n" + grounding
-        }
+        var grounding = knowledgeEnabled ? structuredGrounding(for: question, intent: semanticIntent, knowledgeBase: knowledgeBase) : nil
         var snippets = knowledgeSnippets
+        let resolution = resolveAnswerResolution(intent: semanticIntent, grounding: grounding, snippets: snippets)
+        if resolution.source != .knowledgeBase && resolution.source != .mixed {
+            grounding = nil
+            snippets = []
+        }
+        if let grounding, !grounding.text.isEmpty {
+            system += "\n\n" + grounding.text
+        }
         if !snippets.isEmpty {
             previousSnippets = snippets
             previousDocumentIds = Array(Set(snippets.map(\.documentId))).sorted()
@@ -39,9 +82,12 @@ final class ConversationManager {
             system += "\n\nRelevant account knowledge:\n" + snippets.map {
                 "[\($0.documentTitle)]\n\($0.text)"
             }.joined(separator: "\n\n")
-        } else if knowledgeEnabled, shouldRetrieveKnowledge(for: question), grounding == nil {
+        } else if knowledgeEnabled, resolution.source == .template {
             system += "\n\nNo grounded profile or document evidence matched this question. Say that the requested candidate detail is not available; do not invent it."
         }
+        lastAnswerResolution = resolution
+        lastTrace += " intent=\(resolution.intent.rawValue) source=\(resolution.source.rawValue)"
+        system += "\n\nAnswer Source Contract:\n\(resolution.instruction)"
 
         let configuration = ModelContextRegistry.configuration(for: modelId)
         var budget = max(500, configuration.maxContextTokens - configuration.maxResponseTokens - estimate(system))
@@ -85,17 +131,65 @@ final class ConversationManager {
         ].contains(where: text.contains) || personal
     }
 
-    func shouldSearchKnowledge(for question: String, preferredDocumentIds: [String]) -> Bool {
-        shouldRetrieveKnowledge(for: question) && (!preferredDocumentIds.isEmpty || !isPersonalQuestion(question))
+    func semanticIntent(for question: String, knowledgeBase: StartupSnapshot.KnowledgeBase? = nil) -> InterviewIntent {
+        let text = question.lowercased()
+        if let projects = knowledgeBase?.projectCards,
+           selectProject(question, projects: projects) != nil {
+            return .hybrid
+        }
+        if isProfileQuestion(question) || isExperienceQuestion(question) {
+            return .personal
+        }
+        if requiresCandidateProjectGrounding(question, intent: .personal) {
+            return isProjectDetailQuestion(question) ? .hybrid : .personal
+        }
+        if isClearlyGeneralQuestion(text) {
+            return .general
+        }
+        guard let embedding = NLEmbedding.sentenceEmbedding(for: .english) else {
+            return .ambiguous
+        }
+
+        let prototypes: [(InterviewIntent, [String])] = [
+            (.personal, ["Describe a project you built and the results you achieved.", "Tell me about your own work experience and responsibilities."]),
+            (.general, ["Explain a software engineering concept and compare tradeoffs.", "How would you design a technical system in a hypothetical scenario?"]),
+            (.hybrid, ["Describe how you used a technical concept in your project and why it was appropriate."])
+        ]
+        let ranked = prototypes.compactMap { intent, examples -> (InterviewIntent, Double)? in
+            let distance = examples.map { embedding.distance(between: question, and: $0) }.min()
+            return distance.map { (intent, $0) }
+        }.sorted { $0.1 < $1.1 }
+        guard let best = ranked.first else { return .ambiguous }
+        if ranked.count > 1, ranked[1].1 - best.1 < 0.06 { return .ambiguous }
+        return best.0
     }
 
-    func preferredDocumentIds(for question: String, knowledgeBase: StartupSnapshot.KnowledgeBase?) -> [String] {
+    func shouldSearchKnowledge(for question: String, preferredDocumentIds: [String], intent: InterviewIntent, knowledgeBase: StartupSnapshot.KnowledgeBase?) -> Bool {
+        if isDocumentFollowUp(question) { return !preferredDocumentIds.isEmpty }
+        guard intent == .personal || intent == .hybrid else { return false }
+        guard let knowledgeBase else { return true }
+        if isProfileQuestion(question), knowledgeBase.profileCard != nil { return false }
+        if let projects = knowledgeBase.projectCards,
+           !projects.isEmpty,
+           requiresCandidateProjectGrounding(question, intent: intent) || selectProject(question, projects: projects) != nil {
+            return false
+        }
+        if let experiences = knowledgeBase.experienceCards,
+           !experiences.isEmpty,
+           isExperienceTimelineQuestion(question) || isExperienceQuestion(question) || selectExperience(question, experiences: experiences) != nil {
+            return false
+        }
+        return intent == .personal || intent == .hybrid
+    }
+
+    func preferredDocumentIds(for question: String, intent: InterviewIntent, knowledgeBase: StartupSnapshot.KnowledgeBase?) -> [String] {
         if isDocumentFollowUp(question), !previousDocumentIds.isEmpty {
             lastTrace = "route=Retrieve scope=PreviousDocuments documents=\(previousDocumentIds.joined(separator: ","))"
             return previousDocumentIds
         }
         let text = question.lowercased()
-        if isProjectQuestion(question), let projects = knowledgeBase?.projectCards {
+        if intent != .general, let projects = knowledgeBase?.projectCards,
+           requiresCandidateProjectGrounding(question, intent: intent) || selectProject(question, projects: projects) != nil {
             let alternate = ["another project", "other project", "different project", "any other project"].contains(where: text.contains)
             let followUp = !activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains)
             let generic = ["my project", "your project", "recent project", "a project", "any project"].contains(where: text.contains)
@@ -108,7 +202,7 @@ final class ConversationManager {
             lastTrace = "route=Project scope=ActiveProject target=\(project?.title ?? "missing") documents=\(ids.joined(separator: ","))"
             return ids
         }
-        if let experiences = knowledgeBase?.experienceCards,
+        if intent != .general, let experiences = knowledgeBase?.experienceCards,
            isExperienceQuestion(question) || selectExperience(question, experiences: experiences) != nil {
             let ids = isExperienceTimelineQuestion(question)
                 ? experiences.flatMap(\.sourceDocumentIds)
@@ -116,7 +210,7 @@ final class ConversationManager {
             lastTrace = "route=Experience scope=Structured documents=\(ids.joined(separator: ","))"
             return Array(Set(ids)).sorted()
         }
-        if isProfileQuestion(question), let profile = knowledgeBase?.profileCard {
+        if intent != .general, isProfileQuestion(question), let profile = knowledgeBase?.profileCard {
             lastTrace = "route=Profile scope=Structured documents=\(profile.sourceDocumentIds.joined(separator: ","))"
             return profile.sourceDocumentIds
         }
@@ -140,11 +234,11 @@ final class ConversationManager {
         }
     }
 
-    func localKnowledgeSnippets(question: String, resume: String, jobDescription: String, preferredDocumentIds: [String]) -> [KnowledgeSnippet] {
+    func localKnowledgeSnippets(question: String, resume: String, jobDescription: String, preferredDocumentIds: [String], intent: InterviewIntent) -> [KnowledgeSnippet] {
         let query = tokens(question)
         guard !query.isEmpty else { return [] }
         var documents = [("local-resume", "Resume", resume)]
-        if !isPersonalQuestion(question) {
+        if intent != .personal {
             documents.append(("local-job-description", "Job description", jobDescription))
         }
         let eligibleDocuments = documents
@@ -164,6 +258,7 @@ final class ConversationManager {
         groundingCache = [:]
         knowledgeRevision = ""
         lastTrace = "route=Direct scope=None"
+        lastAnswerResolution = AnswerResolution(source: .universal, intent: .general)
     }
 
     static func estimate(_ text: String) -> Int { max(1, text.count / 4) }
@@ -186,14 +281,20 @@ final class ConversationManager {
 
     private func estimate(_ text: String) -> Int { Self.estimate(text) }
 
+    private struct Grounding {
+        let text: String
+        let hasCandidateEvidence: Bool
+    }
+
     private func structuredGrounding(
         for question: String,
+        intent: InterviewIntent,
         knowledgeBase: StartupSnapshot.KnowledgeBase?
-    ) -> String? {
+    ) -> Grounding? {
         guard let knowledgeBase else { return nil }
         let text = question.lowercased()
         let projects = knowledgeBase.projectCards ?? []
-        let projectAsk = isProjectQuestion(question)
+        let projectAsk = intent != .general && (requiresCandidateProjectGrounding(question, intent: intent) || selectProject(question, projects: projects) != nil)
         if projectAsk {
             let alternate = ["another project", "other project", "different project", "any other project"].contains(where: text.contains)
             let followUp = !activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains)
@@ -207,30 +308,45 @@ final class ConversationManager {
                 activeProjectId = selected.projectCardId
                 let variant = ["architecture", "stack", "challenge", "impact"].first(where: text.contains) ?? "overview"
                 lastTrace = "route=Project scope=ActiveProject target=\(selected.title) variant=\(variant)"
-                return groundingCache["project:\(selected.projectCardId):\(variant)"] ?? projectGrounding(selected, question: text)
+                return Grounding(text: groundingCache["project:\(selected.projectCardId):\(variant)"] ?? projectGrounding(selected, question: text), hasCandidateEvidence: true)
             }
-            return "No grounded candidate project evidence is available. Give only a clearly labelled example that the candidate must adapt; do not present it as real experience."
+            return Grounding(text: "No grounded candidate project evidence is available. Give only a clearly labelled example that the candidate must adapt; do not present it as real experience.", hasCandidateEvidence: false)
         }
 
         if let experiences = knowledgeBase.experienceCards,
-           !experiences.isEmpty,
+            !experiences.isEmpty,
+           intent != .general,
            isExperienceQuestion(question) || selectExperience(question, experiences: experiences) != nil {
             if isExperienceTimelineQuestion(question) {
-                return "Career chronology below is authoritative and ordered oldest to newest. Never reverse it.\n\n" + experiences.sorted(by: { $0.sortOrder < $1.sortOrder }).map(experienceGrounding).joined(separator: "\n\n")
+                return Grounding(text: "Career chronology below is authoritative and ordered oldest to newest. Never reverse it.\n\n" + experiences.sorted(by: { $0.sortOrder < $1.sortOrder }).map(experienceGrounding).joined(separator: "\n\n"), hasCandidateEvidence: true)
             }
             guard let selected = selectExperience(question, experiences: experiences) else {
-                return "No grounded candidate work experience matches this question. Say that the requested experience is not available; do not invent it."
+                return Grounding(text: "No grounded candidate work experience matches this question. Say that the requested experience is not available; do not invent it.", hasCandidateEvidence: false)
             }
             lastTrace = "route=Experience scope=Structured target=\(selected.company)"
-            return groundingCache["experience:\(selected.experienceCardId)"] ?? experienceGrounding(selected)
+            return Grounding(text: groundingCache["experience:\(selected.experienceCardId)"] ?? experienceGrounding(selected), hasCandidateEvidence: true)
         }
 
-        if isProfileQuestion(question), let profile = knowledgeBase.profileCard {
+        if intent != .general, isProfileQuestion(question), let profile = knowledgeBase.profileCard {
             let variant = text.contains("strength") ? "strength" : "general"
             lastTrace = "route=Profile scope=Structured variant=\(variant)"
-            return groundingCache["profile:\(variant)"] ?? profileGrounding(profile, question: text)
+            return Grounding(text: groundingCache["profile:\(variant)"] ?? profileGrounding(profile, question: text), hasCandidateEvidence: true)
         }
         return nil
+    }
+
+    private func resolveAnswerResolution(intent: InterviewIntent, grounding: Grounding?, snippets: [KnowledgeSnippet]) -> AnswerResolution {
+        let hasEvidence = grounding?.hasCandidateEvidence == true || !snippets.isEmpty
+        switch intent {
+        case .personal:
+            return AnswerResolution(source: hasEvidence ? .knowledgeBase : .template, intent: intent)
+        case .hybrid:
+            return AnswerResolution(source: hasEvidence ? .mixed : .universal, intent: intent)
+        case .general:
+            return AnswerResolution(source: .universal, intent: intent)
+        case .ambiguous:
+            return AnswerResolution(source: hasEvidence ? .knowledgeBase : .clarification, intent: intent)
+        }
     }
 
     private func profileGrounding(_ profile: KnowledgeProfile, question: String) -> String {
@@ -279,10 +395,25 @@ final class ConversationManager {
         if !clean.isEmpty { lines.append("\(label): \(clean)") }
     }
 
-    private func isProjectQuestion(_ question: String) -> Bool {
+    private func requiresCandidateProjectGrounding(_ question: String, intent: InterviewIntent) -> Bool {
+        guard intent != .general else { return false }
         let text = question.lowercased()
-        return ["project", "architecture", "system design", "tech stack", "stack", "challenge", "impact", "implementation", "deployment"].contains(where: text.contains)
-            || (!activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains))
+        let explicitCandidateProject = [
+            "my project", "your project", "recent project", "previous project", "a project you", "project you worked",
+            "what did you build", "what have you built", "what did you work on", "tell me about a project"
+        ].contains(where: text.contains)
+        let activeFollowUp = !activeProjectId.isEmpty && ["this", "that", "it", "the project"].contains(where: text.contains)
+        return explicitCandidateProject || activeFollowUp || (!activeProjectId.isEmpty && isProjectDetailQuestion(question))
+    }
+
+    private func isProjectDetailQuestion(_ question: String) -> Bool {
+        let text = question.lowercased()
+        return ["architecture", "design", "stack", "technology", "tech", "challenge", "impact", "tradeoff", "trade-off", "guardrail", "scalab", "deployment", "implementation", "why did you"].contains(where: text.contains)
+    }
+
+    private func isClearlyGeneralQuestion(_ text: String) -> Bool {
+        ["what is ", "define ", "explain ", "compare ", "difference between ", "how does ", "why does "]
+            .contains(where: text.hasPrefix)
     }
 
     private func isPersonalQuestion(_ question: String) -> Bool {
@@ -329,7 +460,7 @@ final class ConversationManager {
     private func isProfileQuestion(_ question: String) -> Bool {
         let text = question.lowercased()
         return [
-            "tell me about yourself", "profile", "background", "strength", "skill", "education", "certification", "why should we hire"
+            "tell me about yourself", "introduce yourself", "walk me through your background", "profile", "background", "strength", "skill", "education", "certification", "why should we hire"
         ].contains(where: text.contains)
     }
 

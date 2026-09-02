@@ -202,9 +202,11 @@ enum PhantomMain {
             precondition(ragRouter.shouldRetrieveKnowledge(for: "What did you personally own?"))
             precondition(ragRouter.shouldRetrieveKnowledge(for: "Why should we hire you?"))
             precondition(!ragRouter.shouldRetrieveKnowledge(for: "What is dependency injection?"))
-            precondition(!ragRouter.shouldSearchKnowledge(for: "What is my favorite color?", preferredDocumentIds: []))
-            precondition(!ragRouter.shouldSearchKnowledge(for: "Tell me about the Atlas project", preferredDocumentIds: []))
-            precondition(ragRouter.shouldSearchKnowledge(for: "What is my recent project?", preferredDocumentIds: ["resume-1"]))
+            precondition(ragRouter.semanticIntent(for: "What is dependency injection?") == .general)
+            precondition(ragRouter.semanticIntent(for: "Please introduce yourself") == .personal)
+            precondition(!ragRouter.shouldSearchKnowledge(for: "What is my favorite color?", preferredDocumentIds: [], intent: .general, knowledgeBase: nil))
+            precondition(!ragRouter.shouldSearchKnowledge(for: "Tell me about the Atlas project", preferredDocumentIds: [], intent: .ambiguous, knowledgeBase: nil))
+            precondition(ragRouter.shouldSearchKnowledge(for: "What is my recent project?", preferredDocumentIds: ["resume-1"], intent: .personal, knowledgeBase: nil))
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
             precondition(PhantomStore.mergeTranscript(current: "Question: ", lastRendered: "Question: ", previous: "", next: "Tell me", prefix: "Question: ", preservingEdits: false).text == "Question: Tell me")
             precondition(SSEParser.parse("data: {\"delta\":\"hello\"}") == .delta("hello"))
@@ -244,12 +246,27 @@ enum PhantomMain {
                 modelId: "gpt-4",
                 knowledgeEnabled: false,
                 knowledgeBase: nil,
-                knowledgeSnippets: []
+                knowledgeSnippets: [],
+                semanticIntent: .general
             )
             precondition(built.first?.role == "system" && built.count == 15)
+            let missingPersonalEvidence = ConversationManager()
+            _ = missingPersonalEvidence.requestMessages(
+                question: "Tell me about yourself",
+                interviewType: InterviewPrompt.types[0],
+                resume: "",
+                jobDescription: "",
+                conversation: [],
+                modelId: "gpt-4",
+                knowledgeEnabled: true,
+                knowledgeBase: nil,
+                knowledgeSnippets: [],
+                semanticIntent: .personal
+            )
+            precondition(missingPersonalEvidence.lastAnswerResolution.source == .template)
             let parsed = ConversationManager().finalizeAssistantResponse("Answer\nSUMMARY: concise")
             precondition(parsed.content == "Answer" && parsed.summary == "concise")
-            let local = ConversationManager().localKnowledgeSnippets(question: "Swift concurrency", resume: "Built Swift concurrency services", jobDescription: "", preferredDocumentIds: [])
+            let local = ConversationManager().localKnowledgeSnippets(question: "Swift concurrency", resume: "Built Swift concurrency services", jobDescription: "", preferredDocumentIds: [], intent: .ambiguous)
             precondition(local.first?.documentId == "local-resume")
             print("Phantom self-check passed.")
             return

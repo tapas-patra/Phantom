@@ -6,6 +6,9 @@ namespace SecureOverlay.Infrastructure.Hosted
 {
     public sealed class HostedRuntimeOptions
     {
+        private const string DefaultWebsiteBaseUrl = "https://phantom-interview.vercel.app";
+        private const string DefaultDesktopBackendBaseUrl = "https://phantom-ai-windows-app-backend.onrender.com";
+
         public string Mode { get; init; } = "remote";
         public string WebsiteBaseUrl { get; init; } = string.Empty;
         public string DesktopBackendBaseUrl { get; init; } = string.Empty;
@@ -17,9 +20,9 @@ namespace SecureOverlay.Infrastructure.Hosted
         public static HostedRuntimeOptions Load()
         {
             var fileConfig = LoadFromFile();
-            var mode = ReadSetting("PHANTOM_HOSTED_MODE", fileConfig?.Mode);
-            var websiteBaseUrl = ReadSetting("PHANTOM_WEBSITE_BASE_URL", fileConfig?.WebsiteBaseUrl);
-            var backendBaseUrl = ReadSetting("PHANTOM_WINDOWS_BACKEND_BASE_URL", fileConfig?.DesktopBackendBaseUrl);
+            var mode = ReadSetting("PHANTOM_HOSTED_MODE", fileConfig?.Mode ?? "remote");
+            var websiteBaseUrl = ReadSetting("PHANTOM_WEBSITE_BASE_URL", fileConfig?.WebsiteBaseUrl ?? DefaultWebsiteBaseUrl);
+            var backendBaseUrl = ReadSetting("PHANTOM_WINDOWS_BACKEND_BASE_URL", fileConfig?.DesktopBackendBaseUrl ?? DefaultDesktopBackendBaseUrl);
 
             var options = new HostedRuntimeOptions
             {
@@ -32,7 +35,7 @@ namespace SecureOverlay.Infrastructure.Hosted
             return options;
         }
 
-        private static string? ReadSetting(string envName, string? fileFallback)
+        private static string ReadSetting(string envName, string fallback)
         {
             var processValue = Environment.GetEnvironmentVariable(envName);
             if (!string.IsNullOrWhiteSpace(processValue))
@@ -52,7 +55,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 return machineValue;
             }
 
-            return fileFallback;
+            return fallback;
         }
 
         private static HostedRuntimeFileConfig? LoadFromFile()

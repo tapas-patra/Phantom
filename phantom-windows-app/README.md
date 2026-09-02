@@ -15,14 +15,12 @@ Owns:
 - local telemetry and sync queues that reconcile to the hosted backend
 - offline continuation behavior
 
-Required runtime env vars:
+Optional runtime overrides:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL`
 - `PHANTOM_WEBSITE_BASE_URL`
 - `PHANTOM_HOSTED_MODE=remote` or unset
 
-Runtime config fallback:
-- if environment variables are not visible after elevation, the app also reads `phantom.hosted.json` from the working directory or executable directory
-- this repo now ships a production `phantom.hosted.json` and copies it into the build output, so normal builds do not need manual env setup for the current hosted deployment
+The production website and backend URLs are embedded in the executable. Local runs may still use `phantom.hosted.json`; release builds do not include it.
 
 Local development example:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=http://localhost:5057`

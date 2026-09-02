@@ -2112,10 +2112,10 @@
     "semantic_hash": "aa0cb1ce27f30747a3733e55807d3fc5"
   },
   "phantom-windows-app/Infrastructure/Hosted/HostedRuntimeOptions.cs": {
-    "mtime": 1781713326.3878574,
-    "seen": 1788316872.8484108,
-    "ast_hash": "a89557014ee8c7e619816c790f376015",
-    "semantic_hash": "a89557014ee8c7e619816c790f376015"
+    "mtime": 1788392834.7096472,
+    "seen": 1788392956.435324,
+    "ast_hash": "c634a3369721df8873b88e9670d4dc94",
+    "semantic_hash": ""
   },
   "phantom-windows-app/Infrastructure/Hosted/HostedServiceException.cs": {
     "mtime": 1781713326.4207904,
@@ -2418,9 +2418,9 @@
     "semantic_hash": "258f1598350518e667610a768c068bed"
   },
   "phantom-windows-app/SecureOverlay.csproj": {
-    "mtime": 1788322521.842689,
-    "seen": 1788389546.912128,
-    "ast_hash": "9b2e15cf5b2792655a1568a0dbf94959",
+    "mtime": 1788392810.0360863,
+    "seen": 1788392956.436018,
+    "ast_hash": "aa1dfa46a9f2d46a796e289356e00a46",
     "semantic_hash": ""
   },
   "phantom-windows-app/SecureOverlay.sln": {
@@ -2586,8 +2586,8 @@
     "semantic_hash": "2e424f871d66710f2e296f713837a0de"
   },
   "phantom-windows-app/phantom.hosted.json": {
-    "mtime": 1786349200.469414,
-    "seen": 1788316872.848437,
+    "mtime": 1788392834.810177,
+    "seen": 1788392956.4367812,
     "ast_hash": "4557259facbae2a6941361d5b3ab5e3a",
     "semantic_hash": "4557259facbae2a6941361d5b3ab5e3a"
   },
@@ -2988,9 +2988,9 @@
     "semantic_hash": ""
   },
   "phantom-windows-app/README.md": {
-    "mtime": 1786349200.4667737,
-    "seen": 1788389546.912468,
-    "ast_hash": "4e6bfb4e9c2fe8d197539eacd3703f2b",
+    "mtime": 1788392834.9092245,
+    "seen": 1788392956.437275,
+    "ast_hash": "6f2bdc29a5d2afe90fcd32de2cbf1f99",
     "semantic_hash": ""
   },
   "phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0-windows/SemanticRoutingChecks.csproj.FileListAbsolute.txt": {

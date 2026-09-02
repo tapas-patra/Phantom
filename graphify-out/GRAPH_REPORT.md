@@ -1,7 +1,7 @@
 # Graph Report - Phantom  (2026-09-03)
 
 ## Corpus Check
-- 508 files · ~526,822 words
+- 508 files · ~526,801 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d8271f7d`
+- Built from commit: `a1cc9ad5`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

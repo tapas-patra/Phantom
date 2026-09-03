@@ -214,7 +214,7 @@ enum ContextSummaryStore {
     }
 
     static func summarize(kind: String, source: String) -> String {
-        let words = source.split(whereSeparator: \Character.isWhitespace).map(String.init)
+        let words = source.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         if kind == "resume" {
             let lines = source.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             let name = lines.first ?? "Not provided"

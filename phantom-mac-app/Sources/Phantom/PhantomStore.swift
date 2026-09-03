@@ -315,8 +315,8 @@ final class PhantomStore: ObservableObject {
         return pack.name != contextPackName || pack.resumeText != resumeText || pack.jobDescriptionText != jobDescriptionText
     }
 
-    var resumeWordCount: Int { resumeText.split(whereSeparator: \Character.isWhitespace).count }
-    var jobDescriptionWordCount: Int { jobDescriptionText.split(whereSeparator: \Character.isWhitespace).count }
+    var resumeWordCount: Int { resumeText.split(whereSeparator: { $0.isWhitespace }).count }
+    var jobDescriptionWordCount: Int { jobDescriptionText.split(whereSeparator: { $0.isWhitespace }).count }
 
     func bootstrap() {
         Diagnostics.log("bootstrap:start")

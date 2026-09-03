@@ -1,26 +1,27 @@
-# Graph Report - Phantom  (2026-09-02)
+# Graph Report - Phantom  (2026-09-03)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 508 files · ~526,822 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 9010 nodes · 23855 edges · 403 communities (359 shown, 39 thin omitted)
-- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 3148 edges (avg confidence: 0.84)
+- 16018 nodes · 46336 edges · 310 communities (279 shown, 20 thin omitted)
+- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 6809 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `16526471`
+- Built from commit: `d8271f7d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- mermaid.min.js
-- .WriteLine
+- phantom-windows-app/assets/mermaid/mermaid.min.js
+- MainWindow
 - ConversationManager
-- i
+- t
 - HostedKnowledgeBaseStructuredExtractionService
 - InterviewSessionRecord
-- BackendValidationException
+- HostedKnowledgeBaseService
 - .List
 - HostedKnowledgeBaseSummaryDto
 - PhantomStore
@@ -28,587 +29,488 @@
 - SecureOverlay.Domain.Entities
 - DesktopAccountRecord
 - IAIService
-- HostedKnowledgeBaseRepository
+- net10.0-windows/assets/mermaid/mermaid.min.js
 - Phantom.WindowsApp.Backend.Contracts
 - ManagedAiLatencyRepository
 - MarkdownHelper
 - PhoneVerificationChallengeRecord
 - UserControl
 - ManagedAiCatalogService
-- DesktopSessionRecord
-- StartupGateContext
+- BackendValidationException
+- AccountCacheSnapshot
 - EmailVerificationTokenRecord
 - BackendOptions
-- AdminAuthService
-- n
+- net8.0-windows/assets/mermaid/mermaid.min.js
+- t
 - .OpenConnection
 - Window
 - DashboardProjectionReplicatorService
 - ManagedAiService
-- CreditMeteringService
-- .SendMessage
+- Codable
+- t
 - handler
 - HostedKnowledgeBaseSummaryDto
 - UsageReconciliationRecord
-- constructor
-- cYe
+- push
+- eN
 - AppSettings
 - SettingsPage
 - design_system.py
-- DesktopLockRecord
+- push
 - App.jsx
 - ContextPack
 - SupportTicketRecord
 - String
 - push
-- t
-- ChatMessage
-- r
-- w
+- f
+- BYOClient
+- f
+- get
 - ContentView.swift
-- subrule
-- APIRotationManager
+- get
+- .WriteLine
 - GoogleMailOAuthService
 - AuthSessionDto
 - HostedRuntimeOptions
 - peekChar
-- eN
-- Codable
+- node
+- node
 - AppDelegate
 - ManagedProviderCredentialRecord
-- sanitizeText
+- .toString
 - TelemetryEvent
 - .constructor
-- ConversationManager
+- String
 - APIRotationManager
-- get
+- .toString
 - DesktopContextPackRecord
-- has
+- get
 - SqliteRuntimeStore
-- TelemetryEventRecord
+- OperationalMetricsService
 - .ApplyProtection
-- setAttribute
+- apply
 - AdminAccountSnapshotDto
 - DeviceLockAcquireResultDto
 - AreaSelectionController
 - SecureOverlay
-- hr
+- LA
 - HostedKnowledgeBaseDocumentContentDto
 - InterviewQuestionBankJobRepository
-- insert
-- _E
+- LA
+- build
 - ManagedAiLatencyModelStatusDto
 - Foundation
 - authHeaders
-- br
+- build
 - e
 - .RetrieveForPromptAsync
-- forEach
-- dr
+- concat
+- concat
 - concat
 - AIModelRegistry
 - node
-- add
+- handler
 - .OnStartup
-- RoutedEventArgs
-- visit
-- UsageLedgerRecord
+- handler
+- InterviewAnswerPlanDto
+- apply
 - LiveRequestTrace
 - KnowledgeBaseEmbeddingService
-- performSelfAnalysis
+- apply
 - AuthSessionDto
 - ScreenshotCapture
 - DeviceProfile
-- join
-- indexOf
+- .constructor
+- .constructor
 - StartupAccountCheckResultDto
-- StartupAccountCheckResultDto
+- peekChar
 - Window
-- KnowledgeBaseEmbeddingProfile
+- .GenerateBatchAsync
 - formatDate
-- wc
-- orInternal
-- IR
+- peekChar
+- Phantom Web Platform
+- ui-ux-pro-max
 - SD
-- "../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/connection.js"
-- getKeyForAutomaticLookahead
-- Kdt
-- PaymentPackDto
-- SettingsManager
-- FakeCursorWindow
-- MermaidDiagram
+- Phantom System Design
+- $D
+- $D
+- What You Must Do When Invoked
+- InterviewPromptRegistry
+- CursorManager
+- .main
 - package.json
 - api.js
-- apply
-- cft
-- LA
-- setEdge
+- SD
+- SD
+- Phantom Monorepo Agent Guide
+- Production RAG Implementation
 - SpeechInputService
-- CursorManager
+- InterviewAnswerPlanDto
 - DashboardQueryService
 - request
-- update
-- link
-- "../../node_modules/.pnpm/vscode-languageserver-protocol@3.17.5/node_modules/vscode-languageserver-protocol/lib/common/utils/is.js"
-- HostedKnowledgeBaseChunkRecord
+- .toString
+- Phantom Pricing And Billing
+- Design System Master File
+- 7. Local Schema
 - HostedKnowledgeBaseEmbeddingConfigRecord
 - StartupGateState
-- ByoProviderModelCatalogService
-- ProtectedMessageBox
-- w5e
-- HostedKnowledgeBaseReindexJobDto
+- Confirmed Decisions
+- ComboBox
+- .InvalidateDefaultDraftCacheIfNeeded
+- .Get
 - AdminPasswordResetTokenRecord
-- StorageBootstrapResult
+- calculateHorizontalSpace
 - RegisterPage
-- et
-- splice
-- setNode
-- Ia
-- $ot
+- calculateHorizontalSpace
+- Phantom Windows → macOS parity checklist
+- AnswerResolution
+- Phantom Agent Guide
+- APIs This Repo Must Eventually Expose
 - DesktopContextPackDto
 - TaskViewMonitor
-- Wbe
-- nodes
-- edge
+- MagicLinkEmailService
+- 8. Hosted Schema
+- .RetrieveForPromptAsync
 - HostedKnowledgeBaseEmbeddingConfigDto
-- HostedKnowledgeBaseProjectCardDto
+- ZIt
 - HostedKnowledgeBaseEmbeddingResolvedConfig
-- ManagedAiCatalogDto
-- HostedManagedAiService
-- PromptTextView
-- register
-- KKe
-- .toString
-- match
-- tokenizeInternal
-- HostedKnowledgeBaseExperienceCardDto
+- ZIt
+- AuthSessionCache
+- InterviewAnswerPlanRequestDto
+- Phantom Repo Split Plan
+- FakeAiService
+- Phantom Windows Performance and RAG Fix Plan
+- graphify reference: extra exports and benchmark
+- .SendAsync
+- Website And Dashboard Frontend Handoff
 - ManagedAiCatalogRefreshProviderResultDto
 - InterviewSessionCompletionResult
 - HostedKnowledgeBaseExperienceCardDto
-- .UpsertProvider
-- .ActivateCustomCursorImmediate
+- Phantom System Architecture
+- PhoneVerificationStartResultDto
 - AuthorityBackendClient
-- extend
-- da
-- HostedKnowledgeBaseRecord
+- TelemetryIngestRequestDto
+- LA
+- 11. Key Runtime Flows
 - ContextDocument
 - HostedKnowledgeBaseReindexJobDto
 - MicrophonePermissionWindow
 - Phantom.Dashboard.Backend.Infrastructure
 - .ApplyMigrations
-- ConversationCache
-- getData
-- Ba
-- entries
-- remove
-- validate
-- getScope
+- RAG Latency And Human Answering
+- Windows App Extraction Manifest
+- Phantom for macOS
+- AuthRegisterResultDto
+- KnowledgeBaseEmbeddingProfile
+- Phase 4: Remove desktop-side pauses and blocking work
+- graphify reference: query, path, explain
 - BrowserSessionCookieService
 - .ApplyMigrations
 - .value
 - RagTraceLogger
 - HttpHostedClientBase
-- atLeastOneInternal
-- ate
-- lE
-- Fv
-- rlt
-- subruleInternal
-- rgb
-- I0e
-- nft
+- Dashboard Backend Domain Handoff
+- .configuration
+- PhoneVerificationConfirmResultDto
+- PhoneVerificationStartRequestDto
+- Phantom Implementation Plan
+- 12. Immediate Refactor Targets In This Repo
+- Current Root Ownership
+- Phase 1: Remove hidden serial model work
+- Phase 3: Make streaming rendering incremental
 - DebugLogger
 - .InvokeAsync
 - DashboardOptions
 - ManagedAiAdminService
 - AdminDashboardPage
-- graph
-- Fee
-- find
-- Cr
-- E8t
-- xh
-- mI
-- text
-- optionInternal
+- Phase 5: Fix RAG correctness before tuning scores
+- Render Deployment
+- Vercel Deployment
+- Q: Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo
+- Q: don't care what current system has. suggest what would be best for the app. draw me the full architecture and explain how we can achieve the desired outcome we want
+- Q: have you reviewed the KB part how it's designed and do we need any improvement on that side to accomodate this?
+- 14. Risks
+- 3. Phase 1: Local Persistence Foundation
+- 5. Phase 3: Context Packs And Local Knowledge
 - AuthRegisterRequestDto
 - HostedKnowledgeBaseExperienceCardUpdateRequestDto
 - HostedKnowledgeBaseProfileCardUpdateRequestDto
 - HostedKnowledgeBaseProjectCardUpdateRequestDto
-- InterviewUsageSource
+- InterviewIntent
 - AdminTicketsPanel
-- accept
-- atLeastOneSepFirstInternal
-- consumeInternal
-- manySepFirstInternal
-- AdminManagedAiTestResponseDto
-- HostedKnowledgeBaseSnippetDto
-- HostedKnowledgeBaseSearchCandidateRecord
-- k8t
-- includes
-- raiseEarlyExitException
-- calculateHorizontalSpace
-- getDrawableElements
-- dAt
-- edges
-- performStartup
-- manyInternal
-- AdminAccountUpdateRequestDto
-- HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto
+- Phase 11: Ingestion and operational improvements
+- Phase 0: Establish a baseline
+- Phase 2: Move preparation out of the live request
+- Phase 8: Stabilize backend streaming and model selection
+- .RunAdminTestAsync
+- Phase 10: Consider a combined managed interview endpoint only if measured
+- graphify reference: add a URL and watch a folder
+- graphify reference: commit hook and native CLAUDE.md integration
+- graphify reference: incremental update and cluster-only
+- Phantom.Dashboard.Backend.csproj
+- 10. Ownership Rules
+- 5. Local Architecture
+- 10. Phase 8: Payments And Abuse Controls
+- 11. Phase 9: Hardening
+- 2. Phase 0: Repo Preparation
+- 4. Phase 2: Secret Storage
+- 6. Phase 4: Hosted Client Contracts
+- 7. Phase 5: Auth Gate And Entitlements
 - .GetCatalogForAccount
 - ManagedAiRuntimeSelectionDto
 - IKnowledgeBaseEmbeddingService
-- DeviceRegistrationMetadataDto
-- Window
-- ISecretVault
+- 8. Phase 6: Credit Metering And Protected Continuation
+- InvisibleMessageBox
+- 9. Phase 7: Premium Hosted Knowledge
 - InterviewPackKind
 - Phantom.WindowsApp.Backend.csproj
 - BrowserSessionCookieService
 - UserDashboardPage
 - sendManagedAiAdminTest
 - ManagedAiAdminPanel
-- A1e
-- hh
+- Split Checklist
+- Final verification matrix
 - YX
-- dedentMatcher
-- Fb
+- Phase 6: Optimize RAG latency and cache behavior
+- Phase 7: Improve RAG ranking with measured changes
 - AuthLoginRequestDto
 - HttpResponse
-- SecureOverlay
+- SecureOverlay.csproj
 - .Root_PreviewMouseLeftButtonDown
 - QuestionBanksPanel
-- addDetails
-- getAttribute
-- doLink
-- j0e
-- dHe
-- ZIt
-- yft
-- jT
+- Phase 9: Add interview session intelligence without a multi-agent live path
+- graphify reference: GitHub clone and cross-repo merge
+- graphify reference: transcribe video and audio
+- Q: Let's implement the semantic routing. Give me the fully production ready implemented output
+- .ExecuteAsync
+- SemanticRoutingChecks.csproj
+- extraction-spec.md
+- phantom-dashboard-backend/README.md
 - AuthMagicLinkRequestDto
 - ContextPackSummary
-- AuthMagicLinkRequestDto
+- phantom-website-dashboard/README.md
 - FakeCursorSizeSlider
 - .InvokeAsync
-- ScreenshotError
-- Zi
-- l
-- build
-- l
+- rag-evaluation-results.md
+- phantom-windows-app-backend/README.md
+- performance-results.md
+- docs/README.md
+- repo-split/README.md
 - AuthMagicLinkIssuedDto
 - DeviceRegistrationMetadataDto
 - EmbeddingProviderException
-- AuthMagicLinkIssuedDto
-- Window
-- APIRotationState
+- MIGRATION.md
+- phantom-windows-app/README.md
 - .RequireUserSessionAsync
 - build-app.sh
-- ISettingsRepository
-- buildDocuments
-- Kp
-- e_e
-- is
-- AdminCreditGrantRequestDto
-- AdminManualLockRequestDto
-- UsageReconciliationResultDto
 - .FromConfiguration
-- HostedKnowledgeBaseReindexWorker
-- CursorVisualMode
-- HostedKnowledgeBaseSnippetDto
-- .OnSourceInitialized
 - ResponsePlanType
-- ContextPackSelectionItem
-- ManagedAiCatalog
-- sbe
-- addNamespace
-- by
-- flatMap
-- AuthCallbackCompletionRequestDto
-- AuthRefreshRequestDto
-- HostedKnowledgeBaseDocumentPasteRequestDto
+- .LoadHostedContextPacks
 - ManagedAiModelVisionUpdateRequestDto
-- PhoneVerificationStateDto
-- ReadOnlySafeModeStateDto
 - InterviewSessionState
-- AuthCallbackCompletionRequestDto
-- PhoneVerificationStateDto
-- ReadOnlySafeModeStateDto
 - updateManagedAiRuntimeSelection
-- acquireParserWorker
-- Elt
-- destructEndLink
-- z8
-- jIt
-- eHe
-- runConverter
-- eqe
-- traverseFolder
-- getAllSubTypes
-- Gn
-- iterator
-- Xp
-- vy
-- q0e
-- AdminBalanceWaiverRequestDto
-- HostedKnowledgeBaseCreateRequestDto
 - ManagedAiRuntimeSelectionUpdateRequestDto
-- Window
 - RetrievalScope
 - loginAdmin
-- cie
-- Act
-- i
-- AJ
-- BE
-- bXe
-- cUe
-- lN
-- k0e
-- eIt
-- extractWrap
-- t
-- gb
-- getAllTags
-- indexNodes2
-- z7
-- Y3e
-- KX
-- rB
-- t8t
-- wrapPreparationException
 - PackageDescription
 - vercel.json
-- addAttributes
-- addDeaccelerator
-- addPipelineComponent
-- addTrend
-- aut
-- bct
-- cIt
-- createScopeForNodes
-- cx
-- DJ
-- fie
-- d
-- getAstNodePath
-- parseClassifier
-- Mae
-- H8t
-- sortDocuments
-- HZe
-- iht
-- mj
-- Nae
-- "../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/cancellation.js"
-- "../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/disposable.js"
-- "../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/messageReader.js"
-- "../../node_modules/.pnpm/vscode-languageserver-protocol@3.17.5/node_modules/vscode-languageserver-protocol/lib/common/protocol.progress.js"
-- NX
-- oie
-- xb
-- oy
-- qMt
-- setAxes
-- startPipeline
-- terminateWorker
-- yj
 
 ## God Nodes (most connected - your core abstractions)
 1. `push()` - 406 edges
-2. `t()` - 313 edges
-3. `r()` - 278 edges
-4. `n()` - 208 edges
-5. `i()` - 200 edges
-6. `MainWindow` - 190 edges
-7. `e()` - 166 edges
-8. `a()` - 159 edges
-9. `s()` - 138 edges
-10. `PhantomStore` - 135 edges
+2. `push()` - 406 edges
+3. `push()` - 406 edges
+4. `t()` - 313 edges
+5. `t()` - 313 edges
+6. `t()` - 313 edges
+7. `r()` - 278 edges
+8. `r()` - 278 edges
+9. `r()` - 278 edges
+10. `n()` - 208 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `.selectedModelSupportsVision` --references--> `ManagedProvider`  [INFERRED]
-  phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BackendClient.swift
-- `.selectedProvider` --references--> `ManagedProvider`  [INFERRED]
-  phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BackendClient.swift
+- `PhantomStore` --calls--> `BYOClient`  [INFERRED]
+  phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BYOClient.swift
 - `.accountTypeLabel` --references--> `StartupSnapshot`  [INFERRED]
   phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BackendClient.swift
 - `.isPremiumAccount` --references--> `StartupSnapshot`  [INFERRED]
   phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BackendClient.swift
-- `.body` --calls--> `MermaidDiagram`  [INFERRED]
-  phantom-mac-app/Sources/Phantom/ContentView.swift → phantom-mac-app/Sources/Phantom/MermaidView.swift
+- `.runtimeWallet` --calls--> `RuntimeWallet`  [EXTRACTED]
+  phantom-mac-app/Sources/Phantom/BackendClient.swift → phantom-mac-app/Sources/Phantom/Domain/RuntimeModels.swift
+- `.selectedModelSupportsVision` --references--> `ManagedProvider`  [INFERRED]
+  phantom-mac-app/Sources/Phantom/PhantomStore.swift → phantom-mac-app/Sources/Phantom/BackendClient.swift
 
 ## Import Cycles
 - None detected.
 
-## Communities (403 total, 39 thin omitted)
+## Communities (310 total, 20 thin omitted)
 
-### Community 0 - "mermaid.min.js"
+### Community 0 - "phantom-windows-app/assets/mermaid/mermaid.min.js"
 Cohesion: 0.00
-Nodes (45): B_e(), buildNamespaceConflictError(), DE(), eie(), f_e(), fontMetrics(), getLinks(), getParent() (+37 more)
+Nodes (577): $2e(), _5e(), $8t(), a2(), a5e(), abe(), accept(), acquireParserWorker() (+569 more)
 
-### Community 1 - ".WriteLine"
+### Community 1 - "MainWindow"
 Cohesion: 0.03
-Nodes (46): CancelEventArgs, ConversationManager, CoreWebView2PermissionRequestedEventArgs, EventHandler, ExecutedRoutedEventArgs, Grid, InvisibleMessageBox, Result (+38 more)
+Nodes (35): Background, Brush, CancelEventArgs, CancellationTokenSource, ExecutedRoutedEventArgs, TimeSpan, ICreditMeteringService, IUsageReconciliationService (+27 more)
 
 ### Community 2 - "ConversationManager"
 Cohesion: 0.04
-Nodes (48): CachedInterviewContextPack, fullResponse, hasCode, InterviewPackKind, RetrievedContextSnippet, DocumentId, DocumentTitle, Score (+40 more)
+Nodes (62): CachedInterviewContextPack, fullResponse, hasCode, InterviewPackKind, RetrievedContextSnippet, DocumentId, DocumentTitle, Score (+54 more)
 
-### Community 3 - "i"
-Cohesion: 0.05
-Nodes (102): a_e(), addLink(), addNode(), addRelationship(), aoe(), blockquote(), blt(), h() (+94 more)
+### Community 3 - "t"
+Cohesion: 0.01
+Nodes (439): _4e(), a3e(), a6e(), a_e(), aa(), aae(), addLink(), addNode() (+431 more)
 
 ### Community 4 - "HostedKnowledgeBaseStructuredExtractionService"
 Cohesion: 0.04
-Nodes (68): Company, ExperienceExtractionEnvelope, ExperienceExtractionResult, JsonSerializerOptions, Match, DateTime, HostedKnowledgeBaseDocumentRecord, CharacterCount (+60 more)
+Nodes (69): Company, ExperienceExtractionEnvelope, ExperienceExtractionResult, JsonSerializerOptions, Match, DateTime, HostedKnowledgeBaseDocumentRecord, CharacterCount (+61 more)
 
 ### Community 5 - "InterviewSessionRecord"
-Cohesion: 0.03
-Nodes (68): IInterviewLockService, IAccountCacheRepository, IInterviewSessionRepository, DateTime, AccountCacheSnapshot, AccessTier, CanUseDesktopPowerFeatures, EmailVerified (+60 more)
+Cohesion: 0.04
+Nodes (59): IInterviewLockService, IAccountCacheRepository, IInterviewSessionRepository, DateTime, InterviewLockHeartbeatResult, LockExpiresAtUtc, Message, Resumed (+51 more)
 
-### Community 6 - "BackendValidationException"
-Cohesion: 0.07
-Nodes (28): CachedSearchEntry, IFormFile, IFormFileCollection, IReadOnlySet, BackendValidationException, IReadOnlyList, CancellationToken, ConcurrentDictionary (+20 more)
+### Community 6 - "HostedKnowledgeBaseService"
+Cohesion: 0.02
+Nodes (132): CachedSearchEntry, IFormFile, IFormFileCollection, IReadOnlySet, DateTime, HostedKnowledgeBaseChunkRecord, ChunkId, ChunkIndex (+124 more)
 
 ### Community 7 - ".List"
-Cohesion: 0.04
-Nodes (63): PaymentCheckoutCreateRequestDto, PackCode, Target, PaymentCheckoutSessionDto, AmountMinor, CheckoutId, Credits, Currency (+55 more)
+Cohesion: 0.03
+Nodes (77): PaymentCatalogResponseDto, PremiumDebtSettlement, PremiumPacks, ProPacks, RazorpayKeyId, PaymentCheckoutCreateRequestDto, PackCode, Target (+69 more)
 
 ### Community 8 - "HostedKnowledgeBaseSummaryDto"
 Cohesion: 0.03
-Nodes (67): DeleteResult, DesktopContextPackDeleteRequestDto, PackId, DateTime, IReadOnlyList, HostedKnowledgeBaseProfileCardDto, CandidateInfo, CurrentRole (+59 more)
+Nodes (79): DeleteResult, DesktopContextPackDeleteRequestDto, PackId, DateTime, IReadOnlyList, HostedKnowledgeBaseProfileCardDto, CandidateInfo, CurrentRole (+71 more)
 
 ### Community 9 - "PhantomStore"
 Cohesion: 0.03
-Nodes (47): Never, ObservableObject, AccountSnapshotStore, .url, SessionStore, PhantomStore, .activeCreditLane, .activeKeyPosition (+39 more)
+Nodes (62): Never, ObservableObject, ChatMessage, ManagedCatalog, InterviewPrompt, AccountSnapshotStore, .url, ConversationStore (+54 more)
 
 ### Community 10 - "String"
 Cohesion: 0.05
-Nodes (60): Decodable, DecodingError, Hashable, Identifiable, JSONDecoder, JSONEncoder, AppLaunchContext, AuthSession (+52 more)
+Nodes (62): Decodable, DecodingError, Hashable, Identifiable, JSONDecoder, JSONEncoder, AppLaunchContext, AuthSession (+54 more)
 
 ### Community 11 - "SecureOverlay.Domain.Entities"
-Cohesion: 0.06
+Cohesion: 0.07
 Nodes (22): SecureOverlay.Application.Interviews, SecureOverlay.Infrastructure.Persistence, SecureOverlay.Application.Telemetry, SecureOverlay.Application.Billing, SecureOverlay.Application.Device, SecureOverlay.Helpers, SecureOverlay.Domain.Enums, SecureOverlay.Platform.Windows.Device (+14 more)
 
 ### Community 12 - "DesktopAccountRecord"
-Cohesion: 0.04
-Nodes (42): BootstrapUser, DateTime, DesktopAccountRecord, AccessTier, CanUseDesktopPowerFeatures, CreatedAtUtc, Email, EmailVerified (+34 more)
+Cohesion: 0.03
+Nodes (65): BootstrapUser, AdminBalanceWaiverRequestDto, Reason, UserId, AdminCreditGrantRequestDto, PremiumCreditsToAdd, ProCreditsToAdd, Reason (+57 more)
 
 ### Community 13 - "IAIService"
 Cohesion: 0.03
 Nodes (47): Action, CancellationToken, HttpClient, List, Task, ChatGPTService, Action, CancellationToken (+39 more)
 
-### Community 14 - "HostedKnowledgeBaseRepository"
-Cohesion: 0.03
-Nodes (61): DateTime, HostedKnowledgeBaseExperienceCardRecord, Company, CreatedAtUtc, EndDate, ExperienceCardId, IsCurrent, KnowledgeBaseId (+53 more)
+### Community 14 - "net10.0-windows/assets/mermaid/mermaid.min.js"
+Cohesion: 0.00
+Nodes (581): $2e(), _3e(), _5e(), $8t(), a2(), a5e(), abe(), accept() (+573 more)
 
 ### Community 15 - "Phantom.WindowsApp.Backend.Contracts"
-Cohesion: 0.06
-Nodes (15): Phantom.WindowsApp.Backend.Persistence, Phantom.WindowsApp.Backend.Services, Phantom.WindowsApp.Backend.Contracts, Phantom.WindowsApp.Backend.Infrastructure, Phantom.WindowsApp.Backend.Domain, AdminPasswordResetStartRequestDto, Email, AuthLogoutRequestDto (+7 more)
+Cohesion: 0.03
+Nodes (54): Phantom.WindowsApp.Backend.Persistence, Phantom.WindowsApp.Backend.Services, Phantom.WindowsApp.Backend.Contracts, Phantom.WindowsApp.Backend.Infrastructure, Phantom.WindowsApp.Backend.Domain, AdminAuthLoginRequestDto, Email, Password (+46 more)
 
 ### Community 16 - "ManagedAiLatencyRepository"
 Cohesion: 0.04
-Nodes (52): CatalogModelRef, IReadOnlyList, AdminManagedAiTestRequestDto, ImageBase64, Messages, ModelId, ProviderId, DateTime (+44 more)
+Nodes (46): CatalogModelRef, DateTime, ManagedAiLatencyModelStatusRecord, CheckedAtUtc, IsChatCapable, LastJobId, LatencyMs, Message (+38 more)
 
 ### Community 17 - "MarkdownHelper"
 Cohesion: 0.05
 Nodes (33): BitmapSource, Block, CoreWebView2Environment, FlowDocument, InlineCollection, MarkdownPipeline, MarkdownSegment, MermaidBrowserMessage (+25 more)
 
 ### Community 18 - "PhoneVerificationChallengeRecord"
-Cohesion: 0.03
-Nodes (56): ExpiresAtUtc, IHostEnvironment, PhoneVerificationConfirmRequestDto, ChallengeId, OtpCode, DateTime, PhoneVerificationConfirmResultDto, MaskedPhoneNumber (+48 more)
+Cohesion: 0.07
+Nodes (24): DateTime, PhoneVerificationChallengeRecord, ChallengeId, ConsumedAtUtc, CooldownUntilUtc, CreatedAtUtc, DeviceFingerprintHash, EmailHint (+16 more)
 
 ### Community 19 - "UserControl"
-Cohesion: 0.04
-Nodes (67): Index, Key, AutoScrollCheckBox, DebugLogsList, CheckBox, ItemsControl, AIProviderComboBox, AutoPauseInactivityCheckBox (+59 more)
+Cohesion: 0.06
+Nodes (57): Index, Key, AutoPauseInactivityCheckBox, AutoSendAfterVoiceStopCheckBox, AutoSwitchKeysCheckBox, AutoSwitchModelsCheckBox, BillingPriorityCheckBox, ByoConfigurationSection (+49 more)
 
 ### Community 20 - "ManagedAiCatalogService"
 Cohesion: 0.06
 Nodes (40): ManagedAiModelOptionDto, DisplayName, ModelId, SupportsVision, DateTime, IReadOnlyList, ManagedAiProviderOptionDto, Label (+32 more)
 
-### Community 21 - "DesktopSessionRecord"
-Cohesion: 0.05
-Nodes (41): AuthMagicLinkIssuedDto, UserPasswordResetCompleteRequestDto, NewPassword, Token, UserPasswordResetResultDto, Message, DateTime, DesktopSessionRecord (+33 more)
+### Community 21 - "BackendValidationException"
+Cohesion: 0.02
+Nodes (93): Admin, AuthMagicLinkIssuedDto, IHostEnvironment, DateTime, AdminAuthSessionDto, AccessToken, AdminId, AuthenticatedAtUtc (+85 more)
 
-### Community 22 - "StartupGateContext"
+### Community 22 - "AccountCacheSnapshot"
 Cohesion: 0.06
 Nodes (31): IStartupGateService, StartupGateContext, CanAttemptLogin, CanOpenMainApp, CanRegister, CanResumeLockedInterview, CanRetry, Detail (+23 more)
 
 ### Community 23 - "EmailVerificationTokenRecord"
-Cohesion: 0.04
-Nodes (44): AuthEmailVerificationRequestDto, Email, AuthEmailVerificationResultDto, Email, Message, Verified, AuthRegisterResultDto, DeliveryError (+36 more)
+Cohesion: 0.12
+Nodes (14): DateTime, EmailVerificationTokenRecord, Consumed, ConsumedAtUtc, CreatedAtUtc, DeliveryError, DeliveryStatus, Email (+6 more)
 
 ### Community 24 - "BackendOptions"
 Cohesion: 0.03
 Nodes (68): BackendOptions, AdminApiKey, AdminPasswordResetTtlMinutes, AdminSessionTtlHours, AllowImplicitLocalAdminBootstrap, AllowSeedTestUsers, BootstrapAdminDisplayName, BootstrapAdminEmail (+60 more)
 
-### Community 25 - "AdminAuthService"
-Cohesion: 0.05
-Nodes (41): Admin, AdminAuthLoginRequestDto, Email, Password, AdminAuthRefreshRequestDto, RefreshToken, DateTime, AdminAuthSessionDto (+33 more)
+### Community 25 - "net8.0-windows/assets/mermaid/mermaid.min.js"
+Cohesion: 0.00
+Nodes (581): $2e(), _3e(), _5e(), $8t(), a2(), a5e(), abe(), accept() (+573 more)
 
-### Community 26 - "n"
-Cohesion: 0.12
-Nodes (63): _6e(), a4e(), _at(), BD(), u(), calculateSpace(), cat(), cd() (+55 more)
+### Community 26 - "t"
+Cohesion: 0.01
+Nodes (523): _2(), _4e(), _6e(), a3e(), a4e(), a6e(), a_e(), aa() (+515 more)
 
 ### Community 27 - ".OpenConnection"
-Cohesion: 0.04
-Nodes (39): DateTime, HostedKnowledgeBaseReindexJobRecord, CompletedAtUtc, Error, JobId, KnowledgeBaseId, ProcessedDocuments, RequestedAtUtc (+31 more)
+Cohesion: 0.02
+Nodes (78): AdminLockClearRequestDto, Reason, UserId, DeviceLockAcquireRequestDto, AppVersion, DeviceId, SessionId, UserId (+70 more)
 
 ### Community 28 - "Window"
 Cohesion: 0.04
-Nodes (62): DragCompletedEventArgs, DragDeltaEventArgs, DragStartedEventArgs, ActiveCreditModeBorder, ActiveCreditModeText, AIProviderText, APIKeyIndicator, APIKeyText (+54 more)
+Nodes (67): DragCompletedEventArgs, DragDeltaEventArgs, DragStartedEventArgs, ActiveCreditModeBorder, ActiveCreditModeText, AIProviderText, APIKeyIndicator, APIKeyText (+59 more)
 
 ### Community 29 - "DashboardProjectionReplicatorService"
-Cohesion: 0.06
-Nodes (32): BackgroundService, Name, PendingState, NpgsqlConnection, NpgsqlConnectionStringBuilder, DashboardProjectionReplicaStore, IsEnabled, CancellationToken (+24 more)
+Cohesion: 0.11
+Nodes (21): Name, PendingState, NpgsqlConnection, NpgsqlConnectionStringBuilder, DashboardProjectionReplicaStore, IsEnabled, CancellationToken, DateTime (+13 more)
 
 ### Community 30 - "ManagedAiService"
-Cohesion: 0.09
-Nodes (30): HttpRequestMessage, IReadOnlyList, DesktopAiChatMessageDto, Content, Role, DesktopAiChatRequestDto, AllowPaidSessionExtension, ImageBase64 (+22 more)
+Cohesion: 0.11
+Nodes (28): HttpRequestMessage, IReadOnlyList, DesktopAiChatMessageDto, Content, Role, DesktopAiChatRequestDto, AllowPaidSessionExtension, ImageBase64 (+20 more)
 
-### Community 31 - "CreditMeteringService"
-Cohesion: 0.09
-Nodes (21): RuntimeState, CreditMeteringService, Bool, Date, Decimal, Int, InterviewUsageSource, String (+13 more)
+### Community 31 - "Codable"
+Cohesion: 0.06
+Nodes (59): Codable, Equatable, ClarificationOption, CreditLedger, premium, pro, DeviceLockResult, InterviewActivation (+51 more)
 
-### Community 32 - ".SendMessage"
-Cohesion: 0.07
-Nodes (9): Background, Brush, CancellationTokenSource, TimeSpan, ICreditMeteringService, IUsageReconciliationService, Dictionary, TimeSpan (+1 more)
+### Community 32 - "t"
+Cohesion: 0.01
+Nodes (523): _2(), _4e(), _6e(), a3e(), a4e(), a6e(), a_e(), aa() (+515 more)
 
 ### Community 33 - "handler"
-Cohesion: 0.07
-Nodes (61): beginGroup(), callFunction(), consume(), consumeArg(), consumeArgs(), consumeSpaces(), countExpansion(), cS() (+53 more)
+Cohesion: 0.05
+Nodes (86): ACTION(), after(), AJ(), assign(), assignWithoutOverride(), before(), beginGroup(), callFunction() (+78 more)
 
 ### Community 34 - "HostedKnowledgeBaseSummaryDto"
-Cohesion: 0.03
-Nodes (57): DateTime, HostedKnowledgeBaseDocumentDto, CharacterCount, ChunkCount, ContentType, DocumentId, EmbeddingModel, EmbeddingVersion (+49 more)
+Cohesion: 0.02
+Nodes (111): DateTime, HostedKnowledgeBaseDocumentDto, CharacterCount, ChunkCount, ContentType, DocumentId, EmbeddingModel, EmbeddingVersion (+103 more)
 
 ### Community 35 - "UsageReconciliationRecord"
 Cohesion: 0.04
 Nodes (46): List, IUsageReconciliationRepository, UsageReconciliationFlushResult, FailedCount, PendingBefore, SyncedCount, DateTime, List (+38 more)
 
-### Community 36 - "constructor"
-Cohesion: 0.04
-Nodes (59): addElement(), addRequirement(), awaitBuilderState(), awaitDocumentState(), bGe(), c0(), C8e(), calculate() (+51 more)
+### Community 36 - "push"
+Cohesion: 0.01
+Nodes (301): $0e(), $4(), _6(), A1(), A1e(), A6(), ACTION(), activationCount() (+293 more)
 
-### Community 37 - "cYe"
-Cohesion: 0.09
-Nodes (55): aB(), b1(), z(), bT(), bYe(), cB(), cYe(), d5() (+47 more)
+### Community 37 - "eN"
+Cohesion: 0.03
+Nodes (276): a(), aB(), ac(), add(), addEntry(), aYe(), b(), b1() (+268 more)
 
 ### Community 38 - "AppSettings"
-Cohesion: 0.03
-Nodes (59): AppSettings, AllowByoSessionExtension, AllowFreeTrialSessionExtension, AutoPauseOnInactivityEnabled, AutoPauseOnInactivityMinutes, AutoSendAfterVoiceStopEnabled, AutoSwitchKeysOnError, AutoSwitchModelsOnError (+51 more)
+Cohesion: 0.02
+Nodes (103): IConversationCacheRepository, ISettingsRepository, DateTime, List, ManagedAiCatalogDto, Providers, RefreshedAtUtc, ManagedAiModelOptionDto (+95 more)
 
 ### Community 39 - "SettingsPage"
-Cohesion: 0.09
-Nodes (8): ResumeBox, ComboBox, ContextPack, DependencyObject, IEnumerable, List, SettingsPage, TextChangedEventArgs
+Cohesion: 0.08
+Nodes (15): EventArgs, INotifyPropertyChanged, UseFakeCursorCheckBox, ComboBox, DependencyObject, IEnumerable, ObservableCollection, RoutedEventArgs (+7 more)
 
 ### Community 40 - "design_system.py"
 Cohesion: 0.05
 Nodes (42): BM25, detect_domain(), _load_csv(), Lowercase, split, remove punctuation, filter short words, Build BM25 index from documents, Score all documents against query, Load CSV and return list of dicts, Core search function using BM25 (+34 more)
 
-### Community 41 - "DesktopLockRecord"
-Cohesion: 0.05
-Nodes (39): AdminLockClearRequestDto, Reason, UserId, DeviceLockAcquireRequestDto, AppVersion, DeviceId, SessionId, UserId (+31 more)
+### Community 41 - "push"
+Cohesion: 0.01
+Nodes (301): $0e(), $4(), _6(), A1(), A1e(), A6(), ACTION(), activationCount() (+293 more)
 
 ### Community 42 - "App.jsx"
 Cohesion: 0.05
@@ -623,64 +525,64 @@ Cohesion: 0.06
 Nodes (33): SupportTicketCreateRequestDto, Category, Description, Priority, Subject, SupportTicketUpdateRequestDto, AdminNotes, Priority (+25 more)
 
 ### Community 45 - "String"
-Cohesion: 0.06
-Nodes (28): LocalizedError, NSException, InterviewPrompt, String, AppVersion, .current, BYOCatalogStore, ContextSummaryStore (+20 more)
+Cohesion: 0.08
+Nodes (23): NSException, AppVersion, .current, BYOCatalogStore, ContextSummaryStore, DeviceIdentity, Diagnostics, .crashURL (+15 more)
 
 ### Community 46 - "push"
-Cohesion: 0.05
-Nodes (52): $4(), activationCount(), addActor(), addAll(), addBox(), addCssStyles(), addEdge(), addMessage() (+44 more)
+Cohesion: 0.01
+Nodes (339): $0e(), _2(), $4(), _6(), A1(), A1e(), A6(), aat() (+331 more)
 
-### Community 47 - "t"
-Cohesion: 0.04
-Nodes (52): _4e(), t(), Aot(), Ce(), checkSingleRoot(), dje(), Drt(), eD() (+44 more)
+### Community 47 - "f"
+Cohesion: 0.03
+Nodes (249): a(), a0e(), aB(), ac(), addEntry(), p(), b(), b1() (+241 more)
 
-### Community 48 - "ChatMessage"
-Cohesion: 0.09
-Nodes (23): BackendError, decoding, .errorDescription, invalidResponse, server, ChatMessage, BYOClient, BYOError (+15 more)
+### Community 48 - "BYOClient"
+Cohesion: 0.19
+Nodes (11): BYOClient, BYOError, .errorDescription, server, .statusCode, unsupportedProvider, Any, Bool (+3 more)
 
-### Community 49 - "r"
-Cohesion: 0.04
-Nodes (49): a3e(), a6e(), aat(), addAnnotation(), r(), bindFunctions(), d(), bst() (+41 more)
+### Community 49 - "f"
+Cohesion: 0.03
+Nodes (249): a(), a0e(), aB(), ac(), addEntry(), p(), b(), b1() (+241 more)
 
-### Community 50 - "w"
-Cohesion: 0.13
-Nodes (46): p(), b(), w(), A(), B(), ble(), Cle(), T() (+38 more)
+### Community 50 - "get"
+Cohesion: 0.02
+Nodes (159): A8e(), add(), addLayoutHint(), aMt(), aRe(), aut(), aYe(), BBe() (+151 more)
 
 ### Community 51 - "ContentView.swift"
-Cohesion: 0.09
-Nodes (44): Button, Color, Content, NSImage, BrandMark, .body, .icon, ChatView (+36 more)
+Cohesion: 0.06
+Nodes (56): Button, Color, Content, Coordinator, NSImage, NSScrollView, NSTextView, NSTextViewDelegate (+48 more)
 
-### Community 52 - "subrule"
+### Community 52 - "get"
+Cohesion: 0.02
+Nodes (159): A8e(), add(), addLayoutHint(), aMt(), aRe(), aut(), aYe(), BBe() (+151 more)
+
+### Community 53 - ".WriteLine"
 Cohesion: 0.05
-Nodes (49): ACTION(), addLocalSymbol(), after(), alternatives(), assign(), assignWithoutOverride(), before(), buildKeywordPattern() (+41 more)
-
-### Community 53 - "APIRotationManager"
-Cohesion: 0.10
-Nodes (7): AIServiceFactory, Dictionary, List, APIRotationManager, IsAutoSwitchKeysEnabled, IsAutoSwitchModelsEnabled, Action
+Nodes (17): ConversationManager, CoreWebView2PermissionRequestedEventArgs, EventHandler, Grid, IDisposable, APIRotationManager, AIServiceFactory, Dictionary (+9 more)
 
 ### Community 54 - "GoogleMailOAuthService"
 Cohesion: 0.06
-Nodes (29): ClientSecrets, GoogleAuthorizationCodeFlow, GoogleMailOAuthStartResultDto, AuthorizationUrl, RedirectUri, GoogleMailOAuthStatusDto, FromEmail, HasRefreshToken (+21 more)
+Nodes (30): ClientSecrets, GoogleAuthorizationCodeFlow, GoogleMailOAuthStartResultDto, AuthorizationUrl, RedirectUri, GoogleMailOAuthStatusDto, FromEmail, HasRefreshToken (+22 more)
 
 ### Community 55 - "AuthSessionDto"
-Cohesion: 0.05
-Nodes (35): AuthCallbackCompletionResultDto, CallbackResult, Session, AuthCallbackResultDto, DeviceFingerprintHash, DeviceInstallId, Email, PhoneVerified (+27 more)
+Cohesion: 0.03
+Nodes (56): AuthCallbackCompletionResultDto, CallbackResult, Session, AuthCallbackResultDto, DeviceFingerprintHash, DeviceInstallId, Email, PhoneVerified (+48 more)
 
 ### Community 56 - "HostedRuntimeOptions"
-Cohesion: 0.06
+Cohesion: 0.05
 Nodes (32): HostedRuntimeFileConfig, DateTime, List, UsageReconciliationRequestDto, ChargedBlocks, ChargedCredits, ConsumedPremiumCredits, ConsumedProCredits (+24 more)
 
 ### Community 57 - "peekChar"
-Cohesion: 0.11
-Nodes (44): alternative(), assertion(), atom(), atomEscape(), characterClass(), characterClassEscape(), classAtom(), classEscape() (+36 more)
+Cohesion: 0.12
+Nodes (41): alternative(), assertion(), atom(), atomEscape(), characterClass(), characterClassEscape(), classAtom(), classEscape() (+33 more)
 
-### Community 58 - "eN"
-Cohesion: 0.06
-Nodes (39): aYe(), bne(), Cne(), count(), dne(), dYe(), eN(), A() (+31 more)
+### Community 58 - "node"
+Cohesion: 0.04
+Nodes (146): $9(), a5(), Af(), age(), alt(), Axe(), b9(), bezierCurveTo() (+138 more)
 
-### Community 59 - "Codable"
-Cohesion: 0.11
-Nodes (40): Codable, Equatable, CreditLedger, premium, pro, DeviceLockResult, InterviewActivation, InterviewCompletion (+32 more)
+### Community 59 - "node"
+Cohesion: 0.04
+Nodes (146): $9(), a5(), Af(), age(), alt(), Axe(), b9(), bezierCurveTo() (+138 more)
 
 ### Community 60 - "AppDelegate"
 Cohesion: 0.08
@@ -690,60 +592,60 @@ Nodes (25): EventHandlerRef, EventHotKeyRef, NSApplication, NSApplicationDelegat
 Cohesion: 0.06
 Nodes (28): DateTime, ManagedAiProviderKeyDto, CredentialId, IsEnabled, Label, Priority, ProviderId, UpdatedAtUtc (+20 more)
 
-### Community 62 - "sanitizeText"
-Cohesion: 0.09
-Nodes (40): addClass(), addClassesToNamespace(), addDescription(), addInterface(), addMember(), addMembers(), addRelation(), addRelationObjs() (+32 more)
+### Community 62 - ".toString"
+Cohesion: 0.03
+Nodes (113): addDocument(), BE(), blockTokens(), buildDocuments(), bZ(), at(), calculateOffsetByRotation(), calculateSpaceIfDrawnHorizontally() (+105 more)
 
 ### Community 63 - "TelemetryEvent"
-Cohesion: 0.09
+Cohesion: 0.08
 Nodes (23): List, ITelemetryRepository, IReadOnlyList, ITelemetryService, DateTime, Dictionary, TelemetryEvent, Attributes (+15 more)
 
 ### Community 64 - ".constructor"
-Cohesion: 0.07
-Nodes (38): a4(), aP(), bEe(), Bie(), bnt(), Cee(), cje(), copy() (+30 more)
+Cohesion: 0.04
+Nodes (70): a4(), Aee(), aO(), bEe(), bI(), Bie(), bnt(), brighter() (+62 more)
 
-### Community 65 - "ConversationManager"
-Cohesion: 0.16
-Nodes (11): KnowledgeSnippet, Double, Configuration, ModelContextRegistry, Int, String, ConversationManager, Bool (+3 more)
+### Community 65 - "String"
+Cohesion: 0.10
+Nodes (25): InterviewAnswerPlan, KnowledgeSnippet, ClarificationOption, Double, String, AnswerResolution, .instruction, AnswerSource (+17 more)
 
 ### Community 66 - "APIRotationManager"
 Cohesion: 0.16
 Nodes (13): APIRotationManager, FailureKind, authentication, rateLimited, retryable, terminal, RotationError, .errorDescription (+5 more)
 
-### Community 67 - "get"
-Cohesion: 0.08
-Nodes (36): aRe(), Aw(), c1e(), cct(), createGrammarElementIdMap(), D6t(), l(), u() (+28 more)
+### Community 67 - ".toString"
+Cohesion: 0.03
+Nodes (113): addDocument(), BE(), blockTokens(), buildDocuments(), bZ(), at(), calculateOffsetByRotation(), calculateSpaceIfDrawnHorizontally() (+105 more)
 
 ### Community 68 - "DesktopContextPackRecord"
 Cohesion: 0.07
 Nodes (26): DateTime, DesktopContextPackDto, JobDescriptionText, Name, PackId, ResumeText, UpdatedAtUtc, DesktopContextPackUpsertRequestDto (+18 more)
 
-### Community 69 - "has"
-Cohesion: 0.07
-Nodes (35): A8e(), BWe(), cacheForContext(), checkSourceFrameTypes(), delete(), dispose(), dnt(), ept() (+27 more)
+### Community 69 - "get"
+Cohesion: 0.02
+Nodes (163): _6e(), a4e(), A8e(), addLayoutHint(), addLocalSymbol(), addNodeFromVertex(), aMt(), aRe() (+155 more)
 
 ### Community 70 - "SqliteRuntimeStore"
-Cohesion: 0.11
-Nodes (17): DateTime, SqliteRuntimeStore, Dictionary, List, LocalSecretBundle, AuthSecrets, DeviceSecrets, ProviderKeys (+9 more)
+Cohesion: 0.05
+Nodes (35): SecureOverlay.Domain.ValueObjects, StorageMode, ReadOnlySafeMode, ReadWrite, SqliteAccountCacheRepository, SqliteAuthSessionRepository, SqliteInterviewSessionRepository, DateTime (+27 more)
 
-### Community 71 - "TelemetryEventRecord"
-Cohesion: 0.08
-Nodes (24): DateTime, Dictionary, TelemetryIngestRequestDto, Attributes, Category, EventName, OccurredAtUtc, DateTime (+16 more)
+### Community 71 - "OperationalMetricsService"
+Cohesion: 0.07
+Nodes (21): BackgroundService, CancellationToken, ILogger, IServiceProvider, Task, HostedKnowledgeBaseReindexWorker, CancellationToken, ILogger (+13 more)
 
 ### Community 72 - ".ApplyProtection"
-Cohesion: 0.13
-Nodes (12): ComboBox, IntPtr, FallbackProtection, LowLevelKeyboardProc, DllImport, IntPtr, LowLevelKeyboardProc, NativeMethods (+4 more)
+Cohesion: 0.10
+Nodes (16): ComboBox, IntPtr, FallbackProtection, ScreenshotButton, FrameworkElement, LowLevelKeyboardProc, Point, DllImport (+8 more)
 
-### Community 73 - "setAttribute"
-Cohesion: 0.12
-Nodes (33): arc(), arcTo(), C2e(), closePath(), curve(), draw(), _drawToContext(), h() (+25 more)
+### Community 73 - "apply"
+Cohesion: 0.03
+Nodes (98): addALink(), addDetails(), addLinks(), addProperties(), Aet(), AHe(), i(), apply() (+90 more)
 
 ### Community 74 - "AdminAccountSnapshotDto"
-Cohesion: 0.06
-Nodes (31): DateTime, List, AdminAccountSnapshotDto, AccessTier, ActiveLockDeviceId, ActiveLockExpiresAtUtc, ActiveLockSessionId, CanUseDesktopPowerFeatures (+23 more)
+Cohesion: 0.03
+Nodes (66): DateTime, List, AdminAccountSnapshotDto, AccessTier, ActiveLockDeviceId, ActiveLockExpiresAtUtc, ActiveLockSessionId, CanUseDesktopPowerFeatures (+58 more)
 
 ### Community 75 - "DeviceLockAcquireResultDto"
-Cohesion: 0.08
+Cohesion: 0.07
 Nodes (22): DeviceLockAcquireRequestDto, AppVersion, DeviceId, SessionId, UserId, DateTime, DeviceLockAcquireResultDto, Acquired (+14 more)
 
 ### Community 76 - "AreaSelectionController"
@@ -751,188 +653,184 @@ Cohesion: 0.13
 Nodes (17): CGFloat, CGImage, CoreGraphics, NSPoint, NSScreen, NSView, AreaSelectionController, AreaSelectionView (+9 more)
 
 ### Community 77 - "SecureOverlay"
-Cohesion: 0.07
-Nodes (18): SecureOverlay.Platform.Windows, SecureOverlay, DependencyObject, ComboBoxProtection, WindowsAppPaths, CrashLogPath, DatabasePath, LegacyConversationCachePath (+10 more)
+Cohesion: 0.04
+Nodes (29): SecureOverlay.Platform.Windows, SecureOverlay, MessageBoxButton, MessageBoxImage, MessageBoxResult, DependencyObject, ComboBoxProtection, DllImport (+21 more)
 
-### Community 78 - "hr"
-Cohesion: 0.08
-Nodes (32): Aq(), b3e(), b5e(), buildAlternationAmbiguityError(), buildAlternationPrefixAmbiguityError(), buildEarlyExitMessage(), buildMismatchTokenMessage(), buildNoViableAltMessage() (+24 more)
+### Community 78 - "LA"
+Cohesion: 0.04
+Nodes (93): addToResyncTokens(), atLeastOneInternalLogic(), atLeastOneSepFirstInternalLogic(), attemptInRepetitionRecovery(), BACKTRACK(), bRe(), buildDuplicateFoundError(), buildFullFollowKeyStack() (+85 more)
 
 ### Community 79 - "HostedKnowledgeBaseDocumentContentDto"
-Cohesion: 0.06
-Nodes (30): DateTime, HostedKnowledgeBaseDocumentContentDto, CharacterCount, ChunkCount, ContentType, DocumentId, Error, ExtractedText (+22 more)
+Cohesion: 0.11
+Nodes (17): DateTime, HostedKnowledgeBaseDocumentContentDto, CharacterCount, ChunkCount, ContentType, DocumentId, Error, ExtractedText (+9 more)
 
 ### Community 80 - "InterviewQuestionBankJobRepository"
 Cohesion: 0.10
 Nodes (19): List, InterviewQuestionBankUpdateRequestDto, InterviewName, Questions, DateTime, IReadOnlyList, NpgsqlConnection, NpgsqlDataReader (+11 more)
 
-### Community 81 - "insert"
-Cohesion: 0.20
-Nodes (31): ac(), boe(), Coe(), dce(), doe(), ele(), eoe(), fl() (+23 more)
+### Community 81 - "LA"
+Cohesion: 0.04
+Nodes (93): addToResyncTokens(), atLeastOneInternalLogic(), atLeastOneSepFirstInternalLogic(), attemptInRepetitionRecovery(), BACKTRACK(), bRe(), buildDuplicateFoundError(), buildFullFollowKeyStack() (+85 more)
 
-### Community 82 - "_E"
-Cohesion: 0.08
-Nodes (31): Cc(), cW(), dW(), _E(), e0(), findIndex(), Il(), iW() (+23 more)
+### Community 82 - "build"
+Cohesion: 0.04
+Nodes (92): arc(), arcTo(), B4(), bHe(), build(), C2e(), CHe(), checkbox() (+84 more)
 
 ### Community 83 - "ManagedAiLatencyModelStatusDto"
 Cohesion: 0.06
 Nodes (28): DateTime, ManagedAiLatencyModelStatusDto, CheckedAtUtc, DisplayName, IsChatCapable, LastJobId, LatencyMs, Message (+20 more)
 
 ### Community 84 - "Foundation"
-Cohesion: 0.09
-Nodes (16): AppKit, AVFoundation, Carbon, CryptoKit, Foundation, AccountAccess, Bool, Decimal (+8 more)
+Cohesion: 0.10
+Nodes (19): CryptoKit, Foundation, LocalizedError, AccountAccess, Bool, Decimal, String, RuntimePersistenceError (+11 more)
 
 ### Community 85 - "authHeaders"
 Cohesion: 0.13
 Nodes (29): KnowledgeBasePanel(), handleCreate(), handleDeleteDocument(), handleDeleteExperience(), handleMarkRecent(), handlePaste(), handleSaveExperience(), handleSaveProfile() (+21 more)
 
-### Community 86 - "br"
-Cohesion: 0.07
-Nodes (30): $2e(), Axe(), B2e(), br(), cgt(), checkbox(), code(), codespan() (+22 more)
+### Community 86 - "build"
+Cohesion: 0.04
+Nodes (92): arc(), arcTo(), B4(), bHe(), build(), C2e(), CHe(), checkbox() (+84 more)
 
 ### Community 87 - "e"
-Cohesion: 0.07
-Nodes (29): Btt(), cnt(), d3e(), HWe(), jat(), jet(), mAt(), mft() (+21 more)
+Cohesion: 0.03
+Nodes (103): aft(), i(), n(), blockTokens(), Btt(), cft(), a(), t() (+95 more)
 
 ### Community 88 - ".RetrieveForPromptAsync"
-Cohesion: 0.10
-Nodes (18): CancellationToken, IReadOnlyList, Task, IKnowledgeRetrievalService, CancellationToken, ContextPack, Func, IReadOnlyList (+10 more)
-
-### Community 89 - "forEach"
-Cohesion: 0.07
-Nodes (29): addStyleClass(), allElements(), bje(), dDt(), docTranslator(), e6e(), eTe(), flat() (+21 more)
-
-### Community 90 - "dr"
 Cohesion: 0.15
-Nodes (29): bKe(), Bu(), bW(), cKe(), dKe(), dr(), EW(), fKe() (+21 more)
+Nodes (11): CancellationToken, IReadOnlyList, Task, IKnowledgeRetrievalService, CancellationToken, Conditional, IEnumerable, IReadOnlyList (+3 more)
+
+### Community 89 - "concat"
+Cohesion: 0.04
+Nodes (85): Aq(), b3e(), b5e(), bq(), buildAlternationAmbiguityError(), buildAlternationPrefixAmbiguityError(), buildEarlyExitMessage(), buildLeftRecursionError() (+77 more)
+
+### Community 90 - "concat"
+Cohesion: 0.04
+Nodes (85): Aq(), b3e(), b5e(), bq(), buildAlternationAmbiguityError(), buildAlternationPrefixAmbiguityError(), buildEarlyExitMessage(), buildLeftRecursionError() (+77 more)
 
 ### Community 91 - "concat"
-Cohesion: 0.12
-Nodes (29): bq(), buildLeftRecursionError(), concat(), getAllElements(), HX(), a(), J6(), a() (+21 more)
+Cohesion: 0.03
+Nodes (95): _3e(), Aq(), b3e(), b5e(), bq(), buildAlternationAmbiguityError(), buildAlternationPrefixAmbiguityError(), buildDuplicateFoundError() (+87 more)
 
 ### Community 92 - "AIModelRegistry"
-Cohesion: 0.08
+Cohesion: 0.09
 Nodes (19): Dictionary, List, AIModelRegistry, ModelInfo, DisplayName, Id, MaxContextTokens, MaxResponseTokens (+11 more)
 
 ### Community 93 - "node"
-Cohesion: 0.11
-Nodes (28): a0e(), Cce(), fI(), gI(), glt(), i(), n(), hI() (+20 more)
+Cohesion: 0.03
+Nodes (155): $9(), a0e(), a5(), Af(), age(), alt(), Axe(), b9() (+147 more)
 
-### Community 94 - "add"
-Cohesion: 0.10
-Nodes (28): add(), addLayoutHint(), b5(), C5(), d1e(), D3(), e1e(), eut() (+20 more)
+### Community 94 - "handler"
+Cohesion: 0.06
+Nodes (70): addParents(), AJ(), aqe(), beginGroup(), callFunction(), consume(), consumeArg(), consumeArgs() (+62 more)
 
 ### Community 95 - ".OnStartup"
-Cohesion: 0.10
-Nodes (10): DispatcherUnhandledExceptionEventArgs, ExitEventArgs, Application, App, Channel, Task, FileLogger, Log (+2 more)
-
-### Community 96 - "RoutedEventArgs"
 Cohesion: 0.13
-Nodes (10): EventArgs, INotifyPropertyChanged, ObservableCollection, RoutedEventArgs, ApiKeyItem, Index, Key, SettingsCloseResult (+2 more)
+Nodes (7): DispatcherUnhandledExceptionEventArgs, ExitEventArgs, Application, App, Log, StartupEventArgs, UnhandledExceptionEventArgs
 
-### Community 97 - "visit"
-Cohesion: 0.10
-Nodes (27): checkIsTarget(), visit(), visitAlternation(), visitAlternative(), visitChildren(), visitDisjunction(), visitEndAnchor(), visitFlags() (+19 more)
+### Community 96 - "handler"
+Cohesion: 0.06
+Nodes (70): addParents(), AJ(), aqe(), beginGroup(), callFunction(), consume(), consumeArg(), consumeArgs() (+62 more)
 
-### Community 98 - "UsageLedgerRecord"
-Cohesion: 0.12
-Nodes (19): DateTime, UsageLedgerRecord, AddedPremiumDebt, ChargedBlocks, ChargedCredits, ChargedPremiumCredits, ChargedProCredits, CreatedAtUtc (+11 more)
+### Community 97 - "InterviewAnswerPlanDto"
+Cohesion: 0.05
+Nodes (43): IReadOnlyList, InterviewAnswerPlanDto, AllowCode, AnswerMode, AnswerOutline, ClarificationOptions, ClarificationQuestion, Confidence (+35 more)
+
+### Community 98 - "apply"
+Cohesion: 0.04
+Nodes (54): addALink(), addDetails(), addLinks(), addProperties(), Aet(), AHe(), i(), apply() (+46 more)
 
 ### Community 99 - "LiveRequestTrace"
 Cohesion: 0.10
-Nodes (16): AsyncLocal, IDisposable, Channel, ConcurrentDictionary, Task, LiveRequestTrace, CorrelationId, Current (+8 more)
+Nodes (15): AsyncLocal, Channel, ConcurrentDictionary, Task, LiveRequestTrace, CorrelationId, Current, HasImage (+7 more)
 
 ### Community 100 - "KnowledgeBaseEmbeddingService"
-Cohesion: 0.13
-Nodes (14): CachedQueryEmbeddingEntry, HostedKnowledgeBaseEmbeddingResolvedConfig, ConcurrentDictionary, HttpClient, ILogger, TimeSpan, EmbeddingRequestPolicy, MaxRetries (+6 more)
+Cohesion: 0.19
+Nodes (8): CachedQueryEmbeddingEntry, HostedKnowledgeBaseEmbeddingResolvedConfig, ConcurrentDictionary, HttpClient, ILogger, KnowledgeBaseEmbeddingService, ActiveProfile, IsConfigured
 
-### Community 101 - "performSelfAnalysis"
-Cohesion: 0.11
-Nodes (22): atLeastOneInternalRecord(), atLeastOneSepFirstInternalRecord(), computeLookaheadFunc(), consumeInternalRecord(), d6(), disableRecording(), enableRecording(), GG() (+14 more)
+### Community 101 - "apply"
+Cohesion: 0.04
+Nodes (54): addALink(), addDetails(), addLinks(), addProperties(), Aet(), AHe(), i(), apply() (+46 more)
 
 ### Community 102 - "AuthSessionDto"
 Cohesion: 0.08
 Nodes (21): AuthCallbackCompletionResultDto, CallbackResult, Session, AuthCallbackResultDto, DeviceFingerprintHash, DeviceInstallId, Email, PhoneVerified (+13 more)
 
 ### Community 103 - "ScreenshotCapture"
-Cohesion: 0.14
-Nodes (10): Bitmap, BitmapImage, KeyEventArgs, MouseButtonEventArgs, MouseEventArgs, Point, RoutedEventArgs, ScreenshotCapture (+2 more)
+Cohesion: 0.09
+Nodes (19): Bitmap, CustomCursorCanvas, SelectionCanvas, SelectionRectangle, Window, BitmapImage, DllImport, EventArgs (+11 more)
 
 ### Community 104 - "DeviceProfile"
-Cohesion: 0.15
+Cohesion: 0.14
 Nodes (12): IDeviceIdentityService, IDeviceProfileRepository, DateTime, DeviceProfile, CreatedAtUtc, DeviceLabel, InstallId, LastSeenAtUtc (+4 more)
 
-### Community 105 - "join"
-Cohesion: 0.10
-Nodes (23): addAccelerator(), cDt(), cut(), w(), Ese(), n(), Ffe(), FOe() (+15 more)
+### Community 105 - ".constructor"
+Cohesion: 0.06
+Nodes (45): a4(), bEe(), Bie(), bnt(), Cee(), cje(), copy(), dje() (+37 more)
 
-### Community 106 - "indexOf"
-Cohesion: 0.09
-Nodes (23): ake(), Bgt(), CG(), EXe(), FD(), fXe(), getAstNode(), hXe() (+15 more)
+### Community 106 - ".constructor"
+Cohesion: 0.06
+Nodes (45): a4(), bEe(), Bie(), bnt(), Cee(), cje(), copy(), dje() (+37 more)
 
 ### Community 107 - "StartupAccountCheckResultDto"
 Cohesion: 0.09
 Nodes (21): DateTime, StartupAccountCheckResultDto, AccessTier, CanUseDesktopPowerFeatures, Email, EmailVerified, HasResumableLockedSession, HostedKnowledgeBase (+13 more)
 
-### Community 108 - "StartupAccountCheckResultDto"
-Cohesion: 0.09
-Nodes (21): DateTime, StartupAccountCheckResultDto, AccessTier, CanUseDesktopPowerFeatures, Email, EmailVerified, HasResumableLockedSession, HostedKnowledgeBase (+13 more)
+### Community 108 - "peekChar"
+Cohesion: 0.11
+Nodes (44): alternative(), assertion(), atom(), atomEscape(), characterClass(), characterClassEscape(), classAtom(), classEscape() (+36 more)
 
 ### Community 109 - "Window"
-Cohesion: 0.11
-Nodes (22): BackButton, BackendModeText, ChoicePanel, ContinueButton, EmailTextBox, InlineStatusText, LeftPanelMessageText, LeftPanelTitleText (+14 more)
+Cohesion: 0.06
+Nodes (37): DeviceRegistrationMetadataDto, AppVersion, DeviceLabel, InstallId, MachineFingerprintHash, SecretFingerprintHint, HostedWebRoutes, BaseUrl (+29 more)
 
-### Community 110 - "KnowledgeBaseEmbeddingProfile"
-Cohesion: 0.15
-Nodes (12): EmbeddingRequestPolicy, HttpResponseMessage, KnowledgeBaseEmbeddingProfile, BaseUrl, Dimensions, ModelId, ProviderId, Version (+4 more)
+### Community 110 - ".GenerateBatchAsync"
+Cohesion: 0.24
+Nodes (6): EmbeddingRequestPolicy, HttpResponseMessage, CancellationToken, IEnumerable, IReadOnlyList, Task
 
 ### Community 111 - "formatDate"
 Cohesion: 0.15
 Nodes (22): countBy(), DevicesPanel(), formatDate(), HistoryPanel(), KnowledgeBaseEmbeddingConfigCard(), handleSubmit(), loadDevicesPage(), loadRazorpayScript() (+14 more)
 
-### Community 112 - "wc"
-Cohesion: 0.13
-Nodes (22): A6(), addAstNodeRegionWithAssignmentsTo(), Av(), createDescription(), createDescriptions(), createInfoDescriptions(), findAllReferences(), findDeclarationNodes() (+14 more)
+### Community 112 - "peekChar"
+Cohesion: 0.11
+Nodes (44): alternative(), assertion(), atom(), atomEscape(), characterClass(), characterClassEscape(), classAtom(), classEscape() (+36 more)
 
-### Community 113 - "orInternal"
-Cohesion: 0.10
-Nodes (22): addToResyncTokens(), BACKTRACK(), consumeInternalError(), exportLexerState(), getCurrRuleFullName(), getLexerPosition(), importLexerState(), OR1() (+14 more)
+### Community 113 - "Phantom Web Platform"
+Cohesion: 0.05
+Nodes (41): 10. Purchase Flow, 11. Usage Visibility, 12. Design Direction, 13. Repo Strategy, 14. Implementation Phases, 15. Immediate Recommendation, 1. Goal, 2. Recommended Stack (+33 more)
 
-### Community 114 - "IR"
-Cohesion: 0.09
-Nodes (22): aH(), createDehyrationContext(), createHydrationContext(), dehydrate(), dehydrateLexerReport(), Ev(), fH(), finalize() (+14 more)
+### Community 114 - "ui-ux-pro-max"
+Cohesion: 0.07
+Nodes (29): Accessibility, Available Domains, Available Stacks, Common Rules for Professional UI, Example Workflow, How to Use This Skill, Icons & Visual Elements, Interaction (+21 more)
 
 ### Community 115 - "SD"
 Cohesion: 0.16
 Nodes (22): BFe(), DFe(), EFe(), Fe(), gd(), hk(), IFe(), Ix() (+14 more)
 
-### Community 116 - ""../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/connection.js""
+### Community 116 - "Phantom System Design"
+Cohesion: 0.07
+Nodes (28): 1. Goal, 2. Product Modes, 3. Core User Flows, 4. Domain Boundaries, 5. Design Principles, 6. Non-Functional Requirements, 7. Credit Model Rules, 8. Target Outcomes For The Refactor (+20 more)
+
+### Community 117 - "$D"
+Cohesion: 0.11
+Nodes (27): Aee(), bI(), brighter(), ch(), clamp(), $D(), darker(), DI() (+19 more)
+
+### Community 118 - "$D"
+Cohesion: 0.11
+Nodes (27): Aee(), bI(), brighter(), ch(), clamp(), $D(), darker(), DI() (+19 more)
+
+### Community 119 - "What You Must Do When Invoked"
+Cohesion: 0.08
+Nodes (24): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+16 more)
+
+### Community 121 - "CursorManager"
+Cohesion: 0.05
+Nodes (33): Canvas, CURSORINFO, CursorVisualMode, DpiScale, Ellipse, ICONINFO, Border, DispatcherTimer (+25 more)
+
+### Community 122 - ".main"
 Cohesion: 0.12
-Nodes (22): blockTokens(), bZ(), at(), createHTML(), createScriptURL(), _getExpansion(), inlineTokens(), Ke() (+14 more)
-
-### Community 117 - "getKeyForAutomaticLookahead"
-Cohesion: 0.10
-Nodes (22): buildFullFollowKeyStack(), c_e(), cstInvocationStateUpdate(), defineRule(), findReSyncTokenType(), flattenFollowSet(), getCurrentGrammarPath(), getCurrFollowKey() (+14 more)
-
-### Community 118 - "Kdt"
-Cohesion: 0.10
-Nodes (19): hA(), hft(), n(), jdt(), e(), jut(), Kdt(), f() (+11 more)
-
-### Community 119 - "PaymentPackDto"
-Cohesion: 0.13
-Nodes (14): PaymentCatalogResponseDto, PremiumDebtSettlement, PremiumPacks, ProPacks, RazorpayKeyId, PaymentPackDto, AmountMinor, Credits (+6 more)
-
-### Community 120 - "SettingsManager"
-Cohesion: 0.16
-Nodes (4): InterviewPromptRegistry, InterviewTypes, List, SettingsManager
-
-### Community 121 - "FakeCursorWindow"
-Cohesion: 0.20
-Nodes (10): CURSORINFO, ICONINFO, DispatcherTimer, DllImport, EventArgs, IntPtr, CURSORINFO, FakeCursorWindow (+2 more)
-
-### Community 122 - "MermaidDiagram"
-Cohesion: 0.20
-Nodes (11): NSObject, Coordinator, MermaidDiagram, Bool, Context, String, Void, WKScriptMessage (+3 more)
+Nodes (16): Carbon, NSObject, Coordinator, MermaidDiagram, Bool, Context, String, UUID (+8 more)
 
 ### Community 123 - "package.json"
 Cohesion: 0.10
@@ -942,29 +840,29 @@ Nodes (20): dependencies, react, react-dom, react-router-dom, devDependencies, v
 Cohesion: 0.17
 Nodes (19): App(), handleAdminAuthenticated(), handleAdminLogout(), handleUserAuthenticated(), handleUserLogout(), hydrateAdminSession(), hydrateUserSession(), clearStoredSession() (+11 more)
 
-### Community 125 - "apply"
-Cohesion: 0.10
-Nodes (21): Aet(), apply(), bb(), bet(), boxEnd(), bqe(), ec(), gqe() (+13 more)
-
-### Community 126 - "cft"
-Cohesion: 0.11
-Nodes (19): aft(), i(), n(), cft(), a(), t(), _ft(), ift() (+11 more)
-
-### Community 127 - "LA"
-Cohesion: 0.13
-Nodes (21): buildLookaheadForAlternation(), buildLookaheadForOptional(), canPerformInRuleRecovery(), canRecoverWithSingleTokenDeletion(), canRecoverWithSingleTokenInsertion(), canTokenTypeBeDeletedInRecovery(), canTokenTypeBeInsertedInRecovery(), consumeToken() (+13 more)
-
-### Community 128 - "setEdge"
+### Community 125 - "SD"
 Cohesion: 0.16
-Nodes (21): Dge(), filterNodes(), a(), gT(), ige(), klt(), _lt(), NGe() (+13 more)
+Nodes (22): BFe(), DFe(), EFe(), Fe(), gd(), hk(), IFe(), Ix() (+14 more)
+
+### Community 126 - "SD"
+Cohesion: 0.16
+Nodes (22): BFe(), DFe(), EFe(), Fe(), gd(), hk(), IFe(), Ix() (+14 more)
+
+### Community 127 - "Phantom Monorepo Agent Guide"
+Cohesion: 0.10
+Nodes (19): Full stack, graphify, Important Environment Variables, Local Development, Low-Signal Areas To Skip, Ownership Boundaries, Per-project commands, `phantom-dashboard-backend/` (+11 more)
+
+### Community 128 - "Production RAG Implementation"
+Cohesion: 0.11
+Nodes (18): Core Principle, Embedding Strategy, Failure Strategy, Goal, `hosted_kb_chunks`, `hosted_kb_documents`, `hosted_knowledge_bases`, Ingestion Pipeline (+10 more)
 
 ### Community 129 - "SpeechInputService"
-Cohesion: 0.18
-Nodes (9): AVAuthorizationStatus, SpeechInputService, .permissionSummary, Bool, String, Void, SFSpeechAudioBufferRecognitionRequest, SFSpeechRecognitionTask (+1 more)
+Cohesion: 0.12
+Nodes (12): AppKit, AVAuthorizationStatus, AVFoundation, SpeechInputService, .permissionSummary, Bool, String, Void (+4 more)
 
-### Community 130 - "CursorManager"
-Cohesion: 0.14
-Nodes (9): Canvas, CursorVisualMode, Ellipse, Border, DispatcherTimer, Window, CursorManager, POINT (+1 more)
+### Community 130 - "InterviewAnswerPlanDto"
+Cohesion: 0.11
+Nodes (18): IReadOnlyList, InterviewAnswerPlanDto, AllowCode, AnswerMode, AnswerOutline, ClarificationOptions, ClarificationQuestion, Confidence (+10 more)
 
 ### Community 131 - "DashboardQueryService"
 Cohesion: 0.24
@@ -974,77 +872,77 @@ Nodes (6): NpgsqlConnection, NpgsqlConnectionStringBuilder, PostgresDashboardSto
 Cohesion: 0.23
 Nodes (20): AdminUsersPanel(), handleAccountUpdate(), handleClearLock(), handleCreditGrant(), handleManualLock(), handleWaiveDebt(), loadUser(), syncSelectedUser() (+12 more)
 
-### Community 133 - "update"
-Cohesion: 0.14
-Nodes (20): cleanUpDeleted(), create(), createAsync(), createLangiumDocument(), createTextDocumentGetter(), ensureBeforeEOL(), fLe(), fromString() (+12 more)
+### Community 133 - ".toString"
+Cohesion: 0.03
+Nodes (108): addDocument(), assignSections(), buildDocuments(), calculateHorizontalSpace(), calculateOffsetByRotation(), calculateSpace(), calculateSpaceIfDrawnHorizontally(), calculateSpaceIfDrawnVertical() (+100 more)
 
-### Community 134 - "link"
-Cohesion: 0.14
-Nodes (20): Db(), fw(), K2e(), kc(), link(), mHe(), a(), l() (+12 more)
-
-### Community 135 - ""../../node_modules/.pnpm/vscode-languageserver-protocol@3.17.5/node_modules/vscode-languageserver-protocol/lib/common/utils/is.js""
+### Community 134 - "Phantom Pricing And Billing"
 Cohesion: 0.11
-Nodes (9): every(), "../../node_modules/.pnpm/vscode-jsonrpc@8.2.0/node_modules/vscode-jsonrpc/lib/common/is.js"(), l(), "../../node_modules/.pnpm/vscode-languageserver-protocol@3.17.5/node_modules/vscode-languageserver-protocol/lib/common/utils/is.js"(), l(), u(), p(), t() (+1 more)
+Nodes (17): 1. Final Launch Plans, 2. Credit Semantics, 3. Balance Types, 4. Protected Continuation, 5. Offline Rules, 6. Single Active Interview Rule, 7. Trial Abuse Rules, 8. Checkout Model (+9 more)
 
-### Community 136 - "HostedKnowledgeBaseChunkRecord"
-Cohesion: 0.10
-Nodes (19): DateTime, HostedKnowledgeBaseChunkRecord, ChunkId, ChunkIndex, ContentSha256, CreatedAtUtc, DocumentId, DocumentTitle (+11 more)
+### Community 135 - "Design System Master File"
+Cohesion: 0.12
+Nodes (16): Additional Forbidden Patterns, Anti-Patterns (Do NOT Use), Buttons, Cards, Color Palette, Component Specs, Design System Master File, Global Rules (+8 more)
+
+### Community 136 - "7. Local Schema"
+Cohesion: 0.12
+Nodes (17): 7. Local Schema, `account_cache`, `app_settings`, `audit_events`, `context_packs`, `device_identity`, `interview_sessions`, `job_descriptions` (+9 more)
 
 ### Community 137 - "HostedKnowledgeBaseEmbeddingConfigRecord"
-Cohesion: 0.12
-Nodes (14): DateTime, HostedKnowledgeBaseEmbeddingConfigRecord, BaseUrl, BatchSize, ConfigId, Dimensions, EncryptedApiKey, IsEnabled (+6 more)
+Cohesion: 0.08
+Nodes (23): HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto, ApiKey, BaseUrl, BatchSize, Dimensions, IsEnabled, ModelId, ProviderId (+15 more)
 
 ### Community 138 - "StartupGateState"
 Cohesion: 0.10
 Nodes (19): AppLaunchContext, CanResumeLockedInterview, CanStartInterview, Detail, GateState, IsRestrictedShell, Message, Title (+11 more)
 
-### Community 139 - "ByoProviderModelCatalogService"
-Cohesion: 0.20
-Nodes (9): ManagedAiModelOptionDto, DisplayName, ModelId, SupportsVision, HttpClient, List, ManagedAiModelOptionDto, TimeSpan (+1 more)
+### Community 139 - "Confirmed Decisions"
+Cohesion: 0.12
+Nodes (16): Auth, Balances, Confirmed Decisions, First Implementation Scope, Implementation Guardrails, In Scope, Launch Defaults, Metering (+8 more)
 
-### Community 140 - "ProtectedMessageBox"
-Cohesion: 0.13
-Nodes (8): MessageBoxButton, MessageBoxImage, MessageBoxResult, DllImport, IntPtr, DiagnosticTool, IntPtr, ProtectedMessageBox
+### Community 140 - "ComboBox"
+Cohesion: 0.15
+Nodes (12): AIProviderComboBox, ChatGPTModelBox, ClaudeModelBox, DebugErrorTypeComboBox, GeminiModelBox, GroqModelBox, InterviewTypeComboBox, ManagedModelComboBox (+4 more)
 
-### Community 141 - "w5e"
-Cohesion: 0.13
-Nodes (18): _3e(), buildDuplicateFoundError(), consumeInternalRecovery(), getBaseCstVisitorConstructor(), getBaseCstVisitorConstructorWithDefaults(), getFollowsForInRuleRecovery(), getGAstProductions(), getNextPossibleTokenTypes() (+10 more)
+### Community 141 - ".InvalidateDefaultDraftCacheIfNeeded"
+Cohesion: 0.14
+Nodes (9): AutoPauseMinutesTextBox, ContextPackNameTextBox, FakeCursorSizeTextBox, JobDescriptionBox, LegacyFallbackAppPathTextBox, ResumeBox, TextBox, TextChangedEventArgs (+1 more)
 
-### Community 142 - "HostedKnowledgeBaseReindexJobDto"
-Cohesion: 0.11
-Nodes (15): DateTime, HostedKnowledgeBaseReindexJobDto, CompletedAtUtc, Error, JobId, KnowledgeBaseId, ProcessedDocuments, RequestedAtUtc (+7 more)
+### Community 142 - ".Get"
+Cohesion: 0.15
+Nodes (10): DateTime, RegistrationSettingsDto, PhoneVerificationRequired, UpdatedAtUtc, RegistrationSettingsUpdateRequestDto, PhoneVerificationRequired, DateTime, RegistrationSettingsRepository (+2 more)
 
 ### Community 143 - "AdminPasswordResetTokenRecord"
 Cohesion: 0.13
 Nodes (14): DateTime, AdminPasswordResetTokenRecord, AdminId, Consumed, ConsumedAtUtc, CreatedAtUtc, DeliveryError, DeliveryStatus (+6 more)
 
-### Community 144 - "StorageBootstrapResult"
-Cohesion: 0.14
-Nodes (12): SecureOverlay.Domain.ValueObjects, StorageMode, ReadOnlySafeMode, ReadWrite, Exception, Lazy, StorageBootstrapper, StorageBootstrapResult (+4 more)
+### Community 144 - "calculateHorizontalSpace"
+Cohesion: 0.19
+Nodes (16): ay(), calculateHorizontalSpace(), calculateVerticalSpace(), getRange(), getTickDistance(), jU(), Kl(), kS() (+8 more)
 
 ### Community 145 - "RegisterPage"
 Cohesion: 0.15
 Nodes (18): AdminResetPasswordPage(), handleSubmit(), AdminSettingsPanel(), handleSave(), getPasswordPolicyError(), RegisterPage(), handleSendOtp(), handleSubmit() (+10 more)
 
-### Community 146 - "et"
-Cohesion: 0.13
-Nodes (18): _2(), Ca(), Dse(), ece(), et(), F2(), Fo(), heading() (+10 more)
+### Community 146 - "calculateHorizontalSpace"
+Cohesion: 0.19
+Nodes (16): ay(), calculateHorizontalSpace(), calculateVerticalSpace(), getRange(), getTickDistance(), jU(), Kl(), kS() (+8 more)
 
-### Community 147 - "splice"
-Cohesion: 0.11
-Nodes (18): A1(), addHiddenNodes(), addParents(), aqe(), buildLeafNode(), cse(), Ipt(), Lxe() (+10 more)
+### Community 147 - "Phantom Windows → macOS parity checklist"
+Cohesion: 0.12
+Nodes (15): AI providers, models, keys, and retry behavior, Chat rendering and interaction, Implementation status after the parity pass, Implemented, Interview metering, credits, and locks, Knowledge Base, RAG, and context packs, P0 — release-blocking behavior gaps, Phantom Windows → macOS parity checklist (+7 more)
 
-### Community 148 - "setNode"
-Cohesion: 0.15
-Nodes (18): a5(), Af(), alt(), F9(), _ge(), hasNode(), hot(), isDirected() (+10 more)
+### Community 148 - "AnswerResolution"
+Cohesion: 0.22
+Nodes (10): AnswerResolution, AnswerResolution, AllowCode, AnswerMode, AnswerOutline, Decision, Instruction, Intent (+2 more)
 
-### Community 149 - "Ia"
-Cohesion: 0.16
-Nodes (18): addExportedSymbol(), collectExportedSymbolsForNode(), getSource(), Ia(), notifyBuildPhase(), notifyDocumentPhase(), performNextOperation(), processLexingErrors() (+10 more)
+### Community 149 - "Phantom Agent Guide"
+Cohesion: 0.17
+Nodes (11): Architectural Invariants, Build / Run, Important Runtime Facts, Low-Signal Areas To Skip, Phantom Agent Guide, Practical Notes For Future LLMs, Purpose, Read This First (+3 more)
 
-### Community 150 - "$ot"
-Cohesion: 0.13
-Nodes (18): b9(), Bot(), cancelWrite(), dequeue(), enqueue(), I9(), inEdges(), mT() (+10 more)
+### Community 150 - "APIs This Repo Must Eventually Expose"
+Cohesion: 0.17
+Nodes (11): APIs This Repo Must Eventually Expose, Auth, Billing, Contracts To Re-Home Here, Current Contract Source, Desktop Client Dependencies, Device, Locking (+3 more)
 
 ### Community 151 - "DesktopContextPackDto"
 Cohesion: 0.13
@@ -1054,65 +952,65 @@ Nodes (12): DateTime, DesktopContextPackDto, JobDescriptionText, Name, PackId, R
 Cohesion: 0.25
 Nodes (6): DispatcherTimer, DllImport, IntPtr, LowLevelKeyboardProc, Window, TaskViewMonitor
 
-### Community 153 - "Wbe"
-Cohesion: 0.15
-Nodes (17): aMt(), BBe(), bft(), s(), fromModel(), Gbe(), Hdt(), i() (+9 more)
+### Community 153 - "MagicLinkEmailService"
+Cohesion: 0.42
+Nodes (6): DateTime, Error, ILogger, IServiceProvider, MagicLinkEmailService, Status
 
-### Community 154 - "nodes"
-Cohesion: 0.12
-Nodes (12): d2e(), E1(), E9(), Fot(), got(), h2e(), k9(), nodes() (+4 more)
+### Community 154 - "8. Hosted Schema"
+Cohesion: 0.17
+Nodes (12): 8. Hosted Schema, `devices`, `entitlements`, `interview_usage`, `kb_chunks`, `kb_documents`, `knowledge_bases`, `ledger_entries` (+4 more)
 
-### Community 155 - "edge"
-Cohesion: 0.19
-Nodes (17): dT(), edge(), ege(), Gme(), hasEdge(), jlt(), Jot(), nodeEdges() (+9 more)
+### Community 155 - ".RetrieveForPromptAsync"
+Cohesion: 0.29
+Nodes (7): CancellationToken, ContextPack, Func, IReadOnlyList, Task, TimeSpan, HostedKnowledgeRetrievalService
 
 ### Community 156 - "HostedKnowledgeBaseEmbeddingConfigDto"
 Cohesion: 0.13
 Nodes (13): DateTime, HostedKnowledgeBaseEmbeddingConfigDto, BaseUrl, BatchSize, ConfigSource, Dimensions, HasApiKey, IsConfigured (+5 more)
 
-### Community 157 - "HostedKnowledgeBaseProjectCardDto"
-Cohesion: 0.12
-Nodes (16): DateTime, IReadOnlyList, HostedKnowledgeBaseProjectCardDto, Architecture, Challenges, Impact, IsRecent, ProjectCardId (+8 more)
+### Community 157 - "ZIt"
+Cohesion: 0.23
+Nodes (12): EBe(), eMt(), gX(), jIt(), KIt(), md(), mX(), RBe() (+4 more)
 
 ### Community 158 - "HostedKnowledgeBaseEmbeddingResolvedConfig"
 Cohesion: 0.12
 Nodes (17): DateTime, CachedQueryEmbeddingEntry, CachedAtUtc, Values, HostedKnowledgeBaseEmbeddingResolvedConfig, ApiKey, BaseUrl, BatchSize (+9 more)
 
-### Community 159 - "ManagedAiCatalogDto"
-Cohesion: 0.12
-Nodes (12): DateTime, List, ManagedAiCatalogDto, Providers, RefreshedAtUtc, DateTime, List, ManagedAiProviderOptionDto (+4 more)
+### Community 159 - "ZIt"
+Cohesion: 0.23
+Nodes (12): EBe(), eMt(), gX(), jIt(), KIt(), md(), mX(), RBe() (+4 more)
 
-### Community 160 - "HostedManagedAiService"
+### Community 160 - "AuthSessionCache"
+Cohesion: 0.11
+Nodes (19): DateTime, AuthSessionCache, AccessToken, AuthenticatedAtUtc, AuthMethod, DeviceFingerprintHash, DeviceInstallId, Email (+11 more)
+
+### Community 161 - "InterviewAnswerPlanRequestDto"
+Cohesion: 0.20
+Nodes (9): IReadOnlyList, InterviewAnswerPlanRequestDto, ActiveEntityId, AllowPaidSessionExtension, Model, Provider, Question, RecentMessages (+1 more)
+
+### Community 162 - "Phantom Repo Split Plan"
+Cohesion: 0.20
+Nodes (9): 1. `phantom-website-dashboard`, 2. `phantom-windows-app`, 3. `phantom-windows-app-backend`, 4. `phantom-dashboard-backend`, Contract Boundary, Current Root Layout, Phantom Repo Split Plan, Target Repositories (+1 more)
+
+### Community 163 - "FakeAiService"
+Cohesion: 0.24
+Nodes (5): Action, CancellationToken, List, Task, FakeAiService
+
+### Community 164 - "Phantom Windows Performance and RAG Fix Plan"
+Cohesion: 0.20
+Nodes (9): Copy/paste prompt for the implementation task, Definition of done, Final handoff required from Codex, Objective, Performance measurements and initial SLOs, Phantom Windows Performance and RAG Fix Plan, Recommended Codex execution model, Required working rules (+1 more)
+
+### Community 165 - "graphify reference: extra exports and benchmark"
 Cohesion: 0.22
-Nodes (7): Action, CancellationToken, HttpClient, HttpStatusCode, List, Task, HostedManagedAiService
+Nodes (8): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000)
 
-### Community 161 - "PromptTextView"
-Cohesion: 0.18
-Nodes (10): Coordinator, NSScrollView, NSTextView, NSTextViewDelegate, NSViewRepresentable, .promptEditor, Coordinator, PromptTextView (+2 more)
+### Community 166 - ".SendAsync"
+Cohesion: 0.28
+Nodes (7): ExpiresAtUtc, CancellationToken, DateTime, HttpClient, Task, TwoFactorOtpClient, SessionId
 
-### Community 162 - "register"
-Cohesion: 0.18
-Nodes (14): a(), addEntry(), dn(), _ensureHSL(), g(), handleException(), Hv(), nDe() (+6 more)
-
-### Community 163 - "KKe"
-Cohesion: 0.15
-Nodes (16): aae(), C2(), Dv(), E2(), Eae(), hW(), jKe(), KKe() (+8 more)
-
-### Community 164 - ".toString"
-Cohesion: 0.14
-Nodes (15): addDocument(), collectExportedSymbols(), createDocument(), deleteDocument(), deleteDocuments(), getDocument(), getDocuments(), getOrCreateDocument() (+7 more)
-
-### Community 165 - "match"
-Cohesion: 0.12
-Nodes (16): b7e(), emStrong(), fences(), fR(), GZe(), jYe(), match(), mLe() (+8 more)
-
-### Community 166 - "tokenizeInternal"
-Cohesion: 0.13
-Nodes (16): buildUnableToPopLexerModeMessage(), buildUnexpectedCharactersMessage(), computeNewColumn(), handleModes(), m3e(), matchLength(), n3e(), Q6() (+8 more)
-
-### Community 167 - "HostedKnowledgeBaseExperienceCardDto"
-Cohesion: 0.12
-Nodes (15): DateTime, IReadOnlyList, HostedKnowledgeBaseExperienceCardDto, Company, EndDate, ExperienceCardId, IsCurrent, Responsibilities (+7 more)
+### Community 167 - "Website And Dashboard Frontend Handoff"
+Cohesion: 0.22
+Nodes (8): Auth, Current Desktop Expectations, Dashboard, First UI Build Order, Frontend Areas, Required Integrations, Website, Website And Dashboard Frontend Handoff
 
 ### Community 168 - "ManagedAiCatalogRefreshProviderResultDto"
 Cohesion: 0.12
@@ -1126,41 +1024,41 @@ Nodes (15): DateTime, List, InterviewSessionCompletionResult, ChargedBlocks, Cha
 Cohesion: 0.12
 Nodes (15): DateTime, IReadOnlyList, HostedKnowledgeBaseExperienceCardDto, Company, EndDate, ExperienceCardId, IsCurrent, Responsibilities (+7 more)
 
-### Community 171 - ".UpsertProvider"
-Cohesion: 0.30
-Nodes (7): DateTime, IEnumerable, List, ManagedAiCatalogDto, ManagedAiModelOptionDto, ManagedAiProviderOptionDto, ProviderModelCatalogCache
+### Community 171 - "Phantom System Architecture"
+Cohesion: 0.22
+Nodes (8): 12. Security Decisions, 1. Target Architecture Summary, 2. High-Level Component Map, 3. Current Code To Preserve, 4. Proposed Folder Structure, 6. Hosted Architecture, 9. Service Interfaces, Phantom System Architecture
 
-### Community 172 - ".ActivateCustomCursorImmediate"
-Cohesion: 0.19
-Nodes (5): DpiScale, DllImport, Point, Action, POINT
+### Community 172 - "PhoneVerificationStartResultDto"
+Cohesion: 0.25
+Nodes (7): DateTime, PhoneVerificationStartResultDto, ChallengeId, ExpiresAtUtc, MaskedPhoneNumber, RetryAfterSeconds, Status
 
 ### Community 173 - "AuthorityBackendClient"
 Cohesion: 0.19
 Nodes (7): HttpMethod, CancellationToken, DateTime, Exception, HttpClient, Task, AuthorityBackendClient
 
-### Community 174 - "extend"
-Cohesion: 0.13
-Nodes (15): bP(), extend(), getColor(), havingBaseSizing(), havingBaseStyle(), havingCrampedStyle(), havingSize(), havingStyle() (+7 more)
+### Community 174 - "TelemetryIngestRequestDto"
+Cohesion: 0.25
+Nodes (7): DateTime, Dictionary, TelemetryIngestRequestDto, Attributes, Category, EventName, OccurredAtUtc
 
-### Community 175 - "da"
-Cohesion: 0.34
-Nodes (15): bRe(), cRe(), da(), eH(), eRe(), rH(), tH(), Tp() (+7 more)
+### Community 175 - "LA"
+Cohesion: 0.08
+Nodes (50): atLeastOneInternalLogic(), atLeastOneSepFirstInternalLogic(), attemptInRepetitionRecovery(), BACKTRACK(), bRe(), buildLookaheadForAlternation(), buildLookaheadForOptional(), consumeInternalError() (+42 more)
 
-### Community 176 - "HostedKnowledgeBaseRecord"
-Cohesion: 0.13
-Nodes (14): DateTime, HostedKnowledgeBaseRecord, ChunkCount, CreatedAtUtc, Description, DocumentCount, EmbeddingModel, EmbeddingVersion (+6 more)
+### Community 176 - "11. Key Runtime Flows"
+Cohesion: 0.25
+Nodes (8): 11. Key Runtime Flows, Lock Timing Defaults, Message Send, Premium Credit Exhausted, Pro BYO Quota Exhausted, Same-Device Offline Resume, Start Session, Startup State Gating
 
 ### Community 177 - "ContextDocument"
 Cohesion: 0.13
 Nodes (13): ContextChunk, ChunkId, Order, SearchText, Text, DateTime, List, ContextDocument (+5 more)
 
 ### Community 178 - "HostedKnowledgeBaseReindexJobDto"
-Cohesion: 0.13
-Nodes (14): DateTime, HostedKnowledgeBaseReindexJobDto, CompletedAtUtc, Error, JobId, KnowledgeBaseId, ProcessedDocuments, RequestedAtUtc (+6 more)
+Cohesion: 0.03
+Nodes (44): AuthCallbackCompletionRequestDto, CallbackUri, DeviceFingerprintHash, InstallId, DateTime, AuthMagicLinkIssuedDto, CallbackUri, Email (+36 more)
 
 ### Community 179 - "MicrophonePermissionWindow"
 Cohesion: 0.17
-Nodes (9): ChatWebView, WebView2, PermissionWebView, StatusText, Window, RoutedEventArgs, Task, MicrophonePermissionWindow (+1 more)
+Nodes (9): PermissionWebView, StatusText, Window, RoutedEventArgs, Task, MicrophonePermissionWindow, PermissionGranted, TextBlock (+1 more)
 
 ### Community 180 - "Phantom.Dashboard.Backend.Infrastructure"
 Cohesion: 0.20
@@ -1170,33 +1068,33 @@ Nodes (5): Phantom.Dashboard.Backend.Infrastructure, Phantom.Dashboard.Backend.P
 Cohesion: 0.24
 Nodes (7): IReadOnlyList, DashboardSchemaMigrations, All, IReadOnlyList, NpgsqlConnection, SchemaMigration, SchemaMigrator
 
-### Community 182 - "ConversationCache"
-Cohesion: 0.24
-Nodes (5): IConversationCacheRepository, SqliteConversationCacheRepository, ConversationCache, Messages, SavedAt
+### Community 182 - "RAG Latency And Human Answering"
+Cohesion: 0.25
+Nodes (7): Goal, Human Answering Rules, Immediate Direction, Market-Standard Choices, Next Step If KB Limits Increase, RAG Latency And Human Answering, Recommended Production Pattern
 
-### Community 183 - "getData"
-Cohesion: 0.15
-Nodes (14): addNodeFromVertex(), destructEdgeType(), flattenNodes(), generateEdges(), getArrowMarker(), getCompiledStyles(), getData(), getEdges() (+6 more)
+### Community 183 - "Windows App Extraction Manifest"
+Cohesion: 0.25
+Nodes (7): Do Not Move, Follow-Up, Move As-Is, Move Directories, Move Supporting Runtime Files, Preconditions, Windows App Extraction Manifest
 
-### Community 184 - "Ba"
-Cohesion: 0.15
-Nodes (14): aM(), Ba(), bM(), FHe(), gHe(), Hee(), iHe(), Ite() (+6 more)
+### Community 184 - "Phantom for macOS"
+Cohesion: 0.29
+Nodes (6): Build and open, Capture limitation, Implemented, Phantom for macOS, Platform-specific exclusions, Test flow
 
-### Community 185 - "entries"
-Cohesion: 0.16
-Nodes (14): assignSections(), entries(), gut(), k5(), lut(), out(), put(), r9e() (+6 more)
+### Community 185 - "AuthRegisterResultDto"
+Cohesion: 0.29
+Nodes (6): AuthRegisterResultDto, DeliveryError, DeliveryStatus, Email, EmailVerificationRequired, UserId
 
-### Community 186 - "remove"
-Cohesion: 0.20
-Nodes (14): B4(), Fse(), getMaxDimension(), hqe(), JRt(), jze(), Mse(), Nse() (+6 more)
+### Community 186 - "KnowledgeBaseEmbeddingProfile"
+Cohesion: 0.29
+Nodes (6): KnowledgeBaseEmbeddingProfile, BaseUrl, Dimensions, ModelId, ProviderId, Version
 
-### Community 187 - "validate"
-Cohesion: 0.18
-Nodes (14): buildKeywordTokens(), buildTerminalTokens(), buildTokens(), C_(), distinct(), findMissingValidationCategories(), getAllValidationCategories(), resultsAreIncomplete() (+6 more)
+### Community 187 - "Phase 4: Remove desktop-side pauses and blocking work"
+Cohesion: 0.29
+Nodes (7): Exit criteria, Goal, Logging steps, Phase 4: Remove desktop-side pauses and blocking work, Provider catalog steps, Screenshot steps, Voice steps
 
-### Community 188 - "getScope"
-Cohesion: 0.14
-Nodes (13): createScope(), documentationLinkRenderer(), documentationTagRenderer(), findNameInGlobalScope(), findNameInLocalSymbols(), getDocumentation(), getGlobalScope(), getScope() (+5 more)
+### Community 188 - "graphify reference: query, path, explain"
+Cohesion: 0.33
+Nodes (5): For /graphify explain, For /graphify path, graphify reference: query, path, explain, Step 0 — Constrained query expansion (REQUIRED before traversal), Step 1 — Traversal
 
 ### Community 189 - "BrowserSessionCookieService"
 Cohesion: 0.29
@@ -1218,41 +1116,41 @@ Nodes (7): Enabled, Channel, Task, Value, RagTraceLogger, IsEnabled, Source
 Cohesion: 0.24
 Nodes (6): Exception, HostedServiceException, CancellationToken, HttpClient, Task, HttpHostedClientBase
 
-### Community 194 - "atLeastOneInternal"
-Cohesion: 0.15
-Nodes (13): AT_LEAST_ONE(), AT_LEAST_ONE1(), AT_LEAST_ONE2(), AT_LEAST_ONE3(), AT_LEAST_ONE4(), AT_LEAST_ONE5(), AT_LEAST_ONE6(), AT_LEAST_ONE7() (+5 more)
+### Community 194 - "Dashboard Backend Domain Handoff"
+Cohesion: 0.33
+Nodes (5): Dashboard Backend Domain Handoff, Do Not Own Here, Expected Upstream Dependencies, First API Groups, Own Here
 
-### Community 195 - "ate"
-Cohesion: 0.19
-Nodes (11): ate(), a(), l(), s(), u(), dft(), lHe(), oHe() (+3 more)
+### Community 195 - ".configuration"
+Cohesion: 0.40
+Nodes (4): Configuration, ModelContextRegistry, Int, String
 
-### Community 196 - "lE"
-Cohesion: 0.18
-Nodes (13): ay(), bezierCurveTo(), Ey(), getQuadrantPoints(), Kl(), kS(), lE(), u() (+5 more)
+### Community 196 - "PhoneVerificationConfirmResultDto"
+Cohesion: 0.33
+Nodes (5): DateTime, PhoneVerificationConfirmResultDto, MaskedPhoneNumber, VerificationToken, VerifiedAtUtc
 
-### Community 197 - "Fv"
-Cohesion: 0.15
-Nodes (13): buildDuplicateRuleNameError(), buildTerminalToken(), Fv(), h5e(), initRecognizerEngine(), o5e(), regexPatternFunction(), requiresCustomPattern() (+5 more)
+### Community 197 - "PhoneVerificationStartRequestDto"
+Cohesion: 0.33
+Nodes (5): PhoneVerificationStartRequestDto, DeviceFingerprintHash, EmailHint, InstallId, PhoneNumber
 
-### Community 198 - "rlt"
-Cohesion: 0.22
-Nodes (13): children(), hc(), isCompound(), isMultigraph(), Kme(), n5(), plt(), n() (+5 more)
+### Community 198 - "Phantom Implementation Plan"
+Cohesion: 0.33
+Nodes (5): 13. Suggested New Packages, 15. Recommended Build Order For The Actual Code, 16. Definition Of Done For The Architecture Migration, 1. Delivery Strategy, Phantom Implementation Plan
 
-### Community 199 - "subruleInternal"
-Cohesion: 0.17
-Nodes (13): cstPostNonTerminal(), j5e(), SUBRULE1(), SUBRULE2(), SUBRULE3(), SUBRULE4(), SUBRULE5(), SUBRULE6() (+5 more)
+### Community 199 - "12. Immediate Refactor Targets In This Repo"
+Cohesion: 0.33
+Nodes (6): 12. Immediate Refactor Targets In This Repo, A. Persistence seam, B. Session seam, C. Billing seam, D. Secret seam, E. Context seam
 
-### Community 200 - "rgb"
-Cohesion: 0.22
-Nodes (13): $D(), DI(), displayable(), isEpsilon(), jl(), Jqe(), kee(), Oa() (+5 more)
+### Community 200 - "Current Root Ownership"
+Cohesion: 0.33
+Nodes (5): Current Root Ownership, `phantom-dashboard-backend`, `phantom-website-dashboard`, `phantom-windows-app`, `phantom-windows-app-backend`
 
-### Community 201 - "I0e"
-Cohesion: 0.21
-Nodes (13): D0e(), fct(), gct(), I0e(), j9(), L0e(), mu(), pct() (+5 more)
+### Community 201 - "Phase 1: Remove hidden serial model work"
+Cohesion: 0.33
+Nodes (6): Exit criteria, Goal, Phase 1: Remove hidden serial model work, Primary file, Required router checks, Steps
 
-### Community 202 - "nft"
-Cohesion: 0.19
-Nodes (11): eft(), t(), gA(), nft(), a(), Qdt(), t(), rft() (+3 more)
+### Community 202 - "Phase 3: Make streaming rendering incremental"
+Cohesion: 0.33
+Nodes (6): Exit criteria, Files, Goal, Phase 3: Make streaming rendering incremental, Required Windows checks, Steps
 
 ### Community 203 - "DebugLogger"
 Cohesion: 0.20
@@ -1274,41 +1172,41 @@ Nodes (3): CancellationToken, Task, ManagedAiAdminService
 Cohesion: 0.32
 Nodes (12): AdminDashboardPage(), load(), refreshManagedAiState(), refreshManagedInventory(), refreshOverview(), AdminOverviewPanel(), handleReconnectGmail(), fetchAdminOverview() (+4 more)
 
-### Community 208 - "graph"
-Cohesion: 0.24
-Nodes (12): $9(), age(), cge(), e0e(), flt(), graph(), isLeaf(), kge() (+4 more)
+### Community 208 - "Phase 5: Fix RAG correctness before tuning scores"
+Cohesion: 0.33
+Nodes (6): Exit criteria, Files, Goal, Phase 5: Fix RAG correctness before tuning scores, Required checks, Steps
 
-### Community 209 - "Fee"
-Cohesion: 0.26
-Nodes (12): Aee(), bI(), brighter(), ch(), darker(), Fee(), jc(), Lee() (+4 more)
+### Community 209 - "Render Deployment"
+Cohesion: 0.33
+Nodes (5): Deploy steps, Notes, Render Deployment, Required env vars in Render, Why the keepalive exists
 
-### Community 210 - "find"
-Cohesion: 0.21
-Nodes (12): all(), collectValues(), find(), findAll(), findChildren(), findNode(), getDataStructures(), getNode() (+4 more)
+### Community 210 - "Vercel Deployment"
+Cohesion: 0.33
+Nodes (5): Project 1: `phantom-windows-app-backend`, Project 2: `phantom-dashboard-backend`, Project 3: `phantom-website-dashboard`, Vercel Deployment, Windows app
 
-### Community 211 - "Cr"
-Cohesion: 0.27
-Nodes (12): aO(), circle(), Cr(), D4(), ellipse(), ioe(), noe(), O4() (+4 more)
+### Community 211 - "Q: Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo"
+Cohesion: 0.40
+Nodes (4): Answer, Outcome, Q: Analyze answer generation, KB fallback, context handling, guardrails, and evals in this repo, Source Nodes
 
-### Community 212 - "E8t"
-Cohesion: 0.23
-Nodes (11): b8t(), C8t(), E8t(), getConfigField(), getLayoutHints(), J2e(), jj(), ready() (+3 more)
+### Community 212 - "Q: don't care what current system has. suggest what would be best for the app. draw me the full architecture and explain how we can achieve the desired outcome we want"
+Cohesion: 0.40
+Nodes (4): Answer, Outcome, Q: don't care what current system has. suggest what would be best for the app. draw me the full architecture and explain how we can achieve the desired outcome we want, Source Nodes
 
-### Community 213 - "xh"
-Cohesion: 0.18
-Nodes (12): CP(), Dae(), eZe(), Iae(), iZe(), nZe(), rZe(), Sae() (+4 more)
+### Community 213 - "Q: have you reviewed the KB part how it's designed and do we need any improvement on that side to accomodate this?"
+Cohesion: 0.40
+Nodes (4): Answer, Outcome, Q: have you reviewed the KB part how it's designed and do we need any improvement on that side to accomodate this?, Source Nodes
 
-### Community 214 - "mI"
-Cohesion: 0.18
-Nodes (12): eee(), H8(), kqe(), mI(), nee(), NS(), pI(), q8() (+4 more)
+### Community 214 - "14. Risks"
+Cohesion: 0.40
+Nodes (5): 14. Risks, Billing Drift Risk, Data Migration Risk, Secret Handling Risk, UI Regression Risk
 
-### Community 215 - "text"
-Cohesion: 0.27
-Nodes (12): GFe(), hIt(), measureText(), renderDiagram(), renderExpression(), renderNonTerminal(), renderRule(), renderSpecial() (+4 more)
+### Community 215 - "3. Phase 1: Local Persistence Foundation"
+Cohesion: 0.40
+Nodes (5): 3. Phase 1: Local Persistence Foundation, Exit Criteria, Files Most Affected, Goals, Tasks
 
-### Community 216 - "optionInternal"
-Cohesion: 0.17
-Nodes (12): option(), OPTION1(), OPTION2(), OPTION3(), OPTION4(), OPTION5(), OPTION6(), OPTION7() (+4 more)
+### Community 216 - "5. Phase 3: Context Packs And Local Knowledge"
+Cohesion: 0.40
+Nodes (5): 5. Phase 3: Context Packs And Local Knowledge, Exit Criteria, Files Most Affected, Goals, Tasks
 
 ### Community 217 - "AuthRegisterRequestDto"
 Cohesion: 0.17
@@ -1326,85 +1224,85 @@ Nodes (11): IReadOnlyList, HostedKnowledgeBaseProfileCardUpdateRequestDto, Candi
 Cohesion: 0.17
 Nodes (11): IReadOnlyList, HostedKnowledgeBaseProjectCardUpdateRequestDto, Architecture, Challenges, Impact, IsRecent, Role, SortOrder (+3 more)
 
-### Community 221 - "InterviewUsageSource"
-Cohesion: 0.17
-Nodes (10): InterviewSessionUsageSegment, EndedMeteredSecond, ProviderId, Source, StartedMeteredSecond, InterviewUsageSource, FreeTrialManaged, PremiumDebtExtension (+2 more)
+### Community 221 - "InterviewIntent"
+Cohesion: 0.40
+Nodes (5): InterviewIntent, Ambiguous, General, Hybrid, Personal
 
 ### Community 222 - "AdminTicketsPanel"
 Cohesion: 0.24
 Nodes (10): AdminTicketsPanel(), handleSubmit(), loadAdminSupportTicketsPage(), loadSupportTicketsPage(), SupportPanel(), handleSubmit(), createUserSupportTicket(), fetchAdminSupportTickets() (+2 more)
 
-### Community 223 - "accept"
-Cohesion: 0.22
-Nodes (11): _5e(), a5e(), accept(), buildEmptyAlternationError(), buildEmptyRepetitionError(), buildTooManyAlternativesError(), c5e(), DG() (+3 more)
+### Community 223 - "Phase 11: Ingestion and operational improvements"
+Cohesion: 0.40
+Nodes (5): Existing full-KB replacement, Exit criteria, PDF support, Phase 11: Ingestion and operational improvements, Vector index
 
-### Community 224 - "atLeastOneSepFirstInternal"
-Cohesion: 0.18
-Nodes (11): AT_LEAST_ONE_SEP(), AT_LEAST_ONE_SEP1(), AT_LEAST_ONE_SEP2(), AT_LEAST_ONE_SEP3(), AT_LEAST_ONE_SEP4(), AT_LEAST_ONE_SEP5(), AT_LEAST_ONE_SEP6(), AT_LEAST_ONE_SEP7() (+3 more)
+### Community 224 - "Phase 0: Establish a baseline"
+Cohesion: 0.40
+Nodes (5): Exit criteria, Files, Goal, Phase 0: Establish a baseline, Steps
 
-### Community 225 - "consumeInternal"
-Cohesion: 0.18
-Nodes (11): CONSUME1(), CONSUME2(), CONSUME3(), CONSUME4(), CONSUME5(), CONSUME6(), CONSUME7(), CONSUME8() (+3 more)
+### Community 225 - "Phase 2: Move preparation out of the live request"
+Cohesion: 0.40
+Nodes (5): Exit criteria, Files, Goal, Phase 2: Move preparation out of the live request, Steps
 
-### Community 226 - "manySepFirstInternal"
-Cohesion: 0.18
-Nodes (11): MANY_SEP(), MANY_SEP1(), MANY_SEP2(), MANY_SEP3(), MANY_SEP4(), MANY_SEP5(), MANY_SEP6(), MANY_SEP7() (+3 more)
+### Community 226 - "Phase 8: Stabilize backend streaming and model selection"
+Cohesion: 0.40
+Nodes (5): Exit criteria, Files, Goal, Phase 8: Stabilize backend streaming and model selection, Steps
 
-### Community 227 - "AdminManagedAiTestResponseDto"
-Cohesion: 0.18
-Nodes (10): DateTime, AdminManagedAiTestResponseDto, ErrorMessage, IsChatCapable, LatencyMs, ModelId, OutputText, ProviderId (+2 more)
+### Community 227 - ".RunAdminTestAsync"
+Cohesion: 0.07
+Nodes (20): IReadOnlyDictionary, IReadOnlyList, AdminManagedAiTestRequestDto, ImageBase64, Messages, ModelId, ProviderId, DateTime (+12 more)
 
-### Community 228 - "HostedKnowledgeBaseSnippetDto"
-Cohesion: 0.18
-Nodes (9): IReadOnlyList, HostedKnowledgeBaseSearchResultDto, KnowledgeBase, Snippets, HostedKnowledgeBaseSnippetDto, DocumentId, DocumentTitle, Score (+1 more)
+### Community 228 - "Phase 10: Consider a combined managed interview endpoint only if measured"
+Cohesion: 0.40
+Nodes (5): Exit criteria, Gate, Goal, If the gate passes, Phase 10: Consider a combined managed interview endpoint only if measured
 
-### Community 229 - "HostedKnowledgeBaseSearchCandidateRecord"
-Cohesion: 0.18
-Nodes (10): HostedKnowledgeBaseSearchCandidateRecord, ChunkId, DocumentId, DocumentTitle, FusedScore, LexicalScore, SearchText, SectionTitle (+2 more)
+### Community 229 - "graphify reference: add a URL and watch a folder"
+Cohesion: 0.50
+Nodes (3): For /graphify add, For --watch, graphify reference: add a URL and watch a folder
 
-### Community 230 - "k8t"
-Cohesion: 0.20
-Nodes (10): $8t(), aIt(), eX(), H9e(), iIt(), j8t(), k8t(), q9e() (+2 more)
+### Community 230 - "graphify reference: commit hook and native CLAUDE.md integration"
+Cohesion: 0.50
+Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify reference: commit hook and native CLAUDE.md integration
 
-### Community 231 - "includes"
-Cohesion: 0.20
-Nodes (10): addVertex(), exists(), getChecks(), Ij(), includes(), Lje(), makeUniq(), parseMember() (+2 more)
+### Community 231 - "graphify reference: incremental update and cluster-only"
+Cohesion: 0.50
+Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
-### Community 232 - "raiseEarlyExitException"
-Cohesion: 0.31
-Nodes (10): atLeastOneInternalLogic(), atLeastOneSepFirstInternalLogic(), attemptInRepetitionRecovery(), doSingleRepetition(), getLaFuncFromCache(), manyInternalLogic(), manySepFirstInternalLogic(), optionInternalLogic() (+2 more)
+### Community 232 - "Phantom.Dashboard.Backend.csproj"
+Cohesion: 0.50
+Nodes (3): net8.0, Npgsql (8.0.4), Microsoft.NET.Sdk.Web
 
-### Community 233 - "calculateHorizontalSpace"
-Cohesion: 0.36
-Nodes (10): calculateHorizontalSpace(), calculateVerticalSpace(), getRange(), getTickDistance(), jU(), recalculateOuterPaddingToDrawBar(), recalculateScale(), setAxisPosition() (+2 more)
+### Community 233 - "10. Ownership Rules"
+Cohesion: 0.50
+Nodes (4): 10. Ownership Rules, Client Owns First, Reconciliation Rule, Server Owns First
 
-### Community 234 - "getDrawableElements"
-Cohesion: 0.31
-Nodes (10): calculateOffsetByRotation(), calculateSpaceIfDrawnHorizontally(), calculateSpaceIfDrawnVertical(), getDrawableElements(), getDrawableElementsForBottomAxis(), getDrawableElementsForLeftAxis(), getDrawableElementsForTopAxis(), getLabelDimension() (+2 more)
+### Community 234 - "5. Local Architecture"
+Cohesion: 0.50
+Nodes (4): 5. Local Architecture, Local Data Ownership, Local Database, Local Secret Protection
 
-### Community 235 - "dAt"
-Cohesion: 0.22
-Nodes (10): D8e(), dAt(), Fat(), HU(), I8e(), L8e(), lAt(), n8e() (+2 more)
+### Community 235 - "10. Phase 8: Payments And Abuse Controls"
+Cohesion: 0.50
+Nodes (4): 10. Phase 8: Payments And Abuse Controls, Exit Criteria, Goals, Tasks
 
-### Community 236 - "edges"
-Cohesion: 0.31
-Nodes (10): dlt(), edges(), fu(), G9(), hlt(), Lge(), nlt(), qge() (+2 more)
+### Community 236 - "11. Phase 9: Hardening"
+Cohesion: 0.50
+Nodes (4): 11. Phase 9: Hardening, Exit Criteria, Goals, Tasks
 
-### Community 237 - "performStartup"
-Cohesion: 0.20
-Nodes (10): getConfiguration(), getRootFolder(), initialized(), initializeWorkspace(), loadAdditionalDocuments(), loadWorkspaceDocuments(), performStartup(), toSectionName() (+2 more)
+### Community 237 - "2. Phase 0: Repo Preparation"
+Cohesion: 0.50
+Nodes (4): 2. Phase 0: Repo Preparation, Exit Criteria, Goals, Tasks
 
-### Community 238 - "manyInternal"
-Cohesion: 0.20
-Nodes (10): MANY1(), MANY2(), MANY3(), MANY4(), MANY5(), MANY6(), MANY7(), MANY8() (+2 more)
+### Community 238 - "4. Phase 2: Secret Storage"
+Cohesion: 0.50
+Nodes (4): 4. Phase 2: Secret Storage, Exit Criteria, Goals, Tasks
 
-### Community 239 - "AdminAccountUpdateRequestDto"
-Cohesion: 0.20
-Nodes (9): AdminAccountUpdateRequestDto, AccessTier, CanUseDesktopPowerFeatures, OfflineModeEnabled, PremiumAvailableCredits, PremiumNegativeCredits, ProAvailableCredits, Reason (+1 more)
+### Community 239 - "6. Phase 4: Hosted Client Contracts"
+Cohesion: 0.50
+Nodes (4): 6. Phase 4: Hosted Client Contracts, Exit Criteria, Goals, Tasks
 
-### Community 240 - "HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto"
-Cohesion: 0.20
-Nodes (9): HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto, ApiKey, BaseUrl, BatchSize, Dimensions, IsEnabled, ModelId, ProviderId (+1 more)
+### Community 240 - "7. Phase 5: Auth Gate And Entitlements"
+Cohesion: 0.50
+Nodes (4): 7. Phase 5: Auth Gate And Entitlements, Exit Criteria, Goals, Tasks
 
 ### Community 241 - ".GetCatalogForAccount"
 Cohesion: 0.22
@@ -1418,25 +1316,25 @@ Nodes (9): DateTime, ManagedAiRuntimeSelectionDto, IsConfigured, IsResolved, Mod
 Cohesion: 0.29
 Nodes (6): CancellationToken, IReadOnlyList, Task, IKnowledgeBaseEmbeddingService, ActiveProfile, IsConfigured
 
-### Community 244 - "DeviceRegistrationMetadataDto"
-Cohesion: 0.20
-Nodes (8): DeviceRegistrationMetadataDto, AppVersion, DeviceLabel, InstallId, MachineFingerprintHash, SecretFingerprintHint, HostedWebRoutes, BaseUrl
+### Community 244 - "8. Phase 6: Credit Metering And Protected Continuation"
+Cohesion: 0.50
+Nodes (4): 8. Phase 6: Credit Metering And Protected Continuation, Exit Criteria, Goals, Tasks
 
-### Community 245 - "Window"
-Cohesion: 0.24
-Nodes (7): CancelButton, MessageText, OkButton, TitleText, Window, RoutedEventArgs, Button
+### Community 245 - "InvisibleMessageBox"
+Cohesion: 0.22
+Nodes (10): CancelButton, MessageText, OkButton, TitleText, Window, RoutedEventArgs, InvisibleMessageBox, Result (+2 more)
 
-### Community 246 - "ISecretVault"
-Cohesion: 0.33
-Nodes (3): Dictionary, List, ISecretVault
+### Community 246 - "9. Phase 7: Premium Hosted Knowledge"
+Cohesion: 0.50
+Nodes (4): 9. Phase 7: Premium Hosted Knowledge, Exit Criteria, Goals, Tasks
 
 ### Community 247 - "InterviewPackKind"
 Cohesion: 0.20
 Nodes (10): InterviewPackKind, ProfileGeneral, ProfileIntro, ProfileRole, ProfileStrengths, ProjectArchitecture, ProjectChallenges, ProjectImpact (+2 more)
 
 ### Community 248 - "Phantom.WindowsApp.Backend.csproj"
-Cohesion: 0.25
-Nodes (7): Google.Apis.Auth (1.69.0), Google.Apis.Gmail.v1 (1.69.0.3742), PdfPig (0.1.15), net8.0, Npgsql (8.0.4), Microsoft.NET.Sdk.Web, Npgsql (8.0.4)
+Cohesion: 0.29
+Nodes (6): Google.Apis.Auth (1.69.0), Google.Apis.Gmail.v1 (1.69.0.3742), PdfPig (0.1.15), net8.0, Npgsql (8.0.4), Microsoft.NET.Sdk.Web
 
 ### Community 249 - "BrowserSessionCookieService"
 Cohesion: 0.36
@@ -1454,73 +1352,45 @@ Nodes (8): formatManagedAiLatencyStatus(), ManagedAiLatencyPanel(), handleCheckL
 Cohesion: 0.33
 Nodes (9): ManagedAiAdminPanel(), handleCatalogRefresh(), handleDelete(), handleSubmit(), handleVisionToggle(), deleteManagedAiCredential(), triggerManagedAiCatalogRefresh(), updateManagedAiModelVision() (+1 more)
 
-### Community 253 - "A1e"
-Cohesion: 0.22
-Nodes (8): $0e(), A1e(), B0e(), dut(), F0e(), hut(), O0e(), wct()
+### Community 253 - "Split Checklist"
+Cohesion: 0.50
+Nodes (3): Completed, Next, Split Checklist
 
-### Community 254 - "hh"
-Cohesion: 0.28
-Nodes (9): aa(), cM(), hh(), lM(), mM(), nM(), oM(), qn() (+1 more)
+### Community 254 - "Final verification matrix"
+Cohesion: 0.50
+Nodes (4): Backend checks Codex must run, Desktop checks Codex can perform statically/non-Windows, Final verification matrix, Final Windows tests for the owner
 
 ### Community 255 - "YX"
-Cohesion: 0.25
-Nodes (8): bs(), bX(), ND(), pX(), VX(), XIt(), YX(), s()
+Cohesion: 0.20
+Nodes (10): bb(), bs(), bX(), ND(), PD(), pX(), VX(), XIt() (+2 more)
 
-### Community 256 - "dedentMatcher"
-Cohesion: 0.28
-Nodes (9): createIndentationTokenInstance(), dedentMatcher(), flushLexingReport(), flushRemainingDedents(), getLineNumber(), indentMatcher(), isStartOfLine(), matchWhitespace() (+1 more)
+### Community 256 - "Phase 6: Optimize RAG latency and cache behavior"
+Cohesion: 0.50
+Nodes (4): Exit criteria, Goal, Phase 6: Optimize RAG latency and cache behavior, Steps
 
-### Community 257 - "Fb"
-Cohesion: 0.25
-Nodes (8): Fb(), n(), r(), fut(), gF(), kI(), vut(), yo()
+### Community 257 - "Phase 7: Improve RAG ranking with measured changes"
+Cohesion: 0.50
+Nodes (4): Exit criteria, Goal, Phase 7: Improve RAG ranking with measured changes, Steps
 
 ### Community 258 - "AuthLoginRequestDto"
 Cohesion: 0.22
 Nodes (8): AuthLoginRequestDto, AppVersion, DeviceFingerprintHash, DeviceLabel, Email, InstallId, Password, SecretFingerprintHint
 
-### Community 260 - "SecureOverlay"
+### Community 260 - "SecureOverlay.csproj"
 Cohesion: 0.25
-Nodes (8): net8.0-windows, Markdig.Wpf (0.5.0.1), Microsoft.Data.Sqlite (8.0.8), Microsoft.Web.WebView2 (1.0.2739.15), Newtonsoft.Json (13.0.3), System.Drawing.Common (8.0.0), SecureOverlay, Microsoft.NET.Sdk
+Nodes (7): Markdig.Wpf (0.5.0.1), Microsoft.Data.Sqlite (8.0.8), Microsoft.Web.WebView2 (1.0.2739.15), Newtonsoft.Json (13.0.3), System.Drawing.Common (8.0.0), net8.0-windows, Microsoft.NET.Sdk
 
 ### Community 261 - ".Root_PreviewMouseLeftButtonDown"
-Cohesion: 0.25
-Nodes (6): MouseWheelEventArgs, DebugScrollViewer, ScrollViewer, SettingsScrollViewer, MouseButtonEventArgs, TextBoxBase
+Cohesion: 0.29
+Nodes (5): MouseWheelEventArgs, SettingsScrollViewer, MouseButtonEventArgs, ScrollViewer, TextBoxBase
 
 ### Community 262 - "QuestionBanksPanel"
 Cohesion: 0.29
 Nodes (5): loadQuestionBanksPage(), QuestionBanksPanel(), saveChanges(), fetchInterviewQuestionBanks(), updateInterviewQuestionBank()
 
-### Community 263 - "addDetails"
-Cohesion: 0.36
-Nodes (8): addALink(), addDetails(), addLinks(), addProperties(), getActor(), getElementById(), insertLinks(), insertProperties()
-
-### Community 264 - "getAttribute"
-Cohesion: 0.25
-Nodes (8): bHe(), CHe(), cI(), dX(), getAttribute(), qVe(), T7(), Uc()
-
-### Community 265 - "doLink"
-Cohesion: 0.43
-Nodes (8): createLinkingError(), doLink(), getCandidate(), getCandidates(), getElement(), getLinkedNode(), loadAstNode(), Tg()
-
-### Community 266 - "j0e"
-Cohesion: 0.32
-Nodes (8): _ct(), dct(), g5(), h5(), Ict(), j0e(), Mct(), tB()
-
-### Community 267 - "dHe"
-Cohesion: 0.29
-Nodes (8): cte(), dHe(), dte(), eM(), hHe(), Lb(), sM(), uHe()
-
-### Community 268 - "ZIt"
-Cohesion: 0.39
-Nodes (8): eMt(), gX(), KIt(), md(), rMt(), tMt(), xx(), ZIt()
-
-### Community 269 - "yft"
-Cohesion: 0.25
-Nodes (8): fft(), t(), gft(), t(), pft(), t(), yft(), a()
-
-### Community 270 - "jT"
-Cohesion: 0.29
-Nodes (7): jT(), Kut(), u(), qut(), Uut(), r(), Zut()
+### Community 263 - "Phase 9: Add interview session intelligence without a multi-agent live path"
+Cohesion: 0.50
+Nodes (4): Exit criteria, Goal, Phase 9: Add interview session intelligence without a multi-agent live path, Steps
 
 ### Community 271 - "AuthMagicLinkRequestDto"
 Cohesion: 0.25
@@ -1530,37 +1400,13 @@ Nodes (7): AuthMagicLinkRequestDto, AppVersion, DeviceFingerprintHash, DeviceLab
 Cohesion: 0.25
 Nodes (7): DateTime, ContextPackSummary, DocumentCount, IsSelected, Name, PackId, UpdatedAtUtc
 
-### Community 273 - "AuthMagicLinkRequestDto"
-Cohesion: 0.25
-Nodes (7): AuthMagicLinkRequestDto, AppVersion, DeviceFingerprintHash, DeviceLabel, Email, InstallId, SecretFingerprintHint
-
 ### Community 274 - "FakeCursorSizeSlider"
-Cohesion: 0.29
-Nodes (5): HeaderOpacitySlider, Slider, FakeCursorSizeSlider, MouseEventArgs, RoutedPropertyChangedEventArgs
+Cohesion: 0.33
+Nodes (4): FakeCursorSizeSlider, MouseEventArgs, RoutedPropertyChangedEventArgs, Slider
 
 ### Community 275 - ".InvokeAsync"
 Cohesion: 0.29
 Nodes (5): EndpointFilterDelegate, EndpointFilterInvocationContext, ValueTask, CancellationToken, Task
-
-### Community 276 - "ScreenshotError"
-Cohesion: 0.29
-Nodes (7): ScreenshotError, cancelled, captureFailed, encodingFailed, .errorDescription, permissionDenied, String
-
-### Community 277 - "Zi"
-Cohesion: 0.38
-Nodes (7): _6(), deserialize(), getRefNode(), linkNode(), reviveReference(), wv(), Zi()
-
-### Community 278 - "l"
-Cohesion: 0.29
-Nodes (7): AE(), s(), jb(), lineEnd(), lineStart(), point(), l()
-
-### Community 279 - "build"
-Cohesion: 0.29
-Nodes (7): build(), emitUpdate(), getAxisLabels(), getBorders(), getQuadrants(), getTitle(), HMt()
-
-### Community 280 - "l"
-Cohesion: 0.33
-Nodes (6): _ensureRGB(), l(), s(), size(), updateVal(), wM()
 
 ### Community 281 - "AuthMagicLinkIssuedDto"
 Cohesion: 0.29
@@ -1571,20 +1417,8 @@ Cohesion: 0.29
 Nodes (6): DeviceRegistrationMetadataDto, AppVersion, DeviceLabel, InstallId, MachineFingerprintHash, SecretFingerprintHint
 
 ### Community 283 - "EmbeddingProviderException"
-Cohesion: 0.29
-Nodes (5): EmbeddingProviderException, IsTransient, ProviderStatusCode, RetryAfterSeconds, HttpStatusCode
-
-### Community 284 - "AuthMagicLinkIssuedDto"
-Cohesion: 0.29
-Nodes (6): DateTime, AuthMagicLinkIssuedDto, CallbackUri, Email, ExpiresAtUtc, MagicLinkUrl
-
-### Community 285 - "Window"
-Cohesion: 0.33
-Nodes (6): CustomCursorCanvas, SelectionCanvas, SelectionRectangle, Window, Canvas, Rectangle
-
-### Community 286 - "APIRotationState"
-Cohesion: 0.29
-Nodes (7): DateTime, Dictionary, APIRotationState, FailedKeys429, Last429Time, LastKeyIndex, LastModelIndex
+Cohesion: 0.14
+Nodes (11): EmbeddingProviderException, IsTransient, ProviderStatusCode, RetryAfterSeconds, HttpStatusCode, TimeSpan, EmbeddingRequestPolicy, MaxRetries (+3 more)
 
 ### Community 287 - ".RequireUserSessionAsync"
 Cohesion: 0.40
@@ -1594,197 +1428,29 @@ Nodes (4): CancellationToken, Task, DashboardUserSession, UserSessionValidator
 Cohesion: 0.33
 Nodes (5): CLANG_MODULE_CACHE_PATH, build-app.sh script, SWIFTPM_CACHE_PATH, SWIFTPM_CONFIG_DIR, SWIFTPM_SECURITY_DIR
 
-### Community 290 - "buildDocuments"
-Cohesion: 0.40
-Nodes (6): buildDocuments(), getBuildOptions(), markAsCompleted(), prepareBuild(), shouldLink(), shouldValidate()
-
-### Community 291 - "Kp"
-Cohesion: 0.33
-Nodes (6): clamp(), _He(), Kp(), See(), tHe(), Zp()
-
-### Community 292 - "e_e"
-Cohesion: 0.33
-Nodes (6): dD(), e_e(), initialize(), o_e(), s_e(), t_e()
-
-### Community 293 - "is"
-Cohesion: 0.33
-Nodes (6): is(), M(), "../../node_modules/.pnpm/vscode-languageserver-protocol@3.17.5/node_modules/vscode-languageserver-protocol/lib/common/connection.js"(), r(), v(), u_e()
-
-### Community 294 - "AdminCreditGrantRequestDto"
-Cohesion: 0.33
-Nodes (5): AdminCreditGrantRequestDto, PremiumCreditsToAdd, ProCreditsToAdd, Reason, UserId
-
-### Community 295 - "AdminManualLockRequestDto"
-Cohesion: 0.33
-Nodes (5): DateTime, AdminManualLockRequestDto, ExpiresAtUtc, Reason, UserId
-
-### Community 296 - "UsageReconciliationResultDto"
-Cohesion: 0.33
-Nodes (5): UsageReconciliationResultDto, Accepted, AddedPremiumDebt, AppliedCredits, LedgerEntryId
-
-### Community 298 - "HostedKnowledgeBaseReindexWorker"
-Cohesion: 0.33
-Nodes (5): CancellationToken, ILogger, IServiceProvider, Task, HostedKnowledgeBaseReindexWorker
-
-### Community 299 - "CursorVisualMode"
-Cohesion: 0.33
-Nodes (6): CursorVisualMode, Default, ResizeDiagonalBackward, ResizeDiagonalForward, ResizeHorizontal, ResizeVertical
-
-### Community 300 - "HostedKnowledgeBaseSnippetDto"
-Cohesion: 0.33
-Nodes (5): HostedKnowledgeBaseSnippetDto, DocumentId, DocumentTitle, Score, Text
-
-### Community 301 - ".OnSourceInitialized"
-Cohesion: 0.47
-Nodes (3): DllImport, EventArgs, IntPtr
-
 ### Community 302 - "ResponsePlanType"
 Cohesion: 0.33
 Nodes (6): ResponsePlanType, Direct, Experience, Profile, Project, Retrieve
 
-### Community 303 - "ContextPackSelectionItem"
-Cohesion: 0.40
-Nodes (4): ContextPackSelectionItem, DisplayName, IsBlank, PackId
-
-### Community 304 - "ManagedAiCatalog"
-Cohesion: 0.40
-Nodes (3): IReadOnlyDictionary, IReadOnlyList, ManagedAiCatalog
-
-### Community 305 - "sbe"
-Cohesion: 0.40
-Nodes (5): abe(), but(), jf(), mut(), sbe()
-
-### Community 306 - "addNamespace"
-Cohesion: 0.40
-Nodes (5): addNamespace(), createNamespaceNode(), getAncestorIds(), linkParentChild(), resolveQualifiedId()
-
-### Community 307 - "by"
-Cohesion: 0.40
-Nodes (5): AS(), bae(), by(), f(), Wae()
-
-### Community 308 - "flatMap"
-Cohesion: 0.40
-Nodes (5): BN(), defineClass(), flatMap(), getRecords(), YC()
-
-### Community 309 - "AuthCallbackCompletionRequestDto"
-Cohesion: 0.40
-Nodes (4): AuthCallbackCompletionRequestDto, CallbackUri, DeviceFingerprintHash, InstallId
-
-### Community 310 - "AuthRefreshRequestDto"
-Cohesion: 0.40
-Nodes (4): AuthRefreshRequestDto, DeviceFingerprintHash, InstallId, RefreshToken
-
-### Community 311 - "HostedKnowledgeBaseDocumentPasteRequestDto"
-Cohesion: 0.40
-Nodes (4): HostedKnowledgeBaseDocumentPasteRequestDto, Content, Section, Title
+### Community 303 - ".LoadHostedContextPacks"
+Cohesion: 0.12
+Nodes (7): SavedContextPackComboBox, ContextPack, List, ContextPackSelectionItem, DisplayName, IsBlank, PackId
 
 ### Community 312 - "ManagedAiModelVisionUpdateRequestDto"
 Cohesion: 0.40
 Nodes (4): ManagedAiModelVisionUpdateRequestDto, ModelId, ProviderId, SupportsVision
 
-### Community 313 - "PhoneVerificationStateDto"
-Cohesion: 0.40
-Nodes (4): PhoneVerificationStateDto, IsVerified, PhoneNumberMasked, UserId
-
-### Community 314 - "ReadOnlySafeModeStateDto"
-Cohesion: 0.40
-Nodes (4): ReadOnlySafeModeStateDto, CanUploadDiagnostics, IsEnabled, Reason
-
 ### Community 315 - "InterviewSessionState"
 Cohesion: 0.40
 Nodes (4): InterviewSessionState, Active, Completed, Paused
-
-### Community 316 - "AuthCallbackCompletionRequestDto"
-Cohesion: 0.40
-Nodes (4): AuthCallbackCompletionRequestDto, CallbackUri, DeviceFingerprintHash, InstallId
-
-### Community 317 - "PhoneVerificationStateDto"
-Cohesion: 0.40
-Nodes (4): PhoneVerificationStateDto, IsVerified, PhoneNumberMasked, UserId
-
-### Community 318 - "ReadOnlySafeModeStateDto"
-Cohesion: 0.40
-Nodes (4): ReadOnlySafeModeStateDto, CanUploadDiagnostics, IsEnabled, Reason
 
 ### Community 319 - "updateManagedAiRuntimeSelection"
 Cohesion: 0.67
 Nodes (3): ManagedRuntimeSelectionCard(), handleSelectionSave(), updateManagedAiRuntimeSelection()
 
-### Community 320 - "acquireParserWorker"
-Cohesion: 0.67
-Nodes (4): acquireParserWorker(), initializeWorkers(), lock(), onReady()
-
-### Community 321 - "Elt"
-Cohesion: 0.50
-Nodes (4): clt(), Elt(), s(), yge()
-
-### Community 322 - "destructEndLink"
-Cohesion: 0.50
-Nodes (4): countChar(), destructEndLink(), destructLink(), destructStartLink()
-
-### Community 323 - "z8"
-Cohesion: 0.50
-Nodes (4): cqe(), K8(), uqe(), z8()
-
-### Community 324 - "jIt"
-Cohesion: 0.50
-Nodes (4): EBe(), jIt(), mX(), RBe()
-
-### Community 325 - "eHe"
-Cohesion: 0.50
-Nodes (4): eHe(), i(), formatHsl(), SHe()
-
-### Community 326 - "runConverter"
-Cohesion: 0.50
-Nodes (4): eq(), runCommonConverter(), runConverter(), runCustomConverter()
-
-### Community 327 - "eqe"
-Cohesion: 0.50
-Nodes (4): eqe(), G8(), sy(), W8()
-
-### Community 328 - "traverseFolder"
-Cohesion: 0.67
-Nodes (4): findChangedUris(), searchFolder(), shouldIncludeEntry(), traverseFolder()
-
-### Community 329 - "getAllSubTypes"
-Cohesion: 0.50
-Nodes (4): getAllSubTypes(), getAllTypes(), isInstance(), isSubtype()
-
-### Community 330 - "Gn"
-Cohesion: 0.50
-Nodes (4): Gn(), setAccDescription(), setAccTitle(), setDiagramTitle()
-
-### Community 331 - "iterator"
-Cohesion: 0.50
-Nodes (4): iterator(), recursiveReduce(), reduceRight(), [Symbol.iterator]()
-
-### Community 332 - "Xp"
-Cohesion: 0.50
-Nodes (4): jp(), Xp(), a(), i()
-
-### Community 333 - "vy"
-Cohesion: 0.50
-Nodes (4): nUe(), oUe(), sUe(), vy()
-
-### Community 334 - "q0e"
-Cohesion: 0.50
-Nodes (4): q0e(), U0e(), W0e(), x1()
-
-### Community 335 - "AdminBalanceWaiverRequestDto"
-Cohesion: 0.50
-Nodes (3): AdminBalanceWaiverRequestDto, Reason, UserId
-
-### Community 336 - "HostedKnowledgeBaseCreateRequestDto"
-Cohesion: 0.50
-Nodes (3): HostedKnowledgeBaseCreateRequestDto, Description, Name
-
 ### Community 337 - "ManagedAiRuntimeSelectionUpdateRequestDto"
 Cohesion: 0.50
 Nodes (3): ManagedAiRuntimeSelectionUpdateRequestDto, ModelId, ProviderId
-
-### Community 338 - "Window"
-Cohesion: 0.50
-Nodes (3): CursorImage, Window, Image
 
 ### Community 339 - "RetrievalScope"
 Cohesion: 0.50
@@ -1794,109 +1460,31 @@ Nodes (4): RetrievalScope, ActiveProject, Global, PreviousDocuments
 Cohesion: 1.00
 Nodes (3): AdminLoginPage(), handleSubmit(), loginAdmin()
 
-### Community 342 - "cie"
-Cohesion: 0.67
-Nodes (3): a2(), cie(), uie()
-
-### Community 343 - "Act"
-Cohesion: 0.67
-Nodes (3): Act(), Ect(), V0e()
-
-### Community 344 - "i"
-Cohesion: 0.67
-Nodes (3): AHe(), i(), kHe()
-
-### Community 345 - "AJ"
-Cohesion: 0.67
-Nodes (3): AJ(), m8(), n8()
-
-### Community 346 - "BE"
-Cohesion: 0.67
-Nodes (3): BE(), o2(), s2()
-
-### Community 347 - "bXe"
-Cohesion: 0.67
-Nodes (3): bXe(), vXe(), yXe()
-
-### Community 348 - "cUe"
-Cohesion: 0.67
-Nodes (3): cUe(), nN(), rN()
-
-### Community 349 - "lN"
-Cohesion: 0.67
-Nodes (3): dUe(), lN(), sN()
-
-### Community 350 - "k0e"
-Cohesion: 0.67
-Nodes (3): eB(), k0e(), lct()
-
-### Community 351 - "eIt"
-Cohesion: 0.67
-Nodes (3): eIt(), W9e(), Z8t()
-
-### Community 352 - "extractWrap"
-Cohesion: 0.67
-Nodes (3): extractWrap(), parseBoxData(), parseMessage()
-
-### Community 353 - "t"
-Cohesion: 0.67
-Nodes (3): t(), QY(), z_t()
-
-### Community 354 - "gb"
-Cohesion: 0.67
-Nodes (3): gb(), tI(), Ty()
-
-### Community 355 - "getAllTags"
-Cohesion: 0.67
-Nodes (3): getAllTags(), getTag(), getTags()
-
-### Community 356 - "indexNodes2"
-Cohesion: 0.67
-Nodes (3): getPosForId(), indexNodes(), indexNodes2()
-
-### Community 357 - "z7"
-Cohesion: 0.67
-Nodes (3): hasClass(), z7(), zk()
-
-### Community 358 - "Y3e"
-Cohesion: 0.67
-Nodes (3): j3e(), o3e(), Y3e()
-
-### Community 359 - "KX"
-Cohesion: 0.67
-Nodes (3): KX(), mze(), pze()
-
-### Community 360 - "rB"
-Cohesion: 0.67
-Nodes (3): Nct(), rB(), X0e()
-
-### Community 361 - "t8t"
-Cohesion: 0.67
-Nodes (3): Oj(), s9e(), t8t()
-
-### Community 362 - "wrapPreparationException"
-Cohesion: 0.67
-Nodes (3): registerAfterDocument(), registerBeforeDocument(), wrapPreparationException()
-
 ## Knowledge Gaps
-- **1677 isolated node(s):** `BootstrapUser`, `InterviewTypes`, `POINT`, `POINT`, `HostedKnowledgeBaseEmbeddingDefaults` (+1672 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2765 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **39 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **2224 isolated node(s):** `DatabaseUrl`, `AdminApiKey`, `WindowsBackendBaseUrl`, `WindowsBackendInternalApiKey`, `PublicWebsiteBaseUrl` (+2219 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 4298 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+
+## Work-memory lessons
+
+**Preferred sources** — corroborated by past sessions; start here.
+- `RetrievedContextSnippet` (3× useful, score=2.996950738)
+- `KnowledgeBaseEmbeddingService` (2× useful, score=1.998250965)
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `PhantomStore` connect `PhantomStore` to `SpeechInputService`, `APIRotationManager`, `ConversationManager`, `String`, `String`, `ChatMessage`, `ContentView.swift`, `Foundation`, `AppDelegate`, `CreditMeteringService`?**
-  _High betweenness centrality (0.062) - this node is a cross-community bridge._
-- **Why does `BackendValidationException` connect `BackendValidationException` to `.List`, `HostedKnowledgeBaseEmbeddingConfigRecord`, `DesktopAccountRecord`, `Phantom.WindowsApp.Backend.Contracts`, `ManagedAiLatencyRepository`, `PhoneVerificationChallengeRecord`, `ManagedAiCatalogService`, `DesktopSessionRecord`, `EmailVerificationTokenRecord`, `AdminAuthService`, `.OpenConnection`, `ManagedAiService`, `DesktopLockRecord`, `SupportTicketRecord`, `GoogleMailOAuthService`, `ManagedProviderCredentialRecord`, `HttpHostedClientBase`, `DesktopContextPackRecord`, `TelemetryEventRecord`, `InterviewQuestionBankJobRepository`, `KnowledgeBaseEmbeddingService`, `KnowledgeBaseEmbeddingProfile`, `PaymentPackDto`?**
-  _High betweenness centrality (0.049) - this node is a cross-community bridge._
-- **Why does `MainWindow` connect `.WriteLine` to `CursorManager`, `ConversationManager`, `InterviewSessionRecord`, `HostedKnowledgeBaseSummaryDto`, `StartupGateState`, `SecureOverlay.Domain.Entities`, `IAIService`, `StartupGateContext`, `TaskViewMonitor`, `Window`, `ManagedAiCatalogDto`, `.SendMessage`, `AppSettings`, `SettingsPage`, `ContextPack`, `APIRotationManager`, `HostedRuntimeOptions`, `TelemetryEvent`, `.ApplyProtection`, `DebugLogger`, `.RetrieveForPromptAsync`, `AIModelRegistry`, `.OnStartup`, `LiveRequestTrace`?**
-  _High betweenness centrality (0.035) - this node is a cross-community bridge._
-- **Are the 171 inferred relationships involving `t()` (e.g. with `mermaid.min.js` and `a()`) actually correct?**
+- **Why does `BackendValidationException` connect `BackendValidationException` to `HostedKnowledgeBaseService`, `.List`, `HostedKnowledgeBaseEmbeddingConfigRecord`, `DesktopAccountRecord`, `Phantom.WindowsApp.Backend.Contracts`, `ManagedAiLatencyRepository`, `ManagedAiCatalogService`, `.OpenConnection`, `ManagedAiService`, `SupportTicketRecord`, `GoogleMailOAuthService`, `ManagedProviderCredentialRecord`, `HttpHostedClientBase`, `DesktopContextPackRecord`, `AdminAccountSnapshotDto`, `InterviewQuestionBankJobRepository`, `InterviewAnswerPlanDto`, `.RunAdminTestAsync`, `KnowledgeBaseEmbeddingService`, `.GenerateBatchAsync`?**
+  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+- **Why does `PhantomStore` connect `PhantomStore` to `SpeechInputService`, `APIRotationManager`, `String`, `String`, `String`, `BYOClient`, `ContentView.swift`, `Foundation`, `AppDelegate`, `Codable`?**
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
+- **Why does `MainWindow` connect `MainWindow` to `ConversationManager`, `InterviewSessionRecord`, `HostedKnowledgeBaseSummaryDto`, `StartupGateState`, `SecureOverlay.Domain.Entities`, `IAIService`, `AccountCacheSnapshot`, `TaskViewMonitor`, `Window`, `AppSettings`, `SettingsPage`, `ContextPack`, `.WriteLine`, `HostedRuntimeOptions`, `TelemetryEvent`, `.ApplyProtection`, `DebugLogger`, `.RetrieveForPromptAsync`, `AIModelRegistry`, `.OnStartup`, `LiveRequestTrace`, `Window`, `CursorManager`?**
+  _High betweenness centrality (0.015) - this node is a cross-community bridge._
+- **Are the 171 inferred relationships involving `t()` (e.g. with `net10.0-windows/assets/mermaid/mermaid.min.js` and `a()`) actually correct?**
   _`t()` has 171 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 173 inferred relationships involving `r()` (e.g. with `mermaid.min.js` and `_6e()`) actually correct?**
-  _`r()` has 173 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 142 inferred relationships involving `n()` (e.g. with `aae()` and `addAnnotation()`) actually correct?**
-  _`n()` has 142 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 133 inferred relationships involving `i()` (e.g. with `ACTION()` and `addLink()`) actually correct?**
-  _`i()` has 133 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 171 inferred relationships involving `t()` (e.g. with `net8.0-windows/assets/mermaid/mermaid.min.js` and `a()`) actually correct?**
+  _`t()` has 171 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `DatabaseUrl`, `AdminApiKey`, `WindowsBackendBaseUrl` to the rest of the system?**
+  _2224 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `phantom-windows-app/assets/mermaid/mermaid.min.js` be split into smaller, more focused modules?**
+  _Cohesion score 0.0032421711103482473 - nodes in this community are weakly interconnected._

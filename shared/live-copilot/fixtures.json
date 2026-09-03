@@ -137,6 +137,7 @@
     "General technical, coding, system-design, and product questions stay universal",
     "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes"
   ],
+  "repairPromptSuffix": "Do not mention the repair or the protocol.",
   "logging": [
     { "name": "direct-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "answer_completed"], "modelOperations": 1, "terminalEvents": 1 },
     { "name": "grounded-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "retrieval_started", "retrieval_completed", "model_call_started", "answer_completed"], "modelOperations": 2, "terminalEvents": 1 },

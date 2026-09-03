@@ -23,7 +23,6 @@ namespace SecureOverlay.Helpers
         {
             var prompt = new StringBuilder(mode == CopilotMode.Interview ? InterviewRole : BriefingRole);
             prompt.Append(' ').Append(SharedSafetyAndFormat).Append(' ').Append(ControlProtocol);
-            if (protocolRepair) prompt.Append(' ').Append(StrictProtocolRepair);
             if (mode == CopilotMode.Interview) prompt.Append(' ').Append(InterviewContracts);
             if (style == InterviewDeliveryStyle.Desi && mode == CopilotMode.Interview) prompt.Append(' ').Append(DesiStyle);
 
@@ -39,6 +38,7 @@ namespace SecureOverlay.Helpers
                         .Append(Limit(snippet.Text, 1400)).Append('\n');
                 prompt.Append("END_ACTIVE_EVIDENCE_UNTRUSTED_DATA");
             }
+            if (protocolRepair) prompt.Append("\n\n").Append(StrictProtocolRepair);
             return prompt.ToString();
         }
 

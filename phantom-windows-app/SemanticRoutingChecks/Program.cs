@@ -50,6 +50,11 @@ var firstCallPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
     Array.Empty<RetrievedContextSnippet>());
 if (fixtures.PromptRequirements.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
     throw new InvalidOperationException("The Windows prompt is missing a shared grounding requirement.");
+var repairPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>(), protocolRepair: true);
+if (!repairPrompt.EndsWith(fixtures.RepairPromptSuffix, StringComparison.Ordinal))
+    throw new InvalidOperationException("The Windows protocol-repair instruction is not the final prompt authority.");
 
 var directFrame = fixtures.Parser.First(x => x.ExpectedAction == "answer").Chunks;
 var directCalls = 0;
@@ -134,6 +139,7 @@ sealed class FixtureRoot
     public List<ContractFixture> Contracts { get; set; } = new();
     public List<LoggingFixture> Logging { get; set; } = new();
     public List<string> PromptRequirements { get; set; } = new();
+    public string RepairPromptSuffix { get; set; } = "";
     public List<string> SensitiveSamples { get; set; } = new();
 }
 sealed class ParserFixture

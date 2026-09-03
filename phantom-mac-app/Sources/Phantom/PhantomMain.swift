@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var hotKeys: [GlobalHotKey] = []
     private var keyMonitor: Any?
     private var restartExecutable: URL?
-    private var windowObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
     private var isQuitting = false
     private var isPreparingToQuit = false
     private var quitSheetOpen = false
@@ -40,11 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.store.send()
             return nil
         }
-        windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
-            guard let visible = notification.object as? NSWindow, NSApp.windows.contains(visible) else { return }
-            visible.sharingType = .none
-            visible.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
-        }
+        windowObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
+            // Only request capture exclusion here; changing collectionBehavior can close transient pickers.
+            (notification.object as? NSWindow)?.sharingType = .none
+        })
+        windowObservers.append(NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in
+            // SwiftUI Picker menus are transient windows; protect them after AppKit orders the menu onscreen.
+            DispatchQueue.main.async { NSApp.windows.forEach { $0.sharingType = .none } }
+        })
         showWindow()
         store.bootstrap()
     }
@@ -185,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 
@@ -272,6 +275,7 @@ enum PhantomMain {
             let contracts: [ContractFixture]
             let logging: [LoggingFixture]
             let promptRequirements: [String]
+            let repairPromptSuffix: String
             let sensitiveSamples: [String]
         }
 
@@ -288,6 +292,11 @@ enum PhantomMain {
             roleOrMeetingContext: "", activeEvidence: []
         )
         precondition(fixtures.promptRequirements.allSatisfy { firstCallPrompt.contains($0) })
+        let repairPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .standard, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: [], protocolRepair: true
+        )
+        precondition(repairPrompt.hasSuffix(fixtures.repairPromptSuffix))
         for fixture in fixtures.parser {
             let parser = PhantomControlFrameParser(
                 allowedEntityIds: fixture.allowedEntityIds ?? [],

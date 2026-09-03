@@ -14,7 +14,6 @@ enum CopilotPrompt {
     ) -> String {
         var prompt = mode == .interview ? interviewRole : briefingRole
         prompt += " \(safetyAndFormat) \(controlProtocol)"
-        if protocolRepair { prompt += " \(strictProtocolRepair)" }
         if mode == .interview { prompt += " \(interviewContracts)" }
         if mode == .interview, style == .desi { prompt += " \(desiStyle)" }
         prompt += "\n\nCANDIDATE_OR_TASK_CATALOG_UNTRUSTED_DATA\n\(catalog(mode: mode, knowledge: knowledge, resume: resume))\nEND_CATALOG_UNTRUSTED_DATA"
@@ -26,6 +25,7 @@ enum CopilotPrompt {
             }
             prompt += "END_ACTIVE_EVIDENCE_UNTRUSTED_DATA"
         }
+        if protocolRepair { prompt += "\n\n\(strictProtocolRepair)" }
         return prompt
     }
 

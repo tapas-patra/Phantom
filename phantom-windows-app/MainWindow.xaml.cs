@@ -175,8 +175,6 @@ namespace SecureOverlay
             _settings = SettingsManager.Load();
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
             LiveModeComboBox.SelectedIndex = string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-            LiveStyleComboBox.SelectedIndex = string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-            LiveStyleComboBox.Visibility = LiveModeComboBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
             HeaderOpacitySlider.Value = _settings.WindowOpacity;
             ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
             UpdateLegacyFallbackButtonState();
@@ -1761,24 +1759,12 @@ namespace SecureOverlay
         {
             if (_settings == null || LiveModeComboBox.SelectedItem is not ComboBoxItem item) return;
             _settings.CopilotMode = item.Content?.ToString() == "Briefing" ? "Briefing" : "Interview";
-            LiveStyleComboBox.Visibility = _settings.CopilotMode == "Interview" ? Visibility.Visible : Visibility.Collapsed;
             SettingsManager.Save(_settings);
             _conversationManager?.ConfigureCopilot(
                 _settings.CopilotMode == "Briefing" ? CopilotMode.Briefing : CopilotMode.Interview,
                 _settings.InterviewDeliveryStyle == "Desi" ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
             _ = RefreshChatSurfaceAsync();
         }
-
-        private void LiveStyleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_settings == null || LiveStyleComboBox.SelectedItem is not ComboBoxItem item) return;
-            _settings.InterviewDeliveryStyle = item.Content?.ToString() == "Desi" ? "Desi" : "Standard";
-            SettingsManager.Save(_settings);
-            _conversationManager?.ConfigureCopilot(
-                _settings.CopilotMode == "Briefing" ? CopilotMode.Briefing : CopilotMode.Interview,
-                _settings.InterviewDeliveryStyle == "Desi" ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
-        }
-
 
         // Add animation for visual feedback
         private void FlashAPIKeyIndicator()

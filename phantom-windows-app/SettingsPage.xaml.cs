@@ -83,6 +83,7 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(DeliveryStyleComboBox);
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
             ComboBoxProtection.ProtectComboBox(SavedContextPackComboBox);
+            ComboBoxProtection.ProtectComboBox(DebugErrorTypeComboBox);
         }
 
         private void InitializeControls()

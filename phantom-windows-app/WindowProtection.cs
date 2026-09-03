@@ -52,25 +52,28 @@ namespace SecureOverlay
             }
             catch { }
 
-            // Apply screen capture protection
+            ApplyCaptureExclusion(hwnd);
+            Log.WriteLine("  - Mouse cursor WILL be visible when hovering");
+        }
+
+        public static void ApplyCaptureExclusion(IntPtr hwnd)
+        {
             bool success = NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE);
             
             if (success)
             {
                 Log.WriteLine($"✓ Protection applied to window 0x{hwnd:X}");
                 Log.WriteLine($"  - Window invisible to screen capture");
-                Log.WriteLine($"  - Mouse cursor WILL be visible when hovering");
             }
             else
             {
                 Log.WriteLine($"✗ Failed to apply protection to window 0x{hwnd:X}");
             }
 
-            // Verify
-            System.Threading.Thread.Sleep(50);
-            uint affinity;
-            NativeMethods.GetWindowDisplayAffinity(hwnd, out affinity);
-            Log.WriteLine($"  Affinity: 0x{affinity:X}");
+            if (NativeMethods.GetWindowDisplayAffinity(hwnd, out var affinity))
+            {
+                Log.WriteLine($"  Affinity: 0x{affinity:X}");
+            }
         }
     }
 }

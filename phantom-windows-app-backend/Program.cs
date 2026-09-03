@@ -130,6 +130,16 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = async (context, cancellationToken) =>
     {
+        var request = context.HttpContext.Request;
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.RateLimit");
+        logger.LogWarning(
+            "request_rate_limited service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-windows-app-backend", "http", "request_rate_limited",
+            request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Method,
+            (context.HttpContext.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched",
+            "4xx", "rate_limited", "error");
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
         context.HttpContext.Response.Headers["Retry-After"] = "5";
@@ -177,7 +187,8 @@ builder.Services.AddRateLimiter(options =>
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 240,
+                // One bounded desktop backlog can contain 500 events; allow one drain without 429 churn.
+                PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true

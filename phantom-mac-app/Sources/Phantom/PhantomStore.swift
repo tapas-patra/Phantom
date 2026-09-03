@@ -1096,9 +1096,16 @@ final class PhantomStore: ObservableObject {
                 status = result.decision.action == .clarify ? "Needs clarification" : "Ready"
             } catch is CancellationError {
                 status = "Request cancelled."
-                Diagnostics.event("turn_cancelled", level: "Information", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "cancelled"])
+                Diagnostics.event("turn_cancelled", level: "Information", sessionId: copilotSessionId, turnId: requestId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "cancelled", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))"])
             } catch {
-                Diagnostics.event("turn_failed", level: "Error", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "error", "error_code": Self.errorCode(error)])
+                let failureFields = [
+                    "provider": provider,
+                    "model": selectedModelId,
+                    "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))",
+                    "outcome": "error",
+                    "error_code": Self.errorCode(error)
+                ]
+                Diagnostics.event("turn_failed", level: "Error", sessionId: copilotSessionId, turnId: requestId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: failureFields)
                 if let backendError = error as? BackendError, case .http(401, _) = backendError {
                     await handleAuthenticationFailure("Your session expired. Sign in again.")
                     return
@@ -1108,7 +1115,13 @@ final class PhantomStore: ObservableObject {
                 await runtime.track(
                     category: "live_copilot",
                     event: "turn_failed",
-                    attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "outcome": "error", "error_code": Self.errorCode(error)],
+                    attributes: failureFields.merging([
+                        "session_id": copilotSessionId,
+                        "turn_id": requestId,
+                        "operation_id": activeOperationId,
+                        "mode": copilotMode.rawValue,
+                        "delivery_style": interviewDeliveryStyle.rawValue
+                    ]) { current, _ in current },
                     accessToken: session.accessToken
                 )
                 let failureMessage = error is PhantomProtocolError

@@ -64,6 +64,20 @@ builder.Services.AddCors(cors =>
 builder.Services.AddRateLimiter(rateLimiterOptions =>
 {
     rateLimiterOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    rateLimiterOptions.OnRejected = (context, _) =>
+    {
+        var request = context.HttpContext.Request;
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.RateLimit");
+        logger.LogWarning(
+            "request_rate_limited service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-dashboard-backend", "http", "request_rate_limited",
+            request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Method,
+            (context.HttpContext.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched",
+            "4xx", "rate_limited", "error");
+        return ValueTask.CompletedTask;
+    };
     rateLimiterOptions.AddPolicy("dashboard-user", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",

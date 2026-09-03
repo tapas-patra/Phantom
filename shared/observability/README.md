@@ -9,6 +9,7 @@ Open the Render service, choose **Logs**, and search the JSON output by a correl
 Useful searches:
 
 - `request_started` or `request_completed` — inbound service request boundary.
+- `request_rate_limited` — a request was rejected with HTTP 429; correlate it with the matching request boundary.
 - `component=managed_ai` — managed provider dispatch, headers, first upstream token, completion, timeout, or failure.
 - `provider_first_token_timeout` — provider produced no token inside the 12-second deadline and the existing retry path took over.
 - `component=desktop_telemetry` — content-free macOS or Windows client milestones received by the authority backend.

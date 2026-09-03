@@ -164,38 +164,6 @@ struct ManagedCatalog: Codable {
     let providers: [ManagedProvider]
 }
 
-struct InterviewAnswerPlan: Codable {
-    let intent: String
-    let source: String
-    let entityType: String
-    let entityId: String
-    let retrieve: Bool
-    let answerMode: String
-    let answerOutline: [String]
-    let allowCode: Bool
-    let confidence: Double
-    let retrievalQuery: String
-    let preferredDocumentIds: [String]
-    let clarificationQuestion: String?
-    let clarificationOptions: [ClarificationOption]?
-
-    static let clarification = InterviewAnswerPlan(
-        intent: "ambiguous",
-        source: "Clarification",
-        entityType: "none",
-        entityId: "",
-        retrieve: false,
-        answerMode: "clarification",
-        answerOutline: ["Ask one concise clarifying question."],
-        allowCode: false,
-        confidence: 0,
-        retrievalQuery: "",
-        preferredDocumentIds: [],
-        clarificationQuestion: nil,
-        clarificationOptions: nil
-    )
-}
-
 struct ManagedProvider: Codable, Identifiable, Hashable {
     let providerId: String
     let label: String
@@ -538,7 +506,13 @@ struct BackendClient {
         )
     }
 
-    func knowledgeSnippets(accessToken: String, query: String, preferredDocumentIds: [String] = []) async throws -> [KnowledgeSnippet] {
+    func knowledgeSnippets(
+        accessToken: String,
+        query: String,
+        preferredDocumentIds: [String] = [],
+        turnId: String,
+        operationId: String
+    ) async throws -> [KnowledgeSnippet] {
         var components = URLComponents(
             url: url("/api/desktop/kb/search"),
             resolvingAgainstBaseURL: false
@@ -551,46 +525,9 @@ struct BackendClient {
         var request = URLRequest(url: components.url!)
         request.timeoutInterval = 1.5
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        correlate(&request, turnId: turnId, operationId: operationId)
         let result: KnowledgeSearchResult = try await send(request)
         return result.snippets
-    }
-
-    func interviewPlan(
-        accessToken: String,
-        requestId: String,
-        provider: String,
-        model: String,
-        allowPaidSessionExtension: Bool,
-        question: String,
-        activeEntityId: String,
-        recentMessages: [ChatMessage]
-    ) async throws -> InterviewAnswerPlan {
-        struct Body: Encodable {
-            struct Message: Encodable {
-                let role: String
-                let content: String
-            }
-            let requestId: String
-            let provider: String
-            let model: String
-            let allowPaidSessionExtension: Bool
-            let question: String
-            let activeEntityId: String
-            let recentMessages: [Message]
-        }
-        return try await post(
-            "/api/desktop/interview/plan",
-            body: Body(
-                requestId: requestId,
-                provider: provider,
-                model: model,
-                allowPaidSessionExtension: allowPaidSessionExtension,
-                question: question,
-                activeEntityId: activeEntityId,
-                recentMessages: recentMessages.suffix(6).map { Body.Message(role: $0.role, content: $0.content) }
-            ),
-            bearer: accessToken
-        )
     }
 
     func knowledgeBase(accessToken: String) async throws -> StartupSnapshot.KnowledgeBase {
@@ -653,16 +590,22 @@ struct BackendClient {
             let attributes: [String: String]
             let occurredAtUtc: Date
         }
-        let _: EmptyResult = try await post(
-            "/api/desktop/telemetry/ingest",
-            body: Body(
-                category: event.category,
-                eventName: event.eventName,
-                attributes: event.attributes,
-                occurredAtUtc: event.occurredAtUtc
-            ),
-            bearer: accessToken
+        var request = URLRequest(url: url("/api/desktop/telemetry/ingest"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        correlate(
+            &request,
+            turnId: event.attributes["turn_id"] ?? UUID().uuidString,
+            operationId: event.attributes["operation_id"] ?? UUID().uuidString
         )
+        request.httpBody = try encoder.encode(Body(
+            category: event.category,
+            eventName: event.eventName,
+            attributes: event.attributes,
+            occurredAtUtc: event.occurredAtUtc
+        ))
+        let _: EmptyResult = try await send(request)
     }
 
     func chatStream(
@@ -671,7 +614,9 @@ struct BackendClient {
         model: String,
         allowPaidSessionExtension: Bool,
         imageBase64: String?,
-        messages: [ChatMessage]
+        messages: [ChatMessage],
+        turnId: String,
+        operationId: String
     ) async throws -> URLSession.AsyncBytes {
         struct WireMessage: Encodable {
             let role: String
@@ -679,6 +624,7 @@ struct BackendClient {
         }
         struct Body: Encodable {
             let requestId: String
+            let turnId: String
             let provider: String
             let model: String
             let allowPaidSessionExtension: Bool
@@ -690,9 +636,11 @@ struct BackendClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        correlate(&request, turnId: turnId, operationId: operationId)
         request.timeoutInterval = 300
         request.httpBody = try encoder.encode(Body(
-            requestId: UUID().uuidString,
+            requestId: operationId,
+            turnId: turnId,
             provider: provider,
             model: model,
             allowPaidSessionExtension: allowPaidSessionExtension,
@@ -702,10 +650,7 @@ struct BackendClient {
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            var data = Data()
-            for try await byte in bytes { data.append(byte) }
-            let message = String(data: data, encoding: .utf8) ?? "Chat request failed."
-            throw BackendError.http((response as? HTTPURLResponse)?.statusCode ?? 0, message)
+            throw BackendError.http((response as? HTTPURLResponse)?.statusCode ?? 0, "The managed AI request failed.")
         }
         return bytes
     }
@@ -739,6 +684,11 @@ struct BackendClient {
 
     private func url(_ path: String) -> URL {
         baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+    }
+
+    private func correlate(_ request: inout URLRequest, turnId: String, operationId: String) {
+        request.setValue(turnId, forHTTPHeaderField: "X-Phantom-Correlation-Id")
+        request.setValue(operationId, forHTTPHeaderField: "X-Phantom-Operation-Id")
     }
 
     private static func describe(_ error: DecodingError) -> String {

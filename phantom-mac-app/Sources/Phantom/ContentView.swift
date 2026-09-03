@@ -157,6 +157,26 @@ private struct ChatView: View {
     private var chatHeader: some View {
         HStack(spacing: 8) {
             BrandMark(compact: true, showsName: false)
+            Menu {
+                Picker("Mode", selection: $store.copilotMode) {
+                    Text("Interview").tag(CopilotMode.interview)
+                    Text("Briefing").tag(CopilotMode.briefing)
+                }
+                if store.copilotMode == .interview {
+                    Divider()
+                    Picker("Delivery", selection: $store.interviewDeliveryStyle) {
+                        Text("Standard").tag(InterviewDeliveryStyle.standard)
+                        Text("Desi — Natural Indian English").tag(InterviewDeliveryStyle.desi)
+                    }
+                }
+            } label: {
+                Text(store.copilotMode == .briefing
+                    ? "Briefing"
+                    : "Interview · \(store.interviewDeliveryStyle == .desi ? "Desi" : "Standard")")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("Live Copilot mode and delivery style")
             StatusPill(text: store.creditStatus, color: PhantomColors.blue)
             StatusPill(text: store.accountTypeLabel, color: PhantomColors.amber)
             StatusPill(text: store.sessionTimerText.isEmpty ? "00:00:00" : store.sessionTimerText, color: PhantomColors.green)
@@ -566,8 +586,15 @@ private struct SettingsView: View {
                             Text("Unsaved context-pack changes").font(.caption).foregroundColor(PhantomColors.amber)
                         }
                         }
-                        Picker("Interview type", selection: $store.interviewType) {
-                            ForEach(InterviewPrompt.types, id: \.self) { Text($0).tag($0) }
+                        Picker("Live Copilot mode", selection: $store.copilotMode) {
+                            Text("Interview").tag(CopilotMode.interview)
+                            Text("Briefing").tag(CopilotMode.briefing)
+                        }
+                        if store.copilotMode == .interview {
+                            Picker("Interview delivery", selection: $store.interviewDeliveryStyle) {
+                                Text("Standard").tag(InterviewDeliveryStyle.standard)
+                                Text("Desi — Natural Indian English").tag(InterviewDeliveryStyle.desi)
+                            }
                         }
                         Text("Resume • \(store.resumeWordCount) words")
                             .font(.system(size: 12, weight: .semibold))
@@ -779,7 +806,7 @@ private struct MarkdownMessageText: View {
                                     renderFailed = false
                                 } catch {
                                     correctionError = error.localizedDescription
-                                    Diagnostics.log("mermaid:correction:failed error=\(error.localizedDescription)")
+                                    Diagnostics.log("mermaid:correction:failed code=render_failed")
                                 }
                                 isCorrecting = false
                             }

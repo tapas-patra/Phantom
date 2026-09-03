@@ -65,7 +65,6 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
-builder.Services.AddSingleton<InterviewAnswerPlanningService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
@@ -192,6 +191,37 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
 }
+
+app.Use(async (context, next) =>
+{
+    var incomingCorrelation = context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault();
+    var incomingOperation = context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault();
+    var correlationId = IsValidOpaqueId(incomingCorrelation) ? incomingCorrelation! : Guid.NewGuid().ToString("N");
+    var operationId = IsValidOpaqueId(incomingOperation) ? incomingOperation! : Guid.NewGuid().ToString("N");
+    context.Request.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    context.Request.Headers["X-Phantom-Operation-Id"] = operationId;
+    context.Response.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Request");
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    using (logger.BeginScope(new Dictionary<string, object>
+    {
+        ["correlation_id"] = correlationId,
+        ["operation_id"] = operationId,
+        ["service"] = "phantom-windows-app-backend"
+    }))
+    {
+        try { await next(); }
+        finally
+        {
+            var route = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+            logger.LogInformation(
+                "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route={Route} status_class={StatusClass} elapsed_ms={ElapsedMs}",
+                "phantom-windows-app-backend", "http", "request_completed", correlationId, operationId,
+                context.Request.Method, route, $"{context.Response.StatusCode / 100}xx",
+                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+    }
+});
 
 using (var scope = app.Services.CreateScope())
 {
@@ -780,17 +810,6 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
-}).RequireRateLimiting("desktop-api");
-
-app.MapPost("/api/desktop/interview/plan", async (
-    HttpContext httpContext,
-    InterviewAnswerPlanRequestDto request,
-    ManagedAiService managedAi,
-    InterviewAnswerPlanningService planner,
-    CancellationToken cancellationToken) =>
-{
-    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(await planner.PlanAsync(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb", (
@@ -1447,5 +1466,8 @@ static string ResolveUserAuthorization(HttpRequest request) =>
     RequestTokenResolver.GetAuthorizationHeader(
         request,
         request.Cookies.TryGetValue(BrowserSessionCookieService.UserAccessCookie, out var cookieToken) ? cookieToken : null);
+
+static bool IsValidOpaqueId(string? value) => value is { Length: >= 8 and <= 128 }
+    && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
 app.Run();

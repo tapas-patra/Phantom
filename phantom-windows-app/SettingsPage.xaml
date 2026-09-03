@@ -466,28 +466,32 @@
                         </Border>
                         </StackPanel>
 
-                        <!-- Interview Type -->
-                        <TextBlock Text="Interview Type" FontSize="14" FontWeight="Bold" 
+                        <TextBlock Text="Live Copilot" FontSize="14" FontWeight="Bold"
                                   Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
-                        <TextBlock Text="Phantom now keeps the system prompt internal and applies a tuned prompt preset based on the interview type, with more natural spoken-answer guidance." 
+                        <TextBlock Text="Choose Interview or Briefing. Phantom detects the answer shape on every turn; Desi changes delivery only."
                                   FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}"/>
                         <Border Background="#30FFFFFF" CornerRadius="8" Padding="10" Margin="0,0,0,15">
-                            <ComboBox x:Name="InterviewTypeComboBox"
-                                      Background="White"
-                                      Foreground="Black"
-                                      BorderThickness="0"
-                                      FontSize="12">
-                                <ComboBox.Resources>
-                                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="Black"/>
-                                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="Black"/>
-                                </ComboBox.Resources>
-                                <ComboBox.ItemContainerStyle>
-                                    <Style TargetType="ComboBoxItem">
-                                        <Setter Property="Foreground" Value="Black"/>
-                                        <Setter Property="Background" Value="White"/>
-                                    </Style>
-                                </ComboBox.ItemContainerStyle>
-                            </ComboBox>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Mode" Foreground="White" FontSize="11" Margin="0,0,0,5"/>
+                                    <ComboBox x:Name="CopilotModeComboBox" Background="White" Foreground="Black" BorderThickness="0" FontSize="12">
+                                        <ComboBoxItem Content="Interview"/>
+                                        <ComboBoxItem Content="Briefing"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Interview delivery" Foreground="White" FontSize="11" Margin="0,0,0,5"/>
+                                    <ComboBox x:Name="DeliveryStyleComboBox" Background="White" Foreground="Black" BorderThickness="0" FontSize="12">
+                                        <ComboBoxItem Content="Standard"/>
+                                        <ComboBoxItem Content="Desi — Natural Indian English" Tag="Desi"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
                         </Border>
 
                         <!-- Auto Pause -->

@@ -227,50 +227,8 @@ enum PhantomMain {
             let legacyStartupJSON = #"{"email":"user@example.com","emailVerified":true,"accessTier":"premium","wallet":{"proAvailableCredits":0,"premiumAvailableCredits":1,"premiumNegativeCredits":0}}"#.data(using: .utf8)!
             let legacyStartup = try! JSONDecoder().decode(StartupSnapshot.self, from: legacyStartupJSON)
             precondition(legacyStartup.emailVerified && legacyStartup.hostedKnowledgeBase.status == "not_created")
-            let conversation = (0..<14).map { ChatMessage(role: $0.isMultiple(of: 2) ? "user" : "assistant", content: "message \($0)") }
-            let built = ConversationManager().requestMessages(
-                question: "next",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: conversation,
-                modelId: "gpt-4",
-                knowledgeEnabled: false,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "technical_concept", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "next", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(built.first?.role == "system" && built.count == 15)
-            let designBuilt = ConversationManager().requestMessages(
-                question: "Build a link shortener",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: [],
-                modelId: "gpt-4",
-                knowledgeEnabled: false,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "system_design", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Build a link shortener", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(designBuilt.first?.content.contains("System Design Response Mode") == true)
-            let missingPersonalEvidence = ConversationManager()
-            _ = missingPersonalEvidence.requestMessages(
-                question: "Tell me about yourself",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: [],
-                modelId: "gpt-4",
-                knowledgeEnabled: true,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "personal", source: "Template", entityType: "none", entityId: "", retrieve: false, answerMode: "profile", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Tell me about yourself", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(missingPersonalEvidence.lastAnswerResolution.source == .template)
-            let parsed = ConversationManager().finalizeAssistantResponse("Answer\nSUMMARY: concise")
-            precondition(parsed.content == "Answer" && parsed.summary == "concise")
-            print("Phantom self-check passed.")
+            runLiveCopilotFixtures()
+            print("Phantom self-check and shared live-copilot fixture suite passed.")
             return
         }
 
@@ -278,5 +236,77 @@ enum PhantomMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
+    }
+
+    private static func runLiveCopilotFixtures() {
+        struct ParserFixture: Decodable {
+            let name: String
+            let allowedEntityIds: [String]?
+            let allowedDocumentIds: [String]?
+            let chunks: [String]
+            let expectedAction: String
+            let expectedBody: String
+            let maxNormalCalls: Int
+        }
+        struct InvalidFixture: Decodable { let name: String; let frame: String }
+        struct ContractFixture: Decodable { let id: Int; let mode: String; let maxNormalCalls: Int }
+        struct LoggingFixture: Decodable { let name: String; let terminalEvents: Int }
+        struct Root: Decodable {
+            let version: String
+            let parser: [ParserFixture]
+            let invalid: [InvalidFixture]
+            let contracts: [ContractFixture]
+            let logging: [LoggingFixture]
+            let sensitiveSamples: [String]
+        }
+
+        let data = try! Data(contentsOf: fixtureURL())
+        let fixtures = try! JSONDecoder().decode(Root.self, from: data)
+        precondition(fixtures.version == "live-copilot-v1")
+        precondition(fixtures.contracts.count >= 27)
+        precondition(Set(fixtures.contracts.map(\.id)).count == fixtures.contracts.count)
+        precondition(Set(fixtures.contracts.filter { $0.mode == "interview" }.map(\.id)).isSuperset(of: Set(1...26)))
+        precondition(fixtures.contracts.allSatisfy { (1...2).contains($0.maxNormalCalls) })
+        precondition(fixtures.logging.count >= 4 && fixtures.logging.allSatisfy { $0.terminalEvents == 1 })
+        for fixture in fixtures.parser {
+            let parser = PhantomControlFrameParser(
+                allowedEntityIds: fixture.allowedEntityIds ?? [],
+                allowedDocumentIds: fixture.allowedDocumentIds ?? []
+            )
+            var body = ""
+            for chunk in fixture.chunks { body += try! parser.feed(chunk) }
+            let decision = try! parser.complete()
+            precondition(decision.action.rawValue == fixture.expectedAction, fixture.name)
+            precondition(body == fixture.expectedBody, fixture.name)
+            precondition(!body.contains(PhantomControlFrameParser.protocolLine), fixture.name)
+            precondition(fixture.maxNormalCalls == (decision.action == .retrieve ? 2 : 1), fixture.name)
+        }
+        for fixture in fixtures.invalid {
+            let parser = PhantomControlFrameParser(
+                allowedEntityIds: ["payment-migration"], allowedDocumentIds: ["resume-document-id"]
+            )
+            do {
+                _ = try parser.feed(fixture.frame)
+                _ = try parser.complete()
+                preconditionFailure("\(fixture.name) was accepted")
+            } catch is PhantomProtocolError { }
+            catch { preconditionFailure("\(fixture.name) failed with the wrong error") }
+        }
+        let allowedFields = ["question_length_bucket", "provider", "model", "answer_basis"]
+        for sample in fixtures.sensitiveSamples {
+            precondition(!allowedFields.contains(where: { $0.contains(sample) }))
+        }
+    }
+
+    private static func fixtureURL() -> URL {
+        for start in [URL(fileURLWithPath: FileManager.default.currentDirectoryPath), Bundle.main.bundleURL] {
+            var directory = start
+            for _ in 0..<10 {
+                let candidate = directory.appendingPathComponent("shared/live-copilot/fixtures.json")
+                if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+                directory.deleteLastPathComponent()
+            }
+        }
+        fatalError("shared/live-copilot/fixtures.json was not found")
     }
 }

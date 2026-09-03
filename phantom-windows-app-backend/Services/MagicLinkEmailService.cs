@@ -108,7 +108,7 @@ If you did not request this reset, ignore this email.
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send Gmail API email to {Email}.", recipientEmail);
+            _logger.LogError(ex, "Failed to send Gmail API email.");
             if (!_options.IsSmtpConfigured)
             {
                 return ("send_failed", ex.Message);
@@ -117,7 +117,7 @@ If you did not request this reset, ignore this email.
 
         if (!_options.IsSmtpConfigured)
         {
-            _logger.LogWarning("No email transport configured for {Email}.", recipientEmail);
+            _logger.LogWarning("No email transport configured.");
             return ("not_sent", "Email transport not configured");
         }
 
@@ -146,7 +146,7 @@ If you did not request this reset, ignore this email.
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send email to {Email}.", recipientEmail);
+            _logger.LogError(ex, "Failed to send email.");
             return ("send_failed", ex.Message);
         }
     }

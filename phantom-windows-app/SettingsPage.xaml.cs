@@ -79,7 +79,8 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(GeminiModelBox);
             ComboBoxProtection.ProtectComboBox(GroqModelBox);
             ComboBoxProtection.ProtectComboBox(NvidiaModelBox);
-            ComboBoxProtection.ProtectComboBox(InterviewTypeComboBox);
+            ComboBoxProtection.ProtectComboBox(CopilotModeComboBox);
+            ComboBoxProtection.ProtectComboBox(DeliveryStyleComboBox);
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
             ComboBoxProtection.ProtectComboBox(SavedContextPackComboBox);
         }
@@ -87,11 +88,6 @@ namespace SecureOverlay
         private void InitializeControls()
         {
             PopulateProviderChoices();
-
-            foreach (var interviewType in InterviewPromptRegistry.GetAllInterviewTypes())
-            {
-                InterviewTypeComboBox.Items.Add(interviewType);
-            }
 
             // ✅ USE REGISTRY - ChatGPT Models
             foreach (var model in _settings.ChatGPTModels)
@@ -217,7 +213,8 @@ namespace SecureOverlay
             _isUpdatingSlider = false;
             
             UpdateFakeCursorPanelVisibility();
-            InterviewTypeComboBox.SelectedItem = _settings.InterviewPromptType;
+            CopilotModeComboBox.SelectedIndex = string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            DeliveryStyleComboBox.SelectedIndex = string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             AutoPauseInactivityCheckBox.IsChecked = _settings.AutoPauseOnInactivityEnabled;
             AutoPauseMinutesTextBox.Text = Math.Max(10, _settings.AutoPauseOnInactivityMinutes).ToString();
             LegacyFallbackAppPathTextBox.Text = _settings.LegacyFallbackAppPath ?? string.Empty;
@@ -1312,8 +1309,14 @@ namespace SecureOverlay
                     _settings.FakeCursorSize = 1.0;
                 }
                 
-                _settings.InterviewPromptType = InterviewTypeComboBox.SelectedItem as string
-                    ?? InterviewPromptRegistry.InterviewTypes.Technical;
+                _settings.CopilotMode = (CopilotModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Interview";
+                _settings.InterviewDeliveryStyle = (DeliveryStyleComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    ?? (DeliveryStyleComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString()
+                    ?? "Standard";
+                if (_settings.InterviewDeliveryStyle.StartsWith("Desi", StringComparison.OrdinalIgnoreCase))
+                {
+                    _settings.InterviewDeliveryStyle = "Desi";
+                }
                 _settings.SelectedHostedContextPackId =
                     (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false
                         ? (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.PackId ?? string.Empty

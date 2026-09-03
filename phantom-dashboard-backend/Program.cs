@@ -11,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 var options = DashboardOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(options);
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<AuthorityBackendClient>();
 builder.Services.AddSingleton<DashboardQueryService>();
@@ -82,6 +83,37 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
 }
+
+app.Use(async (context, next) =>
+{
+    var incomingCorrelation = context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault();
+    var incomingOperation = context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault();
+    var correlationId = IsValidOpaqueId(incomingCorrelation) ? incomingCorrelation! : Guid.NewGuid().ToString("N");
+    var operationId = IsValidOpaqueId(incomingOperation) ? incomingOperation! : Guid.NewGuid().ToString("N");
+    context.Request.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    context.Request.Headers["X-Phantom-Operation-Id"] = operationId;
+    context.Response.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Request");
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    using (logger.BeginScope(new Dictionary<string, object>
+    {
+        ["correlation_id"] = correlationId,
+        ["operation_id"] = operationId,
+        ["service"] = "phantom-dashboard-backend"
+    }))
+    {
+        try { await next(); }
+        finally
+        {
+            var route = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+            logger.LogInformation(
+                "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route={Route} status_class={StatusClass} elapsed_ms={ElapsedMs}",
+                "phantom-dashboard-backend", "http", "request_completed", correlationId, operationId,
+                context.Request.Method, route, $"{context.Response.StatusCode / 100}xx",
+                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+    }
+});
 
 app.UseCors("dashboard");
 app.Use(async (context, next) =>
@@ -379,5 +411,8 @@ adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
         cancellationToken);
     return Results.Ok(new { deleted = true, credentialId });
 });
+
+static bool IsValidOpaqueId(string? value) => value is { Length: >= 8 and <= 128 }
+    && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
 app.Run();

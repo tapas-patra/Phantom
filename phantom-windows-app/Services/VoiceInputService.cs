@@ -206,7 +206,7 @@ namespace SecureOverlay.Services
                     catch (Exception ex)
                     {
                         Log.WriteLine($"✗ Inner initialization error: {ex.GetType().Name}");
-                        Log.WriteLine($"  Message: {ex.Message}");
+                        Log.WriteLine($"  Error type: {ex.GetType().Name}");
                         return false;
                     }
                 });
@@ -220,7 +220,7 @@ namespace SecureOverlay.Services
             {
                 Log.WriteLine("════════════════════════════════════════════════");
                 Log.WriteLine("✗✗✗ VOICE INITIALIZATION FAILED ✗✗✗");
-                Log.WriteLine($"Error: {ex.Message}");
+                Log.WriteLine($"Error type: {ex.GetType().Name}");
                 Log.WriteLine("════════════════════════════════════════════════");
                 
                 _isInitializing = false;
@@ -236,12 +236,12 @@ namespace SecureOverlay.Services
             try
             {
                 var message = e.TryGetWebMessageAsString();
-                Log.WriteLine($"Browser → C#: {message}");
+                Log.WriteLine($"Voice browser event length_bucket={LengthBucket(message.Length)}");
                 
                 if (message.StartsWith("TRANSCRIPT:"))
                 {
                     var text = message.Substring("TRANSCRIPT:".Length);
-                    Log.WriteLine($"✓ Recognized: '{text}'");
+                    Log.WriteLine($"✓ Transcript received length_bucket={LengthBucket(text.Length)}");
                     SpeechRecognized?.Invoke(this, text);
                 }
                 else if (message.StartsWith("STATUS:"))
@@ -277,9 +277,18 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Message handling error: {ex.Message}");
+                Log.WriteLine($"Message handling error: {ex.GetType().Name}");
             }
         }
+
+        private static string LengthBucket(int length) => length switch
+        {
+            <= 0 => "empty",
+            <= 40 => "1-40",
+            <= 160 => "41-160",
+            <= 640 => "161-640",
+            _ => "641+"
+        };
 
         private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
         {
@@ -341,7 +350,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"❌ Permission window error: {ex.Message}");
+                Log.WriteLine($"❌ Permission window error: {ex.GetType().Name}");
             }
             finally
             {
@@ -565,7 +574,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"✗ Start failed: {ex.Message}");
+                Log.WriteLine($"✗ Start failed: {ex.GetType().Name}");
             }
         }
 

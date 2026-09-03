@@ -56,6 +56,6 @@ public sealed class AdminBootstrapService
             UpdatedAtUtc = now
         });
 
-        _logger.LogInformation("Bootstrapped admin account for {Email}.", normalizedEmail);
+        _logger.LogInformation("Bootstrapped configured admin account.");
     }
 }

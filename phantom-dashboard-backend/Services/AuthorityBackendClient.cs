@@ -14,15 +14,17 @@ public sealed class AuthorityBackendClient
     };
 
     private readonly DashboardOptions _options;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly object _sync = new();
     private int _consecutiveFailures;
     private DateTime? _lastSuccessAtUtc;
     private DateTime? _lastFailureAtUtc;
     private DateTime? _circuitOpenUntilUtc;
 
-    public AuthorityBackendClient(DashboardOptions options)
+    public AuthorityBackendClient(DashboardOptions options, IHttpContextAccessor httpContextAccessor)
     {
         _options = options;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<T?> SendAsync<T>(
@@ -49,6 +51,13 @@ public sealed class AuthorityBackendClient
                 if (!string.IsNullOrWhiteSpace(_options.WindowsBackendInternalApiKey))
                 {
                     request.Headers.Add("X-Phantom-Internal-Key", _options.WindowsBackendInternalApiKey);
+                }
+
+                var inbound = _httpContextAccessor.HttpContext?.Request.Headers;
+                if (inbound != null)
+                {
+                    request.Headers.TryAddWithoutValidation("X-Phantom-Correlation-Id", inbound["X-Phantom-Correlation-Id"].FirstOrDefault());
+                    request.Headers.TryAddWithoutValidation("X-Phantom-Operation-Id", inbound["X-Phantom-Operation-Id"].FirstOrDefault());
                 }
 
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -84,26 +93,20 @@ public sealed class AuthorityBackendClient
                     || response.StatusCode == HttpStatusCode.Forbidden)
                 {
                     RecordSuccess();
-                    throw new UnauthorizedAccessException(string.IsNullOrWhiteSpace(body)
-                        ? "Authority backend rejected the request."
-                        : body);
+                    throw new UnauthorizedAccessException("Authority backend rejected the request.");
                 }
 
                 if (response.StatusCode == HttpStatusCode.BadRequest
                     || response.StatusCode == HttpStatusCode.NotFound)
                 {
                     RecordSuccess();
-                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(body)
-                        ? $"Authority backend request failed: {(int)response.StatusCode}"
-                        : body);
+                    throw new InvalidOperationException($"Authority backend request failed: {(int)response.StatusCode}");
                 }
 
                 if (attempt == 3)
                 {
                     RecordFailure();
-                    throw new HttpRequestException(string.IsNullOrWhiteSpace(body)
-                        ? $"Authority backend request failed: {(int)response.StatusCode}"
-                        : body);
+                    throw new HttpRequestException($"Authority backend request failed: {(int)response.StatusCode}");
                 }
             }
             catch (Exception ex) when (attempt < 3 && IsTransient(ex, cancellationToken))

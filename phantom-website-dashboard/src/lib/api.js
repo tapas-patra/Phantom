@@ -12,29 +12,24 @@ const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
 async function request(baseUrl, path, init) {
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const correlationId = init?.correlationId || crypto.randomUUID();
   const response = await fetch(`${baseUrl}${path}`, {
     credentials: "include",
     ...init,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      "X-Phantom-Correlation-Id": correlationId,
+      "X-Phantom-Operation-Id": crypto.randomUUID(),
       ...(init?.headers || {})
     }
   });
 
   if (!response.ok) {
-    let message = `Request failed: ${response.status}`;
-    try {
-      const payload = await response.json();
-      if (payload?.error) {
-        message = payload.error;
-      } else if (payload?.detail) {
-        message = payload.detail;
-      }
-    } catch {
-      // Ignore parse failures.
-    }
-
-    throw new Error(message);
+    const acceptedCorrelationId = response.headers.get("X-Phantom-Correlation-Id") || correlationId;
+    const error = new Error(`Request failed (${response.status}). Reference: ${acceptedCorrelationId}`);
+    error.status = response.status;
+    error.correlationId = acceptedCorrelationId;
+    throw error;
   }
 
   const contentType = response.headers.get("content-type") || "";

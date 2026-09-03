@@ -68,6 +68,7 @@ struct RuntimeDiagnostics {
     let failedUsage: Int
     let deadLetters: [UsageReconciliationRecord]
     let queuedTelemetry: Int
+    let droppedTelemetry: Int
 }
 
 struct InterviewCompletion: Codable, Equatable {
@@ -139,6 +140,7 @@ struct RuntimeState: Codable {
     var wallet: RuntimeWallet?
     var reconciliations: [UsageReconciliationRecord] = []
     var telemetry: [PhantomTelemetryEvent] = []
+    var droppedTelemetry: Int?
 }
 
 struct DeviceLockResult: Decodable {

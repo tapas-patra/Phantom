@@ -72,9 +72,9 @@ namespace SecureOverlay.Services
         public double FakeCursorSize { get; set; } = 1.0;
         public string LegacyFallbackAppPath { get; set; } = "";
         
-        // AI Configuration
-        public string InterviewPromptType { get; set; } = InterviewPromptRegistry.InterviewTypes.Technical;
-        public string SystemPrompt { get; set; } = InterviewPromptRegistry.ResolveSystemPrompt(InterviewPromptRegistry.InterviewTypes.Technical);
+        // Live Copilot
+        public string CopilotMode { get; set; } = "Interview";
+        public string InterviewDeliveryStyle { get; set; } = "Standard";
         public ManagedAiCatalogDto ManagedAiCatalogCache { get; set; } = new ManagedAiCatalogDto();
         public List<string> PremiumConfiguredProviders { get; set; } = new List<string>();
         public string SelectedHostedContextPackId { get; set; } = string.Empty;
@@ -166,7 +166,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error loading settings: {ex.Message}");
+                Log.WriteLine($"Error loading settings: {ex.GetType().Name}");
                 var fallback = new AppSettings();
                 PrepareSettings(fallback, persistChanges: false);
                 return fallback;
@@ -268,7 +268,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error saving settings: {ex.Message}");
+                Log.WriteLine($"Error saving settings: {ex.GetType().Name}");
             }
         }
 
@@ -298,7 +298,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Warning: Failed to load conversation cache: {ex.Message}");
+                Log.WriteLine($"Warning: Failed to load conversation cache: {ex.GetType().Name}");
             }
             
             return null;
@@ -333,7 +333,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error saving conversation cache: {ex.Message}");
+                Log.WriteLine($"Error saving conversation cache: {ex.GetType().Name}");
             }
         }
 
@@ -360,7 +360,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error clearing conversation cache: {ex.Message}");
+                Log.WriteLine($"Error clearing conversation cache: {ex.GetType().Name}");
             }
         }
 
@@ -534,26 +534,18 @@ namespace SecureOverlay.Services
 
         private static void ApplyDerivedSettings(AppSettings settings)
         {
-            settings.InterviewPromptType = NormalizeInterviewPromptType(settings.InterviewPromptType);
-            settings.SystemPrompt = InterviewPromptRegistry.ResolveSystemPrompt(settings.InterviewPromptType);
+            settings.CopilotMode = string.Equals(settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase)
+                ? "Briefing"
+                : "Interview";
+            settings.InterviewDeliveryStyle = string.Equals(settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase)
+                ? "Desi"
+                : "Standard";
             settings.AutoPauseOnInactivityMinutes = Math.Max(10, settings.AutoPauseOnInactivityMinutes);
             settings.PremiumConfiguredProviders = settings.PremiumConfiguredProviders
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings);
-        }
-
-        private static string NormalizeInterviewPromptType(string? interviewPromptType)
-        {
-            if (string.IsNullOrWhiteSpace(interviewPromptType))
-            {
-                return InterviewPromptRegistry.InterviewTypes.Technical;
-            }
-
-            return InterviewPromptRegistry.GetAllInterviewTypes()
-                .FirstOrDefault(item => string.Equals(item, interviewPromptType, StringComparison.OrdinalIgnoreCase))
-                ?? InterviewPromptRegistry.InterviewTypes.Technical;
         }
 
         private static AppSettings? LoadLegacySettingsReadOnly()
@@ -570,7 +562,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Failed to read legacy settings in safe mode: {ex.Message}");
+                Log.WriteLine($"Failed to read legacy settings in safe mode: {ex.GetType().Name}");
                 return null;
             }
         }
@@ -595,7 +587,7 @@ namespace SecureOverlay.Services
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Failed to read legacy conversation cache in safe mode: {ex.Message}");
+                Log.WriteLine($"Failed to read legacy conversation cache in safe mode: {ex.GetType().Name}");
                 return null;
             }
         }

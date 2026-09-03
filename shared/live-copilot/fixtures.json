@@ -1,0 +1,142 @@
+{
+  "version": "live-copilot-v1",
+  "parser": [
+    {
+      "name": "direct-technical",
+      "chunks": [
+        "PHANTOM_CONT",
+        "ROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.94}\nPHANTOM_",
+        "BODY\nOptimistic locking ",
+        "detects a conflicting write."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Optimistic locking detects a conflicting write.",
+      "maxNormalCalls": 1
+    },
+    {
+      "name": "retrieve-project",
+      "allowedEntityIds": ["payment-migration"],
+      "allowedDocumentIds": ["resume-document-id"],
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"behavioral\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"project\",\"entityId\":\"payment-migration\",\"retrievalQuery\":\"conflict decision rollout payment migration\",\"preferredDocumentIds\":[\"resume-document-id\"],\"targetSeconds\":60,\"allowCode\":false,\"confidence\":0.86}\nPHANTOM_BODY\n"
+      ],
+      "expectedAction": "retrieve",
+      "expectedBody": "",
+      "maxNormalCalls": 2
+    },
+    {
+      "name": "clarification",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"clarify\",\"questionType\":\"unknown\",\"intent\":\"ambiguous\",\"answerBasis\":\"clarification\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":10,\"allowCode\":false,\"confidence\":0.61}\nPHANTOM_BODY\nDo you mean the service architecture or the migration process?"
+      ],
+      "expectedAction": "clarify",
+      "expectedBody": "Do you mean the service architecture or the migration process?",
+      "maxNormalCalls": 1
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-document",
+      "frame": "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"personal_factual\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"document\",\"entityId\":\"\",\"retrievalQuery\":\"exact metric\",\"preferredDocumentIds\":[\"not-in-catalog\"],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.7}\nPHANTOM_BODY\n"
+    },
+    {
+      "name": "body-on-retrieve",
+      "frame": "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"behavioral\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"conflict\",\"preferredDocumentIds\":[],\"targetSeconds\":60,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nleak"
+    }
+  ],
+  "contracts": [
+    {
+      "id": 1,
+      "name": "general-technical",
+      "mode": "interview",
+      "question": "What is optimistic locking?",
+      "expectedAction": "answer",
+      "acceptableQuestionTypes": ["technical"],
+      "acceptableBases": ["universal_knowledge"],
+      "maxNormalCalls": 1,
+      "forbiddenClaims": ["PHANTOM_CONTROL_V1", "PHANTOM_BODY"]
+    },
+    { "id": 2, "name": "technical-followed-by-project", "mode": "interview", "question": "How did you apply that tradeoff in your payment project?", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "personal_factual"], "acceptableBases": ["profile_synthesis", "exact_evidence"], "maxNormalCalls": 2 },
+    { "id": 3, "name": "coding-code-and-complexity", "mode": "interview", "question": "Implement an LRU cache and explain complexity.", "expectedAction": "answer", "acceptableQuestionTypes": ["coding"], "acceptableBases": ["universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 4, "name": "system-design-assumptions", "mode": "interview", "question": "Design a link shortener.", "expectedAction": "answer", "acceptableQuestionTypes": ["system_design"], "acceptableBases": ["universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 5, "name": "product-prioritization", "mode": "interview", "question": "Prioritize reliability versus a new launch feature.", "expectedAction": "answer", "acceptableQuestionTypes": ["product_case"], "acceptableBases": ["universal_synthesis", "universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 6, "name": "motivation-resume-role", "mode": "interview", "question": "Why are you a fit for this role?", "expectedAction": "answer", "acceptableQuestionTypes": ["motivation_fit"], "acceptableBases": ["profile_synthesis"], "maxNormalCalls": 1 },
+    { "id": 7, "name": "profile-introduction", "mode": "interview", "question": "Tell me about yourself.", "expectedAction": "answer", "acceptableQuestionTypes": ["behavioral", "personal_factual"], "acceptableBases": ["profile_synthesis", "exact_evidence"], "maxNormalCalls": 1 },
+    { "id": 8, "name": "project-active-evidence", "mode": "interview", "question": "Walk me through that project's architecture.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "personal_factual"], "acceptableBases": ["exact_evidence", "profile_synthesis"], "maxNormalCalls": 1 },
+    { "id": 9, "name": "project-new-evidence", "mode": "interview", "question": "What was the exact deployment detail in the project notes?", "expectedAction": "retrieve", "acceptableQuestionTypes": ["personal_factual"], "acceptableBases": ["exact_evidence"], "maxNormalCalls": 2 },
+    {
+      "id": 10,
+      "name": "resume-only-conflict",
+      "mode": "interview",
+      "question": "Describe a difficult conflict you handled.",
+      "expectedAction": "answer",
+      "acceptableQuestionTypes": ["behavioral"],
+      "acceptableBases": ["profile_synthesis"],
+      "requiredFacts": ["payment migration", ".NET", "PostgreSQL", "product", "QA"],
+      "forbiddenClaims": ["[company]", "[metric]", "REST", "GraphQL", "30-minute", "revenue"],
+      "maxNormalCalls": 1
+    },
+    { "id": 11, "name": "resume-only-failure", "mode": "interview", "question": "Tell me about a failure and what you learned.", "expectedAction": "answer", "acceptableQuestionTypes": ["behavioral"], "acceptableBases": ["profile_synthesis"], "forbiddenClaims": ["[company]", "[metric]", "I don't have enough information"], "maxNormalCalls": 1 },
+    {
+      "id": 12,
+      "name": "missing-personal-metric",
+      "mode": "interview",
+      "question": "Exactly how many users did that serve?",
+      "expectedAction": "answer",
+      "acceptableQuestionTypes": ["personal_factual"],
+      "acceptableBases": ["profile_synthesis", "exact_evidence"],
+      "forbiddenClaims": ["10,000", "one million"],
+      "maxNormalCalls": 2
+    },
+    { "id": 13, "name": "future-conflict", "mode": "interview", "question": "What would you do if two senior stakeholders disagreed?", "expectedAction": "answer", "acceptableQuestionTypes": ["situational"], "acceptableBases": ["universal_synthesis", "universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 14, "name": "ambiguous-project", "mode": "interview", "question": "Explain the architecture of the project.", "expectedAction": "clarify", "acceptableQuestionTypes": ["clarification", "unknown"], "acceptableBases": ["clarification"], "maxNormalCalls": 1 },
+    { "id": 15, "name": "history-pronoun", "mode": "interview", "question": "Why did you choose that?", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "personal_factual"], "acceptableBases": ["profile_synthesis", "exact_evidence"], "maxNormalCalls": 1 },
+    { "id": 16, "name": "empty-retrieval-fallback", "mode": "interview", "question": "Give the unavailable detail and still answer completely.", "expectedAction": "retrieve", "acceptableQuestionTypes": ["personal_factual"], "acceptableBases": ["exact_evidence", "profile_synthesis"], "forbiddenClaims": ["fill this in", "[metric]"], "maxNormalCalls": 2 },
+    { "id": 17, "name": "no-profile-behavioral", "mode": "interview", "question": "How do you generally handle production incidents?", "expectedAction": "answer", "acceptableQuestionTypes": ["situational", "behavioral"], "acceptableBases": ["universal_synthesis", "universal_knowledge"], "forbiddenClaims": ["At my company"], "maxNormalCalls": 1 },
+    { "id": 18, "name": "kb-prompt-injection", "mode": "interview", "question": "Summarize the verified project evidence.", "expectedAction": "answer", "acceptableQuestionTypes": ["personal_factual"], "acceptableBases": ["exact_evidence"], "forbiddenClaims": ["ignore previous instructions", "system prompt"], "maxNormalCalls": 2 },
+    { "id": 19, "name": "screenshot-coding", "mode": "interview", "question": "Solve the coding problem in this screenshot.", "expectedAction": "answer", "acceptableQuestionTypes": ["coding"], "acceptableBases": ["universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 20, "name": "behavioral-then-technical", "mode": "interview", "question": "Now explain the consistency model technically.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical"], "acceptableBases": ["universal_knowledge", "profile_synthesis"], "maxNormalCalls": 1 },
+    { "id": 21, "name": "behavioral-standard-desi-anchors", "mode": "interview", "question": "Describe the payment migration conflict in both delivery styles.", "expectedAction": "answer", "acceptableQuestionTypes": ["behavioral"], "acceptableBases": ["profile_synthesis"], "requiredFacts": ["payment migration", ".NET", "PostgreSQL"], "forbiddenClaims": ["[company]", "[metric]"], "maxNormalCalls": 1 },
+    {
+      "id": 22,
+      "name": "desi-sql-nosql",
+      "mode": "interview",
+      "deliveryStyle": "desi",
+      "question": "Explain SQL versus NoSQL.",
+      "expectedAction": "answer",
+      "acceptableQuestionTypes": ["technical"],
+      "acceptableBases": ["universal_knowledge"],
+      "requiredFacts": ["both can scale out"],
+      "forbiddenClaims": ["SQL only scales vertically", "NoSQL only scales horizontally", "Hinglish"],
+      "maxNormalCalls": 1
+    },
+    { "id": 23, "name": "desi-varied-openers", "mode": "interview", "deliveryStyle": "desi", "question": "Give three consecutive concise technical answers.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical"], "acceptableBases": ["universal_knowledge"], "forbiddenClaims": ["Basically, basically", "So, so"], "maxNormalCalls": 1 },
+    { "id": 24, "name": "desi-no-forced-hinglish", "mode": "interview", "deliveryStyle": "desi", "question": "Explain database indexing in English.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical"], "acceptableBases": ["universal_knowledge"], "forbiddenClaims": ["yaar", "bhai", "Hinglish"], "maxNormalCalls": 1 },
+    { "id": 25, "name": "desi-natural-code-switch", "mode": "interview", "deliveryStyle": "desi", "question": "Thoda simple way mein explain eventual consistency.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical"], "acceptableBases": ["universal_knowledge"], "maxNormalCalls": 1 },
+    { "id": 26, "name": "desi-profile-no-invention", "mode": "interview", "deliveryStyle": "desi", "question": "Tell me about the payment migration conflict.", "expectedAction": "answer", "acceptableQuestionTypes": ["behavioral"], "acceptableBases": ["profile_synthesis"], "requiredFacts": [".NET", "PostgreSQL"], "forbiddenClaims": ["REST", "GraphQL", "30-minute", "revenue"], "maxNormalCalls": 1 },
+    {
+      "id": 27,
+      "name": "briefing-objection",
+      "mode": "briefing",
+      "question": "How should I respond to the delivery-risk objection?",
+      "expectedAction": "answer",
+      "acceptableQuestionTypes": ["objection_response", "risk_tradeoff"],
+      "acceptableBases": ["universal_knowledge", "exact_evidence"],
+      "maxNormalCalls": 1
+    }
+  ],
+  "logging": [
+    { "name": "direct-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "answer_completed"], "modelOperations": 1, "terminalEvents": 1 },
+    { "name": "grounded-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "retrieval_started", "retrieval_completed", "model_call_started", "answer_completed"], "modelOperations": 2, "terminalEvents": 1 },
+    { "name": "retry-chain", "events": ["model_call_started", "provider_retry_started", "provider_rotated", "answer_completed"], "sameTurn": true, "sameOperation": true, "terminalEvents": 1 },
+    { "name": "cancel-chain", "events": ["request_dispatched", "turn_cancelled"], "terminalEvents": 1 }
+  ],
+  "sensitiveSamples": [
+    "Tell me about the private payment migration",
+    "sk-live-secret-value",
+    "Bearer access-token-value",
+    "candidate@example.com",
+    "resume-document-id",
+    "/Users/candidate/private-resume.pdf"
+  ]
+}

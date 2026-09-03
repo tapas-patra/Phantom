@@ -48,8 +48,17 @@ final class PhantomStore: ObservableObject {
     @Published var prompt = ""
     @Published var messages: [ChatMessage] = []
     @Published var isSending = false
-    @Published var interviewType: String {
-        didSet { UserDefaults.standard.set(interviewType, forKey: "context.interviewType") }
+    @Published var copilotMode: CopilotMode {
+        didSet {
+            UserDefaults.standard.set(copilotMode.rawValue, forKey: "copilot.mode")
+            guard oldValue != copilotMode else { return }
+            messages.removeAll()
+            ConversationStore.clear()
+            conversationManager.reset(mode: copilotMode)
+        }
+    }
+    @Published var interviewDeliveryStyle: InterviewDeliveryStyle {
+        didSet { UserDefaults.standard.set(interviewDeliveryStyle.rawValue, forKey: "copilot.deliveryStyle") }
     }
     @Published var resumeText: String {
         didSet {
@@ -170,12 +179,15 @@ final class PhantomStore: ObservableObject {
     private var meteringSessionId = ""
     private var laneChargeBaseline: Decimal = 0
     private var activeRequestId = ""
+    private let copilotSessionId = UUID().uuidString
+    private var activeTurnId = ""
+    private var activeOperationId = ""
     private var activeRequestStartedAt = Date()
     private var firstChunkRecorded = false
     private var settingsSnapshot: SettingsSnapshot?
 
     private struct SettingsSnapshot {
-        let provider: String, model: String, interviewType: String, resume: String, job: String
+        let provider: String, model: String, mode: CopilotMode, style: InterviewDeliveryStyle, resume: String, job: String
         let opacity: Double, freeExtension: Bool, paidExtension: Bool
         let autoPause: Bool, inactivity: Int, preferBYO: Bool, voice: Bool, autoVoice: Bool
         let legacyPath: String, debug: Bool, simulation: String
@@ -184,6 +196,9 @@ final class PhantomStore: ObservableObject {
     private var previousVoiceTranscript = ""
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
+    private var voiceDispatchTask: Task<Void, Never>?
+    private var pendingVoiceTurnId: String?
+    private var lastAutoSentVoiceText = ""
 
     init() {
         let defaults = UserDefaults.standard
@@ -219,7 +234,8 @@ final class PhantomStore: ObservableObject {
         autoSendAfterVoiceStop = defaults.object(forKey: "voice.autoSend") == nil
             ? true
             : defaults.bool(forKey: "voice.autoSend")
-        interviewType = defaults.string(forKey: "context.interviewType") ?? InterviewPrompt.types[0]
+        copilotMode = CopilotMode(rawValue: defaults.string(forKey: "copilot.mode") ?? "") ?? .interview
+        interviewDeliveryStyle = InterviewDeliveryStyle(rawValue: defaults.string(forKey: "copilot.deliveryStyle") ?? "") ?? .standard
         resumeText = defaults.string(forKey: "context.resume") ?? ""
         jobDescriptionText = defaults.string(forKey: "context.jobDescription") ?? ""
         legacyAppPath = defaults.string(forKey: "power.legacyAppPath") ?? ""
@@ -322,13 +338,13 @@ final class PhantomStore: ObservableObject {
         Diagnostics.log("bootstrap:start")
         onWindowPreferencesChanged?(opacity, clickThrough)
         if let error = runtime.storageFailure {
-            Diagnostics.log("bootstrap:storage_unavailable error=\(error)")
+            Diagnostics.log("bootstrap:storage_unavailable code=storage_unavailable")
             status = error
             launchContext = AppLaunchContext(state: .backendUnavailable, title: "Read-Only Safe Mode", message: error, canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
             return
         }
         if let error = configuration.validationError {
-            Diagnostics.log("bootstrap:configuration_invalid error=\(error)")
+            Diagnostics.log("bootstrap:configuration_invalid code=configuration_invalid")
             status = error
             launchContext = AppLaunchContext(state: .backendUnavailable, title: "Configuration Error", message: error, canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
             return
@@ -364,7 +380,7 @@ final class PhantomStore: ObservableObject {
                     try SessionStore.save(refreshed)
                     try await enterApp(with: refreshed)
                 } catch {
-                    Diagnostics.log("bootstrap:session_refresh_failed error=\(error.localizedDescription)")
+                    Diagnostics.log("bootstrap:session_refresh_failed code=refresh_failed")
                     await handleAuthenticationFailure("Your saved session expired. Sign in again.")
                 }
             } catch {
@@ -373,7 +389,7 @@ final class PhantomStore: ObservableObject {
                     Diagnostics.log("bootstrap:using_cached_snapshot")
                     try await enterApp(with: saved, cachedSnapshot: cached)
                 } catch {
-                    Diagnostics.log("bootstrap:failed error=\(error.localizedDescription)")
+                    Diagnostics.log("bootstrap:failed code=startup_failed")
                     launchContext = AppLaunchContext(state: .backendUnavailable, title: "Backend Unavailable", message: "Reconnect and press Retry. Offline launch requires a valid cached lease or resumable interview.", canOpenApp: false, canStartInterview: false, canResumeLockedInterview: false)
                     status = launchContext.message
                 }
@@ -399,7 +415,7 @@ final class PhantomStore: ObservableObject {
                 password = ""
                 try await enterApp(with: authenticated)
             } catch {
-                Diagnostics.log("login:failed error=\(error.localizedDescription)")
+                Diagnostics.log("login:failed code=authentication_failed")
                 status = error.localizedDescription
             }
         }
@@ -423,7 +439,7 @@ final class PhantomStore: ObservableObject {
         guard session != nil else { return }
         settingsClickThrough = clickThrough
         settingsSnapshot = SettingsSnapshot(
-            provider: selectedProviderId, model: selectedModelId, interviewType: interviewType,
+            provider: selectedProviderId, model: selectedModelId, mode: copilotMode, style: interviewDeliveryStyle,
             resume: resumeText, job: jobDescriptionText, opacity: opacity,
             freeExtension: allowFreeTrialSessionExtension, paidExtension: allowPaidSessionExtension,
             autoPause: autoPauseOnInactivity, inactivity: inactivityMinutes,
@@ -453,7 +469,7 @@ final class PhantomStore: ObservableObject {
 
     func cancelSettings() {
         guard let old = settingsSnapshot else { screen = .chat; return }
-        selectedProviderId = old.provider; selectedModelId = old.model; interviewType = old.interviewType
+        selectedProviderId = old.provider; selectedModelId = old.model; copilotMode = old.mode; interviewDeliveryStyle = old.style
         resumeText = old.resume; jobDescriptionText = old.job; opacity = old.opacity
         allowFreeTrialSessionExtension = old.freeExtension; allowPaidSessionExtension = old.paidExtension
         autoPauseOnInactivity = old.autoPause; inactivityMinutes = old.inactivity
@@ -535,7 +551,7 @@ final class PhantomStore: ObservableObject {
         Task {
             let queue = await runtime.diagnostics()
             let deadLetters = queue.deadLetters.map { "\($0.recordId): \($0.lastError)" }.joined(separator: "\n")
-            diagnosticsText = "Usage pending: \(queue.pendingUsage) | failed: \(queue.failedUsage) | dead-letter: \(queue.deadLetters.count)\nTelemetry queued: \(queue.queuedTelemetry)\nRAG: \(conversationManager.lastTrace)\n\(deadLetters)\n\n\(Diagnostics.text())"
+            diagnosticsText = "Usage pending: \(queue.pendingUsage) | failed: \(queue.failedUsage) | dead-letter: \(queue.deadLetters.count)\nTelemetry queued: \(queue.queuedTelemetry) | dropped: \(queue.droppedTelemetry)\nLive Copilot: \(conversationManager.lastTrace)\n\(deadLetters)\n\n\(Diagnostics.text())"
         }
     }
     func clearDiagnostics() {
@@ -757,18 +773,16 @@ final class PhantomStore: ObservableObject {
         if speechInput.isListening {
             speechInput.stop()
             isListening = false
-            if autoSendAfterVoiceStop && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Task {
-                    try? await Task.sleep(nanoseconds: 350_000_000)
-                    send()
-                }
-            }
+            if autoSendAfterVoiceStop { scheduleVoiceDispatch() }
         } else {
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             voicePromptPrefix = existing.isEmpty ? "" : existing + " "
             previousVoiceTranscript = ""
             lastVoiceRenderedPrompt = prompt
             preserveVoiceEdits = false
+            pendingVoiceTurnId = UUID().uuidString
+            lastAutoSentVoiceText = ""
+            voiceDispatchTask?.cancel()
             Task {
                 await speechInput.start()
                 isListening = speechInput.isListening
@@ -818,13 +832,16 @@ final class PhantomStore: ObservableObject {
         let provider = selectedProviderId
         let model = selectedModelId
         let usesBYO = useBYOProvider
-        let requestId = UUID().uuidString
+        let requestId = pendingVoiceTurnId ?? UUID().uuidString
+        pendingVoiceTurnId = nil
         activeRequestId = requestId
+        activeTurnId = requestId
         activeRequestStartedAt = Date()
         firstChunkRecorded = false
         isSending = true
-        status = "Starting interview session…"
-        Diagnostics.log("request_started id=\(requestId) provider=\(provider) model=\(model) lane=\(usesBYO ? "byo" : "managed")")
+        status = copilotMode == .interview ? "Starting interview session…" : "Starting briefing session…"
+        Diagnostics.event("session_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
+        Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch"])
 
         chatTask = Task {
             defer { isSending = false }
@@ -844,7 +861,6 @@ final class PhantomStore: ObservableObject {
                 guard activation.allowed else { throw BackendError.server("\(activation.title): \(activation.message)") }
                 lastInterviewActivityAt = Date()
                 startHeartbeat()
-                await refineContextSummariesIfNeeded(session: session, provider: provider, model: model, usesBYO: usesBYO)
                 try await runtime.metering.trackQuestion(text)
                 await runtime.track(
                     category: "chat",
@@ -858,145 +874,147 @@ final class PhantomStore: ObservableObject {
                 reply = pendingReply
                 messages.append(pendingReply)
                 ConversationStore.save(messages)
-                status = "Thinking…"
+                status = "Understanding…"
 
                 if isPremiumAccount, hostedKnowledgeBase?.canUseInInterview != true {
-                    Diagnostics.log("rag:kb_refresh:start")
+                    Diagnostics.event("context_assembly_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
                     do {
                         let refreshedKnowledge = try await backend.knowledgeBase(accessToken: session.accessToken)
                         hostedKnowledgeBase = refreshedKnowledge
                         conversationManager.warm(refreshedKnowledge)
-                        Diagnostics.log("rag:kb_refresh:success status=\(refreshedKnowledge.status) usable=\(refreshedKnowledge.canUseInInterview) documents=\(refreshedKnowledge.documentCount) chunks=\(refreshedKnowledge.chunkCount) profile=\(refreshedKnowledge.profileCard != nil) experiences=\(refreshedKnowledge.experienceCards?.count ?? 0) projects=\(refreshedKnowledge.projectCards?.count ?? 0)")
+                        Diagnostics.event("context_assembly_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success"])
                     } catch {
-                        Diagnostics.log("rag:kb_refresh:failed error=\(error.localizedDescription)")
-                    }
-                } else if isPremiumAccount {
-                    Diagnostics.log("rag:kb_refresh:skipped reason=cached_ready")
-                }
-                var plan = InterviewAnswerPlan.clarification
-                if usesBYO {
-                    Diagnostics.log("planner:skipped reason=byo_lane")
-                } else {
-                    do {
-                        plan = try await backend.interviewPlan(
-                            accessToken: session.accessToken,
-                            requestId: requestId,
-                            provider: provider,
-                            model: model,
-                            allowPaidSessionExtension: extensionEnabled,
-                            question: text,
-                            activeEntityId: conversationManager.activeEntityId,
-                            recentMessages: Array(messages.dropLast())
-                        )
-                        Diagnostics.log("planner:resolved intent=\(plan.intent) entity=\(plan.entityType):\(plan.entityId) retrieve=\(plan.retrieve) mode=\(plan.answerMode) confidence=\(plan.confidence)")
-                    } catch {
-                        Diagnostics.log("planner:failed error=\(error.localizedDescription)")
+                        Diagnostics.event("retrieval_degraded", level: "Warning", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["error_code": "kb_summary_unavailable"])
                     }
                 }
-                var snippets: [KnowledgeSnippet] = []
-                let knowledgeReady = isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true
-                Diagnostics.log("rag:route intent=\(plan.intent) should_search=\(plan.retrieve) preferred_docs=\(plan.preferredDocumentIds.count) kb_ready=\(knowledgeReady)")
-                if plan.retrieve, knowledgeReady {
-                    do {
-                        snippets = try await backend.knowledgeSnippets(
-                            accessToken: session.accessToken,
-                            query: plan.retrievalQuery,
-                            preferredDocumentIds: plan.preferredDocumentIds
-                        )
-                        Diagnostics.log("rag:hosted_search:success snippets=\(snippets.count)")
-                    } catch {
-                        Diagnostics.log("rag:hosted_search:failed error=\(error.localizedDescription)")
-                    }
-                } else if plan.retrieve {
-                    let reason = isPremiumAccount ? (hostedKnowledgeBase?.status ?? "missing_kb") : "not_premium"
-                    Diagnostics.log("rag:hosted_search:skipped reason=\(reason)")
-                }
-                let outbound = conversationManager.requestMessages(
-                    question: text,
-                    interviewType: interviewType,
-                    resume: resumeSummary.isEmpty ? resumeText : resumeSummary,
-                    jobDescription: jobDescriptionSummary.isEmpty ? jobDescriptionText : jobDescriptionSummary,
-                    conversation: Array(messages.dropLast()),
+                let history = Array(messages.dropLast())
+                let resume = resumeSummary.isEmpty ? resumeText : resumeSummary
+                let roleContext = jobDescriptionSummary.isEmpty ? jobDescriptionText : jobDescriptionSummary
+                let firstOutbound = conversationManager.firstCallMessages(
+                    mode: copilotMode,
+                    style: interviewDeliveryStyle,
+                    resume: resume,
+                    roleOrMeetingContext: roleContext,
+                    conversation: history,
                     modelId: model,
-                    knowledgeEnabled: (isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true)
-                        || !snippets.isEmpty,
-                    knowledgeBase: hostedKnowledgeBase,
-                    knowledgeSnippets: snippets,
-                    plan: plan
+                    knowledgeBase: hostedKnowledgeBase
                 )
-                await runtime.track(
-                    category: "rag",
-                    event: "route",
-                    attributes: [
-                        "trace": conversationManager.lastTrace,
-                        "snippetCount": "\(snippets.count)",
-                        "intent": conversationManager.lastAnswerResolution.intent.rawValue,
-                        "source": conversationManager.lastAnswerResolution.source.rawValue
-                    ],
-                    accessToken: session.accessToken
-                )
-                Diagnostics.log("rag:resolved intent=\(conversationManager.lastAnswerResolution.intent.rawValue) source=\(conversationManager.lastAnswerResolution.source.rawValue) snippets=\(snippets.count)")
-                let clarificationOptions = plan.clarificationOptions ?? []
-                if conversationManager.lastAnswerResolution.source == .clarification,
-                   let clarificationQuestion = plan.clarificationQuestion?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !clarificationQuestion.isEmpty,
-                   clarificationOptions.count >= 2 {
-                    if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
-                        messages[index].content = clarificationQuestion
-                        messages[index].summary = clarificationQuestion
-                        messages[index].estimatedTokens = ConversationManager.estimate(messages[index].content)
-                        messages[index].answerSource = AnswerSource.clarification.rawValue
-                        messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
-                        messages[index].clarificationOptions = clarificationOptions
-                    }
-                    ConversationStore.save(messages)
-                    Diagnostics.log("request_completed id=\(requestId) source=Clarification options=\(clarificationOptions.count)")
-                    try await runtime.metering.resume()
-                    lastInterviewActivityAt = Date()
-                    status = "Choose an answer direction"
-                    return
-                }
-                if usesBYO {
-                    do {
-                        let rotatedModel = try await byoResponseWithRotation(
-                            provider: provider,
-                            selectedModel: model,
-                            imageBase64: imageBase64,
-                            messages: outbound,
-                            replyId: pendingReply.id
-                        )
-                        selectedModelId = rotatedModel
-                        try await runtime.metering.trackSource(.proBYO, providerId: provider)
-                    } catch where allowPaidSessionExtension && !managedProviders.isEmpty {
-                        status = "Switching to managed extension…"
-                        try await runtime.metering.trackSource(.premiumDebtExtension, providerId: provider)
-                        _ = try await managedResponseWithRetry(
+                let firstOperationId = UUID().uuidString
+                let makeStream: ([ChatMessage], String) -> LiveCopilotOrchestrator.ModelStream = { outbound, operationId in
+                    return { onDelta, onRetryCleanup in
+                        self.activeOperationId = operationId
+                        Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model])
+                        if usesBYO {
+                            do {
+                                let selected = try await self.byoResponseWithRotation(
+                                    provider: provider,
+                                    selectedModel: self.selectedModelId,
+                                    imageBase64: imageBase64,
+                                    messages: outbound,
+                                    onDelta: onDelta,
+                                    onRetryCleanup: onRetryCleanup
+                                )
+                                self.selectedModelId = selected.model
+                                return selected.response
+                            } catch where self.allowPaidSessionExtension && !self.managedProviders.isEmpty {
+                                self.status = "Switching to managed extension…"
+                                let selected = try await self.managedResponseWithRetry(
+                                    session: session,
+                                    provider: self.managedProviders.first?.providerId ?? provider,
+                                    model: self.managedProviders.first?.models.first?.modelId ?? model,
+                                    allowPaidSessionExtension: true,
+                                    imageBase64: imageBase64,
+                                    messages: outbound,
+                                    turnId: requestId,
+                                    operationId: operationId,
+                                    onDelta: onDelta,
+                                    onRetryCleanup: onRetryCleanup
+                                )
+                                return selected.response
+                            }
+                        }
+                        let selected = try await self.managedResponseWithRetry(
                             session: session,
-                            provider: managedProviders.first?.providerId ?? provider,
-                            model: managedProviders.first?.models.first?.modelId ?? model,
-                            allowPaidSessionExtension: true,
+                            provider: self.selectedProviderId,
+                            model: self.selectedModelId,
+                            allowPaidSessionExtension: self.isFreeTrialAccount ? self.allowFreeTrialSessionExtension : self.allowPaidSessionExtension,
                             imageBase64: imageBase64,
                             messages: outbound,
-                            replyId: pendingReply.id
+                            turnId: requestId,
+                            operationId: operationId,
+                            onDelta: onDelta,
+                            onRetryCleanup: onRetryCleanup
                         )
+                        self.selectedProviderId = selected.provider
+                        self.selectedModelId = selected.model
+                        return selected.response
                     }
-                } else {
+                }
+                if usesBYO { try await runtime.metering.trackSource(.proBYO, providerId: provider) }
+                else {
                     try await runtime.metering.trackSource(
                         isFreeTrialAccount ? .freeTrialManaged : (startingPaidExtension ? .premiumDebtExtension : .premiumManaged),
                         providerId: provider
                     )
-                    let selected = try await managedResponseWithRetry(
-                        session: session,
-                        provider: provider,
-                        model: model,
-                        allowPaidSessionExtension: isFreeTrialAccount ? allowFreeTrialSessionExtension : allowPaidSessionExtension,
-                        imageBase64: imageBase64,
-                        messages: outbound,
-                        replyId: pendingReply.id
-                    )
-                    selectedProviderId = selected.provider
-                    selectedModelId = selected.model
                 }
+                let orchestrator = LiveCopilotOrchestrator()
+                let result = try await orchestrator.execute(
+                    allowedEntityIds: CopilotPrompt.entityIds(hostedKnowledgeBase, mode: copilotMode),
+                    allowedDocumentIds: CopilotPrompt.documentIds(hostedKnowledgeBase, mode: copilotMode),
+                    firstModel: makeStream(firstOutbound, firstOperationId),
+                    retrieve: { decision in
+                        let operationId = UUID().uuidString
+                        self.status = "Searching your knowledge…"
+                        Diagnostics.event("retrieval_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle)
+                        guard self.isPremiumAccount, self.hostedKnowledgeBase?.canUseInInterview == true else {
+                            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+                        }
+                        do {
+                            var preferredDocuments = decision.preferredDocumentIds
+                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
+                                preferredDocuments = CopilotPrompt.documentIds(self.hostedKnowledgeBase, mode: .briefing)
+                            }
+                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
+                                Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                                return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+                            }
+                            let snippets = try await self.backend.knowledgeSnippets(
+                                accessToken: session.accessToken,
+                                query: decision.retrievalQuery,
+                                preferredDocumentIds: preferredDocuments,
+                                turnId: requestId,
+                                operationId: operationId
+                            )
+                            let bounded = Array(snippets.prefix(3))
+                            Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+                            return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(self.hostedKnowledgeBase?.embeddingVersion ?? 0)")
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            Diagnostics.event("retrieval_failed", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": "retrieval_failed"])
+                            return LiveCopilotRetrieval(status: "error", snippets: [], kbRevision: "")
+                        }
+                    },
+                    secondModel: { decision, retrieval in
+                        let finalOutbound = self.conversationManager.secondCallMessages(
+                            mode: self.copilotMode,
+                            style: self.interviewDeliveryStyle,
+                            decision: decision,
+                            retrieval: retrieval,
+                            resume: resume,
+                            roleOrMeetingContext: roleContext,
+                            conversation: history,
+                            modelId: self.selectedModelId,
+                            knowledgeBase: self.hostedKnowledgeBase
+                        )
+                        return makeStream(finalOutbound, UUID().uuidString)
+                    },
+                    publish: { chunk in self.append(chunk, to: pendingReply.id) },
+                    resetPublishedAttempt: { self.clearReply(pendingReply.id) },
+                    protocolRejected: { code in
+                        Diagnostics.event("control_frame_rejected", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": code, "validation_outcome": "rejected"])
+                    }
+                )
+                conversationManager.complete(result, mode: copilotMode)
                 if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
                     let finalized = conversationManager.finalizeAssistantResponse(messages[index].content)
                     messages[index].content = finalized.content
@@ -1006,22 +1024,22 @@ final class PhantomStore: ObservableObject {
                     messages[index].answerSource = conversationManager.lastAnswerResolution.source.rawValue
                     messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
                 }
-                Diagnostics.log("request_completed id=\(requestId) source=\(conversationManager.lastAnswerResolution.source.rawValue)")
+                Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)"])
                 try await runtime.metering.resume()
                 await runtime.track(category: "billing", event: "interview_session_resumed", attributes: ["reason": "response_succeeded"], accessToken: session.accessToken)
                 lastInterviewActivityAt = Date()
                 await runtime.track(
-                    category: "chat",
-                    event: "response_completed",
-                    attributes: ["requestId": requestId, "provider": provider, "model": selectedModelId, "latencyMs": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)"],
+                    category: "live_copilot",
+                    event: "answer_completed",
+                    attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "model": selectedModelId, "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "outcome": "success"],
                     accessToken: session.accessToken
                 )
-                status = "Ready"
+                status = result.decision.action == .clarify ? "Needs clarification" : "Ready"
             } catch is CancellationError {
                 status = "Request cancelled."
-                Diagnostics.log("request_cancelled id=\(requestId)")
+                Diagnostics.event("turn_cancelled", level: "Information", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "cancelled"])
             } catch {
-                Diagnostics.log("request_failed id=\(requestId) error=\(error.localizedDescription)")
+                Diagnostics.event("turn_failed", level: "Error", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "error", "error_code": Self.errorCode(error)])
                 if let backendError = error as? BackendError, case .http(401, _) = backendError {
                     await handleAuthenticationFailure("Your session expired. Sign in again.")
                     return
@@ -1029,18 +1047,19 @@ final class PhantomStore: ObservableObject {
                 try? await runtime.metering.pause()
                 await runtime.track(category: "billing", event: "interview_session_paused", attributes: ["reason": "response_failed"], accessToken: session.accessToken)
                 await runtime.track(
-                    category: "chat",
-                    event: "response_failed",
-                    attributes: ["provider": provider, "error": String(error.localizedDescription.prefix(500))],
+                    category: "live_copilot",
+                    event: "turn_failed",
+                    attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "outcome": "error", "error_code": Self.errorCode(error)],
                     accessToken: session.accessToken
                 )
                 if let reply, let index = messages.firstIndex(where: { $0.id == reply.id }),
                    messages[index].content.isEmpty {
-                    messages[index].content = "Error: \(error.localizedDescription)"
+                    messages[index].content = "Error: The AI provider could not complete this request. Please retry."
                 }
-                status = error.localizedDescription
+                status = "The AI provider could not complete this request. Please retry."
             }
             attachedScreenshot = nil
+            Diagnostics.event("session_ended", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
             ConversationStore.save(messages)
         }
     }
@@ -1070,8 +1089,9 @@ final class PhantomStore: ObservableObject {
         selectedModel: String,
         imageBase64: String?,
         messages: [ChatMessage],
-        replyId: UUID
-    ) async throws -> String {
+        onDelta: @escaping (String) -> Void,
+        onRetryCleanup: @escaping () -> Void
+    ) async throws -> (model: String, response: String) {
         let models = selectedProvider?.models.map(\.modelId) ?? [selectedModel]
         guard var key = rotation.currentKey(provider: provider) else { throw BackendError.server("No usable \(provider) API key remains.") }
         var model = rotation.model(provider: provider, models: models, selected: selectedModel)
@@ -1092,20 +1112,22 @@ final class PhantomStore: ObservableObject {
                     imageBase64: imageBase64,
                     messages: messages
                 )
-                clearReply(replyId)
+                onRetryCleanup()
                 var received = false
+                var response = ""
                 for try await line in bytes.lines {
                     try Task.checkCancellation()
                     if line == "data: [DONE]" { break }
-                    if let failure = BYOClient.failure(from: line) { throw BackendError.server(failure) }
+                    if BYOClient.failure(from: line) != nil { throw BackendError.server("The provider stream failed.") }
                     if let delta = BYOClient.delta(from: line, provider: provider) {
                         received = true
-                        append(delta, to: replyId)
+                        response += delta
+                        onDelta(delta)
                     }
                 }
                 guard received else { throw BackendError.server("The AI provider returned an empty response.") }
                 byoKeyStatus = "Key \(key.index + 1)/\(rotation.keys(for: provider).count) • \(model)"
-                return model
+                return (model, response)
             } catch {
                 lastError = error
                 switch rotation.classify(error) {
@@ -1152,8 +1174,11 @@ final class PhantomStore: ObservableObject {
         allowPaidSessionExtension: Bool,
         imageBase64: String?,
         messages: [ChatMessage],
-        replyId: UUID
-    ) async throws -> (provider: String, model: String) {
+        turnId: String,
+        operationId: String,
+        onDelta: @escaping (String) -> Void,
+        onRetryCleanup: @escaping () -> Void
+    ) async throws -> (provider: String, model: String, response: String) {
         var candidates = managedProviders.flatMap { candidate in
             candidate.models.map { (candidate.providerId, $0.modelId) }
         }
@@ -1171,21 +1196,24 @@ final class PhantomStore: ObservableObject {
                     model: candidate.1,
                     allowPaidSessionExtension: allowPaidSessionExtension,
                     imageBase64: imageBase64,
-                    messages: messages
+                    messages: messages,
+                    turnId: turnId,
+                    operationId: operationId
                 )
-                clearReply(replyId)
+                onRetryCleanup()
                 var received = false
+                var response = ""
                 for try await line in bytes.lines {
                     try Task.checkCancellation()
                     switch SSEParser.parse(line) {
-                    case .delta(let delta): received = true; append(delta, to: replyId)
-                    case .failure(let message): throw BackendError.server(message)
+                    case .delta(let delta): received = true; response += delta; onDelta(delta)
+                    case .failure: throw BackendError.server("The managed provider stream failed.")
                     case .done: break
                     case nil: continue
                     }
                 }
                 guard received else { throw BackendError.server("The AI provider returned an empty response.") }
-                return candidate
+                return (candidate.0, candidate.1, response)
             } catch BackendError.http(401, _) where !refreshed {
                 authenticated = try await backend.refresh(authenticated, device: device)
                 try SessionStore.save(authenticated)
@@ -1207,10 +1235,17 @@ final class PhantomStore: ObservableObject {
         if !firstChunkRecorded {
             firstChunkRecorded = true
             let latency = Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000)
-            Diagnostics.log("request_first_chunk id=\(activeRequestId) latencyMs=\(latency)")
-            Task { await runtime.track(category: "chat", event: "first_desktop_chunk", attributes: ["requestId": activeRequestId, "latencyMs": "\(latency)"], accessToken: session?.accessToken) }
+            Diagnostics.event("model_first_byte_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(latency)"])
+            Task { await runtime.track(category: "live_copilot", event: "model_first_byte_received", attributes: ["session_id": copilotSessionId, "turn_id": activeTurnId, "operation_id": activeOperationId, "elapsed_ms": "\(latency)"], accessToken: session?.accessToken) }
         }
         status = "Streaming response…"
+    }
+
+    private static func errorCode(_ error: Error) -> String {
+        if error is CancellationError { return "cancelled" }
+        if let protocolError = error as? PhantomProtocolError { return protocolError.code }
+        if let urlError = error as? URLError, urlError.code == .timedOut { return "timeout" }
+        return "provider_error"
     }
 
     private func clearReply(_ replyId: UUID) {
@@ -1410,8 +1445,9 @@ final class PhantomStore: ObservableObject {
     }
 
     private func configureSpeechInput() {
-        speechInput.onTranscript = { [weak self] transcript in
+        speechInput.onTranscript = { [weak self] transcript, isFinal in
             guard let self else { return }
+            self.voiceDispatchTask?.cancel()
             let merged = Self.mergeTranscript(
                 current: self.prompt,
                 lastRendered: self.lastVoiceRenderedPrompt,
@@ -1424,11 +1460,48 @@ final class PhantomStore: ObservableObject {
             self.preserveVoiceEdits = merged.preservingEdits
             self.previousVoiceTranscript = transcript
             self.lastVoiceRenderedPrompt = merged.text
+            Diagnostics.event(
+                isFinal ? "transcript_finalized" : "transcript_partial_received",
+                level: isFinal ? "Information" : "Debug",
+                sessionId: self.copilotSessionId,
+                turnId: self.pendingVoiceTurnId ?? UUID().uuidString,
+                mode: self.copilotMode,
+                style: self.interviewDeliveryStyle,
+                fields: ["transcript_length_bucket": Self.lengthBucket(merged.text.count)]
+            )
+            if isFinal, self.autoSendAfterVoiceStop { self.scheduleVoiceDispatch() }
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
             self.voiceStatus = state
             self.isListening = self.speechInput.isListening
+        }
+    }
+
+    private func scheduleVoiceDispatch() {
+        voiceDispatchTask?.cancel()
+        let expected = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !expected.isEmpty else { return }
+        voiceDispatchTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled,
+                  self.prompt.trimmingCharacters(in: .whitespacesAndNewlines) == expected else { return }
+            guard expected != self.lastAutoSentVoiceText else {
+                Diagnostics.event("request_dispatched", level: "Debug", sessionId: self.copilotSessionId, turnId: self.pendingVoiceTurnId ?? UUID().uuidString, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
+                return
+            }
+            self.lastAutoSentVoiceText = expected
+            self.send()
+        }
+    }
+
+    private static func lengthBucket(_ length: Int) -> String {
+        switch length {
+        case ...0: return "empty"
+        case 1...40: return "1-40"
+        case 41...160: return "41-160"
+        case 161...640: return "161-640"
+        default: return "641+"
         }
     }
 
@@ -1503,7 +1576,7 @@ final class PhantomStore: ObservableObject {
                 managedProviders = catalog.providers.filter { !$0.models.isEmpty }
                 if !useBYOProvider { providers = managedProviders; selectAvailableModel() }
             } catch {
-                Diagnostics.log("managed_catalog_refresh_failed \(error.localizedDescription)")
+                Diagnostics.log("managed_catalog_refresh_failed code=catalog_unavailable")
             }
         }
     }
@@ -1607,39 +1680,12 @@ final class PhantomStore: ObservableObject {
             self.jobDescriptionSummary = job.isEmpty ? "" : jobValue
             let fullyCached = (resume.isEmpty || ContextSummaryStore.load(kind: "resume", source: resume) != nil)
                 && (job.isEmpty || ContextSummaryStore.load(kind: "job", source: job) != nil)
-            self.contextSummaryStatus = fullyCached ? "AI context summaries ready." : "Context fallback ready; AI will refine it on first use."
+            self.contextSummaryStatus = fullyCached ? "Context summaries ready." : "Local context summary ready."
         }
     }
 
-    private func refineContextSummariesIfNeeded(session: AuthSession, provider: String, model: String, usesBYO: Bool) async {
-        let inputs = [("resume", resumeText), ("job", jobDescriptionText)]
-        for (kind, source) in inputs where !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let cached = ContextSummaryStore.load(kind: kind, source: source) {
-                if kind == "resume" { resumeSummary = cached } else { jobDescriptionSummary = cached }
-                continue
-            }
-            contextSummaryStatus = "Refining \(kind == "resume" ? "resume" : "job description") summary…"
-            let instruction = kind == "resume"
-                ? "Extract this resume in exactly these headings: **Name:**, **Role & Experience:**, **Core Skills:**, **Domain Expertise:**, **Key Strengths:**. Use only supplied facts, prioritize concrete technologies, and stay under 150 words."
-                : "Summarize this job description in 2-3 sentences under 100 words, covering key requirements, responsibilities, and qualifications. Use only supplied facts."
-            do {
-                let refined = try await contextSummaryResponse(
-                    session: session,
-                    provider: provider,
-                    model: model,
-                    usesBYO: usesBYO,
-                    messages: [ChatMessage(role: "system", content: instruction), ChatMessage(role: "user", content: source)]
-                )
-                guard (kind == "resume" ? resumeText : jobDescriptionText) == source else { continue }
-                try ContextSummaryStore.save(kind: kind, source: source, summary: refined)
-                if kind == "resume" { resumeSummary = refined } else { jobDescriptionSummary = refined }
-            } catch {
-                Diagnostics.log("context_summary_refine_failed kind=\(kind) error=\(error.localizedDescription)")
-            }
-        }
-        contextSummaryStatus = "Context summaries ready."
-    }
-
+    // Auxiliary one-shot call used only by the explicit Mermaid correction action,
+    // never by the live-copilot turn state machine.
     private func contextSummaryResponse(
         session: AuthSession,
         provider: String,
@@ -1649,27 +1695,31 @@ final class PhantomStore: ObservableObject {
     ) async throws -> String {
         let bytes: URLSession.AsyncBytes
         if usesBYO {
-            guard let key = rotation.currentKey(provider: provider) else { throw BackendError.server("No usable BYO key for context summary.") }
-            bytes = try await byoClient.chatStream(provider: provider, model: model, apiKey: key.value, imageBase64: nil, messages: messages)
+            guard let key = rotation.currentKey(provider: provider) else {
+                throw BackendError.server("No usable provider credential remains.")
+            }
+            bytes = try await byoClient.chatStream(
+                provider: provider, model: model, apiKey: key.value, imageBase64: nil, messages: messages)
         } else {
-            bytes = try await backend.chatStream(session: session, provider: provider, model: model, allowPaidSessionExtension: false, imageBase64: nil, messages: messages)
+            bytes = try await backend.chatStream(
+                session: session, provider: provider, model: model, allowPaidSessionExtension: false,
+                imageBase64: nil, messages: messages, turnId: UUID().uuidString, operationId: UUID().uuidString)
         }
         var value = ""
         for try await line in bytes.lines {
-            try Task.checkCancellation()
             if usesBYO {
-                if let failure = BYOClient.failure(from: line) { throw BackendError.server(failure) }
+                if BYOClient.failure(from: line) != nil { throw BackendError.server("The provider request failed.") }
                 value += BYOClient.delta(from: line, provider: provider) ?? ""
             } else {
                 switch SSEParser.parse(line) {
                 case .delta(let delta): value += delta
-                case .failure(let message): throw BackendError.server(message)
+                case .failure: throw BackendError.server("The provider request failed.")
                 default: continue
                 }
             }
         }
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { throw BackendError.server("The summary provider returned an empty response.") }
+        guard !clean.isEmpty else { throw BackendError.server("The provider returned an empty response.") }
         return clean
     }
 

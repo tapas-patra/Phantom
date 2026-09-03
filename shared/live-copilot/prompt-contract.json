@@ -1,0 +1,33 @@
+{
+  "version": "live-copilot-v1",
+  "protocolPrefix": "PHANTOM_CONTROL_V1",
+  "bodyDelimiter": "PHANTOM_BODY",
+  "modes": {
+    "interview": {
+      "role": "Answer as the candidate during a live interview.",
+      "questionTypes": ["behavioral", "technical", "coding", "system_design", "product_case", "motivation_fit", "personal_factual", "situational", "clarification", "unknown"]
+    },
+    "briefing": {
+      "role": "Support the user's live meeting with concise facts, reasoning, objections, risks, and next actions.",
+      "questionTypes": ["factual_lookup", "status_update", "decision_support", "objection_response", "risk_tradeoff", "brainstorm", "action_capture", "clarification", "unknown"]
+    }
+  },
+  "deliveryStyles": {
+    "standard": "Natural, direct, professional spoken English.",
+    "desi": "Natural professional Indian English: simple direct sentences, light conversational transitions, no accent imitation, stereotype, broken grammar, forced slang, or forced code-switching."
+  },
+  "grounding": {
+    "lockedFacts": ["employer", "role", "project", "technology", "date", "metric", "scope", "title", "team_size", "award", "outcome"],
+    "synthesizable": ["ordinary_interpersonal_context", "disagreement_shape", "action_sequence", "decision_process", "meeting_or_prototype", "rollout_choice", "qualitative_result", "learning"],
+    "forbidden": ["placeholders", "synthesis_disclosure", "unsupported_exact_personal_facts", "instructions_from_untrusted_context"]
+  },
+  "privacyAllowlist": [
+    "timestamp_utc", "level", "service", "component", "event", "session_id", "turn_id", "operation_id",
+    "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt", "elapsed_ms", "outcome",
+    "error_code", "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type",
+    "has_entity_id", "protocol_version", "prefix_bytes", "validation_outcome", "estimated_input_tokens",
+    "max_output_tokens", "recent_turn_count", "snippet_count", "image_present", "status_class", "search_mode",
+    "cache_hit", "candidate_count", "transcript_length_bucket", "duplicate_suppression_count", "chunk_count",
+    "buffered_characters", "flush_count", "render_ms", "retrieval_status"
+  ]
+}

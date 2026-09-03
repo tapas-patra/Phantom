@@ -39,18 +39,6 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJsonAsync<ManagedAiCatalogDto>("/api/desktop/ai/catalog", accessToken, cancellationToken);
         }
 
-        public Task<InterviewAnswerPlanDto> GetInterviewAnswerPlanAsync(
-            string accessToken,
-            InterviewAnswerPlanRequestDto request,
-            CancellationToken cancellationToken = default)
-        {
-            return PostJsonAsync<InterviewAnswerPlanRequestDto, InterviewAnswerPlanDto>(
-                "/api/desktop/interview/plan",
-                request,
-                accessToken,
-                cancellationToken);
-        }
-
         public HostedKnowledgeBaseSummaryDto GetKnowledgeBase(string accessToken)
         {
             return GetJson<HostedKnowledgeBaseSummaryDto>("/api/desktop/kb", accessToken);

@@ -1,61 +1,139 @@
-using System.Reflection;
+using System.Text.Json;
+using SecureOverlay.Domain;
+using SecureOverlay.Domain.Entities;
 using SecureOverlay.Services;
 
-var manager = new ConversationManager(new FakeAiService("HYBRID"), "", new ModelConfig());
-
-AssertRoute(manager, "Explain dependency injection", "Direct");
-AssertRoute(manager, "Tell me about Kubernetes", "SemanticProbe");
-AssertSemanticIntent(manager, "How did you use caching, and why?", "Hybrid");
-
-Console.WriteLine("Semantic routing checks passed.");
-
-static void AssertRoute(ConversationManager manager, string question, string expectedType)
+var fixtures = JsonSerializer.Deserialize<FixtureRoot>(File.ReadAllText(FindFixtures()), new JsonSerializerOptions
 {
-    var method = typeof(ConversationManager).GetMethod("RouteResponse", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("RouteResponse was not found.");
-    var plan = method.Invoke(manager, new object[] { question })
-        ?? throw new InvalidOperationException("RouteResponse returned null.");
-    var type = plan.GetType().GetProperty("Type")?.GetValue(plan)?.ToString();
-    if (!string.Equals(type, expectedType, StringComparison.Ordinal))
-    {
-        throw new InvalidOperationException($"Expected {expectedType} for '{question}', got {type}.");
-    }
+    PropertyNameCaseInsensitive = true
+}) ?? throw new InvalidOperationException("Shared live-copilot fixtures could not be decoded.");
+
+foreach (var fixture in fixtures.Parser)
+{
+    var parser = new PhantomControlFrameParser(fixture.AllowedEntityIds, fixture.AllowedDocumentIds);
+    var body = string.Empty;
+    foreach (var chunk in fixture.Chunks) body += parser.Feed(chunk);
+    var decision = parser.Complete();
+    Equal(fixture.ExpectedAction, decision.Action.ToString().ToLowerInvariant(), fixture.Name + " action");
+    Equal(fixture.ExpectedBody, body, fixture.Name + " body");
+    if (body.Contains(PhantomControlFrameParser.ProtocolLine, StringComparison.Ordinal))
+        throw new InvalidOperationException(fixture.Name + " leaked the private control prefix.");
 }
 
-static void AssertSemanticIntent(ConversationManager manager, string question, string expectedIntent)
+foreach (var fixture in fixtures.Invalid)
 {
-    var method = typeof(ConversationManager).GetMethod("ClassifySemanticIntentAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("ClassifySemanticIntentAsync was not found.");
-    var task = method.Invoke(manager, new object[] { question, CancellationToken.None }) as Task
-        ?? throw new InvalidOperationException("Semantic classifier did not return a task.");
-    task.GetAwaiter().GetResult();
-    var intent = task.GetType().GetProperty("Result")?.GetValue(task)?.ToString();
-    if (!string.Equals(intent, expectedIntent, StringComparison.Ordinal))
+    var rejected = false;
+    try
     {
-        throw new InvalidOperationException($"Expected {expectedIntent} semantic intent, got {intent}.");
+        var parser = new PhantomControlFrameParser(new[] { "payment-migration" }, new[] { "resume-document-id" });
+        _ = parser.Feed(fixture.Frame);
+        _ = parser.Complete();
     }
+    catch (PhantomProtocolException) { rejected = true; }
+    if (!rejected) throw new InvalidOperationException(fixture.Name + " was accepted.");
 }
 
-sealed class FakeAiService : IAIService
-{
-    private readonly string _response;
+if (fixtures.Contracts.Count < 27 || fixtures.Contracts.Select(x => x.Id).Distinct().Count() != fixtures.Contracts.Count)
+    throw new InvalidOperationException("The shared golden corpus is incomplete or has duplicate IDs.");
+if (fixtures.Contracts.Where(x => x.Mode == "interview").Select(x => x.Id).Intersect(Enumerable.Range(1, 26)).Count() != 26)
+    throw new InvalidOperationException("Interview fixtures 1 through 26 are required.");
+if (fixtures.Contracts.Any(x => x.MaxNormalCalls is < 1 or > 2))
+    throw new InvalidOperationException("A fixture permits an invalid normal model-call count.");
+if (fixtures.Logging.Count < 4 || fixtures.Logging.Any(x => x.TerminalEvents != 1))
+    throw new InvalidOperationException("Logging correlation fixtures are incomplete.");
 
-    public FakeAiService(string response) => _response = response;
-
-    public bool IsConfigured() => true;
-
-    public string GetProviderName() => "Test";
-
-    public Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
-        => Task.FromResult(_response);
-
-    public Task<string> SendMessageStreamAsync(
-        List<ConversationMessage> messages,
-        Action<string> onChunkReceived,
-        CancellationToken cancellationToken = default,
-        string? imageBase64 = null)
+var directFrame = fixtures.Parser.First(x => x.ExpectedAction == "answer").Chunks;
+var directCalls = 0;
+var directVisible = string.Empty;
+var direct = await new LiveCopilotOrchestrator().ExecuteAsync(
+    Array.Empty<string>(), Array.Empty<string>(),
+    (publish, _, _) =>
     {
-        onChunkReceived(_response);
-        return Task.FromResult(_response);
-    }
+        directCalls++;
+        foreach (var chunk in directFrame) publish(chunk);
+        return Task.FromResult((string.Concat(directFrame), string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Direct fixture retrieved."),
+    (_, _) => throw new InvalidOperationException("Direct fixture used a second call."),
+    chunk => directVisible += chunk, null, CancellationToken.None);
+Equal("1", directCalls.ToString(), "direct model calls");
+Equal(direct.Answer, directVisible, "direct visible body");
+
+var retrieveFixture = fixtures.Parser.First(x => x.ExpectedAction == "retrieve");
+var retrieveCalls = 0;
+var finalVisible = string.Empty;
+var retrieved = await new LiveCopilotOrchestrator().ExecuteAsync(
+    retrieveFixture.AllowedEntityIds, retrieveFixture.AllowedDocumentIds,
+    (publish, _, _) =>
+    {
+        retrieveCalls++;
+        var raw = string.Concat(retrieveFixture.Chunks);
+        publish(raw);
+        return Task.FromResult((raw, string.Empty));
+    },
+    (_, _) => Task.FromResult(new LiveCopilotRetrieval("found", new[]
+    {
+        new RetrievedContextSnippet { DocumentId = "resume-document-id", Text = "verified evidence" }
+    }, "1")),
+    (_, _) => (publish, _, _) =>
+    {
+        retrieveCalls++;
+        publish("Grounded final answer.");
+        return Task.FromResult(("Grounded final answer.", string.Empty));
+    },
+    chunk => finalVisible += chunk, null, CancellationToken.None);
+Equal("2", retrieveCalls.ToString(), "retrieve model calls");
+Equal("Grounded final answer.", retrieved.Answer, "retrieve final answer");
+Equal(retrieved.Answer, finalVisible, "retrieve visible body");
+
+foreach (var secret in fixtures.SensitiveSamples)
+{
+    var allowlist = new[] { "question_length_bucket", "provider", "model", "answer_basis" };
+    if (allowlist.Any(value => value.Contains(secret, StringComparison.Ordinal)))
+        throw new InvalidOperationException("Sensitive fixture leaked into the telemetry allowlist.");
 }
+
+Console.WriteLine($"Shared live-copilot fixture suite passed ({fixtures.Version}).");
+
+static string FindFixtures()
+{
+    foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+    {
+        var current = new DirectoryInfo(start);
+        while (current != null)
+        {
+            var candidate = Path.Combine(current.FullName, "shared", "live-copilot", "fixtures.json");
+            if (File.Exists(candidate)) return candidate;
+            current = current.Parent;
+        }
+    }
+    throw new FileNotFoundException("shared/live-copilot/fixtures.json was not found.");
+}
+
+static void Equal(string expected, string actual, string label)
+{
+    if (!string.Equals(expected, actual, StringComparison.Ordinal))
+        throw new InvalidOperationException($"{label}: expected '{expected}', got '{actual}'.");
+}
+
+sealed class FixtureRoot
+{
+    public string Version { get; set; } = "";
+    public List<ParserFixture> Parser { get; set; } = new();
+    public List<InvalidFixture> Invalid { get; set; } = new();
+    public List<ContractFixture> Contracts { get; set; } = new();
+    public List<LoggingFixture> Logging { get; set; } = new();
+    public List<string> SensitiveSamples { get; set; } = new();
+}
+sealed class ParserFixture
+{
+    public string Name { get; set; } = "";
+    public List<string> AllowedEntityIds { get; set; } = new();
+    public List<string> AllowedDocumentIds { get; set; } = new();
+    public List<string> Chunks { get; set; } = new();
+    public string ExpectedAction { get; set; } = "";
+    public string ExpectedBody { get; set; } = "";
+}
+sealed class InvalidFixture { public string Name { get; set; } = ""; public string Frame { get; set; } = ""; }
+sealed class ContractFixture { public int Id { get; set; } public string Mode { get; set; } = ""; public int MaxNormalCalls { get; set; } }
+sealed class LoggingFixture { public string Name { get; set; } = ""; public int TerminalEvents { get; set; } }

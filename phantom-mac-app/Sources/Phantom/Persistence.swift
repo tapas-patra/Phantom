@@ -232,11 +232,24 @@ enum ContextSummaryStore {
 
 enum Diagnostics {
     private static let maxLogBytes = 1_000_000
+    private static let maxStructuredBytes = 5 * 1_024 * 1_024
+    private static let maxStructuredFiles = 5
+    private static let writer = DispatchQueue(label: "phantom.diagnostics.writer", qos: .utility)
+    private static var terminalTurns = Set<String>()
+    private static let liveFields = Set([
+        "outcome", "error_code", "question_type", "intent", "action", "answer_basis", "confidence_bucket",
+        "entity_type", "has_entity_id", "protocol_version", "prefix_bytes", "validation_outcome",
+        "estimated_input_tokens", "max_output_tokens", "recent_turn_count", "snippet_count", "image_present",
+        "status_class", "search_mode", "cache_hit", "candidate_count", "transcript_length_bucket",
+        "duplicate_suppression_count", "chunk_count", "buffered_characters", "flush_count", "render_ms",
+        "retrieval_status", "provider", "model", "model_call", "attempt", "elapsed_ms", "stage"
+    ])
     private static var root: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Phantom", isDirectory: true)
     }
     private static var logURL: URL? { root?.appendingPathComponent("phantom.log") }
+    private static var structuredURL: URL? { root?.appendingPathComponent("live-copilot.jsonl") }
     private static var crashURL: URL? { root?.appendingPathComponent("last-crash.txt") }
 
     static func install() {
@@ -254,6 +267,56 @@ enum Diagnostics {
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: Data(line.utf8))
         trimIfNeeded(logURL)
+    }
+
+    static func event(
+        _ event: String,
+        level: String = "Information",
+        sessionId: String,
+        turnId: String,
+        operationId: String = "",
+        mode: CopilotMode,
+        style: InterviewDeliveryStyle,
+        fields: [String: String] = [:]
+    ) {
+        let safeFields = sanitizedFields(fields)
+        writer.async {
+            let terminal = ["answer_completed", "turn_cancelled", "turn_failed"].contains(event)
+            if terminal, !self.terminalTurns.insert(turnId).inserted { return }
+            guard let root, let url = self.structuredURL else { return }
+            var envelope: [String: Any] = [
+                "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+                "level": level,
+                "service": "phantom-mac-desktop",
+                "component": "live_copilot",
+                "event": event,
+                "session_id": sessionId,
+                "turn_id": turnId,
+                "operation_id": operationId,
+                "mode": mode.rawValue,
+                "delivery_style": style.rawValue
+            ]
+            safeFields.forEach { envelope[$0.key] = $0.value }
+            guard JSONSerialization.isValidJSONObject(envelope),
+                  let data = try? JSONSerialization.data(withJSONObject: envelope),
+                  var line = String(data: data, encoding: .utf8) else { return }
+            line += "\n"
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            self.rotateStructuredIfNeeded(url)
+            if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
+            guard let handle = try? FileHandle(forWritingTo: url) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+            if event == "session_ended" { self.terminalTurns.remove(turnId) }
+        }
+    }
+
+    static func sanitizedFields(_ fields: [String: String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: fields.compactMap { key, value in
+            guard liveFields.contains(key), value.count <= 160 else { return nil }
+            return (key, value)
+        })
     }
 
     static func recordCrash(_ message: String) {
@@ -275,8 +338,8 @@ enum Diagnostics {
     }
 
     static func clear() {
-        guard let logURL else { return }
-        try? FileManager.default.removeItem(at: logURL)
+        if let logURL { try? FileManager.default.removeItem(at: logURL) }
+        if let structuredURL { try? FileManager.default.removeItem(at: structuredURL) }
     }
 
     private static func trimIfNeeded(_ logURL: URL) {
@@ -284,6 +347,23 @@ enum Diagnostics {
               (values.fileSize ?? 0) > maxLogBytes,
               let data = try? Data(contentsOf: logURL) else { return }
         try? data.suffix(maxLogBytes / 2).write(to: logURL, options: .atomic)
+    }
+
+    private static func rotateStructuredIfNeeded(_ url: URL) {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size >= maxStructuredBytes else { return }
+        let oldest = URL(fileURLWithPath: url.path + ".\(maxStructuredFiles - 1)")
+        try? FileManager.default.removeItem(at: oldest)
+        if maxStructuredFiles > 2 {
+            for index in stride(from: maxStructuredFiles - 2, through: 1, by: -1) {
+                let source = URL(fileURLWithPath: url.path + ".\(index)")
+                let destination = URL(fileURLWithPath: url.path + ".\(index + 1)")
+                if FileManager.default.fileExists(atPath: source.path) {
+                    try? FileManager.default.moveItem(at: source, to: destination)
+                }
+            }
+        }
+        try? FileManager.default.moveItem(at: url, to: URL(fileURLWithPath: url.path + ".1"))
     }
 }
 

@@ -67,6 +67,8 @@ namespace SecureOverlay.Services
             }
 
             var decision = parser.Decision!;
+            if (protocolRetries > 0 && decision.Action == LiveCopilotAction.Retrieve)
+                throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)
             {
                 return new LiveCopilotResult(

@@ -2,6 +2,16 @@
   "version": "live-copilot-v1",
   "protocolPrefix": "PHANTOM_CONTROL_V1",
   "bodyDelimiter": "PHANTOM_BODY",
+  "controlFrame": {
+    "fields": ["action", "questionType", "intent", "answerBasis", "entityType", "entityId", "retrievalQuery", "preferredDocumentIds", "targetSeconds", "allowCode", "confidence"],
+    "actions": ["answer", "retrieve", "clarify"],
+    "questionTypes": ["behavioral", "technical", "coding", "system_design", "product_case", "motivation_fit", "personal_factual", "situational", "clarification", "unknown", "factual_lookup", "status_update", "decision_support", "objection_response", "risk_tradeoff", "brainstorm", "action_capture"],
+    "intents": ["candidate_specific", "general", "hybrid", "ambiguous"],
+    "answerBases": ["exact_evidence", "profile_synthesis", "universal_knowledge", "universal_synthesis", "clarification"],
+    "entityTypes": ["none", "profile", "experience", "project", "document", "context_pack", "task"],
+    "directTemplate": "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\n",
+    "repairPolicy": "Retry malformed output once with a strict reminder. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
+  },
   "modes": {
     "interview": {
       "role": "Answer as the candidate during a live interview.",

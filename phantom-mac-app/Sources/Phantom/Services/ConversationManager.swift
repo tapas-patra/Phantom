@@ -73,7 +73,8 @@ final class ConversationManager {
         roleOrMeetingContext: String,
         conversation: [ChatMessage],
         modelId: String,
-        knowledgeBase: StartupSnapshot.KnowledgeBase?
+        knowledgeBase: StartupSnapshot.KnowledgeBase?,
+        protocolRepair: Bool = false
     ) -> [ChatMessage] {
         updateRevision(knowledgeBase, mode: mode)
         let system = CopilotPrompt.firstCall(
@@ -82,7 +83,8 @@ final class ConversationManager {
             knowledge: mode == .interview ? knowledgeBase : briefingKnowledge(knowledgeBase),
             resume: mode == .interview ? resume : "",
             roleOrMeetingContext: roleOrMeetingContext,
-            activeEvidence: activeEvidence(for: mode)
+            activeEvidence: activeEvidence(for: mode),
+            protocolRepair: protocolRepair
         )
         return budgeted(system: system, conversation: conversation, modelId: modelId)
     }

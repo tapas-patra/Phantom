@@ -333,8 +333,13 @@ enum Diagnostics {
     }
 
     static func text() -> String {
-        guard let logURL, let data = try? Data(contentsOf: logURL), let value = String(data: data, encoding: .utf8) else { return "No diagnostics recorded." }
-        return String(value.suffix(30_000))
+        let legacy = logURL.flatMap { try? Data(contentsOf: $0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let structured = structuredURL.flatMap { try? Data(contentsOf: $0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let sections = [
+            legacy.map { String($0.suffix(30_000)) },
+            structured.map { "Live Copilot structured events (content-free):\n" + String($0.suffix(30_000)) }
+        ].compactMap { $0 }
+        return sections.isEmpty ? "No diagnostics recorded." : sections.joined(separator: "\n\n")
     }
 
     static func clear() {

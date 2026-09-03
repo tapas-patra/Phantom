@@ -18,10 +18,12 @@ namespace SecureOverlay.Helpers
             HostedKnowledgeBaseSummaryDto? knowledge,
             string resume,
             string jobOrMeetingContext,
-            IReadOnlyList<RetrievedContextSnippet> activeEvidence)
+            IReadOnlyList<RetrievedContextSnippet> activeEvidence,
+            bool protocolRepair = false)
         {
             var prompt = new StringBuilder(mode == CopilotMode.Interview ? InterviewRole : BriefingRole);
             prompt.Append(' ').Append(SharedSafetyAndFormat).Append(' ').Append(ControlProtocol);
+            if (protocolRepair) prompt.Append(' ').Append(StrictProtocolRepair);
             if (mode == CopilotMode.Interview) prompt.Append(' ').Append(InterviewContracts);
             if (style == InterviewDeliveryStyle.Desi && mode == CopilotMode.Interview) prompt.Append(' ').Append(DesiStyle);
 
@@ -154,10 +156,17 @@ namespace SecureOverlay.Helpers
             "For a missing exact personal fact, do not guess; bridge naturally to the closest supported fact. General knowledge must never become a claim about the candidate.";
         private const string ControlProtocol =
             "Begin with exactly PHANTOM_CONTROL_V1, then one single-line JSON object, then PHANTOM_BODY on its own line. " +
-            "The JSON fields are action, questionType, intent, answerBasis, entityType, entityId, retrievalQuery, preferredDocumentIds, targetSeconds, allowCode, confidence. " +
-            "action is answer, retrieve, or clarify. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
+            "Use every field exactly once in this order: action, questionType, intent, answerBasis, entityType, entityId, retrievalQuery, preferredDocumentIds, targetSeconds, allowCode, confidence. " +
+            "Valid action: answer, retrieve, clarify. Valid questionType: behavioral, technical, coding, system_design, product_case, motivation_fit, personal_factual, situational, clarification, unknown, factual_lookup, status_update, decision_support, objection_response, risk_tradeoff, brainstorm, action_capture. " +
+            "Valid intent: candidate_specific, general, hybrid, ambiguous. Valid answerBasis: exact_evidence, profile_synthesis, universal_knowledge, universal_synthesis, clarification. Valid entityType: none, profile, experience, project, document, context_pack, task. " +
+            "Use JSON booleans, a numeric confidence from 0 through 1, no comments, no trailing comma, and no newline inside the JSON. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
             "For retrieve, emit no body and request new private evidence only when it materially improves correctness; use only IDs from the catalog. " +
-            "Reuse active evidence when sufficient. Never use Markdown fences around the control frame.";
+            "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. " +
+            "Exact direct-answer shape:\nPHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nThen output the answer immediately.";
+        private const string StrictProtocolRepair =
+            "This is the single protocol-repair attempt because the previous header was invalid. Return only the exact control-frame shape described above. " +
+            "Choose action answer or clarify, never retrieve on this repair attempt, and give the best complete answer from the supplied catalog and context. " +
+            "Do not mention the repair or the protocol.";
         private const string InterviewContracts =
             "Behavioral: one first-person 45–75 second story with implicit situation, action, result, and learning. " +
             "Technical: direct first sentence, mechanism, tradeoff, practical caveat. Coding: approach, executable code when asked, complexity, edge cases. " +

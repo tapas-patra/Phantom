@@ -900,10 +900,20 @@ final class PhantomStore: ObservableObject {
                     knowledgeBase: hostedKnowledgeBase
                 )
                 let firstOperationId = UUID().uuidString
-                let makeStream: ([ChatMessage], String) -> LiveCopilotOrchestrator.ModelStream = { outbound, operationId in
+                let repairOutbound = conversationManager.firstCallMessages(
+                    mode: copilotMode,
+                    style: interviewDeliveryStyle,
+                    resume: resume,
+                    roleOrMeetingContext: roleContext,
+                    conversation: history,
+                    modelId: selectedModelId,
+                    knowledgeBase: hostedKnowledgeBase,
+                    protocolRepair: true
+                )
+                let makeStream: ([ChatMessage], String, Int) -> LiveCopilotOrchestrator.ModelStream = { outbound, operationId, attempt in
                     return { onDelta, onRetryCleanup in
                         self.activeOperationId = operationId
-                        Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model])
+                        Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model, "attempt": "\(attempt)"])
                         if usesBYO {
                             do {
                                 let selected = try await self.byoResponseWithRotation(
@@ -958,10 +968,16 @@ final class PhantomStore: ObservableObject {
                     )
                 }
                 let orchestrator = LiveCopilotOrchestrator()
+                var firstProtocolAttempt = 0
+                let firstStream: LiveCopilotOrchestrator.ModelStream = { onDelta, onRetryCleanup in
+                    firstProtocolAttempt += 1
+                    let outbound = firstProtocolAttempt == 1 ? firstOutbound : repairOutbound
+                    return try await makeStream(outbound, firstOperationId, firstProtocolAttempt)(onDelta, onRetryCleanup)
+                }
                 let result = try await orchestrator.execute(
                     allowedEntityIds: CopilotPrompt.entityIds(hostedKnowledgeBase, mode: copilotMode),
                     allowedDocumentIds: CopilotPrompt.documentIds(hostedKnowledgeBase, mode: copilotMode),
-                    firstModel: makeStream(firstOutbound, firstOperationId),
+                    firstModel: firstStream,
                     retrieve: { decision in
                         let operationId = UUID().uuidString
                         self.status = "Searching your knowledge…"
@@ -1006,7 +1022,7 @@ final class PhantomStore: ObservableObject {
                             modelId: self.selectedModelId,
                             knowledgeBase: self.hostedKnowledgeBase
                         )
-                        return makeStream(finalOutbound, UUID().uuidString)
+                        return makeStream(finalOutbound, UUID().uuidString, 1)
                     },
                     publish: { chunk in self.append(chunk, to: pendingReply.id) },
                     resetPublishedAttempt: { self.clearReply(pendingReply.id) },
@@ -1052,11 +1068,14 @@ final class PhantomStore: ObservableObject {
                     attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "outcome": "error", "error_code": Self.errorCode(error)],
                     accessToken: session.accessToken
                 )
+                let failureMessage = error is PhantomProtocolError
+                    ? "The selected AI model returned an invalid response format. Please retry or choose another model."
+                    : "The AI provider could not complete this request. Please retry."
                 if let reply, let index = messages.firstIndex(where: { $0.id == reply.id }),
                    messages[index].content.isEmpty {
-                    messages[index].content = "Error: The AI provider could not complete this request. Please retry."
+                    messages[index].content = "Error: \(failureMessage)"
                 }
-                status = "The AI provider could not complete this request. Please retry."
+                status = failureMessage
             }
             attachedScreenshot = nil
             Diagnostics.event("session_ended", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)

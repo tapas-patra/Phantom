@@ -53,6 +53,9 @@ final class LiveCopilotOrchestrator {
         }
 
         let decision = try parser.complete()
+        if protocolRetries > 0, decision.action == .retrieve {
+            throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
+        }
         if decision.action != .retrieve {
             return LiveCopilotResult(
                 answer: Self.extractBody(firstResponse), decision: decision, modelCallCount: modelCalls,

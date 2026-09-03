@@ -162,11 +162,17 @@ namespace SecureOverlay.Services
                 var firstPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
                     _copilotMode, _deliveryStyle, knowledge, resume, roleContext, _activeEvidence[_copilotMode]);
                 var firstContext = BuildAdaptiveContext(firstPrompt);
+                var repairPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+                    _copilotMode, _deliveryStyle, knowledge, resume, roleContext, _activeEvidence[_copilotMode], protocolRepair: true);
+                var repairContext = BuildAdaptiveContext(repairPrompt);
+                var firstProtocolAttempt = 0;
                 LiveRequestTrace.Current?.SetContext("adaptive", imageBase64 != null, firstContext.Sum(x => x.EstimatedTokens));
 
                 var result = await new LiveCopilotOrchestrator().ExecuteAsync(
                     CopilotPromptRegistry.EntityIds(knowledge, _copilotMode), CopilotPromptRegistry.DocumentIds(knowledge, _copilotMode),
-                    (publish, cleanup, token) => RunModelOperationAsync("first_model", 1, firstContext, publish, cleanup, token, imageBase64),
+                    (publish, cleanup, token) => RunModelOperationAsync(
+                        "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
+                        publish, cleanup, token, imageBase64),
                     async (decision, token) =>
                     {
                         StageChanged?.Invoke(this, "Searching your knowledge…");

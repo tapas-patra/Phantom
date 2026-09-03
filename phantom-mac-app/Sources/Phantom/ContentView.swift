@@ -157,26 +157,6 @@ private struct ChatView: View {
     private var chatHeader: some View {
         HStack(spacing: 8) {
             BrandMark(compact: true, showsName: false)
-            Menu {
-                Picker("Mode", selection: $store.copilotMode) {
-                    Text("Interview").tag(CopilotMode.interview)
-                    Text("Briefing").tag(CopilotMode.briefing)
-                }
-                if store.copilotMode == .interview {
-                    Divider()
-                    Picker("Delivery", selection: $store.interviewDeliveryStyle) {
-                        Text("Standard").tag(InterviewDeliveryStyle.standard)
-                        Text("Desi — Natural Indian English").tag(InterviewDeliveryStyle.desi)
-                    }
-                }
-            } label: {
-                Text(store.copilotMode == .briefing
-                    ? "Briefing"
-                    : "Interview · \(store.interviewDeliveryStyle == .desi ? "Desi" : "Standard")")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .menuStyle(.borderlessButton)
-            .accessibilityLabel("Live Copilot mode and delivery style")
             StatusPill(text: store.creditStatus, color: PhantomColors.blue)
             StatusPill(text: store.accountTypeLabel, color: PhantomColors.amber)
             StatusPill(text: store.sessionTimerText.isEmpty ? "00:00:00" : store.sessionTimerText, color: PhantomColors.green)
@@ -209,6 +189,9 @@ private struct ChatView: View {
                     .accessibilityLabel("Start new topic")
                 Button(action: { confirmation = .clear }) { Image(systemName: "eraser.fill") }
                     .accessibilityLabel("Clear chat and context")
+                Button(action: store.copyChat) { Image(systemName: "doc.on.doc") }
+                    .disabled(!store.messages.contains(where: { !$0.content.isEmpty }))
+                    .accessibilityLabel("Copy whole chat with response timings")
             }
 
             Button(action: store.toggleClickThrough) {
@@ -754,6 +737,12 @@ private struct MessageBubble: View {
                     .foregroundColor(message.role == "assistant" ? PhantomColors.blue : PhantomColors.green)
                 MarkdownMessageText(content: message.content, onCorrectMermaid: onCorrectMermaid)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if message.role == "assistant", let responseTime = message.responseTimeText, !message.content.isEmpty {
+                    Label("Response time: \(responseTime)", systemImage: "clock")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(PhantomColors.muted)
+                        .accessibilityLabel("Response time \(responseTime)")
+                }
                 if let options = message.clarificationOptions, !options.isEmpty {
                     HStack(spacing: 8) {
                         ForEach(options, id: \.label) { option in

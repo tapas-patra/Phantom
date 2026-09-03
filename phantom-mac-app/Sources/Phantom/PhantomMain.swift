@@ -196,6 +196,7 @@ enum PhantomMain {
             precondition(GlobalHotKey.handles(registeredID: 1, eventID: 1))
             precondition(!GlobalHotKey.handles(registeredID: 1, eventID: 4))
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")
+            precondition(ChatMessage(role: "assistant", content: "ok", responseTimeMs: 1_234).responseTimeText == "1.2 s")
             precondition(MermaidDiagram.html("flowchart TD\nA[\"quoted\"] --> B", hasLocalRuntime: true).contains("mermaid.min.js"))
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
@@ -219,6 +220,10 @@ enum PhantomMain {
             precondition(!CreditMeteringService.shouldFinalizeBoundary(tier: "free", elapsed: 900, projectedCharge: 0.25, paidAvailable: 0, existingDebt: 0, allowFreeTrialExtension: true, allowPaidExtension: false))
             precondition(CreditMeteringService.shouldFinalizeBoundary(tier: "premium", elapsed: 7_200, projectedCharge: 2, paidAvailable: 1, existingDebt: 0, allowFreeTrialExtension: false, allowPaidExtension: true))
             precondition(BYOClient.failure(from: "data: {\"error\":{\"message\":\"rate limited\"}}") == "rate limited")
+            precondition(BYOClient.terminal(from: "data: [DONE]", provider: "Mistral") == .complete)
+            precondition(BYOClient.terminal(from: "data: {\"choices\":[{\"finish_reason\":\"length\"}]}", provider: "Mistral") == .truncated)
+            precondition(BYOClient.terminal(from: "data: {\"type\":\"message_stop\"}", provider: "Claude") == .complete)
+            precondition(BYOClient.terminal(from: "data: {\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}", provider: "Gemini") == .truncated)
             precondition(ContextSummaryStore.summarize(kind: "job", source: String(repeating: "word ", count: 120)).split(separator: " ").count == 100)
             let emptyKnowledge = StartupSnapshot.KnowledgeBase(knowledgeBaseId: "", name: "", description: "", status: "not_created", embeddingModel: "", embeddingVersion: 0, documentCount: 0, chunkCount: 0, canUseInInterview: false, blockedReason: "", lastProcessedAtUtc: nil, profileCard: nil, experienceCards: [], projectCards: [])
             let restricted = StartupSnapshot(userId: "user", email: "user@example.com", emailVerified: true, accessTier: "premium", wallet: .init(proAvailableCredits: 0, premiumAvailableCredits: 0, premiumNegativeCredits: 0), leaseExpiresAtUtc: Date(timeIntervalSince1970: 0), hasResumableLockedSession: true, lastLockTokenHash: "hash", lastLockedSessionId: "session", offlineModeEnabled: true, canUseDesktopPowerFeatures: false, lastValidatedAtUtc: Date(), hostedKnowledgeBase: emptyKnowledge, source: "self-check")
@@ -249,12 +254,14 @@ enum PhantomMain {
             let maxNormalCalls: Int
         }
         struct InvalidFixture: Decodable { let name: String; let frame: String }
+        struct AnswerCompletionFixture: Decodable { let name: String; let body: String; let expectedComplete: Bool }
         struct ContractFixture: Decodable { let id: Int; let mode: String; let maxNormalCalls: Int }
         struct LoggingFixture: Decodable { let name: String; let terminalEvents: Int }
         struct Root: Decodable {
             let version: String
             let parser: [ParserFixture]
             let invalid: [InvalidFixture]
+            let answerCompletion: [AnswerCompletionFixture]
             let contracts: [ContractFixture]
             let logging: [LoggingFixture]
             let sensitiveSamples: [String]
@@ -291,6 +298,9 @@ enum PhantomMain {
                 preconditionFailure("\(fixture.name) was accepted")
             } catch is PhantomProtocolError { }
             catch { preconditionFailure("\(fixture.name) failed with the wrong error") }
+        }
+        for fixture in fixtures.answerCompletion {
+            precondition(LiveCopilotOrchestrator.isCompleteAnswer(fixture.body) == fixture.expectedComplete, fixture.name)
         }
         let allowedFields = ["question_length_bucket", "provider", "model", "answer_basis"]
         for sample in fixtures.sensitiveSamples {

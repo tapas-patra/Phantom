@@ -97,6 +97,7 @@
                         </Border>
 
                         <ComboBox x:Name="LiveModeComboBox" Width="92" Height="28" Margin="4,0,0,0"
+                                  Visibility="Collapsed"
                                   Background="#FF202936" Foreground="White" BorderBrush="#667B8DA5"
                                   SelectionChanged="LiveModeComboBox_SelectionChanged"
                                   AutomationProperties.Name="Live Copilot mode">
@@ -104,6 +105,7 @@
                             <ComboBoxItem Content="Briefing" Foreground="Black"/>
                         </ComboBox>
                         <ComboBox x:Name="LiveStyleComboBox" Width="82" Height="28" Margin="6,0,0,0"
+                                  Visibility="Collapsed"
                                   Background="#FF202936" Foreground="White" BorderBrush="#667B8DA5"
                                   SelectionChanged="LiveStyleComboBox_SelectionChanged"
                                   AutomationProperties.Name="Interview delivery style">
@@ -188,6 +190,11 @@
                         <Button Content="🔃" Width="40" Height="32" Click="ClearChatButton_Click"
                             Background="#50FFA500" BorderBrush="#90FFA500" BorderThickness="1.5"
                             Foreground="White" FontSize="16" Margin="0,0,8,0" 
+                            Style="{StaticResource ButtonStyle}"/>
+
+                        <Button Content="📋" Width="40" Height="32" Click="CopyChatButton_Click"
+                            Background="#504B76A8" BorderBrush="#9073B8FF" BorderThickness="1.5"
+                            Foreground="White" FontSize="16" Margin="0,0,8,0"
                             Style="{StaticResource ButtonStyle}"/>
                         
                         <Button Content="⚙️" Width="40" Height="32" Click="SettingsButton_Click"

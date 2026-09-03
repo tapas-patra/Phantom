@@ -11,6 +11,23 @@ using Phantom.WindowsApp.Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options =>
+{
+    options.IncludeScopes = true;
+    options.UseUtcTimestamp = true;
+    options.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
+});
+builder.Logging.SetMinimumLevel(LogLevel.Information);
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+builder.Logging.AddFilter("Npgsql", LogLevel.Warning);
+builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
+{
+    options.MaxQueueLength = 2048;
+    options.QueueFullMode = Microsoft.Extensions.Logging.Console.ConsoleLoggerQueueFullMode.DropWrite;
+});
+
 var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(backendOptions);
 builder.Services.AddSingleton<PostgresBackendStore>();
@@ -201,8 +218,11 @@ app.Use(async (context, next) =>
     context.Request.Headers["X-Phantom-Correlation-Id"] = correlationId;
     context.Request.Headers["X-Phantom-Operation-Id"] = operationId;
     context.Response.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    context.Response.Headers["X-Phantom-Operation-Id"] = operationId;
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Request");
     var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    var routineHealth = string.Equals(context.Request.Path.Value, "/health", StringComparison.OrdinalIgnoreCase);
+    Exception? requestError = null;
     using (logger.BeginScope(new Dictionary<string, object>
     {
         ["correlation_id"] = correlationId,
@@ -210,18 +230,44 @@ app.Use(async (context, next) =>
         ["service"] = "phantom-windows-app-backend"
     }))
     {
+        if (!routineHealth)
+        {
+            logger.LogInformation(
+                "request_started service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method}",
+                "phantom-windows-app-backend", "http", "request_started", correlationId, operationId, context.Request.Method);
+        }
         try { await next(); }
+        catch (Exception ex)
+        {
+            requestError = ex;
+            logger.LogError(
+                "request_failed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} error_code={ErrorCode} elapsed_ms={ElapsedMs}",
+                "phantom-windows-app-backend", "http", "request_failed", correlationId, operationId,
+                context.Request.Method, ex.GetType().Name, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            throw;
+        }
         finally
         {
             var route = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
-            logger.LogInformation(
-                "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route={Route} status_class={StatusClass} elapsed_ms={ElapsedMs}",
-                "phantom-windows-app-backend", "http", "request_completed", correlationId, operationId,
-                context.Request.Method, route, $"{context.Response.StatusCode / 100}xx",
-                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            if (!routineHealth || requestError != null || context.Response.StatusCode >= 400)
+            {
+                logger.LogInformation(
+                    "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} elapsed_ms={ElapsedMs} outcome={Outcome}",
+                    "phantom-windows-app-backend", "http", "request_completed", correlationId, operationId,
+                    context.Request.Method, route, $"{(requestError == null ? context.Response.StatusCode : 500) / 100}xx",
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, requestError == null ? "success" : "error");
+            }
         }
     }
 });
+
+var lifecycleLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Lifecycle");
+app.Lifetime.ApplicationStarted.Register(() => lifecycleLogger.LogInformation(
+    "service_started service={Service} component={Component} event={Event} environment={Environment} database_configured={DatabaseConfigured}",
+    "phantom-windows-app-backend", "lifecycle", "service_started", app.Environment.EnvironmentName, !string.IsNullOrWhiteSpace(backendOptions.DatabaseUrl)));
+app.Lifetime.ApplicationStopping.Register(() => lifecycleLogger.LogInformation(
+    "service_stopping service={Service} component={Component} event={Event}",
+    "phantom-windows-app-backend", "lifecycle", "service_stopping"));
 
 using (var scope = app.Services.CreateScope())
 {

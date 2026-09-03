@@ -33,6 +33,9 @@ foreach (var fixture in fixtures.Invalid)
     if (!rejected) throw new InvalidOperationException(fixture.Name + " was accepted.");
 }
 
+foreach (var fixture in fixtures.AnswerCompletion)
+    Equal(fixture.ExpectedComplete.ToString(), LiveCopilotOrchestrator.IsCompleteAnswer(fixture.Body).ToString(), fixture.Name + " completion");
+
 if (fixtures.Contracts.Count < 27 || fixtures.Contracts.Select(x => x.Id).Distinct().Count() != fixtures.Contracts.Count)
     throw new InvalidOperationException("The shared golden corpus is incomplete or has duplicate IDs.");
 if (fixtures.Contracts.Where(x => x.Mode == "interview").Select(x => x.Id).Intersect(Enumerable.Range(1, 26)).Count() != 26)
@@ -121,6 +124,7 @@ sealed class FixtureRoot
     public string Version { get; set; } = "";
     public List<ParserFixture> Parser { get; set; } = new();
     public List<InvalidFixture> Invalid { get; set; } = new();
+    public List<AnswerCompletionFixture> AnswerCompletion { get; set; } = new();
     public List<ContractFixture> Contracts { get; set; } = new();
     public List<LoggingFixture> Logging { get; set; } = new();
     public List<string> SensitiveSamples { get; set; } = new();
@@ -135,5 +139,6 @@ sealed class ParserFixture
     public string ExpectedBody { get; set; } = "";
 }
 sealed class InvalidFixture { public string Name { get; set; } = ""; public string Frame { get; set; } = ""; }
+sealed class AnswerCompletionFixture { public string Name { get; set; } = ""; public string Body { get; set; } = ""; public bool ExpectedComplete { get; set; } }
 sealed class ContractFixture { public int Id { get; set; } public string Mode { get; set; } = ""; public int MaxNormalCalls { get; set; } }
 sealed class LoggingFixture { public string Name { get; set; } = ""; public int TerminalEvents { get; set; } }

@@ -57,8 +57,12 @@ final class LiveCopilotOrchestrator {
             throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
         }
         if decision.action != .retrieve {
+            let answer = Self.extractBody(firstResponse)
+            guard Self.isCompleteAnswer(answer) else {
+                throw BackendError.server("The AI provider returned an incomplete response.")
+            }
             return LiveCopilotResult(
-                answer: Self.extractBody(firstResponse), decision: decision, modelCallCount: modelCalls,
+                answer: answer, decision: decision, modelCallCount: modelCalls,
                 protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
             )
         }
@@ -74,8 +78,8 @@ final class LiveCopilotOrchestrator {
             resetPublishedAttempt()
         })
         if finalResponse.isEmpty { finalResponse = completed }
-        guard !finalResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw BackendError.server("The AI provider returned an empty response.")
+        guard Self.isCompleteAnswer(finalResponse) else {
+            throw BackendError.server("The AI provider returned an incomplete response.")
         }
         return LiveCopilotResult(
             answer: finalResponse, decision: decision, modelCallCount: modelCalls,
@@ -86,5 +90,10 @@ final class LiveCopilotOrchestrator {
     static func extractBody(_ response: String) -> String {
         guard let range = response.range(of: PhantomControlFrameParser.bodyDelimiter) else { return "" }
         return String(response[range.upperBound...])
+    }
+
+    nonisolated static func isCompleteAnswer(_ response: String) -> Bool {
+        guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return response.components(separatedBy: "```").count % 2 == 1
     }
 }

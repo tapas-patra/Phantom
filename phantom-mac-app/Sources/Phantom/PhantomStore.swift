@@ -560,6 +560,22 @@ final class PhantomStore: ObservableObject {
         diagnosticsText = Diagnostics.text()
     }
 
+    func copyChat() {
+        let timestamp = ISO8601DateFormatter()
+        let transcript = messages.filter { !$0.content.isEmpty }.map { message in
+            var metadata = message.role == "assistant" ? "PHANTOM" : "YOU"
+            if let createdAtUtc = message.createdAtUtc { metadata += " • \(timestamp.string(from: createdAtUtc))" }
+            if message.role == "assistant", let responseTime = message.responseTimeText {
+                metadata += " • Response time: \(responseTime)"
+            }
+            return "\(metadata)\n\(message.content)"
+        }.joined(separator: "\n\n")
+        guard !transcript.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(transcript, forType: .string)
+        status = "Chat copied with timings."
+    }
+
     func selectContextPack(_ packId: String) {
         selectedContextPackId = packId
         guard let pack = contextPacks.first(where: { $0.packId == packId }) else {
@@ -842,6 +858,7 @@ final class PhantomStore: ObservableObject {
         status = copilotMode == .interview ? "Starting interview session…" : "Starting briefing session…"
         Diagnostics.event("session_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
         Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch"])
+        mirrorLiveEvent("request_dispatched", turnId: requestId, fields: ["provider": provider, "model": model, "stage": "dispatch"])
 
         chatTask = Task {
             defer { isSending = false }
@@ -914,6 +931,7 @@ final class PhantomStore: ObservableObject {
                     return { onDelta, onRetryCleanup in
                         self.activeOperationId = operationId
                         Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model, "attempt": "\(attempt)"])
+                        self.mirrorLiveEvent("model_call_started", turnId: requestId, operationId: operationId, fields: ["provider": provider, "model": model, "attempt": "\(attempt)"])
                         if usesBYO {
                             do {
                                 let selected = try await self.byoResponseWithRotation(
@@ -982,6 +1000,7 @@ final class PhantomStore: ObservableObject {
                         let operationId = UUID().uuidString
                         self.status = "Searching your knowledge…"
                         Diagnostics.event("retrieval_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle)
+                        self.mirrorLiveEvent("retrieval_started", turnId: requestId, operationId: operationId)
                         guard self.isPremiumAccount, self.hostedKnowledgeBase?.canUseInInterview == true else {
                             return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
                         }
@@ -992,6 +1011,7 @@ final class PhantomStore: ObservableObject {
                             }
                             if self.copilotMode == .briefing, preferredDocuments.isEmpty {
                                 Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                                self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
                                 return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
                             }
                             let snippets = try await self.backend.knowledgeSnippets(
@@ -1003,10 +1023,12 @@ final class PhantomStore: ObservableObject {
                             )
                             let bounded = Array(snippets.prefix(3))
                             Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+                            self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
                             return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(self.hostedKnowledgeBase?.embeddingVersion ?? 0)")
                         } catch is CancellationError { throw CancellationError() }
                         catch {
                             Diagnostics.event("retrieval_failed", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": "retrieval_failed"])
+                            self.mirrorLiveEvent("retrieval_failed", turnId: requestId, operationId: operationId, fields: ["outcome": "error", "error_code": "retrieval_failed"])
                             return LiveCopilotRetrieval(status: "error", snippets: [], kbRevision: "")
                         }
                     },
@@ -1028,10 +1050,12 @@ final class PhantomStore: ObservableObject {
                     resetPublishedAttempt: { self.clearReply(pendingReply.id) },
                     protocolRejected: { code in
                         Diagnostics.event("control_frame_rejected", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": code, "validation_outcome": "rejected"])
+                        self.mirrorLiveEvent("control_frame_rejected", turnId: requestId, operationId: self.activeOperationId, fields: ["error_code": code, "validation_outcome": "rejected"])
                     }
                 )
                 conversationManager.complete(result, mode: copilotMode)
                 if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
+                    let responseTimeMs = max(0, Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))
                     let finalized = conversationManager.finalizeAssistantResponse(messages[index].content)
                     messages[index].content = finalized.content
                     messages[index].summary = finalized.summary
@@ -1039,8 +1063,10 @@ final class PhantomStore: ObservableObject {
                     messages[index].hasCode = finalized.content.contains("```")
                     messages[index].answerSource = conversationManager.lastAnswerResolution.source.rawValue
                     messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
+                    messages[index].responseTimeMs = responseTimeMs
+                    messages[index].createdAtUtc = Date()
                 }
-                Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)"])
+                Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)"])
                 try await runtime.metering.resume()
                 await runtime.track(category: "billing", event: "interview_session_resumed", attributes: ["reason": "response_succeeded"], accessToken: session.accessToken)
                 lastInterviewActivityAt = Date()
@@ -1071,9 +1097,10 @@ final class PhantomStore: ObservableObject {
                 let failureMessage = error is PhantomProtocolError
                     ? "The selected AI model returned an invalid response format. Please retry or choose another model."
                     : "The AI provider could not complete this request. Please retry."
-                if let reply, let index = messages.firstIndex(where: { $0.id == reply.id }),
-                   messages[index].content.isEmpty {
+                if let reply, let index = messages.firstIndex(where: { $0.id == reply.id }) {
                     messages[index].content = "Error: \(failureMessage)"
+                    messages[index].responseTimeMs = max(0, Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))
+                    messages[index].createdAtUtc = Date()
                 }
                 status = failureMessage
             }
@@ -1124,6 +1151,7 @@ final class PhantomStore: ObservableObject {
                     debugRequestCount += 1
                     if let simulated = simulatedError(attempt: attempt, keyIndex: key.index) { throw simulated }
                 }
+                let modelStartedAt = Date()
                 let bytes = try await byoClient.chatStream(
                     provider: provider,
                     model: model,
@@ -1131,20 +1159,32 @@ final class PhantomStore: ObservableObject {
                     imageBase64: imageBase64,
                     messages: messages
                 )
+                Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model])
+                mirrorLiveEvent("provider_headers_received", operationId: activeOperationId, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model])
                 onRetryCleanup()
                 var received = false
                 var response = ""
+                var terminal: BYOStreamTerminal?
+                var chunkCount = 0
                 for try await line in bytes.lines {
                     try Task.checkCancellation()
-                    if line == "data: [DONE]" { break }
                     if BYOClient.failure(from: line) != nil { throw BackendError.server("The provider stream failed.") }
                     if let delta = BYOClient.delta(from: line, provider: provider) {
                         received = true
+                        chunkCount += 1
                         response += delta
                         onDelta(delta)
                     }
+                    if let state = BYOClient.terminal(from: line, provider: provider) {
+                        terminal = state
+                        if state == .truncated { throw BackendError.server("The AI provider reached its output limit.") }
+                        break
+                    }
                 }
                 guard received else { throw BackendError.server("The AI provider returned an empty response.") }
+                guard terminal == .complete else { throw BackendError.server("The AI provider stream ended unexpectedly.") }
+                Diagnostics.event("model_call_completed", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
+                mirrorLiveEvent("model_call_completed", operationId: activeOperationId, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
                 byoKeyStatus = "Key \(key.index + 1)/\(rotation.keys(for: provider).count) • \(model)"
                 return (model, response)
             } catch {
@@ -1179,6 +1219,8 @@ final class PhantomStore: ObservableObject {
                 case .terminal:
                     throw error
                 }
+                Diagnostics.event("provider_retry_started", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "error_code": Self.errorCode(error)])
+                mirrorLiveEvent("provider_retry_started", operationId: activeOperationId, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "error_code": Self.errorCode(error)])
                 status = "Retry \(attempt + 1)/5 • Key #\(key.index + 1) • \(model)"
                 try await Task.sleep(nanoseconds: 500_000_000)
             }
@@ -1209,6 +1251,7 @@ final class PhantomStore: ObservableObject {
         for attempt in 0..<5 {
             let candidate = candidates[attempt % candidates.count]
             do {
+                let modelStartedAt = Date()
                 let bytes = try await backend.chatStream(
                     session: authenticated,
                     provider: candidate.0,
@@ -1219,19 +1262,26 @@ final class PhantomStore: ObservableObject {
                     turnId: turnId,
                     operationId: operationId
                 )
+                Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": candidate.0, "model": candidate.1])
+                mirrorLiveEvent("provider_headers_received", operationId: activeOperationId, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": candidate.0, "model": candidate.1])
                 onRetryCleanup()
                 var received = false
                 var response = ""
-                for try await line in bytes.lines {
+                var completed = false
+                var chunkCount = 0
+                streamLoop: for try await line in bytes.lines {
                     try Task.checkCancellation()
                     switch SSEParser.parse(line) {
-                    case .delta(let delta): received = true; response += delta; onDelta(delta)
+                    case .delta(let delta): received = true; chunkCount += 1; response += delta; onDelta(delta)
                     case .failure: throw BackendError.server("The managed provider stream failed.")
-                    case .done: break
+                    case .done: completed = true; break streamLoop
                     case nil: continue
                     }
                 }
                 guard received else { throw BackendError.server("The AI provider returned an empty response.") }
+                guard completed else { throw BackendError.server("The managed provider stream ended unexpectedly.") }
+                Diagnostics.event("model_call_completed", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
+                mirrorLiveEvent("model_call_completed", operationId: activeOperationId, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
                 return (candidate.0, candidate.1, response)
             } catch BackendError.http(401, _) where !refreshed {
                 authenticated = try await backend.refresh(authenticated, device: device)
@@ -1241,6 +1291,8 @@ final class PhantomStore: ObservableObject {
             } catch {
                 lastError = error
                 guard rotation.classify(error) == .retryable || rotation.classify(error) == .rateLimited else { throw error }
+                Diagnostics.event("provider_retry_started", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "retry", "attempt": "\(attempt + 2)", "provider": candidate.0, "model": candidate.1, "error_code": Self.errorCode(error)])
+                mirrorLiveEvent("provider_retry_started", operationId: activeOperationId, fields: ["outcome": "retry", "attempt": "\(attempt + 2)", "provider": candidate.0, "model": candidate.1, "error_code": Self.errorCode(error)])
                 status = "Managed retry \(min(attempt + 2, 5))/5 • \(candidate.1)"
                 try await Task.sleep(nanoseconds: UInt64(min(attempt + 1, 3)) * 500_000_000)
             }
@@ -1265,6 +1317,22 @@ final class PhantomStore: ObservableObject {
         if let protocolError = error as? PhantomProtocolError { return protocolError.code }
         if let urlError = error as? URLError, urlError.code == .timedOut { return "timeout" }
         return "provider_error"
+    }
+
+    private func mirrorLiveEvent(
+        _ event: String,
+        turnId: String? = nil,
+        operationId: String = "",
+        fields: [String: String] = [:]
+    ) {
+        var attributes = fields
+        attributes["session_id"] = copilotSessionId
+        attributes["turn_id"] = turnId ?? activeTurnId
+        attributes["operation_id"] = operationId
+        attributes["mode"] = copilotMode.rawValue
+        attributes["delivery_style"] = interviewDeliveryStyle.rawValue
+        let payload = attributes
+        Task { await runtime.track(category: "live_copilot", event: event, attributes: payload, accessToken: session?.accessToken) }
     }
 
     private func clearReply(_ replyId: UUID) {

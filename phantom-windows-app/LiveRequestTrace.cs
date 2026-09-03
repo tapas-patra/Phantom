@@ -65,6 +65,7 @@ namespace SecureOverlay
         public int InputTokenEstimate { get; private set; }
         public int RetryCount => _retryCount;
         public string OperationId => _operationId;
+        public double ElapsedMilliseconds => Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds;
 
         public static LiveRequestTrace Begin(string provider, string model, bool isVoice, bool hasImage, string mode = "interview", string deliveryStyle = "standard")
             => new(provider, model, isVoice, hasImage, mode, deliveryStyle);
@@ -170,7 +171,7 @@ namespace SecureOverlay
                 elapsed_ms = Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds,
                 outcome,
                 error_code = errorCode,
-                input = IsVoice ? "voice" : "typed",
+                input_type = IsVoice ? "voice" : "typed",
                 image_present = HasImage,
                 estimated_input_tokens = InputTokenEstimate,
                 snippet_count = Math.Max(0, snippetCount),

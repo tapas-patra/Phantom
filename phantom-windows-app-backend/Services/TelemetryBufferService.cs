@@ -106,5 +106,8 @@ public sealed class TelemetryBufferService : BackgroundService
     private void FlushSuccess(int count)
     {
         _metrics.RecordTelemetryFlushSucceeded(count);
+        _logger.LogInformation(
+            "telemetry_batch_flushed service={Service} component={Component} event={Event} batch_count={BatchCount} outcome={Outcome}",
+            "phantom-windows-app-backend", "telemetry", "telemetry_batch_flushed", count, "success");
     }
 }

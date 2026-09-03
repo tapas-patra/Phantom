@@ -125,6 +125,7 @@ namespace SecureOverlay.Services
                 }
 
                 var fullResponse = new StringBuilder();
+                var sawDone = false;
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
                 {
@@ -141,6 +142,7 @@ namespace SecureOverlay.Services
                         var data = line.Substring(6);
                         if (data == "[DONE]")
                         {
+                            sawDone = true;
                             break;
                         }
 
@@ -150,9 +152,7 @@ namespace SecureOverlay.Services
                             var streamError = chunk["error"]?.Value<string>();
                             if (!string.IsNullOrWhiteSpace(streamError))
                             {
-                                return fullResponse.Length == 0
-                                    ? "Error: provider_stream_error"
-                                    : fullResponse.ToString() + "\n\n[Stream ended unexpectedly.]";
+                                return "Error: provider_stream_error";
                             }
                             var delta = chunk["delta"]?.Value<string>();
                             if (!string.IsNullOrWhiteSpace(delta))
@@ -168,7 +168,7 @@ namespace SecureOverlay.Services
                         }
                     }
                 }
-
+                if (!sawDone) return "Error: provider_stream_incomplete";
                 return fullResponse.ToString();
             }
             catch (OperationCanceledException)
@@ -242,6 +242,7 @@ namespace SecureOverlay.Services
             }
 
             var fullResponse = new StringBuilder();
+            var sawDone = false;
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new StreamReader(stream))
             {
@@ -258,6 +259,7 @@ namespace SecureOverlay.Services
                     var data = line.Substring(6);
                     if (data == "[DONE]")
                     {
+                        sawDone = true;
                         break;
                     }
 
@@ -267,9 +269,7 @@ namespace SecureOverlay.Services
                         var streamError = chunk["error"]?.Value<string>();
                         if (!string.IsNullOrWhiteSpace(streamError))
                         {
-                            return fullResponse.Length == 0
-                                ? "Error: provider_stream_error"
-                                : fullResponse.ToString() + "\n\n[Stream ended unexpectedly.]";
+                            return "Error: provider_stream_error";
                         }
                         var delta = chunk["delta"]?.Value<string>();
                     if (!string.IsNullOrWhiteSpace(delta))
@@ -284,7 +284,7 @@ namespace SecureOverlay.Services
                     }
                 }
             }
-
+            if (!sawDone) return "Error: provider_stream_incomplete";
             return fullResponse.ToString();
         }
 

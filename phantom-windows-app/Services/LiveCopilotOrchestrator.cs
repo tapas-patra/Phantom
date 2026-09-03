@@ -71,8 +71,10 @@ namespace SecureOverlay.Services
                 throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)
             {
+                var answer = ExtractBody(firstResponse);
+                if (!IsCompleteAnswer(answer)) throw new InvalidOperationException("The AI provider returned an incomplete response.");
                 return new LiveCopilotResult(
-                    ExtractBody(firstResponse), decision, modelCalls, protocolRetries, "not_requested", Array.Empty<RetrievedContextSnippet>());
+                    answer, decision, modelCalls, protocolRetries, "not_requested", Array.Empty<RetrievedContextSnippet>());
             }
 
             var retrieval = await retrieve(decision, cancellationToken).ConfigureAwait(false);
@@ -93,8 +95,14 @@ namespace SecureOverlay.Services
                 cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(completed.Error)) throw new InvalidOperationException(completed.Error);
             if (finalResponse.Length == 0) finalResponse = completed.Response;
-            if (string.IsNullOrWhiteSpace(finalResponse)) throw new InvalidOperationException("The AI provider returned an empty response.");
+            if (!IsCompleteAnswer(finalResponse)) throw new InvalidOperationException("The AI provider returned an incomplete response.");
             return new LiveCopilotResult(finalResponse, decision, modelCalls, protocolRetries, retrieval.Status, retrieval.Snippets);
+        }
+
+        public static bool IsCompleteAnswer(string response)
+        {
+            if (string.IsNullOrWhiteSpace(response)) return false;
+            return response.Split("```", StringSplitOptions.None).Length % 2 == 1;
         }
 
         public static string ExtractBody(string response)

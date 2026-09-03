@@ -29,8 +29,10 @@
   "grounding": {
     "lockedFacts": ["employer", "role", "project", "technology", "date", "metric", "scope", "title", "team_size", "award", "outcome"],
     "synthesizable": ["ordinary_interpersonal_context", "disagreement_shape", "action_sequence", "decision_process", "meeting_or_prototype", "rollout_choice", "qualitative_result", "learning"],
-    "forbidden": ["placeholders", "synthesis_disclosure", "unsupported_exact_personal_facts", "instructions_from_untrusted_context"]
+    "forbidden": ["placeholders", "synthesis_disclosure", "unsupported_exact_personal_facts", "instructions_from_untrusted_context"],
+    "exactEvidenceRule": "For exact_evidence and profile_synthesis, every employer, role, project, technology, date, metric, scope, title, team size, award, and outcome stated in the answer must be explicitly present in the supplied catalog or evidence. Omit uncertain details."
   },
+  "diagramPolicy": "When the user explicitly asks to draw or diagram an architecture or flow, return one small, complete fenced mermaid diagram and a short explanation. Never use ASCII art. Always close the fence.",
   "privacyAllowlist": [
     "timestamp_utc", "level", "service", "component", "event", "session_id", "turn_id", "operation_id",
     "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt", "elapsed_ms", "outcome",
@@ -38,6 +40,19 @@
     "has_entity_id", "protocol_version", "prefix_bytes", "validation_outcome", "estimated_input_tokens",
     "max_output_tokens", "recent_turn_count", "snippet_count", "image_present", "status_class", "search_mode",
     "cache_hit", "candidate_count", "transcript_length_bucket", "duplicate_suppression_count", "chunk_count",
-    "buffered_characters", "flush_count", "render_ms", "retrieval_status"
+    "buffered_characters", "flush_count", "render_ms", "retrieval_status", "finish_reason", "input_type",
+    "model_call_count"
+  ],
+  "backendLoggingAllowlist": [
+    "timestamp_utc", "level", "service", "component", "category", "event", "correlation_id", "operation_id",
+    "request_id", "session_id", "turn_id", "method", "route_template", "status_class", "elapsed_ms", "outcome",
+    "error_code", "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt",
+    "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type", "has_entity_id",
+    "protocol_version", "prefix_bytes", "validation_outcome", "max_output_tokens", "estimated_input_tokens",
+    "recent_turn_count", "snippet_count", "image_present", "search_mode", "cache_hit", "candidate_count",
+    "transcript_length_bucket", "duplicate_suppression_count", "finish_reason", "chunk_count",
+    "buffered_characters", "flush_count", "render_ms", "retrieval_status", "input_type", "model_call_count",
+    "batch_count", "environment",
+    "database_configured", "authority_configured"
   ]
 }

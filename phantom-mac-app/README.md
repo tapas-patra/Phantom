@@ -1,5 +1,7 @@
 # Phantom for macOS
 
+Local and Render log locations, correlation guidance, and privacy rules are documented in [`../shared/observability/README.md`](../shared/observability/README.md).
+
 Native Swift/AppKit and SwiftUI client for the existing Phantom hosted backend.
 
 ## Implemented

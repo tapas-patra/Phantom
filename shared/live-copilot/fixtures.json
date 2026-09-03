@@ -44,6 +44,11 @@
       "frame": "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"behavioral\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"conflict\",\"preferredDocumentIds\":[],\"targetSeconds\":60,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nleak"
     }
   ],
+  "answerCompletion": [
+    { "name": "complete-text", "body": "A load balancer distributes traffic across healthy servers.", "expectedComplete": true },
+    { "name": "complete-mermaid", "body": "```mermaid\nflowchart TD\nA[Client] --> B[API]\n```", "expectedComplete": true },
+    { "name": "unclosed-code-fence", "body": "```mermaid\nflowchart TD\nA[Client] --> B[API]", "expectedComplete": false }
+  ],
   "contracts": [
     {
       "id": 1,
@@ -123,7 +128,8 @@
       "acceptableQuestionTypes": ["objection_response", "risk_tradeoff"],
       "acceptableBases": ["universal_knowledge", "exact_evidence"],
       "maxNormalCalls": 1
-    }
+    },
+    { "id": 28, "name": "explicit-architecture-diagram", "mode": "interview", "question": "Draw the architecture of that project.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "system_design", "personal_factual"], "acceptableBases": ["exact_evidence", "profile_synthesis"], "requiredFacts": ["```mermaid"], "forbiddenClaims": ["ASCII art"], "maxNormalCalls": 1 }
   ],
   "logging": [
     { "name": "direct-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "answer_completed"], "modelOperations": 1, "terminalEvents": 1 },

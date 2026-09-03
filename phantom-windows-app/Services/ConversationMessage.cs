@@ -12,6 +12,7 @@ namespace SecureOverlay.Services
         public int EstimatedTokens { get; set; } = 0;
         public string AnswerSource { get; set; } = ""; // exact_evidence, profile_synthesis, or universal knowledge/synthesis
         public string InterviewIntent { get; set; } = ""; // Personal, General, Hybrid, or Ambiguous
+        public int? ResponseTimeMs { get; set; }
     }
 
     public class ModelConfig

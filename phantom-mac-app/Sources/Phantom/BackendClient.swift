@@ -347,8 +347,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var answerSource: String?
     var interviewIntent: String?
     var clarificationOptions: [ClarificationOption]?
+    var responseTimeMs: Int?
 
-    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil, clarificationOptions: [ClarificationOption]? = nil) {
+    init(id: UUID = UUID(), role: String, content: String, summary: String? = nil, createdAtUtc: Date = Date(), estimatedTokens: Int? = nil, hasCode: Bool? = nil, answerSource: String? = nil, interviewIntent: String? = nil, clarificationOptions: [ClarificationOption]? = nil, responseTimeMs: Int? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -359,6 +360,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.answerSource = answerSource
         self.interviewIntent = interviewIntent
         self.clarificationOptions = clarificationOptions
+        self.responseTimeMs = responseTimeMs
+    }
+
+    var responseTimeText: String? {
+        guard let responseTimeMs else { return nil }
+        return responseTimeMs < 1_000 ? "\(responseTimeMs) ms" : String(format: "%.1f s", Double(responseTimeMs) / 1_000)
     }
 }
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 using Phantom.Dashboard.Backend.Infrastructure;
 
 namespace Phantom.Dashboard.Backend.Services;
@@ -15,16 +16,18 @@ public sealed class AuthorityBackendClient
 
     private readonly DashboardOptions _options;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ILogger<AuthorityBackendClient> _logger;
     private readonly object _sync = new();
     private int _consecutiveFailures;
     private DateTime? _lastSuccessAtUtc;
     private DateTime? _lastFailureAtUtc;
     private DateTime? _circuitOpenUntilUtc;
 
-    public AuthorityBackendClient(DashboardOptions options, IHttpContextAccessor httpContextAccessor)
+    public AuthorityBackendClient(DashboardOptions options, IHttpContextAccessor httpContextAccessor, ILogger<AuthorityBackendClient> logger)
     {
         _options = options;
         _httpContextAccessor = httpContextAccessor;
+        _logger = logger;
     }
 
     public async Task<T?> SendAsync<T>(
@@ -40,8 +43,13 @@ public sealed class AuthorityBackendClient
         var delay = TimeSpan.FromMilliseconds(200);
         for (var attempt = 1; attempt <= 3; attempt++)
         {
+            var started = Stopwatch.GetTimestamp();
+            var route = SafeRoute(path);
             try
             {
+                _logger.LogInformation(
+                    "authority_request_started service={Service} component={Component} event={Event} method={Method} route_template={RouteTemplate} attempt={Attempt}",
+                    "phantom-dashboard-backend", "authority_client", "outbound_request_started", method.Method, route, attempt);
                 using var request = new HttpRequestMessage(method, $"{_options.WindowsBackendBaseUrl}{path}");
                 if (!string.IsNullOrWhiteSpace(authorizationHeader))
                 {
@@ -71,6 +79,11 @@ public sealed class AuthorityBackendClient
 
                 using var response = await HttpClient.SendAsync(request, cancellationToken);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogInformation(
+                    "authority_request_completed service={Service} component={Component} event={Event} method={Method} route_template={RouteTemplate} attempt={Attempt} status_class={StatusClass} elapsed_ms={ElapsedMs} outcome={Outcome}",
+                    "phantom-dashboard-backend", "authority_client", "outbound_request_completed", method.Method, route, attempt,
+                    $"{(int)response.StatusCode / 100}xx", Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                    response.IsSuccessStatusCode ? "success" : "error");
                 if (response.IsSuccessStatusCode)
                 {
                     RecordSuccess();
@@ -111,6 +124,10 @@ public sealed class AuthorityBackendClient
             }
             catch (Exception ex) when (attempt < 3 && IsTransient(ex, cancellationToken))
             {
+                _logger.LogWarning(
+                    "authority_request_retry service={Service} component={Component} event={Event} method={Method} route_template={RouteTemplate} attempt={Attempt} elapsed_ms={ElapsedMs} error_code={ErrorCode}",
+                    "phantom-dashboard-backend", "authority_client", "outbound_retry_started", method.Method, route, attempt,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.GetType().Name);
                 await Task.Delay(delay, cancellationToken);
                 delay = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 2);
                 continue;
@@ -126,6 +143,10 @@ public sealed class AuthorityBackendClient
             catch
             {
                 RecordFailure();
+                _logger.LogError(
+                    "authority_request_failed service={Service} component={Component} event={Event} method={Method} route_template={RouteTemplate} attempt={Attempt} elapsed_ms={ElapsedMs}",
+                    "phantom-dashboard-backend", "authority_client", "outbound_request_failed", method.Method, route, attempt,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 throw;
             }
         }
@@ -217,6 +238,16 @@ public sealed class AuthorityBackendClient
         }
 
         return ex is HttpRequestException or TaskCanceledException;
+    }
+
+    private static string SafeRoute(string path)
+    {
+        const string credentialPrefix = "/api/admin/managed-ai/credentials/";
+        var queryIndex = path.IndexOf('?');
+        var route = queryIndex >= 0 ? path[..queryIndex] : path;
+        return route.StartsWith(credentialPrefix, StringComparison.Ordinal)
+            ? credentialPrefix + "{credentialId}"
+            : route;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

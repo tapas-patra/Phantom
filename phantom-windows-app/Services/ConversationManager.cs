@@ -327,6 +327,13 @@ namespace SecureOverlay.Services
                 .Any(value => error.Contains(value, StringComparison.OrdinalIgnoreCase));
 
         public List<ConversationMessage> GetAllMessages() => CurrentHistory.ToList();
+        public void CompleteLastAssistantTiming(int responseTimeMs)
+        {
+            var assistant = CurrentHistory.LastOrDefault(message => message.Role == "assistant");
+            if (assistant == null) return;
+            assistant.Timestamp = DateTime.UtcNow;
+            assistant.ResponseTimeMs = Math.Max(0, responseTimeMs);
+        }
         public string? RemoveLastExchangeForRegeneration()
         {
             if (CurrentHistory.Count < 2 || CurrentHistory[^1].Role != "assistant" || CurrentHistory[^2].Role != "user") return null;
@@ -363,13 +370,14 @@ namespace SecureOverlay.Services
 
         private ConversationMessage Message(string role, string content) => new()
         {
-            Role = role, Content = content ?? string.Empty, EstimatedTokens = EstimateTokens(content ?? string.Empty)
+            Role = role, Content = content ?? string.Empty, Timestamp = DateTime.UtcNow,
+            EstimatedTokens = EstimateTokens(content ?? string.Empty)
         };
         private static ConversationMessage Clone(ConversationMessage source) => new()
         {
             Role = source.Role, Content = source.Content, Summary = source.Summary, Timestamp = source.Timestamp,
             HasCode = source.HasCode, EstimatedTokens = source.EstimatedTokens, AnswerSource = source.AnswerSource,
-            InterviewIntent = source.InterviewIntent
+            InterviewIntent = source.InterviewIntent, ResponseTimeMs = source.ResponseTimeMs
         };
         private static string Limit(string value, int max) => value.Length <= max ? value : value[..max];
         private static string KnowledgeRevision(HostedKnowledgeBaseSummaryDto? knowledge) => knowledge?.EmbeddingVersion.ToString() ?? string.Empty;

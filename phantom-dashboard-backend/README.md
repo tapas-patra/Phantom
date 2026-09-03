@@ -1,5 +1,7 @@
 # phantom-dashboard-backend
 
+Operational logging and Render search instructions: [`../shared/observability/README.md`](../shared/observability/README.md).
+
 Query backend for the Phantom website and dashboard.
 
 Owns:

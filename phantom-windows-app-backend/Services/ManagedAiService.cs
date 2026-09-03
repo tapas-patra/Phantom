@@ -11,6 +11,7 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class ManagedAiService
 {
+    private static readonly TimeSpan FirstTokenDeadline = TimeSpan.FromSeconds(12);
     private const int AdminModelTimeoutMs = 20000;
 
     private static readonly HttpClient HttpClient = new()
@@ -179,22 +180,47 @@ public sealed class ManagedAiService
         response.ContentType = "text/event-stream";
         response.Headers.CacheControl = "no-cache, no-transform";
         response.Headers["X-Accel-Buffering"] = "no";
-        var streamWriter = new SseDeltaWriter(response, milestone => LogTiming(request, milestone, stopwatch));
+        CancellationTokenSource? firstTokenDeadline = null;
 
         Exception? lastError = null;
         foreach (var credential in providerCredentials)
         {
+            var streamWriter = new SseDeltaWriter(
+                response,
+                milestone => LogTiming(request, milestone, stopwatch),
+                () => firstTokenDeadline?.CancelAfter(Timeout.InfiniteTimeSpan));
             try
             {
                 var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                await StreamProviderAsync(streamWriter, request, apiKey, cancellationToken);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                firstTokenDeadline = deadline;
+                deadline.CancelAfter(FirstTokenDeadline);
+                await StreamProviderAsync(streamWriter, request, apiKey, deadline.Token);
                 await streamWriter.FlushAsync(cancellationToken);
+                _logger.LogInformation(
+                    "managed_ai_stream_completed service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} finish_reason={FinishReason} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_stream_completed", request.RequestId, request.TurnId,
+                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, streamWriter.FinishReason,
+                    streamWriter.ChunkCount, streamWriter.BufferedCharacters, streamWriter.FlushCount, "success");
                 await WriteSseDataAsync(response, "[DONE]", cancellationToken);
                 return;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !streamWriter.HasWritten)
+            {
+                lastError = new TimeoutException("provider_first_token_timeout");
+                _logger.LogWarning(
+                    "managed_ai_first_token_timeout service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_first_token_timeout", request.RequestId, request.TurnId,
+                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, "first_token_timeout", "retry");
             }
             catch (Exception ex) when (ex is not BackendValidationException && ex is not OperationCanceledException)
             {
                 lastError = ex;
+                _logger.LogWarning(
+                    "managed_ai_stream_failed service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_stream_failed", request.RequestId, request.TurnId,
+                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, StreamErrorCode(ex),
+                    streamWriter.ChunkCount, streamWriter.BufferedCharacters, "error");
                 if (streamWriter.HasWritten || response.HasStarted)
                 {
                     await streamWriter.FlushAsync(cancellationToken);
@@ -239,12 +265,9 @@ public sealed class ManagedAiService
     private void LogTiming(DesktopAiChatRequestDto request, string milestone, Stopwatch stopwatch)
     {
         _logger.LogInformation(
-            "Managed AI timing requestId={RequestId} milestone={Milestone} elapsedMs={ElapsedMs} provider={Provider} model={Model} image={HasImage}",
-            request.RequestId,
-            milestone,
-            stopwatch.Elapsed.TotalMilliseconds,
-            request.Provider,
-            request.Model,
+            "managed_ai_milestone service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} stage={Stage} elapsed_ms={ElapsedMs} provider={Provider} model={Model} image_present={ImagePresent}",
+            "phantom-windows-app-backend", "managed_ai", "provider_milestone", request.RequestId, request.TurnId,
+            milestone, stopwatch.Elapsed.TotalMilliseconds, request.Provider, request.Model,
             !string.IsNullOrWhiteSpace(request.ImageBase64));
     }
 
@@ -402,6 +425,11 @@ public sealed class ManagedAiService
     {
         RunOutputBudgetSelfCheck();
         var outputBudget = GetLiveOutputBudget(request.Messages);
+        _logger.LogInformation(
+            "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} max_output_tokens={MaxOutputTokens} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
+            "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.TurnId,
+            request.Provider, request.Model, outputBudget, request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
+            request.Messages.Count, !string.IsNullOrWhiteSpace(request.ImageBase64));
         switch (request.Provider)
         {
             case ManagedAiCatalog.ChatGpt:
@@ -531,6 +559,8 @@ public sealed class ManagedAiService
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+        var sawDone = false;
+        string? finishReason = null;
         while (!reader.EndOfStream)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -543,6 +573,7 @@ public sealed class ManagedAiService
             var data = line[6..];
             if (data == "[DONE]")
             {
+                sawDone = true;
                 break;
             }
 
@@ -554,6 +585,10 @@ public sealed class ManagedAiService
             }
 
             var choice = choices[0];
+            if (choice.TryGetProperty("finish_reason", out var finishElement) && finishElement.ValueKind == JsonValueKind.String)
+            {
+                finishReason = finishElement.GetString();
+            }
             if (!choice.TryGetProperty("delta", out var delta)
                 || !delta.TryGetProperty("content", out var contentElement))
             {
@@ -568,6 +603,11 @@ public sealed class ManagedAiService
 
             await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
+        if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_output_truncated");
+        if (!sawDone && !string.Equals(finishReason, "stop", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_stream_incomplete");
+        streamWriter.Complete(finishReason ?? "done");
     }
 
     private async Task<string> GenerateOpenAiCompatibleResponseAsync(
@@ -646,6 +686,8 @@ public sealed class ManagedAiService
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+        var sawMessageStop = false;
+        string? stopReason = null;
         while (!reader.EndOfStream)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -662,11 +704,20 @@ public sealed class ManagedAiService
             }
 
             using var json = JsonDocument.Parse(data);
-            if (!json.RootElement.TryGetProperty("type", out var typeElement)
-                || typeElement.GetString() != "content_block_delta")
+            if (!json.RootElement.TryGetProperty("type", out var typeElement))
             {
                 continue;
             }
+            var eventType = typeElement.GetString();
+            if (eventType == "message_stop") { sawMessageStop = true; break; }
+            if (eventType == "message_delta"
+                && json.RootElement.TryGetProperty("delta", out var messageDelta)
+                && messageDelta.TryGetProperty("stop_reason", out var stopElement))
+            {
+                stopReason = stopElement.GetString();
+                continue;
+            }
+            if (eventType != "content_block_delta") continue;
 
             if (!json.RootElement.TryGetProperty("delta", out var delta)
                 || !delta.TryGetProperty("text", out var textElement))
@@ -682,6 +733,10 @@ public sealed class ManagedAiService
 
             await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
+        if (string.Equals(stopReason, "max_tokens", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_output_truncated");
+        if (!sawMessageStop) throw new InvalidOperationException("provider_stream_incomplete");
+        streamWriter.Complete(stopReason ?? "stop");
     }
 
     private async Task<string> GenerateClaudeResponseAsync(
@@ -762,6 +817,7 @@ public sealed class ManagedAiService
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+        string? finishReason = null;
         while (!reader.EndOfStream)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -780,6 +836,10 @@ public sealed class ManagedAiService
             }
 
             var candidate = candidates[0];
+            if (candidate.TryGetProperty("finishReason", out var finishElement) && finishElement.ValueKind == JsonValueKind.String)
+            {
+                finishReason = finishElement.GetString();
+            }
             if (!candidate.TryGetProperty("content", out var content)
                 || !content.TryGetProperty("parts", out var parts)
                 || parts.GetArrayLength() == 0)
@@ -800,6 +860,11 @@ public sealed class ManagedAiService
 
             await streamWriter.AppendAsync(deltaText, cancellationToken);
         }
+        if (string.Equals(finishReason, "MAX_TOKENS", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_output_truncated");
+        if (!string.Equals(finishReason, "STOP", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_stream_incomplete");
+        streamWriter.Complete(finishReason ?? "unknown");
     }
 
     private async Task<string> GenerateGeminiResponseAsync(
@@ -1051,6 +1116,16 @@ public sealed class ManagedAiService
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
     }
 
+    private static string StreamErrorCode(Exception ex)
+    {
+        if (ex is OperationCanceledException) return "cancelled";
+        if (ex.Message.Contains("provider_output_truncated", StringComparison.Ordinal)) return "provider_output_truncated";
+        if (ex.Message.Contains("provider_stream_incomplete", StringComparison.Ordinal)) return "provider_stream_incomplete";
+        if (ex.Message.StartsWith("429", StringComparison.Ordinal)) return "rate_limited";
+        if (ex.Message.Length >= 3 && int.TryParse(ex.Message[..3], out var status)) return $"provider_{status / 100}xx";
+        return "provider_error";
+    }
+
     private static int GetLiveOutputBudget(IReadOnlyList<DesktopAiChatMessageDto> messages)
     {
         var question = messages.LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
@@ -1098,13 +1173,20 @@ public sealed class ManagedAiService
         private bool _providerHeadersMarked;
         private bool _firstTokenMarked;
 
-        public SseDeltaWriter(HttpResponse response, Action<string> mark)
+        private readonly Action _firstToken;
+
+        public SseDeltaWriter(HttpResponse response, Action<string> mark, Action firstToken)
         {
             _response = response;
             _mark = mark;
+            _firstToken = firstToken;
         }
 
         public bool HasWritten { get; private set; }
+        public int ChunkCount { get; private set; }
+        public int BufferedCharacters { get; private set; }
+        public int FlushCount { get; private set; }
+        public string FinishReason { get; private set; } = "unknown";
 
         public void MarkProviderHeaders()
         {
@@ -1115,12 +1197,16 @@ public sealed class ManagedAiService
 
         public async Task AppendAsync(string delta, CancellationToken cancellationToken)
         {
+            ChunkCount++;
+            BufferedCharacters += delta.Length;
             if (!_firstTokenMarked)
             {
                 _firstTokenMarked = true;
+                _firstToken();
                 _mark("first_upstream_token");
                 await WriteSseJsonAsync(_response, new { delta }, cancellationToken);
                 HasWritten = true;
+                FlushCount++;
                 _mark("first_backend_sse_write");
                 _sinceFlush.Restart();
                 return;
@@ -1140,7 +1226,13 @@ public sealed class ManagedAiService
             _pending.Clear();
             await WriteSseJsonAsync(_response, new { delta }, cancellationToken);
             HasWritten = true;
+            FlushCount++;
             _sinceFlush.Restart();
+        }
+
+        public void Complete(string finishReason)
+        {
+            FinishReason = string.IsNullOrWhiteSpace(finishReason) ? "unknown" : finishReason.ToLowerInvariant();
         }
     }
 }

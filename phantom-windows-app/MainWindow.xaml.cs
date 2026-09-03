@@ -359,7 +359,10 @@ namespace SecureOverlay
                             var isUser = msg.Role == "user";
                             var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
-                            var fullText = prefix + msg.Content;
+                            var timing = !isUser && msg.ResponseTimeMs.HasValue
+                                ? $"\n\n_Response time: {FormatResponseTime(msg.ResponseTimeMs.Value)}_"
+                                : string.Empty;
+                            var fullText = prefix + msg.Content + timing;
                             _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(isUser, fullText));
                             rebuilt++;
                         }
@@ -1894,6 +1897,11 @@ namespace SecureOverlay
                 _settings.CopilotMode.ToLowerInvariant(),
                 _settings.InterviewDeliveryStyle.ToLowerInvariant());
             _activeRequestTrace = requestTrace;
+            TrackLiveCopilotAsync("request_dispatched", requestTrace, new Dictionary<string, string>
+            {
+                ["stage"] = "dispatch", ["provider"] = requestTrace.Provider, ["model"] = requestTrace.Model,
+                ["image_present"] = requestTrace.HasImage.ToString().ToLowerInvariant()
+            });
             _nextRequestIsVoice = false;
 
             if (_currentAI == null || !_currentAI.IsConfigured())
@@ -2076,6 +2084,10 @@ namespace SecureOverlay
                         {
                             if (requestTrace.Mark("model_first_byte_received", uniquePerOperation: true))
                             {
+                                TrackLiveCopilotAsync("model_first_byte_received", requestTrace, new Dictionary<string, string>
+                                {
+                                    ["stage"] = "answer", ["elapsed_ms"] = requestTrace.ElapsedMilliseconds.ToString("F0")
+                                });
                                 Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                             }
                             _streamBuffer.Append(chunk);
@@ -2141,6 +2153,7 @@ namespace SecureOverlay
                 if (error == "Cancelled")
                 {
                     requestTrace.Complete(0, "cancelled");
+                    TrackLiveCopilotAsync("turn_cancelled", requestTrace, new Dictionary<string, string> { ["outcome"] = "cancelled" });
                     Log.WriteLine("✗ Request was cancelled");
                     _streamingChatMarkdown = null;
                     _streamMessageId = null;
@@ -2154,6 +2167,7 @@ namespace SecureOverlay
                 else if (!string.IsNullOrEmpty(error))
                 {
                     requestTrace.Complete(0, "error");
+                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string> { ["outcome"] = "error", ["error_code"] = "provider_error" });
                     Log.WriteLine($"✗ AI Error: {error}");
 
                     var isDesktopAuthFailure =
@@ -2192,11 +2206,19 @@ namespace SecureOverlay
                 else
                 {
                     requestTrace.Complete(response.Length, "success");
+                    TrackLiveCopilotAsync("answer_completed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "success", ["elapsed_ms"] = ((int)Math.Max(0, elapsed * 1000)).ToString(),
+                        ["buffered_characters"] = response.Length.ToString(), ["model_call"] = _conversationManager.LastModelCallCount.ToString(),
+                        ["answer_basis"] = _conversationManager.LastDecision?.AnswerBasis ?? string.Empty,
+                        ["question_type"] = _conversationManager.LastDecision?.QuestionType ?? string.Empty
+                    });
                     ResumeInterviewSessionAfterSuccess();
+                    _conversationManager.CompleteLastAssistantTiming((int)Math.Max(0, elapsed * 1000));
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
                     await FlushStreamingDeltaAsync();
                     _streamingChatMarkdown = null;
-                    var finalMarkdown = $"**{aiName}:**\n\n{response}";
+                    var finalMarkdown = $"**{aiName}:**\n\n{response}\n\n_Response time: {FormatResponseTime((int)Math.Max(0, elapsed * 1000))}_";
                     await MarkdownHelper.FinalizeAssistantMessageAsync(ChatWebView, _streamMessageId!, finalMarkdown);
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
@@ -3379,6 +3401,52 @@ namespace SecureOverlay
                 Log.WriteLine($"✗ Failed to copy logs: {ex.Message}");
                 StatusText.Text = "✗ Failed to copy logs";
             }
+        }
+
+        private void CopyChatButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var messages = _conversationManager?.GetAllMessages()
+                    .Where(message => !string.IsNullOrWhiteSpace(message.Content))
+                    .ToList() ?? new List<ConversationMessage>();
+                if (messages.Count == 0)
+                {
+                    StatusText.Text = "No chat to copy";
+                    return;
+                }
+
+                var transcript = string.Join("\n\n", messages.Select(message =>
+                {
+                    var role = message.Role == "assistant" ? "PHANTOM" : "YOU";
+                    var timestamp = message.Timestamp.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+                    var timing = message.Role == "assistant" && message.ResponseTimeMs.HasValue
+                        ? $" • Response time: {FormatResponseTime(message.ResponseTimeMs.Value)}"
+                        : string.Empty;
+                    return $"{role} • {timestamp}{timing}\n{message.Content}";
+                }));
+                Clipboard.SetText(transcript);
+                StatusText.Text = "✓ Chat copied with timings";
+                Log.WriteLine($"Chat transcript copied message_count={messages.Count}");
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Failed to copy chat error_code={ex.GetType().Name}");
+                StatusText.Text = "✗ Failed to copy chat";
+            }
+        }
+
+        private static string FormatResponseTime(int milliseconds)
+            => milliseconds < 1000 ? $"{milliseconds} ms" : $"{milliseconds / 1000d:F1} s";
+
+        private void TrackLiveCopilotAsync(string eventName, LiveRequestTrace trace, Dictionary<string, string> fields)
+        {
+            fields["session_id"] = trace.SessionId;
+            fields["turn_id"] = trace.TurnId;
+            fields["operation_id"] = trace.OperationId;
+            fields["mode"] = trace.Mode;
+            fields["delivery_style"] = trace.DeliveryStyle;
+            _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
         }
 
         private void ClearLogsButton_Click(object sender, RoutedEventArgs e)

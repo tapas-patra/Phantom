@@ -1520,6 +1520,7 @@ namespace SecureOverlay
             {
                 _conversationManager.APISwitchNotification -= OnAPISwitchNotification;
                 _conversationManager.StageChanged -= OnCopilotStageChanged;
+                _conversationManager.DecisionParsed -= OnCopilotDecisionParsed;
                 _conversationManager.UpdateAIService(newAI);
                 _conversationManager.UpdateModelConfig(modelConfig);
                 _conversationManager.ConfigureCopilot(
@@ -1530,6 +1531,7 @@ namespace SecureOverlay
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
                 _conversationManager.StageChanged += OnCopilotStageChanged;
+                _conversationManager.DecisionParsed += OnCopilotDecisionParsed;
                 
                 Log.WriteLine("✓ AI service updated - conversation history PRESERVED");
             }
@@ -1565,6 +1567,7 @@ namespace SecureOverlay
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
                 _conversationManager.StageChanged += OnCopilotStageChanged;
+                _conversationManager.DecisionParsed += OnCopilotDecisionParsed;
                 
                 var selectedPack = _contextPackService.GetSelectedPack();
 
@@ -1733,6 +1736,25 @@ namespace SecureOverlay
                     ? Brushes.DeepSkyBlue
                     : Brushes.Yellow;
             }));
+        }
+
+        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount)
+        {
+            if (_activeRequestTrace is not { } trace) return;
+            TrackLiveCopilotAsync("control_frame_parsed", trace, new Dictionary<string, string>
+            {
+                ["question_type"] = decision.QuestionType,
+                ["intent"] = decision.Intent,
+                ["action"] = decision.Action.ToString().ToLowerInvariant(),
+                ["answer_basis"] = decision.AnswerBasis,
+                ["confidence_bucket"] = decision.Confidence < .5 ? "low" : decision.Confidence < .8 ? "medium" : "high",
+                ["entity_type"] = decision.EntityType,
+                ["has_entity_id"] = (!string.IsNullOrEmpty(decision.EntityId)).ToString().ToLowerInvariant(),
+                ["protocol_version"] = decision.ProtocolVersion.ToString(),
+                ["validation_outcome"] = "accepted",
+                ["model_call_count"] = modelCallCount.ToString(),
+                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested"
+            });
         }
 
         private void LiveModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

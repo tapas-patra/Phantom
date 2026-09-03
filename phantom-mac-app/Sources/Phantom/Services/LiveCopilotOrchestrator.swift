@@ -12,7 +12,8 @@ final class LiveCopilotOrchestrator {
         secondModel: @escaping (LiveTurnDecision, LiveCopilotRetrieval) -> ModelStream,
         publish: @escaping (String) -> Void,
         resetPublishedAttempt: @escaping () -> Void,
-        protocolRejected: ((String) -> Void)? = nil
+        protocolRejected: ((String) -> Void)? = nil,
+        decisionParsed: ((LiveTurnDecision, Int) -> Void)? = nil
     ) async throws -> LiveCopilotResult {
         var modelCalls = 0
         var protocolRetries = 0
@@ -53,6 +54,7 @@ final class LiveCopilotOrchestrator {
         }
 
         let decision = try parser.complete()
+        decisionParsed?(decision, modelCalls)
         if protocolRetries > 0, decision.action == .retrieve {
             throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
         }

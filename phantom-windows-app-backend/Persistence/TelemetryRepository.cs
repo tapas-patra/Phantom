@@ -30,7 +30,8 @@ INSERT INTO telemetry_events (
     event_id, category, event_name, payload_json, created_at_utc
 ) VALUES (
     @eventId, @category, @eventName, CAST(@payloadJson AS jsonb), @createdAtUtc
-);";
+)
+ON CONFLICT(event_id) DO NOTHING;";
             command.Parameters.AddWithValue("eventId", record.EventId);
             command.Parameters.AddWithValue("category", record.Category);
             command.Parameters.AddWithValue("eventName", record.EventName);

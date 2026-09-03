@@ -14,12 +14,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options =>
 {
-    options.IncludeScopes = true;
+    options.IncludeScopes = false;
     options.UseUtcTimestamp = true;
     options.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
 });
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware", LogLevel.None);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 builder.Logging.AddFilter("Npgsql", LogLevel.Warning);
 builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
@@ -209,6 +210,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+app.UseRouting();
 app.Use(async (context, next) =>
 {
     var incomingCorrelation = context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault();
@@ -222,6 +224,7 @@ app.Use(async (context, next) =>
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Request");
     var started = System.Diagnostics.Stopwatch.GetTimestamp();
     var routineHealth = string.Equals(context.Request.Path.Value, "/health", StringComparison.OrdinalIgnoreCase);
+    var routeTemplate = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
     Exception? requestError = null;
     using (logger.BeginScope(new Dictionary<string, object>
     {
@@ -248,14 +251,14 @@ app.Use(async (context, next) =>
         }
         finally
         {
-            var route = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+            var statusCode = requestError == null ? context.Response.StatusCode : StatusCodes.Status500InternalServerError;
             if (!routineHealth || requestError != null || context.Response.StatusCode >= 400)
             {
                 logger.LogInformation(
                     "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} elapsed_ms={ElapsedMs} outcome={Outcome}",
                     "phantom-windows-app-backend", "http", "request_completed", correlationId, operationId,
-                    context.Request.Method, route, $"{(requestError == null ? context.Response.StatusCode : 500) / 100}xx",
-                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, requestError == null ? "success" : "error");
+                    context.Request.Method, routeTemplate, $"{statusCode / 100}xx",
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, statusCode < 400 ? "success" : "error");
             }
         }
     }
@@ -305,9 +308,16 @@ app.UseExceptionHandler(exceptionApp =>
     exceptionApp.Run(async context =>
     {
         var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Error");
         if (exception is BackendValidationException validationException)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            logger.LogWarning(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "4xx", validationException.Code, "error");
             await context.Response.WriteAsJsonAsync(new { error = validationException.Message });
             return;
         }
@@ -315,6 +325,12 @@ app.UseExceptionHandler(exceptionApp =>
         if (exception is NpgsqlException || exception is SocketException)
         {
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", "database_unavailable", "error");
             await context.Response.WriteAsJsonAsync(new
             {
                 error = "Database unavailable."
@@ -327,6 +343,12 @@ app.UseExceptionHandler(exceptionApp =>
             context.Response.StatusCode = embeddingException.IsTransient
                 ? StatusCodes.Status503ServiceUnavailable
                 : StatusCodes.Status502BadGateway;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", "embedding_provider_failed", "error");
             if (embeddingException.RetryAfterSeconds.HasValue && embeddingException.RetryAfterSeconds.Value > 0)
             {
                 context.Response.Headers["Retry-After"] = embeddingException.RetryAfterSeconds.Value.ToString();
@@ -343,6 +365,12 @@ app.UseExceptionHandler(exceptionApp =>
         }
 
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        logger.LogError(
+            "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-windows-app-backend", "http", "request_error_handled",
+            context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+            context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+            context.Request.Method, "5xx", exception?.GetType().Name ?? "unhandled_error", "error");
         await context.Response.WriteAsJsonAsync(new
         {
             error = "An unexpected server error occurred."

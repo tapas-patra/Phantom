@@ -1051,6 +1051,23 @@ final class PhantomStore: ObservableObject {
                     protocolRejected: { code in
                         Diagnostics.event("control_frame_rejected", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": code, "validation_outcome": "rejected"])
                         self.mirrorLiveEvent("control_frame_rejected", turnId: requestId, operationId: self.activeOperationId, fields: ["error_code": code, "validation_outcome": "rejected"])
+                    },
+                    decisionParsed: { decision, calls in
+                        let fields = [
+                            "question_type": decision.questionType,
+                            "intent": decision.intent,
+                            "action": decision.action.rawValue,
+                            "answer_basis": decision.answerBasis,
+                            "confidence_bucket": decision.confidence < 0.5 ? "low" : (decision.confidence < 0.8 ? "medium" : "high"),
+                            "entity_type": decision.entityType,
+                            "has_entity_id": decision.entityId.isEmpty ? "false" : "true",
+                            "protocol_version": "\(decision.protocolVersion)",
+                            "validation_outcome": "accepted",
+                            "model_call_count": "\(calls)",
+                            "retrieval_status": decision.action == .retrieve ? "pending" : "not_requested"
+                        ]
+                        Diagnostics.event("control_frame_parsed", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: fields)
+                        self.mirrorLiveEvent("control_frame_parsed", turnId: requestId, operationId: self.activeOperationId, fields: fields)
                     }
                 )
                 conversationManager.complete(result, mode: copilotMode)

@@ -15,6 +15,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 "/api/desktop/telemetry/ingest",
                 new
                 {
+                    eventId = telemetryEvent.EventId,
                     category = telemetryEvent.Category,
                     eventName = telemetryEvent.EventName,
                     attributes = telemetryEvent.Attributes,

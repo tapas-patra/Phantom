@@ -10,5 +10,11 @@
     <Compile Include="../Domain/Entities/RetrievedContextSnippet.cs" Link="Domain/Entities/RetrievedContextSnippet.cs" />
     <Compile Include="../Services/PhantomControlFrameParser.cs" Link="Services/PhantomControlFrameParser.cs" />
     <Compile Include="../Services/LiveCopilotOrchestrator.cs" Link="Services/LiveCopilotOrchestrator.cs" />
+    <Compile Include="../Helpers/CopilotPromptRegistry.cs" Link="Helpers/CopilotPromptRegistry.cs" />
+    <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" />
+    <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" />
+    <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" />
+    <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProjectCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProjectCardDto.cs" />
+    <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseReindexJobDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseReindexJobDto.cs" />
   </ItemGroup>
 </Project>

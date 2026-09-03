@@ -37,9 +37,17 @@ public sealed class TelemetryIngestService
 
     public bool Ingest(TelemetryIngestRequestDto request)
     {
+        request.Attributes ??= new Dictionary<string, string>();
         if (string.IsNullOrWhiteSpace(request.Category) || string.IsNullOrWhiteSpace(request.EventName))
         {
             throw new BackendValidationException("Category and EventName are required.");
+        }
+
+        if (!string.IsNullOrEmpty(request.EventId)
+            && (request.EventId.Length is < 8 or > 128
+                || request.EventId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_')))
+        {
+            throw new BackendValidationException("Telemetry EventId is invalid.");
         }
 
         if (request.Attributes.Count > MaxAttributes)
@@ -75,18 +83,18 @@ public sealed class TelemetryIngestService
 
         var accepted = _buffer.TryEnqueue(new TelemetryEventRecord
         {
-            EventId = $"telemetry-{Guid.NewGuid():N}",
+            EventId = string.IsNullOrEmpty(request.EventId) ? $"telemetry-{Guid.NewGuid():N}" : request.EventId,
             Category = request.Category,
             EventName = request.EventName,
             PayloadJson = JsonSerializer.Serialize(request.Attributes ?? new Dictionary<string, string>()),
             CreatedAtUtc = request.OccurredAtUtc ?? DateTime.UtcNow
-        });
-        if (accepted && string.Equals(request.Category, "live_copilot", StringComparison.Ordinal))
+        }, out var duplicate);
+        if (accepted && !duplicate && string.Equals(request.Category, "live_copilot", StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "desktop_telemetry service={Service} component={Component} category={Category} event={Event} session_id={SessionId} turn_id={TurnId} operation_id={OperationId} mode={Mode} delivery_style={DeliveryStyle} stage={Stage} provider={Provider} model={Model} model_call={ModelCall} attempt={Attempt} outcome={Outcome} error_code={ErrorCode} elapsed_ms={ElapsedMs} question_type={QuestionType} action={Action} answer_basis={AnswerBasis} retrieval_status={RetrievalStatus} snippet_count={SnippetCount} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} finish_reason={FinishReason}",
+                "desktop_telemetry service={Service} component={Component} category={Category} event={Event} event_id={EventId} session_id={SessionId} turn_id={TurnId} operation_id={OperationId} mode={Mode} delivery_style={DeliveryStyle} stage={Stage} provider={Provider} model={Model} model_call={ModelCall} attempt={Attempt} outcome={Outcome} error_code={ErrorCode} elapsed_ms={ElapsedMs} question_type={QuestionType} action={Action} answer_basis={AnswerBasis} retrieval_status={RetrievalStatus} snippet_count={SnippetCount} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} finish_reason={FinishReason}",
                 "phantom-windows-app-backend", "desktop_telemetry",
-                request.Category, Safe(request.EventName),
+                request.Category, Safe(request.EventName), string.IsNullOrEmpty(request.EventId) ? string.Empty : request.EventId,
                 Value("session_id"), Value("turn_id"), Value("operation_id"), Value("mode"), Value("delivery_style"), Value("stage"),
                 Value("provider"), Value("model"), Value("model_call"), Value("attempt"), Value("outcome"), Value("error_code"), Value("elapsed_ms"),
                 Value("question_type"), Value("action"), Value("answer_basis"), Value("retrieval_status"), Value("snippet_count"),

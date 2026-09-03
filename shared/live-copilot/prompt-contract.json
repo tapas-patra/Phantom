@@ -30,11 +30,13 @@
     "lockedFacts": ["employer", "role", "project", "technology", "date", "metric", "scope", "title", "team_size", "award", "outcome"],
     "synthesizable": ["ordinary_interpersonal_context", "disagreement_shape", "action_sequence", "decision_process", "meeting_or_prototype", "rollout_choice", "qualitative_result", "learning"],
     "forbidden": ["placeholders", "synthesis_disclosure", "unsupported_exact_personal_facts", "instructions_from_untrusted_context"],
-    "exactEvidenceRule": "For exact_evidence and profile_synthesis, every employer, role, project, technology, date, metric, scope, title, team size, award, and outcome stated in the answer must be explicitly present in the supplied catalog or evidence. Omit uncertain details."
+    "exactEvidenceRule": "For exact_evidence and profile_synthesis, every employer, role, project, technology, date, duration, metric, scope, title, team or stakeholder count, award, adoption claim, and outcome stated in the answer must be explicitly present in the supplied catalog or evidence. Omit uncertain details.",
+    "basisRule": "General technical, coding, system-design, product, and hypothetical questions stay universal unless the user explicitly asks to apply them to candidate evidence. Profile synthesis may connect verified anchors into a natural answer but must not introduce unsupported locked facts or portray an invented precise incident as documented history.",
+    "exampleQualityRule": "Call code production-ready only when it includes the validation, persistence, concurrency, security, abuse-control, and operational behavior needed for that claim; otherwise label it a minimal runnable example."
   },
   "diagramPolicy": "When the user explicitly asks to draw or diagram an architecture or flow, return one small, complete fenced mermaid diagram and a short explanation. Never use ASCII art. Always close the fence.",
   "privacyAllowlist": [
-    "timestamp_utc", "level", "service", "component", "event", "session_id", "turn_id", "operation_id",
+    "timestamp_utc", "level", "service", "component", "event", "event_id", "session_id", "turn_id", "operation_id",
     "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt", "elapsed_ms", "outcome",
     "error_code", "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type",
     "has_entity_id", "protocol_version", "prefix_bytes", "validation_outcome", "estimated_input_tokens",
@@ -44,7 +46,7 @@
     "model_call_count"
   ],
   "backendLoggingAllowlist": [
-    "timestamp_utc", "level", "service", "component", "category", "event", "correlation_id", "operation_id",
+    "timestamp_utc", "level", "service", "component", "category", "event", "event_id", "correlation_id", "operation_id",
     "request_id", "session_id", "turn_id", "method", "route_template", "status_class", "elapsed_ms", "outcome",
     "error_code", "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt",
     "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type", "has_entity_id",

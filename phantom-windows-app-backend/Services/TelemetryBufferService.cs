@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Persistence;
@@ -13,6 +14,8 @@ public sealed class TelemetryBufferService : BackgroundService
     private readonly TelemetryRepository _repository;
     private readonly OperationalMetricsService _metrics;
     private readonly ILogger<TelemetryBufferService> _logger;
+    private readonly ConcurrentDictionary<string, byte> _recentEventIds = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _recentEventOrder = new();
 
     public TelemetryBufferService(
         TelemetryRepository repository,
@@ -30,8 +33,15 @@ public sealed class TelemetryBufferService : BackgroundService
         });
     }
 
-    public bool TryEnqueue(TelemetryEventRecord record)
+    public bool TryEnqueue(TelemetryEventRecord record, out bool duplicate)
     {
+        duplicate = !_recentEventIds.TryAdd(record.EventId, 0);
+        if (duplicate) return true;
+
+        _recentEventOrder.Enqueue(record.EventId);
+        while (_recentEventIds.Count > 20_000 && _recentEventOrder.TryDequeue(out var expired))
+            _recentEventIds.TryRemove(expired, out _);
+
         var accepted = _channel.Writer.TryWrite(record);
         if (accepted)
         {
@@ -39,6 +49,7 @@ public sealed class TelemetryBufferService : BackgroundService
         }
         else
         {
+            _recentEventIds.TryRemove(record.EventId, out _);
             _metrics.RecordTelemetryDropped();
         }
 
@@ -53,20 +64,11 @@ public sealed class TelemetryBufferService : BackgroundService
         {
             try
             {
-                var readTask = _channel.Reader.ReadAsync(stoppingToken).AsTask();
-                var completed = await Task.WhenAny(readTask, Task.Delay(FlushInterval, stoppingToken));
-                if (completed == readTask)
+                batch.Add(await _channel.Reader.ReadAsync(stoppingToken));
+                await Task.Delay(FlushInterval, stoppingToken);
+                while (batch.Count < BatchSize && _channel.Reader.TryRead(out var buffered))
                 {
-                    batch.Add(await readTask);
-                    while (batch.Count < BatchSize && _channel.Reader.TryRead(out var buffered))
-                    {
-                        batch.Add(buffered);
-                    }
-                }
-
-                if (batch.Count == 0)
-                {
-                    continue;
+                    batch.Add(buffered);
                 }
 
                 await FlushBatchWithRetry(batch, stoppingToken);
@@ -78,6 +80,13 @@ public sealed class TelemetryBufferService : BackgroundService
             }
         }
 
+        while (_channel.Reader.TryRead(out var buffered))
+        {
+            batch.Add(buffered);
+            if (batch.Count < BatchSize) continue;
+            await FlushBatchWithRetry(batch, CancellationToken.None);
+            batch.Clear();
+        }
         if (batch.Count > 0)
         {
             await FlushBatchWithRetry(batch, CancellationToken.None);

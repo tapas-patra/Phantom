@@ -237,6 +237,13 @@ enum PhantomMain {
             return
         }
 
+        if let bundleIdentifier = Bundle.main.bundleIdentifier,
+           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            existing.activate(options: [.activateAllWindows])
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -264,17 +271,23 @@ enum PhantomMain {
             let answerCompletion: [AnswerCompletionFixture]
             let contracts: [ContractFixture]
             let logging: [LoggingFixture]
+            let promptRequirements: [String]
             let sensitiveSamples: [String]
         }
 
         let data = try! Data(contentsOf: fixtureURL())
         let fixtures = try! JSONDecoder().decode(Root.self, from: data)
         precondition(fixtures.version == "live-copilot-v1")
-        precondition(fixtures.contracts.count >= 27)
+        precondition(fixtures.contracts.count >= 30)
         precondition(Set(fixtures.contracts.map(\.id)).count == fixtures.contracts.count)
         precondition(Set(fixtures.contracts.filter { $0.mode == "interview" }.map(\.id)).isSuperset(of: Set(1...26)))
         precondition(fixtures.contracts.allSatisfy { (1...2).contains($0.maxNormalCalls) })
         precondition(fixtures.logging.count >= 4 && fixtures.logging.allSatisfy { $0.terminalEvents == 1 })
+        let firstCallPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .standard, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: []
+        )
+        precondition(fixtures.promptRequirements.allSatisfy { firstCallPrompt.contains($0) })
         for fixture in fixtures.parser {
             let parser = PhantomControlFrameParser(
                 allowedEntityIds: fixture.allowedEntityIds ?? [],

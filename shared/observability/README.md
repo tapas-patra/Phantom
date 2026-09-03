@@ -21,6 +21,8 @@ For one live turn, search its `turn_id`. For one provider attempt, search its `o
 
 If `provider_headers_received` is slow, the delay is connection/provider admission. If headers are fast but `first_upstream_token` is slow, it is provider generation latency. If backend writes quickly but `model_first_byte_received` is late, inspect the desktop control-frame/parser path.
 
+Desktop telemetry also carries an opaque `event_id`. Replayed queue entries keep the same ID, so the authority service acknowledges them idempotently and does not persist or print duplicate milestone records. `telemetry_batch_flushed` confirms that the bounded backend channel reached PostgreSQL; accepted ingest requests may precede that message by the two-second batching window.
+
 ## Desktop files
 
 - Windows: `%AppData%\Windows Host Service 271\performance_log.jsonl` and `crash_log.txt`.

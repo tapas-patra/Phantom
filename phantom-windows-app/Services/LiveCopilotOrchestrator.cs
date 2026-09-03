@@ -23,7 +23,8 @@ namespace SecureOverlay.Services
             Action<string> publish,
             Action? resetPublishedAttempt,
             CancellationToken cancellationToken,
-            Action<string>? protocolRejected = null)
+            Action<string>? protocolRejected = null,
+            Action<LiveTurnDecision, int>? decisionParsed = null)
         {
             var modelCalls = 0;
             var protocolRetries = 0;
@@ -67,6 +68,7 @@ namespace SecureOverlay.Services
             }
 
             var decision = parser.Decision!;
+            decisionParsed?.Invoke(decision, modelCalls);
             if (protocolRetries > 0 && decision.Action == LiveCopilotAction.Retrieve)
                 throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)

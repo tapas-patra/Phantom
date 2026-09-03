@@ -46,6 +46,7 @@ namespace SecureOverlay.Services
         public int LastModelCallCount { get; private set; }
         public event EventHandler<string>? APISwitchNotification;
         public event EventHandler<string>? StageChanged;
+        public event Action<LiveTurnDecision, int>? DecisionParsed;
 
         public ConversationManager(
             IAIService aiService, string systemPrompt, ModelConfig modelConfig,
@@ -213,7 +214,13 @@ namespace SecureOverlay.Services
                     },
                     chunk => { StageChanged?.Invoke(this, "Answering…"); LiveRequestTrace.Current?.Mark("answer_first_visible_token"); onChunkReceived(chunk); },
                     onRetryCleanup, cancellationToken,
-                    code => LiveRequestTrace.Current?.RejectControl(code)).ConfigureAwait(false);
+                    code => LiveRequestTrace.Current?.RejectControl(code),
+                    (decision, calls) =>
+                    {
+                        LiveRequestTrace.Current?.SetDecision(
+                            decision, calls, decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested");
+                        DecisionParsed?.Invoke(decision, calls);
+                    }).ConfigureAwait(false);
 
                 LastDecision = result.Decision;
                 LastModelCallCount = result.ModelCallCount;
@@ -223,7 +230,6 @@ namespace SecureOverlay.Services
                 assistant.AnswerSource = result.Decision.AnswerBasis;
                 assistant.InterviewIntent = result.Decision.Intent;
                 CurrentHistory.Add(assistant);
-                LiveRequestTrace.Current?.SetDecision(result.Decision, result.ModelCallCount, result.RetrievalStatus);
                 return (result.Answer, string.Empty);
             }
             catch (OperationCanceledException) { CurrentHistory.Remove(user); return (string.Empty, "Cancelled"); }

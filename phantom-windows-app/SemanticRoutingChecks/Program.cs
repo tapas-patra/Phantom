@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SecureOverlay.Domain;
 using SecureOverlay.Domain.Entities;
+using SecureOverlay.Helpers;
 using SecureOverlay.Services;
 
 var fixtures = JsonSerializer.Deserialize<FixtureRoot>(File.ReadAllText(FindFixtures()), new JsonSerializerOptions
@@ -36,7 +37,7 @@ foreach (var fixture in fixtures.Invalid)
 foreach (var fixture in fixtures.AnswerCompletion)
     Equal(fixture.ExpectedComplete.ToString(), LiveCopilotOrchestrator.IsCompleteAnswer(fixture.Body).ToString(), fixture.Name + " completion");
 
-if (fixtures.Contracts.Count < 27 || fixtures.Contracts.Select(x => x.Id).Distinct().Count() != fixtures.Contracts.Count)
+if (fixtures.Contracts.Count < 30 || fixtures.Contracts.Select(x => x.Id).Distinct().Count() != fixtures.Contracts.Count)
     throw new InvalidOperationException("The shared golden corpus is incomplete or has duplicate IDs.");
 if (fixtures.Contracts.Where(x => x.Mode == "interview").Select(x => x.Id).Intersect(Enumerable.Range(1, 26)).Count() != 26)
     throw new InvalidOperationException("Interview fixtures 1 through 26 are required.");
@@ -44,6 +45,11 @@ if (fixtures.Contracts.Any(x => x.MaxNormalCalls is < 1 or > 2))
     throw new InvalidOperationException("A fixture permits an invalid normal model-call count.");
 if (fixtures.Logging.Count < 4 || fixtures.Logging.Any(x => x.TerminalEvents != 1))
     throw new InvalidOperationException("Logging correlation fixtures are incomplete.");
+var firstCallPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>());
+if (fixtures.PromptRequirements.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows prompt is missing a shared grounding requirement.");
 
 var directFrame = fixtures.Parser.First(x => x.ExpectedAction == "answer").Chunks;
 var directCalls = 0;
@@ -127,6 +133,7 @@ sealed class FixtureRoot
     public List<AnswerCompletionFixture> AnswerCompletion { get; set; } = new();
     public List<ContractFixture> Contracts { get; set; } = new();
     public List<LoggingFixture> Logging { get; set; } = new();
+    public List<string> PromptRequirements { get; set; } = new();
     public List<string> SensitiveSamples { get; set; } = new();
 }
 sealed class ParserFixture

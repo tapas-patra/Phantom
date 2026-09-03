@@ -129,7 +129,13 @@
       "acceptableBases": ["universal_knowledge", "exact_evidence"],
       "maxNormalCalls": 1
     },
-    { "id": 28, "name": "explicit-architecture-diagram", "mode": "interview", "question": "Draw the architecture of that project.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "system_design", "personal_factual"], "acceptableBases": ["exact_evidence", "profile_synthesis"], "requiredFacts": ["```mermaid"], "forbiddenClaims": ["ASCII art"], "maxNormalCalls": 1 }
+    { "id": 28, "name": "explicit-architecture-diagram", "mode": "interview", "question": "Draw the architecture of that project.", "expectedAction": "answer", "acceptableQuestionTypes": ["technical", "system_design", "personal_factual"], "acceptableBases": ["exact_evidence", "profile_synthesis"], "requiredFacts": ["```mermaid"], "forbiddenClaims": ["ASCII art"], "maxNormalCalls": 1 },
+    { "id": 29, "name": "observed-conflict-no-invention", "mode": "interview", "question": "Tell me about a difficult conflict you resolved.", "expectedAction": "answer", "acceptableQuestionTypes": ["behavioral"], "acceptableBases": ["profile_synthesis", "exact_evidence"], "forbiddenClaims": ["two senior testers", "40 percent", "two-week", "YAML-driven", "rolled out across teams"], "maxNormalCalls": 2 },
+    { "id": 30, "name": "production-url-shortener", "mode": "interview", "question": "Build a production-ready URL shortener using Python.", "expectedAction": "answer", "acceptableQuestionTypes": ["coding", "system_design"], "acceptableBases": ["universal_knowledge"], "forbiddenClaims": ["In my work", "profile_synthesis", "This is production-ready"], "maxNormalCalls": 1 }
+  ],
+  "promptRequirements": [
+    "General technical, coding, system-design, and product questions stay universal",
+    "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes"
   ],
   "logging": [
     { "name": "direct-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "answer_completed"], "modelOperations": 1, "terminalEvents": 1 },

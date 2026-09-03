@@ -592,6 +592,7 @@ struct BackendClient {
 
     func ingestTelemetry(accessToken: String, event: PhantomTelemetryEvent) async throws {
         struct Body: Encodable {
+            let eventId: String
             let category: String
             let eventName: String
             let attributes: [String: String]
@@ -607,6 +608,7 @@ struct BackendClient {
             operationId: event.attributes["operation_id"] ?? UUID().uuidString
         )
         request.httpBody = try encoder.encode(Body(
+            eventId: event.eventId,
             category: event.category,
             eventName: event.eventName,
             attributes: event.attributes,

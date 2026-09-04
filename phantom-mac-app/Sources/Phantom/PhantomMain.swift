@@ -67,9 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func connectStore() {
-        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough, useFakeCursor in
+        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough, useFakeCursor, fakeCursorScale in
             self?.window.apply(opacity: opacity, clickThrough: clickThrough)
-            self?.window.configureFakeCursor(enabled: useFakeCursor, clickThrough: clickThrough)
+            self?.window.configureFakeCursor(enabled: useFakeCursor, clickThrough: clickThrough, scale: fakeCursorScale)
         }
         store.onCaptureScreenshot = { [weak self] in
             guard let self else { throw ScreenshotError.captureFailed }
@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
         }
         window.apply(opacity: store.opacity, clickThrough: store.clickThrough)
-        window.configureFakeCursor(enabled: store.useFakeCursor, clickThrough: store.clickThrough)
+        window.configureFakeCursor(enabled: store.useFakeCursor, clickThrough: store.clickThrough, scale: store.fakeCursorScale)
     }
 
     private func toggleWindow() {
@@ -199,6 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 enum PhantomMain {
     static func main() {
         if CommandLine.arguments.contains("--self-check") {
+            precondition(FakeCursorCoordinator.clampedScale(0.1) == 0.5)
+            precondition(FakeCursorCoordinator.clampedScale(3.0) == 2.0)
+            precondition(FakeCursorCoordinator.transitionDuration(distance: 0) == 0.1)
+            precondition(FakeCursorCoordinator.transitionDuration(distance: 1_000) == 0.8)
             precondition(GlobalHotKey.handles(registeredID: 1, eventID: 1))
             precondition(!GlobalHotKey.handles(registeredID: 1, eventID: 4))
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")

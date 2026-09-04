@@ -460,6 +460,17 @@ private struct SettingsView: View {
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
                         Toggle("Use an experimental fake cursor inside Phantom", isOn: $store.useFakeCursor)
+                            .disabled(store.settingsClickThrough)
+                        if store.useFakeCursor {
+                            HStack {
+                                Text("Fake cursor size")
+                                Slider(value: $store.fakeCursorScale, in: 0.5...2.0, step: 0.05)
+                                    .disabled(store.settingsClickThrough)
+                                Text("\(Int(store.fakeCursorScale * 100))%")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .frame(width: 48)
+                            }
+                        }
                         Text("When enabled, Phantom hides the system pointer over its window, shows a local protected pointer, and leaves a capturable decoy at the entry point. macOS capture exclusion is not guaranteed—verify the actual sharing preview before every use. Fake cursor is disabled while click-through is active.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)

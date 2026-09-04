@@ -290,6 +290,7 @@ namespace SecureOverlay
                 _settings.UseFakeCursor,
                 _settings.FakeCursorSize
             );
+            _cursorManager.SetClickThroughActive(_settings.ClickThroughEnabled);
             Log.WriteLine("Two-cursor system initialized");
 
             _proc = HookCallback;
@@ -1388,6 +1389,7 @@ namespace SecureOverlay
             Log.WriteLine("Applying screen capture protection...");
             WindowProtection.ApplyProtection(_windowHandle);
             WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            _cursorManager?.SetClickThroughActive(_settings.ClickThroughEnabled);
             UpdateClickThroughButtonState();
             
             uint affinity;
@@ -3605,6 +3607,7 @@ namespace SecureOverlay
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
                 WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+                _cursorManager?.SetClickThroughActive(_settings.ClickThroughEnabled);
                 UpdateLegacyFallbackButtonState();
                 UpdateClickThroughButtonState();
                 
@@ -3627,6 +3630,7 @@ namespace SecureOverlay
                     _settings.UseFakeCursor,
                     _settings.FakeCursorSize
                 );
+                _cursorManager.SetClickThroughActive(_settings.ClickThroughEnabled);
                 Log.WriteLine("✓ Cursor manager reinitialized with new settings");
 
                 var newProvider = _currentAI?.GetProviderName() ?? "None";
@@ -4200,6 +4204,7 @@ namespace SecureOverlay
             _settings.ClickThroughEnabled = !_settings.ClickThroughEnabled;
             SettingsManager.Save(_settings);
             WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            _cursorManager?.SetClickThroughActive(_settings.ClickThroughEnabled);
             UpdateClickThroughButtonState();
             Log.WriteLine($"Click-through {(_settings.ClickThroughEnabled ? "enabled" : "disabled")} reason=header_button");
         }
@@ -4229,6 +4234,7 @@ namespace SecureOverlay
             _settings.ClickThroughEnabled = false;
             SettingsManager.Save(_settings);
             WindowProtection.SetClickThrough(_windowHandle, false);
+            _cursorManager?.SetClickThroughActive(false);
             UpdateClickThroughButtonState();
             Log.WriteLine($"Click-through disabled reason={reason}");
         }

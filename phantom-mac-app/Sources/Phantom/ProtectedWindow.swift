@@ -3,7 +3,6 @@ import AppKit
 @MainActor
 final class ProtectedWindow: NSPanel {
     private let fakeCursor = FakeCursorCoordinator()
-    private var cursorTrackingArea: NSTrackingArea?
 
     init() {
         super.init(
@@ -34,32 +33,26 @@ final class ProtectedWindow: NSPanel {
         standardWindowButton(.closeButton)?.toolTip = nil
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
+        fakeCursor.attach(to: self)
     }
 
     func apply(opacity: Double, clickThrough: Bool) {
         alphaValue = max(0.35, min(opacity, 1.0))
         ignoresMouseEvents = clickThrough
-        fakeCursor.configure(enabled: fakeCursorEnabled, clickThrough: clickThrough)
+        fakeCursor.configure(enabled: fakeCursorEnabled, clickThrough: clickThrough, scale: fakeCursorScale)
     }
 
     private var fakeCursorEnabled = false
+    private var fakeCursorScale = 1.0
 
     func installCursorTracking() {
-        guard let contentView else { return }
-        if let cursorTrackingArea { contentView.removeTrackingArea(cursorTrackingArea) }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
-            owner: self,
-            userInfo: nil
-        )
-        contentView.addTrackingArea(area)
-        cursorTrackingArea = area
+        fakeCursor.attach(to: self)
     }
 
-    func configureFakeCursor(enabled: Bool, clickThrough: Bool) {
+    func configureFakeCursor(enabled: Bool, clickThrough: Bool, scale: Double) {
         fakeCursorEnabled = enabled
-        fakeCursor.configure(enabled: enabled, clickThrough: clickThrough)
+        fakeCursorScale = scale
+        fakeCursor.configure(enabled: enabled, clickThrough: clickThrough, scale: scale)
     }
 
     func stopFakeCursor() {
@@ -84,15 +77,4 @@ final class ProtectedWindow: NSPanel {
         }
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        fakeCursor.entered(at: convertPoint(toScreen: event.locationInWindow))
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        fakeCursor.moved(to: convertPoint(toScreen: event.locationInWindow))
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        fakeCursor.exited(at: NSEvent.mouseLocation)
-    }
 }

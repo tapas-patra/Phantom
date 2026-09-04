@@ -26,6 +26,7 @@ namespace SecureOverlay
         // Fake cursor window (visible to screen share)
         private FakeCursorWindow? _fakeCursorWindow;
         private bool _useFakeCursor = true;
+        private bool _clickThroughActive;
 
         // Debounce timers to prevent flickering at borders
         private System.Windows.Threading.DispatcherTimer? _activateTimer;
@@ -72,7 +73,7 @@ namespace SecureOverlay
             _activateTimer.Tick += (s, e) =>
             {
                 _activateTimer.Stop();
-                if (!_isSuspended)
+                if (!_isSuspended && !_clickThroughActive)
                     ActivateCustomCursorImmediate();
             };
 
@@ -190,7 +191,7 @@ namespace SecureOverlay
 
         public void ActivateCustomCursor()
         {
-            if (!_useFakeCursor || _isSuspended)
+            if (!_useFakeCursor || _isSuspended || _clickThroughActive)
                 return;
 
             _deactivateTimer?.Stop();
@@ -204,7 +205,7 @@ namespace SecureOverlay
 
         private void ActivateCustomCursorImmediate()
         {
-            if (_customCursorActive || _isSuspended)
+            if (_customCursorActive || _isSuspended || _clickThroughActive)
                 return;
 
             try
@@ -288,10 +289,12 @@ namespace SecureOverlay
                 GetCursorPos(out exitPos);
                 Point exitPoint = new Point(exitPos.X, exitPos.Y);
                 
-                // Calculate distance
+                var animationStart = _fakeCursorWindow?.GetHotspotScreenPosition() ?? _lastCursorPosition;
+
+                // Calculate from the stationary decoy, not the moving protected cursor.
                 double distance = Math.Sqrt(
-                    Math.Pow(exitPoint.X - _lastCursorPosition.X, 2) + 
-                    Math.Pow(exitPoint.Y - _lastCursorPosition.Y, 2)
+                    Math.Pow(exitPoint.X - animationStart.X, 2) +
+                    Math.Pow(exitPoint.Y - animationStart.Y, 2)
                 );
                 
                 // NEW: Use constant speed for natural movement
@@ -303,7 +306,7 @@ namespace SecureOverlay
                 // Clamp between reasonable limits
                 animationMs = Math.Max(100, Math.Min(800, animationMs));
                 
-                Log.WriteLine($"🖱️ Animating cursor: ({_lastCursorPosition.X:F0}, {_lastCursorPosition.Y:F0}) → ({exitPoint.X}, {exitPoint.Y})");
+                Log.WriteLine($"🖱️ Animating cursor: ({animationStart.X:F0}, {animationStart.Y:F0}) → ({exitPoint.X}, {exitPoint.Y})");
                 Log.WriteLine($"   Distance: {distance:F0}px | Duration: {animationMs}ms | Speed: {(distance / animationMs):F1}px/ms");
                 
                 if (_fakeCursorWindow != null)
@@ -368,7 +371,7 @@ namespace SecureOverlay
 
         public void UpdateCustomCursorPosition(Point position)
         {
-            if (_useFakeCursor && _cursorDot != null && _customCursorActive && !_isSuspended)
+            if (_useFakeCursor && _cursorDot != null && _customCursorActive && !_isSuspended && !_clickThroughActive)
             {
                 // Position custom cursor
                 Canvas.SetLeft(_cursorDot, position.X - 8);
@@ -454,9 +457,50 @@ namespace SecureOverlay
             _fakeCursorWindow?.SetScale(scale);
         }
 
+        public void SetClickThroughActive(bool active)
+        {
+            _clickThroughActive = active;
+            if (active)
+            {
+                ResetCursorImmediately();
+                return;
+            }
+
+            if (_useFakeCursor && !_isSuspended && _parentWindow?.IsVisible == true)
+            {
+                POINT cursorPos;
+                if (GetCursorPos(out cursorPos))
+                {
+                    var local = _parentWindow.PointFromScreen(new Point(cursorPos.X, cursorPos.Y));
+                    if (local.X >= 0 && local.Y >= 0 &&
+                        local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight)
+                    {
+                        ActivateCustomCursor();
+                    }
+                }
+            }
+        }
+
+        private void ResetCursorImmediately()
+        {
+            _activateTimer?.Stop();
+            _deactivateTimer?.Stop();
+            _embeddedSurfaceCursorActive = false;
+            _customCursorActive = false;
+
+            if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
+            if (_cursorBadge != null) _cursorBadge.Visibility = Visibility.Collapsed;
+            if (_fakeCursorWindow != null)
+            {
+                _fakeCursorWindow.CancelAnimation();
+                _fakeCursorWindow.Hide();
+            }
+            if (_parentWindow != null) _parentWindow.Cursor = null;
+        }
+
         public void ShowFakeCursorPreview()
         {
-            if (_fakeCursorWindow != null)
+            if (_fakeCursorWindow != null && !_clickThroughActive)
             {
                 POINT cursorPos;
                 GetCursorPos(out cursorPos);

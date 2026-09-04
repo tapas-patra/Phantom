@@ -70,6 +70,10 @@ namespace SecureOverlay
 
         private System.Windows.Threading.DispatcherTimer? _cursorUpdateTimer;
         private IntPtr _lastCursorHandle = IntPtr.Zero;
+        private BitmapSource? _cursorBitmap;
+        private double _cursorScale = 1.0;
+        private double _hotspotPixelX;
+        private double _hotspotPixelY;
 
         public FakeCursorWindow()
         {
@@ -130,11 +134,10 @@ namespace SecureOverlay
                         // Update image
                         Dispatcher.Invoke(() =>
                         {
-                            CursorImage.Source = bitmapSource;
-                            
-                            // Adjust window size to cursor size
-                            this.Width = bitmapSource.PixelWidth;
-                            this.Height = bitmapSource.PixelHeight;
+                            _cursorBitmap = bitmapSource;
+                            _hotspotPixelX = iconInfo.xHotspot;
+                            _hotspotPixelY = iconInfo.yHotspot;
+                            ApplyCursorMetrics();
                         });
                     }
                     finally
@@ -169,8 +172,8 @@ namespace SecureOverlay
             var dpiScale = GetDpiScale();
             
             // Convert physical pixels to device-independent pixels
-            double dipX = screenX / dpiScale.DpiScaleX;
-            double dipY = screenY / dpiScale.DpiScaleY;
+            double dipX = screenX / dpiScale.DpiScaleX - HotspotDipX(dpiScale);
+            double dipY = screenY / dpiScale.DpiScaleY - HotspotDipY(dpiScale);
             
             this.Left = dipX;
             this.Top = dipY;
@@ -182,8 +185,8 @@ namespace SecureOverlay
             {
                 var dpiScale = GetDpiScale();
                 
-                double dipX = screenX / dpiScale.DpiScaleX;
-                double dipY = screenY / dpiScale.DpiScaleY;
+                double dipX = screenX / dpiScale.DpiScaleX - HotspotDipX(dpiScale);
+                double dipY = screenY / dpiScale.DpiScaleY - HotspotDipY(dpiScale);
                 
                 var leftAnimation = new DoubleAnimation
                 {
@@ -231,19 +234,42 @@ namespace SecureOverlay
             return new DpiScale(1.0, 1.0);
         }
 
-        // Legacy method for backward compatibility
         public void SetScale(double scale)
         {
-            // With real cursor cloning, we can apply a transform if needed
-            if (scale != 1.0)
-            {
-                CursorImage.RenderTransform = new ScaleTransform(scale, scale);
-                Log.WriteLine($"Cursor scale applied: {scale:F2}x");
-            }
-            else
-            {
-                CursorImage.RenderTransform = null;
-            }
+            _cursorScale = Math.Max(0.5, Math.Min(2.0, scale));
+            ApplyCursorMetrics();
+            Log.WriteLine($"Cursor scale applied: {_cursorScale:F2}x");
+        }
+
+        public Point GetHotspotScreenPosition()
+        {
+            var dpiScale = GetDpiScale();
+            return new Point(
+                (Left + HotspotDipX(dpiScale)) * dpiScale.DpiScaleX,
+                (Top + HotspotDipY(dpiScale)) * dpiScale.DpiScaleY
+            );
+        }
+
+        public void CancelAnimation()
+        {
+            BeginAnimation(Window.LeftProperty, null);
+            BeginAnimation(Window.TopProperty, null);
+        }
+
+        private double HotspotDipX(DpiScale dpiScale) => _hotspotPixelX * _cursorScale / dpiScale.DpiScaleX;
+        private double HotspotDipY(DpiScale dpiScale) => _hotspotPixelY * _cursorScale / dpiScale.DpiScaleY;
+
+        private void ApplyCursorMetrics()
+        {
+            if (_cursorBitmap == null) return;
+            var dpiScale = GetDpiScale();
+            var width = Math.Max(1, _cursorBitmap.PixelWidth * _cursorScale / dpiScale.DpiScaleX);
+            var height = Math.Max(1, _cursorBitmap.PixelHeight * _cursorScale / dpiScale.DpiScaleY);
+            CursorImage.Source = _cursorBitmap;
+            CursorImage.Width = width;
+            CursorImage.Height = height;
+            Width = width;
+            Height = height;
         }
 
         protected override void OnSourceInitialized(EventArgs e)

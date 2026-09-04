@@ -63,7 +63,7 @@ The app uses `phantom.hosted.json`. Environment variables override it:
 4. Test area screenshot attachment and its preview/replace/remove controls.
 5. In Settings, request both Microphone and Speech Recognition permissions; if previously denied, use the privacy-pane buttons and reopen Phantom.
 6. Collapse Phantom to its bar and confirm the compact microphone button works.
-7. Open Settings and test opacity, click-through, tier restrictions, Knowledge Base status, context, and BYO Keychain storage.
+7. Open Settings and test opacity, click-through, the experimental fake cursor, tier restrictions, Knowledge Base status, context, and BYO Keychain storage. Verify the fake cursor both locally and in the capture preview, then confirm disabling it immediately restores the system pointer.
 8. Press **Command + Control + `** to hide and show Phantom.
 9. Press the red close button, cancel once, then confirm that Quit terminates Phantom.
 10. Start a Zoom, Teams, Meet, OBS, and QuickTime recording one at a time.
@@ -73,6 +73,6 @@ Do not ship an “invisible” guarantee until every supported macOS and capture
 
 ## Platform-specific exclusions
 
-Windows fake-cursor, task-view suppression, WebView2 voice hosting, and Windows debug simulation tools are not copied because they are OS-specific implementation details. AppKit window/Spaces handling, Speech.framework, ScreenCaptureKit, Keychain, and protected SwiftUI surfaces provide their macOS counterparts.
+The Windows fake-cursor behavior has an AppKit-specific, opt-in counterpart: a protected local pointer follows the real position while a capturable decoy remains at the overlay entry point. It does not create a capture-invisibility guarantee because modern macOS capture clients may ignore `NSWindow.SharingType.none`. Windows task-view suppression, WebView2 voice hosting, and Windows debug simulation tools remain platform-specific. AppKit window/Spaces handling, Speech.framework, ScreenCaptureKit, Keychain, and protected SwiftUI surfaces provide the other macOS counterparts.
 
 “Audio capture” currently means microphone speech-to-text, matching the interview-input flow. It does not capture system/output audio.

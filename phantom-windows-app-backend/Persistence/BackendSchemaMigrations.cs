@@ -30,7 +30,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("022_managed_ai_credential_health", ManagedAiCredentialHealthSql),
         new SchemaMigration("023_admin_email_otp", AdminEmailOtpSql),
         new SchemaMigration("024_admin_action_audit", AdminActionAuditSql),
-        new SchemaMigration("025_dashboard_email_verification", DashboardEmailVerificationSql)
+        new SchemaMigration("025_dashboard_email_verification", DashboardEmailVerificationSql),
+        new SchemaMigration("026_download_and_feedback_analytics", DownloadAndFeedbackAnalyticsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1655,5 +1656,37 @@ ALTER TABLE dashboard_interview_question_banks
     private const string DashboardInterviewQuestionBankNamesSql = @"
 ALTER TABLE dashboard_interview_question_banks
     ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
+";
+
+    private const string DownloadAndFeedbackAnalyticsSql = @"
+CREATE TABLE IF NOT EXISTS download_events (
+    download_event_id TEXT PRIMARY KEY,
+    token_nonce TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    platform TEXT NOT NULL CHECK (platform IN ('windows', 'macos')),
+    downloaded_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_events_downloaded
+    ON download_events(downloaded_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_download_events_user_downloaded
+    ON download_events(user_id, downloaded_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS feedback_submissions (
+    feedback_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    category TEXT NOT NULL,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    message TEXT NOT NULL,
+    consent_to_publish BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewed', 'published', 'rejected')),
+    admin_notes TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_submissions_status_created
+    ON feedback_submissions(status, created_at_utc DESC);
 ";
 }

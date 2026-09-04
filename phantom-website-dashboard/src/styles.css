@@ -231,6 +231,15 @@ p { line-height: 1.68; }
 .product-ribbon .info-row span { display: block; margin-bottom: 9px; color: var(--blue); font-family: "IBM Plex Mono", monospace; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .product-ribbon .info-row strong { color: var(--ink); font-weight: 500; line-height: 1.45; }
 
+.features-section { padding: 132px 0 120px; }
+.features-section .section-heading { max-width: 940px; }
+.features-section .section-heading h2, .reviews-section .section-heading h2, .feedback-copy h2 { margin: 0; font-size: clamp(2.5rem, 5vw, 5rem); line-height: 0.98; }
+.feature-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 52px; }
+.feature-card { min-height: 245px; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+.feature-card > span { color: var(--blue); font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; }
+.feature-card h3 { margin: 56px 0 10px; font-size: 1.25rem; }
+.feature-card p { margin: 0; color: var(--muted); }
+
 .story-intro { display: grid; grid-template-columns: 1.05fr 0.75fr; align-items: end; gap: 12%; padding: 132px 0 54px; }
 .story-intro h2, .feature-copy h2, .trust-section h2, .closing-cta h2 { margin: 0; font-size: clamp(2.5rem, 5vw, 5rem); line-height: 0.98; }
 .story-intro > p { margin: 0; color: var(--muted); }
@@ -271,6 +280,27 @@ p { line-height: 1.68; }
 .definition-card h3 { margin: 0 0 10px; }
 .definition-card p { margin: 0; color: var(--muted); }
 .responsible-note { margin: 42px 0 0; padding: 20px 0 0; color: #6d788a; border-top: 1px solid var(--line); font-size: 0.86rem; }
+.reviews-section { padding: 0 0 120px; }
+.reviews-section .section-heading { max-width: 860px; }
+.reviews-section .section-heading > p:not(.eyebrow) { color: var(--muted); }
+.review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 48px; }
+.review-card { min-height: 280px; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+.review-stars { color: var(--amber); letter-spacing: 0.12em; }
+.review-stars span { color: #d5dce6; }
+.review-card blockquote { margin: 40px 0 24px; color: var(--ink); font-family: "Newsreader", serif; font-size: 1.45rem; line-height: 1.35; }
+.review-card > p { margin: auto 0 0; color: var(--muted); font-size: 0.86rem; }
+.reviews-empty { margin-top: 46px; padding: 36px; border: 1px dashed var(--line-strong); border-radius: 16px; background: rgba(255,255,255,0.6); }
+.reviews-empty p { max-width: 720px; margin-bottom: 0; color: var(--muted); }
+.feedback-section { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: clamp(40px, 8vw, 110px); align-items: start; padding: 92px clamp(24px, 6vw, 80px); color: var(--night-text); border-radius: 24px; background: var(--night-soft); }
+.feedback-copy h2 { color: var(--night-text); }
+.feedback-copy > p:not(.eyebrow) { color: var(--night-muted); }
+.feedback-copy .text-link { color: #91adff; }
+.public-feedback-form { display: grid; gap: 16px; padding: 28px; border: 1px solid var(--night-line); border-radius: 16px; background: #0a1522; }
+.public-feedback-form label { display: grid; gap: 7px; color: #b7c5d5; font-size: 0.84rem; }
+.public-feedback-form .consent-row { grid-template-columns: auto 1fr; align-items: start; line-height: 1.55; }
+.public-feedback-form .consent-row input { width: 18px; min-height: 18px; margin-top: 2px; accent-color: var(--blue); }
+.feedback-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.feedback-admin-message { display: block; min-width: 260px; max-width: 520px; white-space: normal; }
 .marketing-pricing { padding-bottom: 120px; }
 .marketing-pricing .plan-card { min-height: 290px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
 .plan-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
@@ -339,7 +369,12 @@ p { line-height: 1.68; }
 .auth-aside > p:not(.eyebrow), .auth-aside li { position: relative; z-index: 1; color: var(--night-muted); }
 .auth-aside ul { position: relative; z-index: 1; padding-left: 20px; line-height: 1.8; }
 .auth-form { display: grid; align-content: start; gap: 17px; padding: 42px; }
-.auth-form label, .admin-form label, .admin-form-panel label, .question-bank-editor label, .upload-panel label { display: grid; gap: 7px; color: #46556a; font-size: 0.84rem; }
+.auth-form label, .auth-form .password-field, .admin-form label, .admin-form-panel label, .question-bank-editor label, .upload-panel label { display: grid; gap: 7px; color: #46556a; font-size: 0.84rem; }
+.password-input-wrap { position: relative; }
+.password-input-wrap input { padding-right: 48px; }
+.password-visibility { position: absolute; top: 50%; right: 5px; display: grid; place-items: center; width: 38px; height: 36px; padding: 0; color: #607087; border: 0; border-radius: 7px; background: transparent; transform: translateY(-50%); }
+.password-visibility:hover { color: var(--ink); background: #eef2f7; }
+.password-visibility svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 input, select, textarea {
   width: 100%;
   min-height: 44px;
@@ -488,7 +523,7 @@ tbody tr:hover { background: rgba(111, 145, 255, 0.055); }
 @media (max-width: 1120px) {
   .site-header { grid-template-columns: auto 1fr; }
   .top-nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; overflow-x: auto; }
-  .marketing-hero, .feature-showcase, .auth-shell { grid-template-columns: 1fr; }
+  .marketing-hero, .feature-showcase, .feedback-section, .auth-shell { grid-template-columns: 1fr; }
   .marketing-hero { padding-top: 70px; }
   .marketing-hero-copy { max-width: 760px; }
   .phantom-demo { min-height: 470px; }
@@ -509,7 +544,7 @@ tbody tr:hover { background: rgba(111, 145, 255, 0.055); }
   .product-ribbon { grid-template-columns: repeat(2, 1fr); }
   .product-ribbon .info-row:nth-child(2) { border-right: 0; }
   .product-ribbon .info-row:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
-  .triple-grid, .comparison-grid, .timeline-grid, .stats-grid, .faq-list { grid-template-columns: 1fr; }
+  .triple-grid, .comparison-grid, .timeline-grid, .stats-grid, .faq-list, .feature-card-grid, .review-grid { grid-template-columns: 1fr; }
   .story-intro, .trust-section { padding-top: 92px; }
   .trust-section .section-heading { grid-template-columns: 1fr; gap: 20px; }
   .feature-showcase { padding: 54px 28px; }

@@ -31,4 +31,8 @@ test("public metadata and authenticated no-index controls are present", async ()
   assert.match(html, /og:image/);
   assert.match(robots, /Sitemap:/);
   assert.match(sitemap, /<loc>https:\/\/phantom-interview\.vercel\.app\//);
+  assert.match(sitemap, /refund-policy/);
+  assert.match(app, /function PasswordField/);
+  assert.match(app, /PublicFeedbackSection/);
+  assert.match(app, /Published only with permission/);
 });

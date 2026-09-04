@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   clearAdminLock,
@@ -14,6 +14,7 @@ import {
   fetchAccountSummary,
   fetchAdminOverview,
   fetchAdminAudit,
+  fetchAdminFeedback,
   fetchAdminPaymentOrders,
   fetchAdminSupportTickets,
   fetchAdminPaymentWebhooks,
@@ -28,6 +29,7 @@ import {
   fetchHostedKnowledgeBase,
   fetchHostedKnowledgeBaseDocument,
   fetchInterviewQuestionBanks,
+  fetchPublicReviews,
   markHostedKnowledgeBaseProjectRecent,
   pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
@@ -55,10 +57,12 @@ import {
   sendPhoneOtp,
   setAdminManualLock,
   startGmailOAuth,
+  submitPublicFeedback,
   sendManagedAiAdminTest,
   triggerManagedAiCatalogRefresh,
   triggerManagedAiLatencyCheck,
   updateAdminUser,
+  updateAdminFeedback,
   updateAdminSupportTicket,
   updateHostedKnowledgeBaseProfile,
   updateHostedKnowledgeBaseExperience,
@@ -104,6 +108,34 @@ function getPasswordPolicyError(password) {
   return "";
 }
 
+function PasswordField({ label, id, ...inputProps }) {
+  const generatedId = useId();
+  const inputId = id || generatedId;
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="password-field">
+      <label htmlFor={inputId}>{label}</label>
+      <div className="password-input-wrap">
+        <input id={inputId} {...inputProps} type={visible ? "text" : "password"} />
+        <button
+          className="password-visibility"
+          type="button"
+          aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+          aria-pressed={visible}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? (
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2 2 0 002.7 2.7M9.9 4.2A10.8 10.8 0 0112 4c5.5 0 9 6 9 6a17.7 17.7 0 01-2.1 2.8M6.6 6.7C4.3 8.2 3 10 3 10s3.5 6 9 6a9.8 9.8 0 004.1-.9" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" /><circle cx="12" cy="12" r="2.5" /></svg>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function clearStoredSession(storageKey) {
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(storageKey);
@@ -112,10 +144,11 @@ function clearStoredSession(storageKey) {
 
 const publicNav = [
   { to: "/", label: "Product", section: "product" },
+  { to: "/#features", label: "Features", section: "features" },
   { to: "/#workflow", label: "How it works", section: "workflow" },
   { to: "/pricing", label: "Pricing" },
-  { to: "/download", label: "Download" },
-  { to: "/#security", label: "Security", section: "security" }
+  { to: "/#reviews", label: "Reviews", section: "reviews" },
+  { to: "/download", label: "Download" }
 ];
 
 const userNav = [
@@ -133,6 +166,7 @@ const adminNav = [
   { to: "/admin/users", label: "Users" },
   { to: "/admin/payments", label: "Payments" },
   { to: "/admin/tickets", label: "Tickets" },
+  { to: "/admin/feedback", label: "Feedback" },
   { to: "/admin/managed-ai", label: "Managed AI" },
   { to: "/admin/audit", label: "Audit" },
   { to: "/admin/settings", label: "Settings" }
@@ -227,6 +261,15 @@ const publicValueProps = [
     detail:
       "The website prepares the account and context. The live experience stays in Phantom's focused desktop application."
   }
+];
+
+const publicFeatureCards = [
+  { index: "01", title: "Live voice input", detail: "Capture the question by microphone and keep your hands free while the conversation moves." },
+  { index: "02", title: "Visual context", detail: "Attach a targeted screenshot when code, diagrams, or shared material need to become part of the prompt." },
+  { index: "03", title: "Interview memory", detail: "Turn resumes, project stories, role notes, and company research into reusable context." },
+  { index: "04", title: "Managed or BYO models", detail: "Start with Phantom-managed AI or connect supported provider accounts when you want direct control." },
+  { index: "05", title: "Windows and macOS", detail: "Use the same account, wallet, and hosted context across focused native desktop experiences." },
+  { index: "06", title: "Operational safeguards", detail: "Device visibility, signed downloads, session locks, usage reconciliation, and clear account readiness checks." }
 ];
 
 const publicFaqs = [
@@ -365,6 +408,41 @@ const termsSections = [
     title: "12. Contact",
     body:
       "For legal, privacy, billing, or support requests, use the support route exposed by the Phantom deployment you use, including the dashboard support surface or the contact details published by the operator."
+  }
+];
+
+const refundSections = [
+  {
+    title: "1. When a refund may be requested",
+    body: "You may request a refund within 7 calendar days of purchase when a paid credit pack has not been used. Duplicate charges, confirmed payment errors, and charges for a service Phantom could not provide will also be reviewed. Nothing in this policy limits rights that cannot be excluded under applicable consumer law."
+  },
+  {
+    title: "2. Digital credits and partial use",
+    body: "Phantom credit packs are digital services made available to your account after payment confirmation. Once any credit from a pack has been consumed, that pack is normally non-refundable because the service has begun. If a verified service failure affected only part of a pack, Phantom may offer a proportionate credit restoration or refund after reviewing usage records."
+  },
+  {
+    title: "3. Failed, pending, or duplicate payments",
+    body: "A payment that appears debited but was not confirmed by Phantom may be automatically reversed by the bank or payment provider. Contact support with the payment date, amount, account email, and Razorpay payment or order ID. Never send a card number, CVV, OTP, UPI PIN, or banking password. Duplicate captured payments are eligible for review and refund."
+  },
+  {
+    title: "4. How to request a refund",
+    body: "Submit a billing ticket from the signed-in dashboard or email official.phantomai@gmail.com from the address on your Phantom account. Include the reason for the request and the relevant payment or order ID. Requests are acknowledged as soon as reasonably possible and are assessed against payment and usage records."
+  },
+  {
+    title: "5. Approved refunds and timing",
+    body: "Approved refunds are returned to the original payment method. Phantom will initiate the refund promptly after approval. Banking and payment-provider processing can take approximately 7 to 10 working days after initiation, and the exact timing depends on the payment method and financial institution."
+  },
+  {
+    title: "6. Non-refundable situations",
+    body: "Refunds may be declined when credits have been used, the request is outside the stated window without a legal or service-failure basis, account access was suspended for abuse or a material policy violation, or the request cannot be matched to a captured payment. This does not override any mandatory remedy available under applicable law."
+  },
+  {
+    title: "7. Cancellations and account closure",
+    body: "Phantom currently sells credit packs rather than automatically renewing subscriptions. Closing an account does not automatically refund used or expired credits. If recurring billing is introduced, its cancellation terms will be disclosed before purchase and this policy will be updated."
+  },
+  {
+    title: "8. Disputes and contact",
+    body: "Please contact Phantom first so the payment and usage record can be investigated. If a refund has been initiated, the refund reference supplied by the payment provider can be used with your bank. For billing questions, use the dashboard support route or official.phantomai@gmail.com."
   }
 ];
 
@@ -646,6 +724,7 @@ export default function App() {
         <Route path="/desktop-return" element={<DesktopReturnPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        <Route path="/refund-policy" element={<RefundPolicyPage />} />
         <Route
           path="/dashboard/*"
           element={
@@ -804,6 +883,8 @@ function PublicFooter() {
         <div className="footer-column">
           <strong>Product</strong>
           <Link to="/#workflow">How it works</Link>
+          <Link to="/#features">Features</Link>
+          <Link to="/#reviews">Reviews</Link>
           <Link to="/pricing">Pricing</Link>
           <Link to="/download">Download</Link>
         </div>
@@ -817,6 +898,7 @@ function PublicFooter() {
           <strong>Legal</strong>
           <Link to="/privacy">Privacy Policy</Link>
           <Link to="/terms">Terms of Use</Link>
+          <Link to="/refund-policy">Refund Policy</Link>
         </div>
       </div>
       <div className="footer-bottom">
@@ -868,6 +950,16 @@ function Seo({ title, description, noindex = false, structuredData = null }) {
 }
 
 function MarketingPage({ userSession }) {
+  const [reviews, setReviews] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPublicReviews(6)
+      .then((result) => { if (!cancelled) setReviews(result?.items || []); })
+      .catch(() => { if (!cancelled) setReviews([]); });
+    return () => { cancelled = true; };
+  }, []);
+
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
@@ -923,6 +1015,22 @@ function MarketingPage({ userSession }) {
         {publicFeatureRows.map((item) => <InfoRow key={item.label} label={item.label} value={item.value} />)}
       </section>
 
+      <section className="features-section" id="features">
+        <div className="section-heading">
+          <p className="eyebrow">Features built around the live moment</p>
+          <h2>Everything you need to prepare, retrieve, and respond without losing the conversation.</h2>
+        </div>
+        <div className="feature-card-grid">
+          {publicFeatureCards.map((feature) => (
+            <article className="feature-card" key={feature.title}>
+              <span>{feature.index}</span>
+              <h3>{feature.title}</h3>
+              <p>{feature.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="story-intro" id="workflow">
         <div>
           <p className="eyebrow">One continuous workflow</p>
@@ -974,6 +1082,32 @@ function MarketingPage({ userSession }) {
         <p className="responsible-note">Phantom supports preparation and authorised live assistance. Always follow the applicable rules. Capture invisibility is not guaranteed: verify the actual meeting and screen-sharing preview before use, and do not continue if Phantom is visible.</p>
       </section>
 
+      <section className="reviews-section" id="reviews">
+        <div className="section-heading">
+          <p className="eyebrow">Reviews from the people using Phantom</p>
+          <h2>Published only with permission—never manufactured.</h2>
+          <p>Every review below comes from feedback a person explicitly allowed Phantom to publish and an admin approved.</p>
+        </div>
+        {reviews.length > 0 ? (
+          <div className="review-grid">
+            {reviews.map((review) => (
+              <article className="review-card" key={review.feedbackId}>
+                <div className="review-stars" aria-label={`${review.rating} out of 5 stars`}>{"★".repeat(review.rating)}<span>{"★".repeat(5 - review.rating)}</span></div>
+                <blockquote>“{review.message}”</blockquote>
+                <p>{review.name}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="reviews-empty">
+            <strong>We are collecting our first publishable reviews.</strong>
+            <p>Use the feedback form below to share an honest experience. Nothing is published without explicit consent and admin review.</p>
+          </div>
+        )}
+      </section>
+
+      <PublicFeedbackSection />
+
       <section className="triple-grid marketing-pricing">
         {plans.map((plan) => (
           <article className={`plan-card tone-${plan.tone}`} key={plan.name}>
@@ -1009,6 +1143,52 @@ function MarketingPage({ userSession }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function PublicFeedbackSection() {
+  const initialForm = { name: "", email: "", category: "product", rating: "5", message: "", consentToPublish: false, website: "" };
+  const [form, setForm] = useState(initialForm);
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      await submitPublicFeedback({ ...form, rating: Number(form.rating) });
+      setForm(initialForm);
+      setStatus("Thank you. Your feedback has been received for review.");
+    } catch (error) {
+      setStatus(error.message || "Could not submit feedback. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="feedback-section" id="feedback">
+      <div className="feedback-copy">
+        <p className="eyebrow">Help shape Phantom</p>
+        <h2>Tell us what felt useful—and what still gets in your way.</h2>
+        <p>Product feedback goes directly into the admin review queue. For account or billing help, use the signed-in support dashboard so we can investigate securely.</p>
+        <Link className="text-link" to="/dashboard/support">Open account support <span>→</span></Link>
+      </div>
+      <form className="public-feedback-form" onSubmit={handleSubmit}>
+        <div className="form-grid-two">
+          <label><span>Name</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} minLength={2} maxLength={80} autoComplete="name" required /></label>
+          <label><span>Email</span><input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} maxLength={254} autoComplete="email" required /></label>
+          <label><span>Feedback type</span><select value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}><option value="product">Product experience</option><option value="feature-request">Feature request</option><option value="bug">Bug report</option><option value="billing">Billing experience</option><option value="other">Other</option></select></label>
+          <label><span>Rating</span><select value={form.rating} onChange={(event) => setForm((current) => ({ ...current, rating: event.target.value }))}><option value="5">5 — Excellent</option><option value="4">4 — Good</option><option value="3">3 — Okay</option><option value="2">2 — Needs work</option><option value="1">1 — Poor</option></select></label>
+        </div>
+        <label><span>Your feedback</span><textarea value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} minLength={20} maxLength={2000} placeholder="What happened, what worked, or what would make Phantom better?" required /></label>
+        <label className="feedback-honeypot" aria-hidden="true"><span>Website</span><input value={form.website} onChange={(event) => setForm((current) => ({ ...current, website: event.target.value }))} tabIndex={-1} autoComplete="off" /></label>
+        <label className="consent-row"><input type="checkbox" checked={form.consentToPublish} onChange={(event) => setForm((current) => ({ ...current, consentToPublish: event.target.checked }))} /><span>Phantom may publish my first name, rating, and feedback as a review. My email will remain private.</span></label>
+        <button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Sending feedback..." : "Send feedback"}</button>
+        {status ? <p className={`status-message ${status.startsWith("Thank") ? "status-success" : "status-error"}`} role="status" aria-live="polite">{status}</p> : null}
+      </form>
+    </section>
   );
 }
 
@@ -1256,17 +1436,14 @@ function UserLoginPage({ onAuthenticated, userSession }) {
               placeholder="name@example.com"
             />
           </label>
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={form.password}
-              onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-              placeholder="Enter your password"
-            />
-          </label>
+          <PasswordField
+            label="Password"
+            required
+            autoComplete="current-password"
+            value={form.password}
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            placeholder="Enter your password"
+          />
           <button className="button button-primary" type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in to Phantom"}
           </button>
@@ -1463,18 +1640,15 @@ function RegisterPage() {
               placeholder="name@example.com"
             />
           </label>
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              required
-              autoComplete="new-password"
-              value={form.password}
-              onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-              placeholder="Choose a strong password"
-              minLength={12}
-            />
-          </label>
+          <PasswordField
+            label="Password"
+            required
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            placeholder="Choose a strong password"
+            minLength={12}
+          />
           <p className={`inline-note ${form.password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
             {form.password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
           </p>
@@ -1659,17 +1833,11 @@ function UserResetPasswordPage() {
           <p>Reset links are single-use and time-limited.</p>
         </article>
         <form className="glass-panel auth-form" onSubmit={handleSubmit}>
-          <label>
-            <span>New password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" minLength={12} required />
-          </label>
+          <PasswordField label="New password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" autoComplete="new-password" minLength={12} required />
           <p className={`inline-note ${password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
             {password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
           </p>
-          <label>
-            <span>Confirm password</span>
-            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" required />
-          </label>
+          <PasswordField label="Confirm password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" autoComplete="new-password" required />
           <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
@@ -1799,6 +1967,23 @@ function TermsPage() {
         title="Clear terms for using Phantom responsibly."
         intro="These terms explain your account responsibilities, acceptable use, AI limitations, payments, and how your agreement works together with Phantom's Privacy Policy."
         sections={termsSections}
+      />
+    </main>
+  );
+}
+
+function RefundPolicyPage() {
+  return (
+    <main className="page">
+      <Seo
+        title="Refund Policy | Phantom"
+        description="Read Phantom's refund eligibility, request process, and payment-provider processing timelines."
+      />
+      <LegalPage
+        eyebrow="Refund Policy · Effective September 5, 2026"
+        title="A clear path for unused credits, duplicate charges, and service failures."
+        intro="This policy explains when a Phantom payment may be refunded, how to make a request, and what happens after approval. Refunds are assessed against the payment and credit-usage record for the account."
+        sections={refundSections}
       />
     </main>
   );
@@ -3586,10 +3771,7 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
                 <span>Admin email</span>
                 <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@example.com" autoComplete="username" required />
               </label>
-              <label>
-                <span>Password</span>
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your admin password" autoComplete="current-password" required />
-              </label>
+              <PasswordField label="Password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your admin password" autoComplete="current-password" required />
             </>
           ) : (
             <>
@@ -3728,17 +3910,11 @@ function AdminResetPasswordPage() {
           <p>Reset links are single-use and time-limited.</p>
         </article>
         <form className="glass-panel auth-form" onSubmit={handleSubmit}>
-          <label>
-            <span>New password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" minLength={12} required />
-          </label>
+          <PasswordField label="New password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" autoComplete="new-password" minLength={12} required />
           <p className={`inline-note ${password ? passwordError ? "inline-note-error" : "inline-note-success" : ""}`}>
             {password && !passwordError ? "Password meets the security requirements." : PASSWORD_REQUIREMENTS}
           </p>
-          <label>
-            <span>Confirm password</span>
-            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" required />
-          </label>
+          <PasswordField label="Confirm password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Re-enter the new password" autoComplete="new-password" required />
           <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
@@ -3869,6 +4045,8 @@ function AdminDashboardPage({ adminSession }) {
             <InfoRow label="Active locks" value={String(overview?.activeLockCount ?? 0)} />
             <InfoRow label="Managed keys" value={String(overview?.managedCredentialCount ?? 0)} />
             <InfoRow label="Payment orders" value={String(overview?.paymentOrderCount ?? 0)} />
+            <InfoRow label="Downloads" value={String(overview?.downloadCount ?? 0)} />
+            <InfoRow label="Feedback" value={String(overview?.feedbackCount ?? 0)} />
           </div>
         </aside>
 
@@ -3919,6 +4097,10 @@ function AdminDashboardPage({ adminSession }) {
               }
             />
             <Route
+              path="feedback"
+              element={<AdminFeedbackPanel accessToken={adminSession.accessToken} />}
+            />
+            <Route
               path="managed-ai"
               element={
                 <ManagedAiAdminPanel
@@ -3943,6 +4125,77 @@ function AdminDashboardPage({ adminSession }) {
         </section>
       </section>
     </main>
+  );
+}
+
+function AdminFeedbackPanel({ accessToken }) {
+  const [feedbackPage, setFeedbackPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState("");
+  const [error, setError] = useState("");
+
+  async function load(page = 1, status = statusFilter) {
+    setLoading(true);
+    setError("");
+    try {
+      setFeedbackPage(await fetchAdminFeedback(accessToken, { status, page: Math.max(1, page), pageSize: 20 }));
+    } catch (loadError) {
+      setError(loadError.message || "Could not load feedback.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(1, statusFilter); }, [accessToken, statusFilter]);
+
+  async function changeStatus(item, status) {
+    setUpdatingId(item.feedbackId);
+    setError("");
+    try {
+      await updateAdminFeedback(accessToken, { feedbackId: item.feedbackId, status, adminNotes: item.adminNotes || "" });
+      await load(feedbackPage.page || 1, statusFilter);
+    } catch (updateError) {
+      setError(updateError.message || "Could not update feedback.");
+    } finally {
+      setUpdatingId("");
+    }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Feedback and reviews</p>
+        <h1>Review what people tell you before anything becomes public.</h1>
+        <p>Publishing is available only when the submitter explicitly consented. Email addresses always remain private.</p>
+      </article>
+      <article className="glass-panel table-span-full section-switcher">
+        {["all", "new", "reviewed", "published", "rejected"].map((status) => (
+          <button key={status} className={`button button-compact ${statusFilter === status ? "button-primary" : "button-ghost"}`} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)}>{status === "all" ? "All" : status[0].toUpperCase() + status.slice(1)}</button>
+        ))}
+      </article>
+      <RetryNotice message={error} onRetry={() => load(feedbackPage.page || 1)} className="table-span-full" />
+      <DataTable
+        loading={loading}
+        title="Feedback submissions"
+        columns={["Person", "Rating", "Feedback", "Publish consent", "Status", "Submitted", "Actions"]}
+        rows={(feedbackPage.items || []).map((item) => [
+          <span key="person"><strong>{item.name}</strong><br /><small>{item.email}</small></span>,
+          `${item.rating}/5`,
+          <span className="feedback-admin-message" key="message">{item.message}<br /><small>{item.category}</small></span>,
+          item.consentToPublish ? "Yes" : "No",
+          item.status,
+          formatDate(item.createdAtUtc),
+          <div className="table-actions" key="actions">
+            <button className="button button-ghost button-compact" type="button" disabled={updatingId === item.feedbackId} onClick={() => changeStatus(item, "reviewed")}>Mark reviewed</button>
+            <button className="button button-primary button-compact" type="button" disabled={!item.consentToPublish || updatingId === item.feedbackId} title={!item.consentToPublish ? "Publication consent was not granted" : "Publish this review"} onClick={() => changeStatus(item, "published")}>Publish</button>
+            <button className="button button-danger button-compact" type="button" disabled={updatingId === item.feedbackId} onClick={() => changeStatus(item, "rejected")}>Reject</button>
+          </div>
+        ])}
+        emptyLabel="No feedback matches this filter."
+        footer={<PaginationBar page={feedbackPage.page || 1} hasNextPage={Boolean(feedbackPage.hasNextPage)} totalCount={feedbackPage.totalCount || 0} disabled={loading} onPrevious={() => load(feedbackPage.page - 1)} onNext={() => load((feedbackPage.page || 1) + 1)} />}
+      />
+    </div>
   );
 }
 
@@ -4128,6 +4381,12 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
 
       <MetricCard label="Live sessions" value={String(overview?.activeSessionCount ?? 0)} />
       <MetricCard label="Ledger entries" value={String(overview?.ledgerEntryCount ?? 0)} />
+      <MetricCard label="Downloads" value={String(overview?.downloadCount ?? 0)} />
+      <MetricCard label="30-day downloads" value={String(overview?.downloadsLast30Days ?? 0)} />
+      <MetricCard label="Unique downloaders" value={String(overview?.uniqueDownloaderCount ?? 0)} />
+      <MetricCard label="Windows downloads" value={String(overview?.windowsDownloadCount ?? 0)} />
+      <MetricCard label="macOS downloads" value={String(overview?.macosDownloadCount ?? 0)} />
+      <MetricCard label="Published reviews" value={String(overview?.publishedReviewCount ?? 0)} />
       <MetricCard label="Managed providers" value={String(providers.length)} />
       <MetricCard
         label="Catalog models"

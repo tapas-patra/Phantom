@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         installMainMenu()
         window.contentView = NSHostingView(rootView: PhantomRootView(store: store))
+        window.installCursorTracking()
         window.delegate = self
         window.center()
         connectStore()
@@ -66,8 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func connectStore() {
-        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough in
+        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough, useFakeCursor in
             self?.window.apply(opacity: opacity, clickThrough: clickThrough)
+            self?.window.configureFakeCursor(enabled: useFakeCursor, clickThrough: clickThrough)
         }
         store.onCaptureScreenshot = { [weak self] in
             guard let self else { throw ScreenshotError.captureFailed }
@@ -105,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
         }
         window.apply(opacity: store.opacity, clickThrough: store.clickThrough)
+        window.configureFakeCursor(enabled: store.useFakeCursor, clickThrough: store.clickThrough)
     }
 
     private func toggleWindow() {
@@ -186,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 
     func applicationWillTerminate(_ notification: Notification) {
+        window.stopFakeCursor()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         windowObservers.forEach(NotificationCenter.default.removeObserver)
     }

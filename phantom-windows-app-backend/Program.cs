@@ -74,6 +74,8 @@ builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<PaymentOrderRepository>();
 builder.Services.AddSingleton<SupportTicketRepository>();
+builder.Services.AddSingleton<DownloadEventRepository>();
+builder.Services.AddSingleton<FeedbackSubmissionRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
@@ -103,6 +105,7 @@ builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
+builder.Services.AddSingleton<FeedbackService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddHostedService<ManagedAiLatencyWorker>();
 builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
@@ -941,6 +944,15 @@ app.MapGet("/api/desktop/downloads/file", (
     Results.Redirect(downloads.ResolveAssetUrl(token ?? string.Empty)))
     .RequireRateLimiting("desktop-api");
 
+app.MapPost("/api/public/feedback", (
+    FeedbackSubmissionCreateRequestDto request,
+    FeedbackService feedback) => Results.Ok(feedback.Create(request)))
+    .RequireRateLimiting("auth");
+
+app.MapGet("/api/public/reviews", (int? limit, FeedbackService feedback) =>
+    Results.Ok(feedback.ListPublished(limit ?? 6)))
+    .RequireRateLimiting("auth");
+
 app.MapPost("/api/desktop/account/startup-check/session", (
     HttpContext httpContext,
     AuthSessionDto request,
@@ -1457,6 +1469,16 @@ adminGroup.MapPost("/accounts/update", (
 adminGroup.MapGet("/overview", (AdminService admin) =>
 {
     return Results.Ok(admin.GetOverview());
+});
+
+adminGroup.MapGet("/feedback", (string? status, int? page, int? pageSize, FeedbackService feedback) =>
+{
+    return Results.Ok(feedback.ListAdmin(status ?? string.Empty, page ?? 1, pageSize ?? 20));
+});
+
+adminGroup.MapPost("/feedback/update", (FeedbackSubmissionUpdateRequestDto request, FeedbackService feedback) =>
+{
+    return Results.Ok(feedback.Update(request));
 });
 
 adminGroup.MapGet("/audit", (int? page, int? pageSize, AdminAuditRepository audit) =>

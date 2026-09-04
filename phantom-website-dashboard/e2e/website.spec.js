@@ -5,11 +5,36 @@ test("public site is navigable and does not overflow", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: /Think clearly when the room gets loud/i })).toBeVisible();
   await expect(page.getByRole("link", { name: "Start your free trial" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Everything you need to prepare/i })).toBeVisible();
+  await expect(page.getByText("Asha", { exact: true })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
   await page.getByRole("link", { name: "Pricing", exact: true }).first().click();
   await expect(page).toHaveURL(/\/pricing$/);
   await expect(page.getByRole("heading", { level: 1 })).toContainText(/Choose who manages the AI/i);
+});
+
+test("password visibility, feedback, and refund policy work on public surfaces", async ({ page }) => {
+  await mockApi(page, { user: null, admin: null });
+  await page.goto("/login");
+  const password = page.getByLabel("Password", { exact: true });
+  await password.fill("Visible-password-123!");
+  await expect(password).toHaveAttribute("type", "password");
+  await page.getByRole("button", { name: "Show password" }).click();
+  await expect(password).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "Hide password" }).click();
+  await expect(password).toHaveAttribute("type", "password");
+
+  await page.goto("/");
+  await page.getByLabel("Name", { exact: true }).fill("Asha Test");
+  await page.getByLabel("Email", { exact: true }).fill("asha@example.com");
+  await page.getByLabel("Your feedback").fill("The workflow is calm and the feature navigation is clear.");
+  await page.getByRole("button", { name: "Send feedback" }).click();
+  await expect(page.getByText("Thank you. Your feedback has been received for review.")).toBeVisible();
+
+  await page.goto("/refund-policy");
+  await expect(page.getByRole("heading", { name: /A clear path for unused credits/i })).toBeVisible();
+  await expect(page.getByText(/within 7 calendar days/i)).toBeVisible();
 });
 
 test("keyboard users can skip directly to main content", async ({ page }) => {
@@ -42,6 +67,9 @@ test("admin overview and audit route render without exposing bearer tokens", asy
   await mockApi(page, { user: null, admin: adminSession() });
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Monitor the systems that keep Phantom available." })).toBeVisible();
+  await expect(page.getByText("30-day downloads").locator("xpath=.." )).toContainText("10");
+  await page.getByRole("link", { name: "Feedback" }).click();
+  await expect(page.getByRole("heading", { name: /Review what people tell you/i })).toBeVisible();
   await page.getByRole("link", { name: "Audit" }).click();
   await expect(page.getByRole("heading", { name: /Review security-sensitive changes/i })).toBeVisible();
   await expect(page.getByText("No admin changes have been recorded yet.")).toBeVisible();
@@ -53,7 +81,7 @@ test("admin password login requires the emailed one-time code", async ({ page })
   await mockApi(page, { user: null, admin: null, adminOtp: true });
   await page.goto("/admin/login");
   await page.getByLabel("Admin email").fill("admin@example.com");
-  await page.getByLabel("Password").fill("correct-horse-battery-staple");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-battery-staple");
   await page.getByRole("button", { name: "Continue with Email Verification" }).click();
   await expect(page.getByText(/A 6-digit verification code was sent/i)).toBeVisible();
   await page.getByLabel("Email verification code").fill("482913");
@@ -86,7 +114,10 @@ async function mockApi(page, { user, admin, adminOtp = false }) {
     if (path.endsWith("/api/dashboard/devices")) return json(emptyPage());
     if (path.endsWith("/api/dashboard/wallet-history")) return json(emptyPage());
     if (path.endsWith("/api/dashboard/wallet-purchases")) return json(emptyPage());
-    if (path.endsWith("/api/dashboard/admin/overview")) return json({ accountCount: 0, activeSessionCount: 0, ledgerEntryCount: 0, activeLockCount: 0, managedCredentialCount: 0, paymentOrderCount: 0 });
+    if (path.endsWith("/api/dashboard/admin/overview")) return json({ accountCount: 0, activeSessionCount: 0, ledgerEntryCount: 0, activeLockCount: 0, managedCredentialCount: 0, paymentOrderCount: 0, downloadCount: 12, windowsDownloadCount: 8, macosDownloadCount: 4, uniqueDownloaderCount: 7, downloadsLast30Days: 10, feedbackCount: 1, publishedReviewCount: 1 });
+    if (path.endsWith("/api/public/reviews")) return json({ items: [{ feedbackId: "feedback-1", name: "Asha", rating: 5, message: "Phantom helped me keep my project stories organized.", updatedAtUtc: "2026-09-04T10:00:00Z" }] });
+    if (method === "POST" && path.endsWith("/api/public/feedback")) return json({ accepted: true, feedbackId: "feedback-2" });
+    if (path.endsWith("/api/admin/feedback")) return json(emptyPage());
     if (path.endsWith("/api/dashboard/admin/managed-ai/credentials")) return json({ credentials: [], managedProviders: [], catalogs: { providers: [] } });
     if (path.endsWith("/api/admin/managed-ai/latency/status")) return json({ providers: [] });
     if (path.endsWith("/api/admin/integrations/gmail/oauth/status")) return json({ statusLabel: "Configured", statusMessage: "Sender ready", isConfigured: true, hasRefreshToken: true, hasValidRefreshToken: true, fromEmail: "admin@example.com" });

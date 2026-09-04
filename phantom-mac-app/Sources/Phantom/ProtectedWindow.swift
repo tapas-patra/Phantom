@@ -2,6 +2,9 @@ import AppKit
 
 @MainActor
 final class ProtectedWindow: NSPanel {
+    private let fakeCursor = FakeCursorCoordinator()
+    private var cursorTrackingArea: NSTrackingArea?
+
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 640),
@@ -36,6 +39,36 @@ final class ProtectedWindow: NSPanel {
     func apply(opacity: Double, clickThrough: Bool) {
         alphaValue = max(0.35, min(opacity, 1.0))
         ignoresMouseEvents = clickThrough
+        fakeCursor.configure(enabled: fakeCursorEnabled, clickThrough: clickThrough)
+    }
+
+    private var fakeCursorEnabled = false
+
+    func installCursorTracking() {
+        guard let contentView else { return }
+        if let cursorTrackingArea { contentView.removeTrackingArea(cursorTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            owner: self,
+            userInfo: nil
+        )
+        contentView.addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    func configureFakeCursor(enabled: Bool, clickThrough: Bool) {
+        fakeCursorEnabled = enabled
+        fakeCursor.configure(enabled: enabled, clickThrough: clickThrough)
+    }
+
+    func stopFakeCursor() {
+        fakeCursor.stop()
+    }
+
+    override func orderOut(_ sender: Any?) {
+        fakeCursor.windowHidden()
+        super.orderOut(sender)
     }
 
     override var canBecomeKey: Bool { true }
@@ -49,5 +82,17 @@ final class ProtectedWindow: NSPanel {
         default:
             break
         }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        fakeCursor.entered(at: convertPoint(toScreen: event.locationInWindow))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        fakeCursor.moved(to: convertPoint(toScreen: event.locationInWindow))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        fakeCursor.exited(at: NSEvent.mouseLocation)
     }
 }

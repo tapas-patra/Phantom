@@ -459,6 +459,10 @@ private struct SettingsView: View {
                         Text("Click-through activates after Save closes Settings. Press ⌘ ⌃ ` to show Phantom and automatically disable it.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
+                        Toggle("Use an experimental fake cursor inside Phantom", isOn: $store.useFakeCursor)
+                        Text("When enabled, Phantom hides the system pointer over its window, shows a local protected pointer, and leaves a capturable decoy at the entry point. macOS capture exclusion is not guaranteed—verify the actual sharing preview before every use. Fake cursor is disabled while click-through is active.")
+                            .font(.caption)
+                            .foregroundColor(PhantomColors.muted)
                     }
 
                     SettingsSection(title: "Voice input", systemImage: "mic") {

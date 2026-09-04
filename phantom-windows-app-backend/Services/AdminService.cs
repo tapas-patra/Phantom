@@ -204,7 +204,14 @@ public sealed class AdminService
             paymentWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events;"),
             processedWebhookCount = ExecuteCount(connection, "SELECT COUNT(*) FROM payment_webhook_events WHERE processed_at_utc IS NOT NULL;"),
             openSupportTicketCount = ExecuteCount(connection, "SELECT COUNT(*) FROM support_tickets WHERE status IN ('open', 'investigating', 'waiting_for_user');"),
-            supportTicketCount = ExecuteCount(connection, "SELECT COUNT(*) FROM support_tickets;")
+            supportTicketCount = ExecuteCount(connection, "SELECT COUNT(*) FROM support_tickets;"),
+            downloadCount = ExecuteCount(connection, "SELECT COUNT(*) FROM download_events;"),
+            windowsDownloadCount = ExecuteCount(connection, "SELECT COUNT(*) FROM download_events WHERE platform = 'windows';"),
+            macosDownloadCount = ExecuteCount(connection, "SELECT COUNT(*) FROM download_events WHERE platform = 'macos';"),
+            uniqueDownloaderCount = ExecuteCount(connection, "SELECT COUNT(DISTINCT user_id) FROM download_events;"),
+            downloadsLast30Days = ExecuteCount(connection, "SELECT COUNT(*) FROM download_events WHERE downloaded_at_utc >= NOW() - INTERVAL '30 days';"),
+            feedbackCount = ExecuteCount(connection, "SELECT COUNT(*) FROM feedback_submissions;"),
+            publishedReviewCount = ExecuteCount(connection, "SELECT COUNT(*) FROM feedback_submissions WHERE status = 'published';")
         };
     }
 

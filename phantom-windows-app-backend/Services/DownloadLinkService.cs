@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
 using Phantom.WindowsApp.Backend.Infrastructure;
+using Phantom.WindowsApp.Backend.Persistence;
 
 namespace Phantom.WindowsApp.Backend.Services;
 
@@ -15,11 +16,19 @@ public sealed class DownloadLinkService
 
     private readonly BackendOptions _options;
     private readonly AccountStateService _accounts;
+    private readonly DownloadEventRepository _downloadEvents;
+    private readonly ILogger<DownloadLinkService> _logger;
 
-    public DownloadLinkService(BackendOptions options, AccountStateService accounts)
+    public DownloadLinkService(
+        BackendOptions options,
+        AccountStateService accounts,
+        DownloadEventRepository downloadEvents,
+        ILogger<DownloadLinkService> logger)
     {
         _options = options;
         _accounts = accounts;
+        _downloadEvents = downloadEvents;
+        _logger = logger;
     }
 
     public object CreateSignedLink(string userId, string email, string platform, string publicBackendBaseUrl)
@@ -76,6 +85,16 @@ public sealed class DownloadLinkService
         var account = _accounts.RequireAccount(fields[0], string.Empty);
         EnsureEligible(account.UserId, account.Email);
         var platform = NormalizePlatform(fields[1]);
+        try
+        {
+            _downloadEvents.Record(fields[3], account.UserId, platform);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "download_analytics_failed component={Component} event={Event} user_id={UserId} platform={Platform}",
+                "downloads", "download_analytics_failed", account.UserId, platform);
+        }
         return $"https://github.com/{_options.ReleaseRepository}/releases/download/{_options.ReleaseTag}/{AssetNames[platform]}";
     }
 

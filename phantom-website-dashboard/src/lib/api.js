@@ -364,9 +364,35 @@ export async function createUserSupportTicket(accessToken, payload) {
   });
 }
 
+export async function submitPublicFeedback(payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/public/feedback", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchPublicReviews(limit = 6) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/public/reviews?limit=${encodeURIComponent(limit)}`);
+}
+
 export async function fetchAdminOverview(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/overview", {
     headers: authHeaders(accessToken)
+  });
+}
+
+export async function fetchAdminFeedback(accessToken, { status = "all", page = 1, pageSize = 20 } = {}) {
+  const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/feedback?${params.toString()}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateAdminFeedback(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/feedback/update", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
   });
 }
 

@@ -57,6 +57,15 @@ final class FakeCursorCoordinator {
         min(0.8, max(0.1, TimeInterval(distance / 600.0)))
     }
 
+    static func canActivate(
+        enabled: Bool,
+        windowIsVisible: Bool,
+        windowIgnoresMouse: Bool,
+        applicationIsActive: Bool
+    ) -> Bool {
+        enabled && windowIsVisible && !windowIgnoresMouse && applicationIsActive
+    }
+
     private func startBoundaryTracking() {
         guard boundaryTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
@@ -72,7 +81,13 @@ final class FakeCursorCoordinator {
     }
 
     private func synchronizeWithWindowBoundary() {
-        guard enabled, let window = protectedWindow, window.isVisible, !window.ignoresMouseEvents else {
+        guard let window = protectedWindow,
+              Self.canActivate(
+                enabled: enabled,
+                windowIsVisible: window.isVisible,
+                windowIgnoresMouse: window.ignoresMouseEvents,
+                applicationIsActive: NSApp.isActive
+              ) else {
             if active || transitionTimer != nil || systemCursorHidden {
                 deactivate(at: NSEvent.mouseLocation, animated: false)
             }

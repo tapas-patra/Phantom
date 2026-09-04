@@ -845,6 +845,7 @@ private struct MessageBubble: View {
                 }
             }
             .padding(14)
+            .frame(maxWidth: message.role == "assistant" ? 760 : .infinity, alignment: .leading)
             .background(message.role == "assistant" ? PhantomColors.graphite : PhantomColors.blue.opacity(0.16))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(PhantomColors.stroke))
@@ -900,19 +901,18 @@ private struct MarkdownMessageText: View {
                     }
                 }
             }
-        } else if let markdown = try? AttributedString(
-            markdown: content,
-            options: .init(interpretedSyntax: .full)
-        ) {
-            Text(markdown)
-                .textSelection(.enabled)
-                .lineSpacing(4)
-                .foregroundColor(PhantomColors.frost)
         } else {
-            Text(content)
-                .textSelection(.enabled)
-                .lineSpacing(4)
-                .foregroundColor(PhantomColors.frost)
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(ChatDisplayFormatter.blocks(content).enumerated()), id: \.offset) { _, block in
+                    Text((try? AttributedString(
+                        markdown: block,
+                        options: .init(interpretedSyntax: .full)
+                    )) ?? AttributedString(block))
+                    .textSelection(.enabled)
+                    .lineSpacing(5)
+                    .foregroundColor(PhantomColors.frost)
+                }
+            }
         }
     }
 
@@ -922,6 +922,35 @@ private struct MarkdownMessageText: View {
         let diagram = String(content[opening.upperBound..<closing.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
         let explanation = String(content[..<opening.lowerBound] + content[closing.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         return diagram.isEmpty ? nil : (explanation, diagram)
+    }
+}
+
+enum ChatDisplayFormatter {
+    static func blocks(_ content: String) -> [String] {
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+        guard !normalized.contains("```") else { return [normalized] }
+
+        let authoredParagraphs = normalized
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if authoredParagraphs.count > 1 { return authoredParagraphs }
+
+        guard normalized.count >= 360, !normalized.contains("\n") else { return [normalized] }
+        var sentences: [String] = []
+        normalized.enumerateSubstrings(in: normalized.startIndex..<normalized.endIndex, options: .bySentences) { substring, _, _, _ in
+            if let sentence = substring?.trimmingCharacters(in: .whitespacesAndNewlines), !sentence.isEmpty {
+                sentences.append(sentence)
+            }
+        }
+        guard sentences.count >= 4 else { return [normalized] }
+
+        return stride(from: 0, to: sentences.count, by: 2).map { start in
+            sentences[start..<min(start + 2, sentences.count)].joined(separator: " ")
+        }
     }
 }
 

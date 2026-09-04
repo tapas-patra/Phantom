@@ -77,6 +77,17 @@ var firstCallPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
     Array.Empty<RetrievedContextSnippet>());
 if (fixtures.PromptRequirements.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
     throw new InvalidOperationException("The Windows prompt is missing a shared grounding requirement.");
+if (fixtures.DeliveryStyleRequirements.Standard.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows Standard prompt is missing a shared delivery-style requirement.");
+var desiPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Desi, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>());
+if (fixtures.DeliveryStyleRequirements.Desi.Any(requirement => !desiPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows Desi prompt is missing a shared delivery-style requirement.");
+if (string.Equals(firstCallPrompt, desiPrompt, StringComparison.Ordinal) ||
+    firstCallPrompt.Contains("Delivery style is Desi", StringComparison.Ordinal) ||
+    desiPrompt.Contains("Delivery style is Standard", StringComparison.Ordinal))
+    throw new InvalidOperationException("The Windows delivery-style prompts are not isolated.");
 var repairPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
     CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
     Array.Empty<RetrievedContextSnippet>(), protocolRepair: true);
@@ -215,8 +226,14 @@ sealed class FixtureRoot
     public List<LoggingFixture> Logging { get; set; } = new();
     public ResilienceFixture Resilience { get; set; } = new();
     public List<string> PromptRequirements { get; set; } = new();
+    public DeliveryStyleRequirements DeliveryStyleRequirements { get; set; } = new();
     public string RepairPromptSuffix { get; set; } = "";
     public List<string> SensitiveSamples { get; set; } = new();
+}
+sealed class DeliveryStyleRequirements
+{
+    public List<string> Standard { get; set; } = new();
+    public List<string> Desi { get; set; } = new();
 }
 sealed class ParserFixture
 {

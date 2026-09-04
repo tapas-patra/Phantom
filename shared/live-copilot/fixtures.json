@@ -136,8 +136,13 @@
   "promptRequirements": [
     "General technical, coding, system-design, and product questions stay universal",
     "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes",
-    "For answers longer than three sentences, separate ideas with blank lines"
+    "Never return a long wall of text",
+    "use 2–4 short paragraphs"
   ],
+  "deliveryStyleRequirements": {
+    "standard": ["Delivery style is Standard", "Avoid casual openers and colloquial filler"],
+    "desi": ["Delivery style is Desi", "confident Indian professional speaking naturally", "Use selective bold emphasis", "four short spoken paragraphs"]
+  },
   "repairPromptSuffix": "Do not mention the repair or the protocol.",
   "logging": [
     { "name": "direct-chain", "events": ["request_dispatched", "model_call_started", "control_frame_parsed", "answer_completed"], "modelOperations": 1, "terminalEvents": 1 },

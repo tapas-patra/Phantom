@@ -178,6 +178,7 @@ namespace SecureOverlay
             HeaderOpacitySlider.Value = _settings.WindowOpacity;
             ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
             UpdateLegacyFallbackButtonState();
+            UpdateClickThroughButtonState();
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -1387,6 +1388,7 @@ namespace SecureOverlay
             Log.WriteLine("Applying screen capture protection...");
             WindowProtection.ApplyProtection(_windowHandle);
             WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            UpdateClickThroughButtonState();
             
             uint affinity;
             if (NativeMethods.GetWindowDisplayAffinity(_windowHandle, out affinity) && 
@@ -3604,6 +3606,7 @@ namespace SecureOverlay
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
                 WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
                 UpdateLegacyFallbackButtonState();
+                UpdateClickThroughButtonState();
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
@@ -4059,23 +4062,23 @@ namespace SecureOverlay
             {
                 int vkCode = Marshal.ReadInt32(lParam);
 
-                // Ctrl + Alt + ` - Toggle visibility
+                // Ctrl + Alt + ` - disable click-through first; otherwise toggle visibility
                 if (vkCode == NativeMethods.VK_OEM_3)
                 {
                     if (NativeMethods.IsKeyPressed(NativeMethods.VK_CONTROL) && 
                         NativeMethods.IsKeyPressed(NativeMethods.VK_MENU))
                     {
                         Log.WriteLine("Hotkey: Ctrl+Alt+` pressed");
-                        Dispatcher.Invoke(() => ToggleVisibility());
+                        Dispatcher.Invoke(() => HandleVisibilityShortcut("ctrl_alt_backtick"));
                         return (IntPtr)1;
                     }
                 }
 
-                // F13 - Toggle visibility
+                // F13 - same hardware-key behavior as Ctrl+Alt+`
                 if (vkCode == NativeMethods.VK_F13)
                 {
                     Log.WriteLine("Hotkey: F13 pressed");
-                    Dispatcher.Invoke(() => ToggleVisibility());
+                    Dispatcher.Invoke(() => HandleVisibilityShortcut("f13"));
                     return (IntPtr)1;
                 }
 
@@ -4170,12 +4173,63 @@ namespace SecureOverlay
             }
         }
 
+        private void HandleVisibilityShortcut(string source)
+        {
+            if (_settings.ClickThroughEnabled)
+            {
+                DisableClickThroughForInteraction(source);
+                if (_isHidden)
+                {
+                    ToggleVisibility();
+                }
+                else
+                {
+                    Show();
+                    Activate();
+                    FocusInput();
+                }
+                return;
+            }
+
+            ToggleVisibility();
+        }
+
+        private void ClickThroughButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseCurrentDropdownMenu();
+            _settings.ClickThroughEnabled = !_settings.ClickThroughEnabled;
+            SettingsManager.Save(_settings);
+            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            UpdateClickThroughButtonState();
+            Log.WriteLine($"Click-through {(_settings.ClickThroughEnabled ? "enabled" : "disabled")} reason=header_button");
+        }
+
+        private void UpdateClickThroughButtonState()
+        {
+            if (ClickThroughButton == null) return;
+
+            var enabled = _settings.ClickThroughEnabled;
+            ClickThroughButton.Background = new SolidColorBrush(enabled
+                ? Color.FromArgb(96, 34, 197, 94)
+                : Color.FromArgb(80, 80, 80, 80));
+            ClickThroughButton.BorderBrush = new SolidColorBrush(enabled
+                ? Color.FromArgb(210, 74, 222, 128)
+                : Color.FromArgb(144, 255, 255, 255));
+            ClickThroughButton.ToolTip = enabled
+                ? "Click-through is enabled. Press Ctrl+Alt+` to disable."
+                : "Enable click-through. Press Ctrl+Alt+` to disable.";
+            System.Windows.Automation.AutomationProperties.SetName(
+                ClickThroughButton,
+                enabled ? "Click-through enabled. Press Control Alt backtick to disable." : "Enable click-through");
+        }
+
         private void DisableClickThroughForInteraction(string reason)
         {
             if (!_settings.ClickThroughEnabled) return;
             _settings.ClickThroughEnabled = false;
             SettingsManager.Save(_settings);
             WindowProtection.SetClickThrough(_windowHandle, false);
+            UpdateClickThroughButtonState();
             Log.WriteLine($"Click-through disabled reason={reason}");
         }
 

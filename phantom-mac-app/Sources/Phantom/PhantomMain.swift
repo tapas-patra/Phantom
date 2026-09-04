@@ -302,6 +302,10 @@ enum PhantomMain {
             let laneTransitions: [LaneFixture]
         }
         struct Root: Decodable {
+            struct DeliveryStyleRequirements: Decodable {
+                let standard: [String]
+                let desi: [String]
+            }
             let version: String
             let parser: [ParserFixture]
             let invalid: [InvalidFixture]
@@ -310,6 +314,7 @@ enum PhantomMain {
             let logging: [LoggingFixture]
             let resilience: ResilienceFixture
             let promptRequirements: [String]
+            let deliveryStyleRequirements: DeliveryStyleRequirements
             let repairPromptSuffix: String
             let sensitiveSamples: [String]
         }
@@ -346,6 +351,19 @@ enum PhantomMain {
             roleOrMeetingContext: "", activeEvidence: []
         )
         precondition(fixtures.promptRequirements.allSatisfy { firstCallPrompt.contains($0) })
+        precondition(fixtures.deliveryStyleRequirements.standard.allSatisfy { firstCallPrompt.contains($0) })
+        let desiPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .desi, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: []
+        )
+        precondition(fixtures.deliveryStyleRequirements.desi.allSatisfy { desiPrompt.contains($0) })
+        precondition(firstCallPrompt != desiPrompt)
+        precondition(!firstCallPrompt.contains("Delivery style is Desi"))
+        precondition(!desiPrompt.contains("Delivery style is Standard"))
+        precondition(ChatDisplayFormatter.blocks("Short answer.").count == 1)
+        precondition(ChatDisplayFormatter.blocks("First paragraph.\n\nSecond paragraph.").count == 2)
+        let denseAnswer = Array(repeating: "This is a complete sentence that explains one focused part of the answer.", count: 6).joined(separator: " ")
+        precondition(ChatDisplayFormatter.blocks(denseAnswer).count == 3)
         let repairPrompt = CopilotPrompt.firstCall(
             mode: .interview, style: .standard, knowledge: nil, resume: "",
             roleOrMeetingContext: "", activeEvidence: [], protocolRepair: true

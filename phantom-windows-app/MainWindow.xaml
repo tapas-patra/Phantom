@@ -187,6 +187,18 @@
                             Background="#504B76A8" BorderBrush="#9073B8FF" BorderThickness="1.5"
                             Foreground="White" FontSize="16" Margin="0,0,8,0"
                             Style="{StaticResource ButtonStyle}"/>
+
+                        <Button x:Name="ClickThroughButton" Width="40" Height="32" Click="ClickThroughButton_Click"
+                            Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1.5"
+                            Foreground="White" Margin="0,0,8,0"
+                            ToolTip="Enable click-through. Press Ctrl+Alt+` to disable."
+                            AutomationProperties.Name="Enable click-through"
+                            Style="{StaticResource ButtonStyle}">
+                            <Viewbox Width="17" Height="17">
+                                <Path Data="M3,2 L3,22 L8.8,16.5 L13.2,25 L17,23 L12.7,15 L21,15 Z"
+                                      Fill="White" Stroke="#CCFFFFFF" StrokeThickness="0.8"/>
+                            </Viewbox>
+                        </Button>
                         
                         <Button Content="⚙️" Width="40" Height="32" Click="SettingsButton_Click"
                             Background="#5000AAFF" BorderBrush="#9000AAFF" BorderThickness="1.5"

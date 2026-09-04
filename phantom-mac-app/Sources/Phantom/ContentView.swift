@@ -463,7 +463,7 @@ private struct SettingsView: View {
                             .disabled(store.settingsClickThrough)
                         if store.useFakeCursor {
                             HStack {
-                                Text("Fake cursor size")
+                                Text("Decoy cursor size")
                                 Slider(value: $store.fakeCursorScale, in: 0.5...2.0, step: 0.05)
                                     .disabled(store.settingsClickThrough)
                                 Text("\(Int(store.fakeCursorScale * 100))%")
@@ -471,7 +471,7 @@ private struct SettingsView: View {
                                     .frame(width: 48)
                             }
                         }
-                        Text("When enabled, Phantom hides the system pointer over its window, shows a local protected pointer, and leaves a capturable decoy at the entry point. macOS capture exclusion is not guaranteed—verify the actual sharing preview before every use. Fake cursor is disabled while click-through is active.")
+                        Text("The size control changes only the stationary, capturable decoy; the protected pointer that follows your movement stays at the system size. macOS capture exclusion is not guaranteed—verify the actual sharing preview before every use. Fake cursor is disabled while click-through is active.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
                     }

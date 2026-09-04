@@ -31,7 +31,7 @@ final class FakeCursorCoordinator {
         if active {
             let fakePosition = fakePanel.hotspotPosition
             fakePanel.apply(cursor: clonedCursor, scale: self.scale)
-            livePanel.apply(cursor: clonedCursor, scale: self.scale)
+            livePanel.apply(cursor: clonedCursor, scale: 1.0)
             fakePanel.moveHotspot(to: fakePosition)
             livePanel.moveHotspot(to: NSEvent.mouseLocation)
         }
@@ -96,7 +96,7 @@ final class FakeCursorCoordinator {
 
         clonedCursor = NSCursor.currentSystem ?? NSCursor.current
         fakePanel.apply(cursor: clonedCursor, scale: scale)
-        livePanel.apply(cursor: clonedCursor, scale: scale)
+        livePanel.apply(cursor: clonedCursor, scale: 1.0)
         fakePanel.moveHotspot(to: screenPoint)
         livePanel.moveHotspot(to: screenPoint)
         fakePanel.orderFrontRegardless()

@@ -67,14 +67,4 @@ final class ProtectedWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
-    override func sendEvent(_ event: NSEvent) {
-        super.sendEvent(event)
-        switch event.type {
-        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .cursorUpdate:
-            NSCursor.arrow.set()
-        default:
-            break
-        }
-    }
-
 }

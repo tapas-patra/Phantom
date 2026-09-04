@@ -105,7 +105,9 @@ public sealed class BackendOptions
         Require(errors, ReleaseRepository, nameof(ReleaseRepository));
         Require(errors, ReleaseTag, nameof(ReleaseTag));
         Require(errors, RazorpayKeyId, nameof(RazorpayKeyId));
-        RequireSecret(errors, RazorpayKeySecret, nameof(RazorpayKeySecret));
+        // Razorpay issues this opaque credential, so validate presence without
+        // imposing a locally chosen length or changing the provider value.
+        Require(errors, RazorpayKeySecret, nameof(RazorpayKeySecret));
         RequireSecret(errors, RazorpayWebhookSecret, nameof(RazorpayWebhookSecret));
 
         if (!Uri.TryCreate(PublicWebsiteBaseUrl, UriKind.Absolute, out var publicWebsite)

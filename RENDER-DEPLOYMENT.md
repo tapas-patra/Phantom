@@ -49,6 +49,8 @@ Windows backend:
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET`
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET`
 
+Use the API key secret exactly as Razorpay issued it. The webhook secret is independent; generate a high-entropy value of at least 32 characters and enter the same value in the Razorpay webhook configuration.
+
 Dashboard backend:
 
 - `PHANTOM_DASHBOARD_BACKEND_DATABASE_URL`

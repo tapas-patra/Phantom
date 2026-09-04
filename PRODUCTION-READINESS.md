@@ -16,6 +16,8 @@ Configure these values in the Windows authority backend before deploying the new
 - Gmail OAuth client settings plus either an existing encrypted refresh token or `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN`, or SMTP settings that can deliver mail to every administrator
 - production Razorpay keys and webhook secret
 
+Use the Razorpay API key secret exactly as issued. Do not pad or transform it. Generate the separate webhook secret with at least 32 characters and configure the identical value in Razorpay and Render.
+
 Keep the bootstrap admin password and all provider, payment, mail, database, and signing secrets in the deployment secret manager. Do not place them in Vite variables or source control.
 
 Both backends now fail fast when production starts with missing database/inter-service secrets, non-HTTPS public origins, unsafe signing/payment configuration, unavailable email delivery, test-user seeding, local admin bootstrap, or untrusted proxy handling. Phone verification can remain disabled without an SMS provider; the admin API refuses to enable it until production OTP credentials exist.

@@ -34,13 +34,17 @@ This is a best-effort workaround, not a hard uptime guarantee. GitHub scheduled 
 Windows backend:
 
 - `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
-- `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY`
-- `PHANTOM_BOOTSTRAP_ADMIN_EMAIL`
-- `PHANTOM_BOOTSTRAP_ADMIN_PASSWORD`
-- `PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME`
+- `PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_TAG`
+- `PHANTOM_WINDOWS_BACKEND_TRUST_FORWARDED_HEADERS=true`
+- `PHANTOM_BOOTSTRAP_ADMIN_EMAIL` (initial account creation only)
+- `PHANTOM_BOOTSTRAP_ADMIN_PASSWORD` (initial account creation only; remove after bootstrap)
+- `PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME` (initial account creation only)
 - `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON`
+- `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN` (required for a cold deployment without an existing encrypted token)
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID`
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET`
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_WEBHOOK_SECRET`
@@ -48,8 +52,8 @@ Windows backend:
 Dashboard backend:
 
 - `PHANTOM_DASHBOARD_BACKEND_DATABASE_URL`
-- `PHANTOM_DASHBOARD_ADMIN_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`
+- `PHANTOM_DASHBOARD_BACKEND_TRUST_FORWARDED_HEADERS=true`
 
 ## Notes
 
@@ -57,3 +61,6 @@ Dashboard backend:
 - This setup keeps Gmail API mail delivery, not SMTP.
 - Both deployed backends run with `ASPNETCORE_ENVIRONMENT=Production`.
 - Phone verification is disabled by default through Admin → Settings. Before enabling it, configure a production OTP provider and its credentials; mock OTP remains local-development-only.
+- Production startup fails when security-critical configuration is missing or unsafe. This is intentional: fix the listed environment errors instead of bypassing validation.
+- Forwarded headers are trusted with a one-proxy limit because Render terminates public traffic before the service. Do not enable the setting when exposing either Kestrel service directly to the internet.
+- Legacy admin API-key variables are no longer used by browser or backend admin routes. Admin access requires the password-plus-email-OTP session; dashboard-to-authority validation uses the internal API key.

@@ -66,7 +66,8 @@ public sealed class GoogleMailOAuthService
 
     public bool HasRefreshTokenConfigured()
     {
-        return _secrets.FindByKey(GmailRefreshTokenSecretKey) != null;
+        return _secrets.FindByKey(GmailRefreshTokenSecretKey) != null
+            || _options.HasGoogleOAuthRefreshToken;
     }
 
     public GoogleMailOAuthStartResultDto StartAuthorization(string publicBackendBaseUrl)
@@ -141,9 +142,18 @@ public sealed class GoogleMailOAuthService
 
     public string GetRefreshToken()
     {
-        var secret = _secrets.FindByKey(GmailRefreshTokenSecretKey)
-            ?? throw new InvalidOperationException("Google Gmail refresh token is not configured.");
-        return _protector.Unprotect(secret.EncryptedValue);
+        var secret = _secrets.FindByKey(GmailRefreshTokenSecretKey);
+        if (secret != null)
+        {
+            return _protector.Unprotect(secret.EncryptedValue);
+        }
+
+        if (_options.HasGoogleOAuthRefreshToken)
+        {
+            return _options.GoogleOAuthRefreshToken;
+        }
+
+        throw new InvalidOperationException("Google Gmail refresh token is not configured.");
     }
 
     public GoogleAuthorizationCodeFlow BuildFlow()

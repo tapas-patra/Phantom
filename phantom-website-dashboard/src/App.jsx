@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   clearAdminLock,
   confirmPaymentCheckout,
+  createSignedDownloadLink,
   createHostedKnowledgeBase,
   createHostedKnowledgeBaseExperience,
   createPaymentCheckout,
@@ -12,6 +13,7 @@ import {
   deleteManagedAiCredential,
   fetchAccountSummary,
   fetchAdminOverview,
+  fetchAdminAudit,
   fetchAdminPaymentOrders,
   fetchAdminSupportTickets,
   fetchAdminPaymentWebhooks,
@@ -36,6 +38,7 @@ import {
   fetchWalletHistory,
   fetchWalletPurchases,
   grantAdminCredits,
+  isCurrentBrowserDevice,
   loginAccount,
   loginAdmin,
   logoutAccount,
@@ -48,6 +51,7 @@ import {
   resendVerificationEmail,
   resetAdminPassword,
   resetUserPassword,
+  revokeDeviceSession,
   sendPhoneOtp,
   setAdminManualLock,
   startGmailOAuth,
@@ -68,14 +72,29 @@ import {
   upsertManagedAiCredential,
   fetchUserSupportTickets,
   verifyPhoneOtp,
+  verifyAdminOtp,
   waiveAdminPremiumDebt
 } from "./lib/api";
+import { maskIdentifier, parseRequiredInteger, parseRequiredNonNegativeNumber } from "./lib/validation";
+import { DashboardSkeleton, RetryNotice, SectionSkeleton } from "./components/AsyncState";
+import { DataTable, PaginationBar, TableScroll } from "./components/DataTable";
+import { InfoRow, MetricCard, MetricDefinition, MiniBarList, SimpleSparkline, TimelineStep } from "./components/DashboardPrimitives";
+import {
+  countBy,
+  describePaymentOpsState,
+  formatDate,
+  formatInr,
+  formatManagedAiLatencyStatus,
+  getPaymentOpsState,
+  parseUtcMillis,
+  prettyJson,
+  toDateTimeLocal,
+  trimAdminTesterHistory
+} from "./lib/format";
 
 const USER_SESSION_STORAGE_KEY = "phantom.website.user-session";
 const ADMIN_SESSION_STORAGE_KEY = "phantom.website.admin-session";
 const PASSWORD_REQUIREMENTS = "Use 12+ characters with uppercase, lowercase, a number, and a special character. Spaces are not allowed.";
-const RELEASE_REPOSITORY = "tapas-patra/phantom-release-repo";
-const RELEASE_BASE_URL = `https://github.com/${RELEASE_REPOSITORY}/releases/download/desktop-latest`;
 
 function getPasswordPolicyError(password) {
   if (!password || password.length < 12) return PASSWORD_REQUIREMENTS;
@@ -115,6 +134,7 @@ const adminNav = [
   { to: "/admin/payments", label: "Payments" },
   { to: "/admin/tickets", label: "Tickets" },
   { to: "/admin/managed-ai", label: "Managed AI" },
+  { to: "/admin/audit", label: "Audit" },
   { to: "/admin/settings", label: "Settings" }
 ];
 
@@ -128,7 +148,7 @@ const plans = [
     bullets: [
       "Phantom-managed AI lane",
       "2 hosted trial blocks, 15 minutes each",
-      "Phone OTP and email verification required",
+      "Email verification required; phone OTP follows deployment policy",
       "No provider key setup"
     ],
     cta: "Create Free Account",
@@ -595,6 +615,7 @@ export default function App() {
 
   return (
     <div className={`app-shell surface-${surface}`}>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <SiteHeader
@@ -605,6 +626,7 @@ export default function App() {
         onAdminLogout={handleAdminLogout}
       />
 
+      <div id="main-content" tabIndex={-1}>
       <Routes>
         <Route
           path="/"
@@ -650,6 +672,7 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </div>
 
       {surface === "public" ? <PublicFooter /> : null}
     </div>
@@ -811,9 +834,12 @@ function Seo({ title, description, noindex = false, structuredData = null }) {
     setMeta("og:title", title, "property");
     setMeta("og:description", description, "property");
     setMeta("og:type", "website", "property");
+    setMeta("og:url", window.location.href, "property");
+    setMeta("og:image", `${window.location.origin}/brand/phantom-logo-512.png`, "property");
     setMeta("twitter:card", "summary_large_image");
     setMeta("twitter:title", title);
     setMeta("twitter:description", description);
+    setMeta("twitter:image", `${window.location.origin}/brand/phantom-logo-512.png`);
     setMeta("robots", noindex ? "noindex,nofollow" : "index,follow");
 
     let link = document.querySelector('link[rel="canonical"]');
@@ -1040,18 +1066,19 @@ function PricingPage() {
 function DownloadPage({ userSession }) {
   const [entitlement, setEntitlement] = useState(null);
   const [error, setError] = useState("");
+  const [downloadingPlatform, setDownloadingPlatform] = useState("");
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      if (!userSession?.accessToken) {
+      if (!userSession?.isAuthenticated) {
         setEntitlement(null);
         return;
       }
 
       try {
-        const result = await fetchDownloadEntitlement(userSession.accessToken);
+        const result = await fetchDownloadEntitlement();
         if (!cancelled) {
           setEntitlement(result);
           setError("");
@@ -1067,7 +1094,23 @@ function DownloadPage({ userSession }) {
     return () => {
       cancelled = true;
     };
-  }, [userSession?.accessToken]);
+  }, [userSession?.isAuthenticated, userSession?.email]);
+
+  async function startDownload(platform) {
+    setDownloadingPlatform(platform);
+    setError("");
+    try {
+      const result = await createSignedDownloadLink(null, platform);
+      if (!result?.url) {
+        throw new Error("A secure download link could not be created.");
+      }
+      window.location.assign(result.url);
+    } catch (downloadError) {
+      setError(downloadError.message || "Could not start the download.");
+    } finally {
+      setDownloadingPlatform("");
+    }
+  }
 
   return (
     <main className="page">
@@ -1103,7 +1146,7 @@ function DownloadPage({ userSession }) {
               </>
             )}
           </div>
-          {error ? <p className="status-message status-error">{error}</p> : null}
+          {error ? <p className="status-message status-error" role="alert">{error}</p> : null}
         </article>
 
         <article className="glass-panel hero-panel hero-panel-side">
@@ -1115,8 +1158,12 @@ function DownloadPage({ userSession }) {
           </div>
           {entitlement?.canDownload ? (
             <div className="hero-actions">
-              <a className="button button-primary" href={`${RELEASE_BASE_URL}/Phantom-Windows-x64.zip`}>Download for Windows</a>
-              <a className="button button-secondary" href={`${RELEASE_BASE_URL}/Phantom-macOS.zip`}>Download for macOS</a>
+              <button className="button button-primary" type="button" disabled={Boolean(downloadingPlatform)} onClick={() => startDownload("windows")}>
+                {downloadingPlatform === "windows" ? "Securing link..." : "Download for Windows"}
+              </button>
+              <button className="button button-secondary" type="button" disabled={Boolean(downloadingPlatform)} onClick={() => startDownload("macos")}>
+                {downloadingPlatform === "macos" ? "Securing link..." : "Download for macOS"}
+              </button>
             </div>
           ) : null}
         </article>
@@ -1128,9 +1175,21 @@ function DownloadPage({ userSession }) {
           <h2>Move from account setup to a ready desktop workspace.</h2>
         </div>
         <div className="timeline-grid">
-          <TimelineStep index="01" title="Create account" body="Register on the website and complete phone OTP plus email verification." />
+          <TimelineStep index="01" title="Create account" body="Register on the website and complete the verification steps required for your deployment." />
           <TimelineStep index="02" title="Check your workspace" body="Confirm your plan, credits, device status, and download access in the dashboard." />
           <TimelineStep index="03" title="Launch Phantom" body="Sign in on Windows or macOS, choose your AI lane, and enter the interview ready." />
+        </div>
+      </section>
+
+      <section className="glass-panel section-panel">
+        <div className="section-heading">
+          <p className="eyebrow">System requirements</p>
+          <h2>Check compatibility before installing.</h2>
+        </div>
+        <div className="comparison-grid">
+          <MetricDefinition title="Windows" detail="Windows 10 or 11, 64-bit CPU, WebView2, microphone access, and screen-capture permission for visual context." />
+          <MetricDefinition title="macOS" detail="macOS 12.3 or newer, Apple Silicon or Intel, plus Microphone, Speech Recognition, Accessibility, and Screen Recording permissions." />
+          <MetricDefinition title="Network and account" detail="A verified Phantom email and an internet connection are required for sign-in, hosted AI, payments, and knowledge-base sync." />
         </div>
       </section>
     </main>
@@ -1190,6 +1249,8 @@ function UserLoginPage({ onAuthenticated, userSession }) {
             <span>Email</span>
             <input
               type="email"
+              required
+              autoComplete="username"
               value={form.email}
               onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
               placeholder="name@example.com"
@@ -1199,6 +1260,8 @@ function UserLoginPage({ onAuthenticated, userSession }) {
             <span>Password</span>
             <input
               type="password"
+              required
+              autoComplete="current-password"
               value={form.password}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
               placeholder="Enter your password"
@@ -1207,7 +1270,7 @@ function UserLoginPage({ onAuthenticated, userSession }) {
           <button className="button button-primary" type="submit" disabled={submitting}>
             {submitting ? "Signing in..." : "Sign in to Phantom"}
           </button>
-          {status ? <p className="status-message status-error">{status}</p> : null}
+          {status ? <p className="status-message status-error" role="alert">{status}</p> : null}
           <div className="link-row">
             <Link to="/register">Create account</Link>
             <Link to="/forgot-password">Forgot password?</Link>
@@ -1371,7 +1434,7 @@ function RegisterPage() {
     <main className="page">
       <Seo
         title="Register | Phantom"
-        description="Create a Phantom account and complete phone OTP plus email verification before the first desktop sign-in."
+        description={`Create a Phantom account and complete email verification${phoneVerificationRequired ? " plus phone OTP" : ""} before the first desktop sign-in.`}
         noindex
       />
       <section className="auth-shell">
@@ -1394,6 +1457,7 @@ function RegisterPage() {
             <input
               type="email"
               required
+              autoComplete="email"
               value={form.email}
               onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
               placeholder="name@example.com"
@@ -1404,6 +1468,7 @@ function RegisterPage() {
             <input
               type="password"
               required
+              autoComplete="new-password"
               value={form.password}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
               placeholder="Choose a strong password"
@@ -1419,6 +1484,8 @@ function RegisterPage() {
                 <span>Phone number</span>
                 <input
                   required
+                  type="tel"
+                  autoComplete="tel"
                   value={form.phoneNumber}
                   onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
                   placeholder="+91 9876543210"
@@ -1445,8 +1512,12 @@ function RegisterPage() {
                 <span>OTP code</span>
                 <input
                   required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
                   value={form.otpCode}
-                  onChange={(event) => setForm((current) => ({ ...current, otpCode: event.target.value }))}
+                  onChange={(event) => setForm((current) => ({ ...current, otpCode: event.target.value.replace(/\D/g, "").slice(0, 6) }))}
                   placeholder="6-digit OTP"
                 />
               </label>
@@ -1481,7 +1552,7 @@ function RegisterPage() {
           </button>
 
           {status ? (
-            <p className={`status-message ${status.toLowerCase().includes("verified") || status.toLowerCase().includes("sent") ? "" : "status-error"}`}>
+            <p className={`status-message ${status.toLowerCase().includes("verified") || status.toLowerCase().includes("sent") ? "" : "status-error"}`} role="status" aria-live="polite">
               {status}
             </p>
           ) : null}
@@ -1531,7 +1602,7 @@ function UserForgotPasswordPage() {
           <button className="button button-primary" type="submit" disabled={submitting}>
             {submitting ? "Sending..." : "Send Reset Link"}
           </button>
-          {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p> : null}
+          {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{status}</p> : null}
           <div className="link-row">
             <Link to="/login">Back to login</Link>
           </div>
@@ -1602,7 +1673,7 @@ function UserResetPasswordPage() {
           <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
-          {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p> : null}
+          {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`} role="status" aria-live="polite">{status}</p> : null}
         </form>
       </section>
     </main>
@@ -1795,6 +1866,7 @@ function UserDashboardPage({ session }) {
   const [support, setSupport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1802,40 +1874,34 @@ function UserDashboardPage({ session }) {
     async function load() {
       setLoading(true);
       setError("");
-      try {
-        const account = await fetchAccountSummary(session.accessToken);
-        if (!account || cancelled) {
-          return;
-        }
+      const results = await Promise.allSettled([
+        fetchAccountSummary(session.accessToken),
+        fetchDownloadEntitlement(session.accessToken),
+        fetchSupportOverview(session.accessToken),
+        fetchHostedKnowledgeBase(session.accessToken)
+      ]);
 
-        const [downloadEntitlement, supportOverview, knowledgeBaseStatus] = await Promise.all([
-          fetchDownloadEntitlement(session.accessToken),
-          fetchSupportOverview(session.accessToken),
-          fetchHostedKnowledgeBase(session.accessToken)
-        ]);
-
-        if (!cancelled) {
-          setSummary(account);
-          setKnowledgeBase(knowledgeBaseStatus);
-          setDownload(downloadEntitlement);
-          setSupport(supportOverview);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError.message || "Could not load the user dashboard.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
+      if (!cancelled) {
+        const [accountResult, downloadResult, supportResult, knowledgeBaseResult] = results;
+        if (accountResult.status === "fulfilled") setSummary(accountResult.value);
+        if (downloadResult.status === "fulfilled") setDownload(downloadResult.value);
+        if (supportResult.status === "fulfilled") setSupport(supportResult.value);
+        if (knowledgeBaseResult.status === "fulfilled") setKnowledgeBase(knowledgeBaseResult.value);
+        const failedCount = results.filter((result) => result.status === "rejected").length;
+        if (failedCount > 0) {
+          const accountError = accountResult.status === "rejected" ? accountResult.reason?.message : "";
+          setError(accountError || `${failedCount} dashboard section${failedCount === 1 ? "" : "s"} could not be loaded.`);
         }
       }
+
+      if (!cancelled) setLoading(false);
     }
 
     load();
     return () => {
       cancelled = true;
     };
-  }, [session.accessToken, session.email, session.expiresAtUtc]);
+  }, [session.accessToken, session.email, session.expiresAtUtc, reloadKey]);
 
   async function refreshSummary() {
     const nextSummary = await fetchAccountSummary(session.accessToken);
@@ -1843,10 +1909,10 @@ function UserDashboardPage({ session }) {
   }
 
   if (loading) {
-    return <SessionLoadingPage label="User dashboard" title="Loading hosted account state..." />;
+    return <DashboardSkeleton label="User dashboard" />;
   }
 
-  if (error || !summary) {
+  if (!summary) {
     return (
       <main className="page">
         <Seo title="User Dashboard | Phantom" description="User dashboard" noindex />
@@ -1854,6 +1920,7 @@ function UserDashboardPage({ session }) {
           <p className="eyebrow">User dashboard</p>
           <h1>Dashboard unavailable</h1>
           <p>{error || "Account summary could not be resolved."}</p>
+          <button className="button button-primary" type="button" onClick={() => setReloadKey((value) => value + 1)}>Try again</button>
         </section>
       </main>
     );
@@ -1870,7 +1937,7 @@ function UserDashboardPage({ session }) {
         <aside className="glass-panel dashboard-rail">
           <div className="dashboard-rail-heading">
             <p className="eyebrow">Your workspace</p>
-            <h2>{summary.email}</h2>
+            <p className="dashboard-rail-title">{summary.email}</p>
           </div>
           <nav className="dashboard-nav" aria-label="Workspace navigation">
             {userNav.map((item) => (
@@ -1882,9 +1949,10 @@ function UserDashboardPage({ session }) {
           <div className="status-band">
             <span className="status-pill">{summary.planLabel}</span>
             {summary.canUseDesktopPowerFeatures ? <span className="status-pill status-pill-power">Power user</span> : null}
-            <span className={`status-pill ${summary.phoneVerified ? "status-pill-good" : "status-pill-warn"}`}>
-              {summary.phoneVerified ? "Phone verified" : "Verification required"}
+            <span className={`status-pill ${summary.emailVerified ? "status-pill-good" : "status-pill-warn"}`}>
+              {summary.emailVerified ? "Email verified" : "Email verification required"}
             </span>
+            {summary.phoneVerified ? <span className="status-pill status-pill-good">Phone verified</span> : null}
           </div>
           <div className="stack-list">
             <InfoRow label="Pro credits" value={summary.proAvailableCredits.toFixed(2)} />
@@ -1894,7 +1962,8 @@ function UserDashboardPage({ session }) {
           </div>
         </aside>
 
-        <section className="dashboard-main">
+        <section className="dashboard-main" aria-busy={loading || undefined}>
+          <RetryNotice message={error} onRetry={() => setReloadKey((value) => value + 1)} />
           <Routes>
             <Route
               index
@@ -1944,34 +2013,36 @@ function UserOverviewPanel({ accessToken, summary, download, support, knowledgeB
   const [devicesPage, setDevicesPage] = useState({ items: [] });
   const [walletHistoryPage, setWalletHistoryPage] = useState({ items: [] });
   const [walletPurchasesPage, setWalletPurchasesPage] = useState({ items: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([
+    setLoading(true);
+    setError("");
+    Promise.allSettled([
       fetchDevices(accessToken, 1, 6),
       fetchWalletHistory(accessToken, 1, 12),
       fetchWalletPurchases(accessToken, 1, 12)
     ])
-      .then(([nextDevices, nextHistory, nextPurchases]) => {
+      .then((results) => {
+        const [nextDevices, nextHistory, nextPurchases] = results;
         if (!cancelled) {
-          setDevicesPage(nextDevices || { items: [] });
-          setWalletHistoryPage(nextHistory || { items: [] });
-          setWalletPurchasesPage(nextPurchases || { items: [] });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDevicesPage({ items: [] });
-          setWalletHistoryPage({ items: [] });
-          setWalletPurchasesPage({ items: [] });
+          if (nextDevices.status === "fulfilled") setDevicesPage(nextDevices.value || { items: [] });
+          if (nextHistory.status === "fulfilled") setWalletHistoryPage(nextHistory.value || { items: [] });
+          if (nextPurchases.status === "fulfilled") setWalletPurchasesPage(nextPurchases.value || { items: [] });
+          const failed = results.filter((result) => result.status === "rejected");
+          if (failed.length) setError(failed[0].reason?.message || "Recent activity could not be loaded.");
+          setLoading(false);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [accessToken]);
+  }, [accessToken, reloadKey]);
 
   const devices = devicesPage.items || [];
   const walletHistory = walletHistoryPage.items || [];
@@ -1979,12 +2050,17 @@ function UserOverviewPanel({ accessToken, summary, download, support, knowledgeB
   const activeDeviceCount = devices.filter((item) => item.isActive).length;
   const purchaseStates = countBy(walletPurchases, (item) => item.status || "unknown");
 
+  if (loading && devices.length === 0 && walletHistory.length === 0 && walletPurchases.length === 0) {
+    return <SectionSkeleton rows={8} label="Loading account overview" />;
+  }
+
   return (
     <div className="dashboard-grid">
+      <RetryNotice message={error} onRetry={() => setReloadKey((value) => value + 1)} className="table-span-full" />
       <article className="glass-panel dashboard-hero">
-        <p className="eyebrow">{summary.phoneVerified && download?.canDownload ? "Ready to launch" : "Action required"}</p>
-        <h1>{summary.phoneVerified && download?.canDownload ? "Your Phantom workspace is ready." : "Complete account verification to unlock Phantom."}</h1>
-        <p>{summary.phoneVerified ? "Your account is verified. Review context, credits, and recent interview activity before opening the desktop app." : "Verify your phone and email, then return here to download and launch the Windows or macOS app."}</p>
+        <p className="eyebrow">{summary.emailVerified && download?.canDownload ? "Ready to launch" : "Action required"}</p>
+        <h1>{summary.emailVerified && download?.canDownload ? "Your Phantom workspace is ready." : "Complete email verification to unlock Phantom."}</h1>
+        <p>{summary.emailVerified ? "Your email is verified. Review context, credits, and recent interview activity before opening the desktop app." : "Verify your email, then return here to download and launch the Windows or macOS app."}</p>
         <div className="hero-actions">
           <Link className="button button-primary" to="/download">{download?.canDownload ? "Download Phantom" : "Check download access"}</Link>
           <Link className="button button-secondary" to="/dashboard/knowledge-base">Review knowledge</Link>
@@ -2052,6 +2128,7 @@ function UserOverviewPanel({ accessToken, summary, download, support, knowledgeB
 }
 
 function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBaseChanged }) {
+  const [activeKnowledgeEditor, setActiveKnowledgeEditor] = useState(() => knowledgeBase?.knowledgeBaseId ? "profile" : "base");
   const [name, setName] = useState(knowledgeBase?.name || "My Premium Knowledge Base");
   const [description, setDescription] = useState(knowledgeBase?.description || "");
   const [status, setStatus] = useState("");
@@ -2335,18 +2412,18 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
     event.preventDefault();
     setSavingExperience(true);
     setStatus("");
-    const payload = {
-      company: experienceDraft.company,
-      role: experienceDraft.role,
-      isCurrent: experienceDraft.isCurrent,
-      sortOrder: Number(experienceDraft.sortOrder) || 0,
-      startDate: experienceDraft.startDate,
-      endDate: experienceDraft.isCurrent ? "" : experienceDraft.endDate,
-      summary: experienceDraft.summary,
-      responsibilities: experienceDraft.responsibilities,
-      skills: parseListInput(experienceDraft.skills)
-    };
     try {
+      const payload = {
+        company: experienceDraft.company,
+        role: experienceDraft.role,
+        isCurrent: experienceDraft.isCurrent,
+        sortOrder: parseRequiredInteger(experienceDraft.sortOrder, "Experience order", 0, 10000),
+        startDate: experienceDraft.startDate,
+        endDate: experienceDraft.isCurrent ? "" : experienceDraft.endDate,
+        summary: experienceDraft.summary,
+        responsibilities: experienceDraft.responsibilities,
+        skills: parseListInput(experienceDraft.skills)
+      };
       const saved = experienceDraft.experienceCardId
         ? await updateHostedKnowledgeBaseExperience(accessToken, experienceDraft.experienceCardId, payload)
         : await createHostedKnowledgeBaseExperience(accessToken, payload);
@@ -2390,7 +2467,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
       await updateHostedKnowledgeBaseProject(accessToken, projectDraft.projectCardId, {
         title: projectDraft.title,
         isRecent: projectDraft.isRecent,
-        sortOrder: Number(projectDraft.sortOrder) || 0,
+        sortOrder: parseRequiredInteger(projectDraft.sortOrder, "Project order", 0, 10000),
         role: projectDraft.role,
         summary: projectDraft.summary,
         stack: parseListInput(projectDraft.stack),
@@ -2449,7 +2526,27 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         </p>
       </article>
 
-      <form className="glass-panel auth-form" onSubmit={handleCreate}>
+      <nav className="glass-panel section-switcher table-span-full" aria-label="Knowledge base editors">
+        {[
+          ["base", "Knowledge base"],
+          ["documents", "Documents"],
+          ["profile", "Profile"],
+          ["experience", "Experience"],
+          ["project", "Projects"]
+        ].map(([value, label]) => (
+          <button
+            className={`button button-compact ${activeKnowledgeEditor === value ? "button-primary" : "button-ghost"}`}
+            type="button"
+            aria-pressed={activeKnowledgeEditor === value}
+            key={value}
+            onClick={() => setActiveKnowledgeEditor(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {activeKnowledgeEditor === "base" ? <form className="glass-panel auth-form table-span-full" onSubmit={handleCreate}>
         <p className="eyebrow">Create or rename</p>
         <label>
           <span>Knowledge base name</span>
@@ -2468,9 +2565,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingBase || processingDocuments}>
           {savingBase ? "Saving..." : "Save Knowledge Base"}
         </button>
-      </form>
+      </form> : null}
 
-      <article className="glass-panel upload-panel">
+      {activeKnowledgeEditor === "documents" ? <article className="glass-panel upload-panel table-span-full">
         <p className="eyebrow">Sectioned memory</p>
         <h3>Supported: `.txt`, `.md`, `.json`, `.csv`, `.log`, `.docx`</h3>
         <p>
@@ -2515,9 +2612,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             {processingDocuments ? "Processing..." : "Process Pasted Content"}
           </button>
         </form>
-      </article>
+      </article> : null}
 
-      <form className="glass-panel auth-form" onSubmit={handleSaveProfile}>
+      {activeKnowledgeEditor === "profile" ? <form className="glass-panel auth-form table-span-full" onSubmit={handleSaveProfile}>
         <p className="eyebrow">Profile</p>
         <label>
           <span>Full name</span>
@@ -2546,9 +2643,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
         <button className="button button-primary" type="submit" disabled={isPremiumBlocked || savingProfile || processingDocuments || !knowledgeBase?.knowledgeBaseId}>
           {savingProfile ? "Saving..." : "Save Profile"}
         </button>
-      </form>
+      </form> : null}
 
-      <form className="glass-panel auth-form" onSubmit={handleSaveExperience}>
+      {activeKnowledgeEditor === "experience" ? <form className="glass-panel auth-form table-span-full" onSubmit={handleSaveExperience}>
         <div className="section-heading-row">
           <div>
             <p className="eyebrow">Experience</p>
@@ -2615,9 +2712,9 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             </button>
           )}
         </div>
-      </form>
+      </form> : null}
 
-      <form className="glass-panel auth-form" onSubmit={handleSaveProject}>
+      {activeKnowledgeEditor === "project" ? <form className="glass-panel auth-form table-span-full" onSubmit={handleSaveProject}>
         <p className="eyebrow">Project card</p>
         <label>
           <span>Selected project</span>
@@ -2665,7 +2762,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
             Mark as Recent
           </button>
         </div>
-      </form>
+      </form> : null}
 
       <div className="glass-panel table-panel table-span-full">
         <div className="table-header">
@@ -2728,7 +2825,7 @@ function KnowledgeBasePanel({ accessToken, summary, knowledgeBase, onKnowledgeBa
           </table>
         </TableScroll>
         {status ? (
-          <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>
+          <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">
             {status}
           </p>
         ) : null}
@@ -2772,9 +2869,13 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState("success");
   const [submittingTarget, setSubmittingTarget] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setStatus("");
 
     Promise.allSettled([
       fetchWalletHistory(accessToken, 1, 12),
@@ -2796,16 +2897,17 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
           : { items: [], page: 1, hasNextPage: false, totalCount: 0 }
       );
       setPaymentCatalog(catalogResult.status === "fulfilled" ? catalogResult.value : null);
-      if (historyResult.status === "rejected" || purchasesResult.status === "rejected") {
+      if (historyResult.status === "rejected" || purchasesResult.status === "rejected" || catalogResult.status === "rejected") {
         setStatusType("error");
-        setStatus("Some wallet activity could not be loaded. Recharge options remain available.");
+        setStatus("Some wallet information could not be loaded. Existing balances remain unchanged.");
       }
+      setLoading(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [accessToken]);
+  }, [accessToken, reloadKey]);
 
   async function refreshWalletState() {
     const [history, purchases, catalog] = await Promise.all([
@@ -2847,6 +2949,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
 
   return (
     <div className="dashboard-grid">
+      {statusType === "error" ? <RetryNotice message={status} onRetry={() => setReloadKey((value) => value + 1)} className="table-span-full" /> : null}
       <MetricCard label="Pro available" value={summary.proAvailableCredits.toFixed(2)} tone="signal" />
       <MetricCard label="Premium available" value={summary.premiumAvailableCredits.toFixed(2)} tone="signal" />
       <MetricCard label="Premium debt" value={summary.premiumNegativeCredits.toFixed(2)} tone="warn" />
@@ -2900,15 +3003,16 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
         </article>
       ) : null}
 
-      {status ? (
+      {status && statusType !== "error" ? (
         <article className="glass-panel table-span-full">
-          <p className={`status-message status-${statusType}`}>
+          <p className={`status-message status-${statusType}`} role="status" aria-live="polite">
             {status}
           </p>
         </article>
       ) : null}
 
       <DataTable
+        loading={loading}
         title="Purchase history"
         columns={["Purchase", "Amount", "Credits", "Status", "Created"]}
         rows={
@@ -2937,6 +3041,7 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
       />
 
       <DataTable
+        loading={loading}
         title="Wallet history"
         columns={["Session", "Credits", "Blocks", "Debt", "Created"]}
         rows={
@@ -2967,12 +3072,48 @@ function WalletPanel({ accessToken, summary, onSummaryChanged }) {
 
 function DevicesPanel({ accessToken }) {
   const [devicesPage, setDevicesPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [busyDevice, setBusyDevice] = useState("");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function load(page = 1) {
+    setLoading(true);
+    setError("");
+    try {
+      await loadDevicesPage(accessToken, page, setDevicesPage);
+    } catch (loadError) {
+      setError(loadError.message || "Could not load device sessions.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    loadDevicesPage(accessToken, 1, setDevicesPage);
+    load(1);
   }, [accessToken]);
 
   const devices = devicesPage.items || [];
+
+  async function handleRevoke(device) {
+    const deviceKey = `${device.deviceInstallId}-${device.deviceFingerprintHash}`;
+    if (!window.confirm("Sign this device out? It will need to authenticate again.")) return;
+    setBusyDevice(deviceKey);
+    setStatus("");
+    try {
+      await revokeDeviceSession(accessToken, device.deviceInstallId, device.deviceFingerprintHash);
+      if (isCurrentBrowserDevice(device.deviceInstallId)) {
+        window.location.assign("/login");
+        return;
+      }
+      await load(devicesPage.page || 1);
+      setStatus("Device session revoked.");
+    } catch (error) {
+      setError(error.message || "Could not revoke the device session.");
+    } finally {
+      setBusyDevice("");
+    }
+  }
 
   return (
     <div className="dashboard-grid">
@@ -2981,7 +3122,8 @@ function DevicesPanel({ accessToken }) {
         <h1>Know exactly where your Phantom account has been used.</h1>
         <p>Review active and previous browser or desktop sessions, including their sign-in method and last activity.</p>
       </article>
-      {devices.length === 0 ? (
+      <RetryNotice message={error} onRetry={() => load(devicesPage.page || 1)} className="table-span-full" />
+      {loading && devices.length === 0 ? <SectionSkeleton label="Loading device sessions" /> : devices.length === 0 ? (
         <article className="glass-panel">
           <h3>No device sessions recorded yet.</h3>
         </article>
@@ -2991,10 +3133,15 @@ function DevicesPanel({ accessToken }) {
             <span className={`status-pill ${device.isActive ? "status-pill-good" : ""}`}>
               {device.isActive ? "Active" : "Historical"}
             </span>
-            <h3>{device.deviceInstallId}</h3>
-            <p>Fingerprint: {device.deviceFingerprintHash}</p>
+            <h3>{device.deviceInstallId.startsWith("web-") ? "Browser Dashboard" : "Phantom Desktop"}</h3>
+            <p>Device reference: {maskIdentifier(device.deviceInstallId)}</p>
             <p>Auth method: {device.authMethod}</p>
             <p>Last seen: {formatDate(device.lastAuthenticatedAtUtc)}</p>
+            {device.isActive ? (
+              <button className="button button-secondary button-compact" type="button" disabled={busyDevice === `${device.deviceInstallId}-${device.deviceFingerprintHash}`} onClick={() => handleRevoke(device)}>
+                {busyDevice === `${device.deviceInstallId}-${device.deviceFingerprintHash}` ? "Signing out..." : "Sign out device"}
+              </button>
+            ) : null}
           </article>
         ))
       )}
@@ -3003,19 +3150,35 @@ function DevicesPanel({ accessToken }) {
           page={devicesPage.page || 1}
           hasNextPage={Boolean(devicesPage.hasNextPage)}
           totalCount={devicesPage.totalCount || 0}
-          onPrevious={() => loadDevicesPage(accessToken, devicesPage.page - 1, setDevicesPage)}
-          onNext={() => loadDevicesPage(accessToken, (devicesPage.page || 1) + 1, setDevicesPage)}
+          disabled={loading}
+          onPrevious={() => load(devicesPage.page - 1)}
+          onNext={() => load((devicesPage.page || 1) + 1)}
         />
       </article>
+      {status ? <p className="status-message table-span-full" role="status">{status}</p> : null}
     </div>
   );
 }
 
 function HistoryPanel({ accessToken }) {
   const [walletHistoryPage, setWalletHistoryPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load(page = 1) {
+    setLoading(true);
+    setError("");
+    try {
+      await loadWalletHistoryPage(accessToken, page, setWalletHistoryPage);
+    } catch (loadError) {
+      setError(loadError.message || "Could not load usage history.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    loadWalletHistoryPage(accessToken, 1, setWalletHistoryPage);
+    load(1);
   }, [accessToken]);
 
   return (
@@ -3025,7 +3188,9 @@ function HistoryPanel({ accessToken }) {
         <h1>A clear record of every credit charge.</h1>
         <p>Review session-level usage, credit deductions, and any Premium continuation balance in one place.</p>
       </article>
+      <RetryNotice message={error} onRetry={() => load(walletHistoryPage.page || 1)} className="table-span-full" />
       <DataTable
+        loading={loading}
         title="Usage charge history"
         columns={["Ledger entry", "Session", "Credits", "Debt", "Created"]}
         rows={
@@ -3045,8 +3210,9 @@ function HistoryPanel({ accessToken }) {
             page={walletHistoryPage.page || 1}
             hasNextPage={Boolean(walletHistoryPage.hasNextPage)}
             totalCount={walletHistoryPage.totalCount || 0}
-            onPrevious={() => loadWalletHistoryPage(accessToken, walletHistoryPage.page - 1, setWalletHistoryPage)}
-            onNext={() => loadWalletHistoryPage(accessToken, (walletHistoryPage.page || 1) + 1, setWalletHistoryPage)}
+            disabled={loading}
+            onPrevious={() => load(walletHistoryPage.page - 1)}
+            onNext={() => load((walletHistoryPage.page || 1) + 1)}
           />
         }
       />
@@ -3060,15 +3226,29 @@ function QuestionBanksPanel({ accessToken }) {
   const [draft, setDraft] = useState({ interviewName: "", questions: [] });
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function load(page = 1) {
+    setLoading(true);
+    setError("");
+    try {
+      await loadQuestionBanksPage(accessToken, page, setBanksPage);
+    } catch (loadError) {
+      setError(loadError.message || "Could not load interview question banks.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    loadQuestionBanksPage(accessToken, 1, setBanksPage);
+    load(1);
   }, [accessToken]);
 
   function startEditing(bank) {
     setEditingSessionId(bank.sessionId);
     setDraft({
-      interviewName: bank.interviewName || "",
+      interviewName: bank.interviewName || `Interview · ${formatDate(bank.interviewEndedAtUtc)}`,
       questions: [...(bank.questions || [])]
     });
     setStatus("");
@@ -3119,7 +3299,9 @@ function QuestionBanksPanel({ accessToken }) {
         <p>Phantom keeps the cleaned, grouped questions only. Interview answers and the full chat are not stored here.</p>
       </article>
 
-      {(banksPage.items || []).length === 0 ? (
+      <RetryNotice message={error} onRetry={() => load(banksPage.page || 1)} className="table-span-full" />
+
+      {loading && (banksPage.items || []).length === 0 ? <SectionSkeleton label="Loading interview question banks" /> : (banksPage.items || []).length === 0 ? (
         <article className="glass-panel table-span-full">
           <h3>No interview question banks yet.</h3>
           <p>A bank appears after the desktop session ends and background processing completes.</p>
@@ -3170,18 +3352,20 @@ function QuestionBanksPanel({ accessToken }) {
                 <div className="question-bank-heading">
                   <div>
                     <p className="story-tag">Interview · {formatDate(bank.interviewEndedAtUtc)}</p>
-                    <h3>{bank.interviewName || "Untitled interview"}</h3>
+                    <h3>{bank.interviewName || `Interview · ${formatDate(bank.interviewEndedAtUtc)}`}</h3>
                   </div>
                   <button className="button button-secondary button-compact" type="button" onClick={() => startEditing(bank)}>
                     Edit interview
                   </button>
                 </div>
                 <p>{(bank.questions || []).length} grouped question{(bank.questions || []).length === 1 ? "" : "s"}</p>
-                <ol className="question-bank-list">
-                  {(bank.questions || []).map((question, index) => (
-                    <li key={`${bank.sessionId}-${index}`}>{question}</li>
-                  ))}
-                </ol>
+                {(bank.questions || []).length > 0 ? (
+                  <ol className="question-bank-list">
+                    {(bank.questions || []).map((question, index) => (
+                      <li key={`${bank.sessionId}-${index}`}>{question}</li>
+                    ))}
+                  </ol>
+                ) : <p>No questions were captured for this completed session.</p>}
               </>
             )}
           </article>
@@ -3190,7 +3374,7 @@ function QuestionBanksPanel({ accessToken }) {
 
       {status ? (
         <article className="glass-panel table-span-full">
-          <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p>
+          <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{status}</p>
         </article>
       ) : null}
 
@@ -3199,8 +3383,9 @@ function QuestionBanksPanel({ accessToken }) {
           page={banksPage.page || 1}
           hasNextPage={Boolean(banksPage.hasNextPage)}
           totalCount={banksPage.totalCount || 0}
-          onPrevious={() => loadQuestionBanksPage(accessToken, banksPage.page - 1, setBanksPage)}
-          onNext={() => loadQuestionBanksPage(accessToken, (banksPage.page || 1) + 1, setBanksPage)}
+          disabled={loading}
+          onPrevious={() => load(banksPage.page - 1)}
+          onNext={() => load((banksPage.page || 1) + 1)}
         />
       </article>
     </div>
@@ -3217,9 +3402,23 @@ function SupportPanel({ accessToken, support }) {
   });
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  async function load(page = 1) {
+    setLoading(true);
+    setLoadError("");
+    try {
+      await loadSupportTicketsPage(accessToken, page, setTicketsPage);
+    } catch (error) {
+      setLoadError(error.message || "Could not load support tickets.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    loadSupportTicketsPage(accessToken, 1, setTicketsPage);
+    load(1);
   }, [accessToken]);
 
   async function handleSubmit(event) {
@@ -3234,7 +3433,7 @@ function SupportPanel({ accessToken, support }) {
         priority: "normal",
         description: ""
       });
-      await loadSupportTicketsPage(accessToken, 1, setTicketsPage);
+      await load(1);
       setStatus("Support ticket created.");
     } catch (error) {
       setStatus(error.message || "Could not create the support ticket.");
@@ -3249,9 +3448,11 @@ function SupportPanel({ accessToken, support }) {
         <p className="eyebrow">Support</p>
         <h1>Tell us what happened. Include the details that will help us resolve it faster.</h1>
       </article>
+      <RetryNotice message={loadError} onRetry={() => load(ticketsPage.page || 1)} className="table-span-full" />
       <article className="glass-panel table-span-full">
         <h3>{support?.openLockSessionId || "No active support event"}</h3>
         <p>{support?.supportMessage || "Support state is not available."}</p>
+        <p><strong>Response target:</strong> within 2 business days. Use urgent priority for account access or payment incidents.</p>
         <div className="stats-grid">
           <MetricCard label="Last charge" value={String(support?.lastUsageChargeCredits ?? 0)} />
           <MetricCard label="Lease hours left" value={String(support?.offlineLeaseHoursRemaining ?? 0)} />
@@ -3262,7 +3463,7 @@ function SupportPanel({ accessToken, support }) {
         <div className="admin-form">
           <label>
             Subject
-            <input value={ticketForm.subject} onChange={(event) => setTicketForm((current) => ({ ...current, subject: event.target.value }))} placeholder="Issue summary" />
+            <input value={ticketForm.subject} onChange={(event) => setTicketForm((current) => ({ ...current, subject: event.target.value }))} placeholder="Issue summary" minLength={5} maxLength={160} required />
           </label>
           <label>
             Category
@@ -3285,15 +3486,16 @@ function SupportPanel({ accessToken, support }) {
           </label>
           <label className="table-span-full">
             Description
-            <textarea rows={5} value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} placeholder="What happened, what you expected, and any relevant checkout/session/device details." />
+            <textarea rows={5} value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} placeholder="What happened, what you expected, and any relevant checkout/session/device details." minLength={10} maxLength={5000} required />
           </label>
         </div>
         <button className="button button-primary" type="submit" disabled={submitting}>
           {submitting ? "Creating..." : "Create Ticket"}
         </button>
-        {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p> : null}
+        {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{status}</p> : null}
       </form>
       <DataTable
+        loading={loading}
         title="Your support tickets"
         columns={["Ticket", "Category", "Priority", "Status", "Updated"]}
         rows={
@@ -3313,8 +3515,9 @@ function SupportPanel({ accessToken, support }) {
             page={ticketsPage.page || 1}
             hasNextPage={Boolean(ticketsPage.hasNextPage)}
             totalCount={ticketsPage.totalCount || 0}
-            onPrevious={() => loadSupportTicketsPage(accessToken, ticketsPage.page - 1, setTicketsPage)}
-            onNext={() => loadSupportTicketsPage(accessToken, (ticketsPage.page || 1) + 1, setTicketsPage)}
+            disabled={loading}
+            onPrevious={() => load(ticketsPage.page - 1)}
+            onNext={() => load((ticketsPage.page || 1) + 1)}
           />
         }
       />
@@ -3326,6 +3529,8 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState(adminSession?.email || "");
   const [password, setPassword] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [challenge, setChallenge] = useState(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -3340,9 +3545,16 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
     setSubmitting(true);
     setError("");
     try {
-      const session = await loginAdmin({ email, password });
-      onAuthenticated(session);
-      navigate("/admin", { replace: true });
+      if (!challenge) {
+        const nextChallenge = await loginAdmin({ email, password });
+        setChallenge(nextChallenge);
+        setPassword("");
+        setOtpCode("");
+      } else {
+        const session = await verifyAdminOtp(challenge.challengeId, otpCode);
+        onAuthenticated(session);
+        navigate("/admin", { replace: true });
+      }
     } catch (loginError) {
       setError(loginError.message || "Admin sign-in failed.");
     } finally {
@@ -3368,18 +3580,48 @@ function AdminLoginPage({ onAuthenticated, adminSession }) {
         </article>
 
         <form className="glass-panel auth-form" onSubmit={handleSubmit}>
-          <label>
-            <span>Admin email</span>
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@example.com" />
-          </label>
-          <label>
-            <span>Password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your admin password" />
-          </label>
+          {!challenge ? (
+            <>
+              <label>
+                <span>Admin email</span>
+                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@example.com" autoComplete="username" required />
+              </label>
+              <label>
+                <span>Password</span>
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your admin password" autoComplete="current-password" required />
+              </label>
+            </>
+          ) : (
+            <>
+              <div className="status-message" role="status">
+                A 6-digit verification code was sent to {challenge.maskedEmail}. It expires at {formatDate(challenge.expiresAtUtc)}.
+              </div>
+              <label>
+                <span>Email verification code</span>
+                <input
+                  type="text"
+                  value={otpCode}
+                  onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="000000"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  required
+                  autoFocus
+                />
+              </label>
+            </>
+          )}
           <button className="button button-primary" type="submit" disabled={submitting}>
-            {submitting ? "Authenticating..." : "Open Admin Dashboard"}
+            {submitting ? "Authenticating..." : challenge ? "Verify and Open Dashboard" : "Continue with Email Verification"}
           </button>
-          {error ? <p className="status-message status-error">{error}</p> : null}
+          {challenge ? (
+            <button className="button button-secondary" type="button" disabled={submitting} onClick={() => { setChallenge(null); setOtpCode(""); setError(""); }}>
+              Use a different account
+            </button>
+          ) : null}
+          {error ? <p className="status-message status-error" role="alert">{error}</p> : null}
           <div className="link-row">
             <Link to="/admin/forgot-password">Forgot password?</Link>
           </div>
@@ -3429,7 +3671,7 @@ function AdminForgotPasswordPage() {
           <button className="button button-primary" type="submit" disabled={submitting}>
             {submitting ? "Sending..." : "Send Reset Link"}
           </button>
-          {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`}>{status}</p> : null}
+          {status ? <p className={`status-message ${status.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{status}</p> : null}
           <div className="link-row">
             <Link to="/admin/login">Back to admin login</Link>
           </div>
@@ -3500,7 +3742,7 @@ function AdminResetPasswordPage() {
           <button className="button button-primary" type="submit" disabled={submitting || Boolean(passwordError) || password !== confirmPassword}>
             {submitting ? "Resetting..." : "Reset Password"}
           </button>
-          {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`}>{status}</p> : null}
+          {status ? <p className={`status-message ${status.toLowerCase().includes("complete") ? "" : "status-error"}`} role="status" aria-live="polite">{status}</p> : null}
         </form>
       </section>
     </main>
@@ -3515,6 +3757,7 @@ function AdminDashboardPage({ adminSession }) {
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const location = useLocation();
 
   useEffect(() => {
@@ -3523,28 +3766,24 @@ function AdminDashboardPage({ adminSession }) {
     async function load() {
       setLoading(true);
       setError("");
-      try {
-        const [overviewData, inventoryData, latencyStatusData, gmailStatusData] = await Promise.all([
-          fetchAdminOverview(adminSession.accessToken),
-          fetchManagedAiAdminInventory(adminSession.accessToken),
-          fetchManagedAiLatencyStatus(adminSession.accessToken),
-          fetchGmailOAuthStatus(adminSession.accessToken)
-        ]);
-
-        if (!cancelled) {
-          setOverview(overviewData);
-          setInventory(inventoryData);
-          setLatencyStatus(latencyStatusData);
-          setGmailStatus(gmailStatusData);
+      const results = await Promise.allSettled([
+        fetchAdminOverview(adminSession.accessToken),
+        fetchManagedAiAdminInventory(adminSession.accessToken),
+        fetchManagedAiLatencyStatus(adminSession.accessToken),
+        fetchGmailOAuthStatus(adminSession.accessToken)
+      ]);
+      if (!cancelled) {
+        const [overviewResult, inventoryResult, latencyResult, gmailResult] = results;
+        if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
+        if (inventoryResult.status === "fulfilled") setInventory(inventoryResult.value);
+        if (latencyResult.status === "fulfilled") setLatencyStatus(latencyResult.value);
+        if (gmailResult.status === "fulfilled") setGmailStatus(gmailResult.value);
+        const failedCount = results.filter((result) => result.status === "rejected").length;
+        if (failedCount > 0) {
+          const overviewError = overviewResult.status === "rejected" ? overviewResult.reason?.message : "";
+          setError(overviewError || `${failedCount} admin section${failedCount === 1 ? "" : "s"} could not be loaded.`);
         }
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError.message || "Could not load admin dashboard.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     }
 
@@ -3552,7 +3791,7 @@ function AdminDashboardPage({ adminSession }) {
     return () => {
       cancelled = true;
     };
-  }, [adminSession.accessToken, adminSession.email, adminSession.expiresAtUtc]);
+  }, [adminSession.accessToken, adminSession.email, adminSession.expiresAtUtc, reloadKey]);
 
   async function refreshManagedInventory() {
     const nextInventory = await fetchManagedAiAdminInventory(adminSession.accessToken);
@@ -3583,17 +3822,18 @@ function AdminDashboardPage({ adminSession }) {
   }
 
   if (loading) {
-    return <SessionLoadingPage label="Admin dashboard" title="Loading control plane..." />;
+    return <DashboardSkeleton label="Admin dashboard" />;
   }
 
-  if (error) {
+  if (!overview) {
     return (
       <main className="page">
         <Seo title="Admin Dashboard | Phantom" description="Admin dashboard" noindex />
         <section className="glass-panel page-intro">
           <p className="eyebrow">Admin dashboard</p>
           <h1>Admin access failed</h1>
-          <p>{error}</p>
+          <p>{error || "The admin overview could not be loaded."}</p>
+          <button className="button button-primary" type="button" onClick={() => setReloadKey((value) => value + 1)}>Try again</button>
         </section>
       </main>
     );
@@ -3610,7 +3850,7 @@ function AdminDashboardPage({ adminSession }) {
         <aside className="glass-panel dashboard-rail">
           <div className="dashboard-rail-heading">
             <p className="eyebrow">Control plane</p>
-            <h2>Hosted operations</h2>
+            <p className="dashboard-rail-title">Hosted operations</p>
           </div>
           <nav className="dashboard-nav" aria-label="Admin navigation">
             {adminNav.map((item) => (
@@ -3632,7 +3872,8 @@ function AdminDashboardPage({ adminSession }) {
           </div>
         </aside>
 
-        <section className="dashboard-main">
+        <section className="dashboard-main" aria-busy={loading || undefined}>
+          <RetryNotice message={error} onRetry={() => setReloadKey((value) => value + 1)} />
           <Routes>
             <Route
               index
@@ -3691,6 +3932,10 @@ function AdminDashboardPage({ adminSession }) {
               }
             />
             <Route
+              path="audit"
+              element={<AdminAuditPanel accessToken={adminSession.accessToken} />}
+            />
+            <Route
               path="settings"
               element={<AdminSettingsPanel accessToken={adminSession.accessToken} />}
             />
@@ -3701,31 +3946,84 @@ function AdminDashboardPage({ adminSession }) {
   );
 }
 
+function AdminAuditPanel({ accessToken }) {
+  const [auditPage, setAuditPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function load(page = 1) {
+    setLoading(true);
+    setError("");
+    try {
+      setAuditPage(await fetchAdminAudit(accessToken, { page: Math.max(1, page), pageSize: 25 }));
+    } catch (loadError) {
+      setError(loadError.message || "Could not load the audit trail.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(1); }, [accessToken]);
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Audit trail</p>
+        <h1>Review security-sensitive changes made through the admin control plane.</h1>
+        <p>Each mutation records the operator, route, target, reason, result, time, and correlation reference.</p>
+      </article>
+      <RetryNotice message={error} onRetry={() => load(auditPage.page || 1)} className="table-span-full" />
+      <DataTable
+        loading={loading}
+        title="Recent admin actions"
+        columns={["Operator", "Action", "Target", "Reason", "Result", "Time", "Reference"]}
+        rows={(auditPage.items || []).map((item) => [
+          item.adminEmail,
+          `${item.method} ${item.path}`,
+          item.targetUserId || "System",
+          item.reason || "No reason field",
+          item.succeeded ? "Succeeded" : `Failed${item.statusCode ? ` (${item.statusCode})` : ""}`,
+          formatDate(item.createdAtUtc),
+          maskIdentifier(item.correlationId)
+        ])}
+        emptyLabel="No admin changes have been recorded yet."
+        footer={<PaginationBar page={auditPage.page || 1} hasNextPage={Boolean(auditPage.hasNextPage)} totalCount={auditPage.totalCount || 0} disabled={loading} onPrevious={() => load(auditPage.page - 1)} onNext={() => load((auditPage.page || 1) + 1)} />}
+      />
+    </div>
+  );
+}
+
 function AdminSettingsPanel({ accessToken }) {
   const [settings, setSettings] = useState(null);
   const [phoneVerificationRequired, setPhoneVerificationRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError("");
     fetchRegistrationSettings()
       .then((result) => {
         if (!cancelled) {
           setSettings(result);
           setPhoneVerificationRequired(Boolean(result?.phoneVerificationRequired));
+          setLoading(false);
         }
       })
       .catch((loadError) => {
         if (!cancelled) {
           setError(loadError.message || "Could not load registration settings.");
+          setLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   async function handleSave() {
     setSubmitting(true);
@@ -3751,6 +4049,8 @@ function AdminSettingsPanel({ accessToken }) {
         <p>Email verification remains required. Phone verification can be enabled for future registrations when the additional identity signal justifies the signup friction and SMS cost.</p>
       </article>
 
+      <RetryNotice message={error} onRetry={() => setReloadKey((value) => value + 1)} className="table-span-full" />
+
       <article className="glass-panel admin-form-panel table-span-full">
         <div className="table-header">
           <div>
@@ -3758,7 +4058,7 @@ function AdminSettingsPanel({ accessToken }) {
             <h3>Require phone verification at signup</h3>
           </div>
           <span className={`status-pill ${phoneVerificationRequired ? "status-pill-warn" : "status-pill-good"}`}>
-            {phoneVerificationRequired ? "Required" : "Not required"}
+            {loading ? "Loading…" : phoneVerificationRequired ? "Required" : "Not required"}
           </span>
         </div>
         <p>Changing this setting only affects registrations completed after the change. Existing phone numbers and existing account access are left untouched.</p>
@@ -3777,8 +4077,7 @@ function AdminSettingsPanel({ accessToken }) {
           </button>
           <span className="inline-note">Last updated: {formatDate(settings?.updatedAtUtc)}</span>
         </div>
-        {error ? <p className="status-message status-error">{error}</p> : null}
-        {success ? <p className="status-message status-success">{success}</p> : null}
+        {success ? <p className="status-message status-success" role="status" aria-live="polite">{success}</p> : null}
       </article>
     </div>
   );
@@ -3852,7 +4151,7 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
           <MetricCard label="Token valid" value={gmailStatus?.hasValidRefreshToken ? "Yes" : "No"} />
           <MetricCard label="Sender" value={gmailStatus?.fromEmail || "n/a"} />
         </div>
-        {gmailMessage ? <p className={`status-message ${gmailMessage.toLowerCase().includes("could not") ? "status-error" : ""}`}>{gmailMessage}</p> : null}
+        {gmailMessage ? <p className={`status-message ${gmailMessage.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{gmailMessage}</p> : null}
       </article>
 
       <div className="glass-panel table-panel table-span-full">
@@ -3969,8 +4268,8 @@ function ManagedRuntimeSelectionCard({
         {description ||
           "Premium and other managed lanes consume this selection as the global active hosted runtime. The desktop app should no longer expose provider or model switching for managed users."}
       </p>
-      {localError ? <p className="status-message status-error">{localError}</p> : null}
-      {success ? <p className="status-message">{success}</p> : null}
+      {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
+      {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
       {catalogProviders.length === 0 ? (
         <p>
           No managed model catalog is available yet. Add at least one managed credential and refresh models from the
@@ -4073,14 +4372,17 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
     setLocalError("");
     setSuccess("");
     try {
+      const parsedDimensions = parseRequiredInteger(dimensions, "Embedding dimensions", 1, 16000);
+      const parsedVersion = parseRequiredInteger(version, "Embedding version", 1, 1000000);
+      const parsedBatchSize = parseRequiredInteger(batchSize, "Embedding batch size", 1, 256);
       await updateKnowledgeBaseEmbeddingConfig(accessToken, {
         isEnabled,
         providerId,
         baseUrl,
         modelId,
-        dimensions: Number(dimensions) || 0,
-        version: Number(version) || 0,
-        batchSize: Number(batchSize) || 0,
+        dimensions: parsedDimensions,
+        version: parsedVersion,
+        batchSize: parsedBatchSize,
         apiKey
       });
       setApiKey("");
@@ -4106,8 +4408,8 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
         intentionally separate from the managed chat runtime so provider or pricing changes on chat do not force KB
         rework.
       </p>
-      {localError ? <p className="status-message status-error">{localError}</p> : null}
-      {success ? <p className="status-message">{success}</p> : null}
+      {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
+      {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
       <form className="admin-form" onSubmit={handleSubmit}>
         <label className="admin-toggle">
           <input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} />
@@ -4134,17 +4436,17 @@ function KnowledgeBaseEmbeddingConfigCard({ accessToken, inventory, onRefresh })
           </label>
           <label>
             Dimensions
-            <input value={dimensions} onChange={(event) => setDimensions(event.target.value)} inputMode="numeric" />
+            <input type="number" min="1" max="16000" step="1" required value={dimensions} onChange={(event) => setDimensions(event.target.value)} inputMode="numeric" />
           </label>
         </div>
         <div className="admin-form-inline">
           <label>
             Version
-            <input value={version} onChange={(event) => setVersion(event.target.value)} inputMode="numeric" />
+            <input type="number" min="1" max="1000000" step="1" required value={version} onChange={(event) => setVersion(event.target.value)} inputMode="numeric" />
           </label>
           <label>
             Batch size
-            <input value={batchSize} onChange={(event) => setBatchSize(event.target.value)} inputMode="numeric" />
+            <input type="number" min="1" max="256" step="1" required value={batchSize} onChange={(event) => setBatchSize(event.target.value)} inputMode="numeric" />
           </label>
         </div>
         <label>
@@ -4311,7 +4613,7 @@ function ManagedAiTesterCard({ accessToken, catalogProviders, latencyModels, onR
         This uses the managed pipeline directly but keeps the global runtime selection unchanged. Models already marked
         as not chat-capable stay out of this tester.
       </p>
-      {localError ? <p className="status-message status-error">{localError}</p> : null}
+      {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
       {eligibleProviders.length === 0 ? (
         <p>No chat-capable test candidates are available yet. Run latency checks or refresh the provider catalog first.</p>
       ) : (
@@ -4426,8 +4728,8 @@ function ManagedAiLatencyPanel({ accessToken, latencyStatus, onRefresh }) {
           Each run sends a tiny chat probe through the Windows backend pipeline. Any model that takes more than 20
           seconds is marked as timeout. Non chat-capable models stay visible here and stay hidden from the tester.
         </p>
-        {localError ? <p className="status-message status-error">{localError}</p> : null}
-        {success ? <p className="status-message">{success}</p> : null}
+        {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
+        {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
         <div className="stack-list">
           <InfoRow label="Latest run" value={latestRun ? formatManagedAiLatencyStatus(latestRun.status) : "No run yet"} />
           <InfoRow label="Processed" value={latestRun ? `${latestRun.processedModels}/${latestRun.totalModels}` : "0/0"} />
@@ -4483,12 +4785,13 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
     setLocalError("");
     setSuccess("");
     try {
+      const parsedPriority = parseRequiredInteger(priority, "Credential priority", 0, 1000);
       await upsertManagedAiCredential(accessToken, {
         providerId,
         label,
         apiKey,
         isEnabled,
-        priority: Number(priority) || 0
+        priority: parsedPriority
       });
       setLabel("");
       setApiKey("");
@@ -4503,6 +4806,10 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
   }
 
   async function handleDelete(credentialId) {
+    if (!window.confirm("Remove this managed AI credential? Requests may fail if no healthy fallback remains.")) {
+      return;
+    }
+
     setLocalError("");
     setSuccess("");
     try {
@@ -4583,8 +4890,8 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
           </div>
         </div>
 
-        {localError ? <p className="status-message status-error">{localError}</p> : null}
-        {success ? <p className="status-message">{success}</p> : null}
+        {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
+        {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
 
         <form className="admin-form" onSubmit={handleSubmit}>
           <label>
@@ -4608,7 +4915,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
           <div className="admin-form-inline">
             <label>
               Priority
-              <input value={priority} onChange={(event) => setPriority(event.target.value)} />
+              <input type="number" min="0" max="1000" step="1" required value={priority} onChange={(event) => setPriority(event.target.value)} />
             </label>
             <label className="admin-toggle">
               <input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} />
@@ -4719,6 +5026,7 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
 
 function AdminUsersPanel({ accessToken }) {
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [usersPage, setUsersPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
@@ -4738,6 +5046,7 @@ function AdminUsersPanel({ accessToken }) {
     reason: ""
   });
   const [interviewLockReason, setInterviewLockReason] = useState("Admin interview lock clear");
+  const [debtWaiverReason, setDebtWaiverReason] = useState("");
   const [manualLockForm, setManualLockForm] = useState(() => ({
     expiresAtLocal: toDateTimeLocal(new Date(Date.now() + 24 * 60 * 60 * 1000)),
     reason: "Temporary account suspension"
@@ -4745,14 +5054,27 @@ function AdminUsersPanel({ accessToken }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [usersLoading, setUsersLoading] = useState(true);
+
+  async function loadUsers(page = 1) {
+    setUsersLoading(true);
+    setError("");
+    try {
+      await loadAdminUsersPage(accessToken, page, deferredQuery, setUsersPage);
+    } catch (loadError) {
+      setError(loadError.message || "Could not load users.");
+    } finally {
+      setUsersLoading(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      loadAdminUsersPage(accessToken, 1, query, setUsersPage);
+      loadUsers(1);
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [accessToken, query]);
+  }, [accessToken, deferredQuery]);
 
   useEffect(() => {
     if (!selectedUserId && (usersPage.items || []).length > 0) {
@@ -4811,7 +5133,7 @@ function AdminUsersPanel({ accessToken }) {
 
   async function syncSelectedUser(nextUserId = selectedUserId) {
     const [nextUsersPage, nextDetail, nextLedger] = await Promise.all([
-      fetchAdminUsers(accessToken, { page: usersPage.page || 1, pageSize: 20, query }),
+      fetchAdminUsers(accessToken, { page: usersPage.page || 1, pageSize: 20, query: deferredQuery }),
       nextUserId ? fetchAdminUser(accessToken, nextUserId) : Promise.resolve(null),
       nextUserId ? fetchAdminUserLedger(accessToken, nextUserId, { page: ledgerPage.page || 1, pageSize: 10 }) : Promise.resolve({ items: [] })
     ]);
@@ -4830,12 +5152,18 @@ function AdminUsersPanel({ accessToken }) {
     setStatus("");
     setError("");
     try {
+      const proAvailableCredits = parseRequiredNonNegativeNumber(accountForm.proAvailableCredits, "Pro credits");
+      const premiumAvailableCredits = parseRequiredNonNegativeNumber(accountForm.premiumAvailableCredits, "Premium credits");
+      const premiumNegativeCredits = parseRequiredNonNegativeNumber(accountForm.premiumNegativeCredits, "Premium debt");
+      if (!window.confirm(`Save account and balance changes for ${selectedUser.email}?`)) {
+        return;
+      }
       const updated = await updateAdminUser(accessToken, {
         userId: selectedUserId,
         accessTier: accountForm.accessTier,
-        proAvailableCredits: Number(accountForm.proAvailableCredits) || 0,
-        premiumAvailableCredits: Number(accountForm.premiumAvailableCredits) || 0,
-        premiumNegativeCredits: Number(accountForm.premiumNegativeCredits) || 0,
+        proAvailableCredits,
+        premiumAvailableCredits,
+        premiumNegativeCredits,
         offlineModeEnabled: accountForm.offlineModeEnabled,
         canUseDesktopPowerFeatures: accountForm.canUseDesktopPowerFeatures,
         reason: accountForm.reason
@@ -4860,10 +5188,18 @@ function AdminUsersPanel({ accessToken }) {
     setStatus("");
     setError("");
     try {
+      const proCreditsToAdd = parseRequiredNonNegativeNumber(creditForm.proCreditsToAdd, "Pro credit grant", 10000);
+      const premiumCreditsToAdd = parseRequiredNonNegativeNumber(creditForm.premiumCreditsToAdd, "Premium credit grant", 10000);
+      if (proCreditsToAdd === 0 && premiumCreditsToAdd === 0) {
+        throw new Error("Enter at least one positive credit amount.");
+      }
+      if (!window.confirm(`Grant ${proCreditsToAdd} Pro and ${premiumCreditsToAdd} Premium credits to ${selectedUser.email}?`)) {
+        return;
+      }
       await grantAdminCredits(accessToken, {
         userId: selectedUserId,
-        proCreditsToAdd: Number(creditForm.proCreditsToAdd) || 0,
-        premiumCreditsToAdd: Number(creditForm.premiumCreditsToAdd) || 0,
+        proCreditsToAdd,
+        premiumCreditsToAdd,
         reason: creditForm.reason
       });
       await syncSelectedUser();
@@ -4889,11 +5225,15 @@ function AdminUsersPanel({ accessToken }) {
     setStatus("");
     setError("");
     try {
+      if (!window.confirm(`Waive ${selectedUser.premiumNegativeCredits} Premium debt credits for ${selectedUser.email}? This cannot be undone.`)) {
+        return;
+      }
       await waiveAdminPremiumDebt(accessToken, {
         userId: selectedUserId,
-        reason: "Admin waived premium debt"
+        reason: debtWaiverReason
       });
       await syncSelectedUser();
+      setDebtWaiverReason("");
       setStatus("Premium debt waived.");
     } catch (waiveError) {
       setError(waiveError.message || "Could not waive premium debt.");
@@ -4911,6 +5251,9 @@ function AdminUsersPanel({ accessToken }) {
     setStatus("");
     setError("");
     try {
+      if (!window.confirm(`Clear the active interview lock for ${selectedUser.email}?`)) {
+        return;
+      }
       await clearAdminLock(accessToken, {
         userId: selectedUserId,
         reason: interviewLockReason
@@ -4937,10 +5280,13 @@ function AdminUsersPanel({ accessToken }) {
       if (shouldLock && (!manualLockForm.expiresAtLocal || Number.isNaN(expiresAtUtc.getTime()))) {
         throw new Error("Choose a valid future lock expiry.");
       }
+      if (!window.confirm(`${shouldLock ? "Temporarily lock" : "Remove the account lock for"} ${selectedUser.email}?`)) {
+        return;
+      }
       await setAdminManualLock(accessToken, {
         userId: selectedUserId,
         expiresAtUtc: shouldLock ? expiresAtUtc.toISOString() : null,
-        reason: shouldLock ? manualLockForm.reason : ""
+        reason: manualLockForm.reason
       });
       await syncSelectedUser();
       setStatus(shouldLock ? "User temporarily locked and active sessions revoked." : "Temporary account lock removed.");
@@ -4959,13 +5305,15 @@ function AdminUsersPanel({ accessToken }) {
         <p>User operations here should be deliberate, auditable, and narrow.</p>
       </article>
 
+      <RetryNotice message={error} onRetry={() => loadUsers(usersPage.page || 1)} className="table-span-full" />
+
       <article className="glass-panel admin-form-panel">
         <div className="table-header">
           <div>
             <p className="eyebrow">Directory</p>
             <h3>User roster</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={() => loadAdminUsersPage(accessToken, usersPage.page || 1, query, setUsersPage)}>
+          <button className="button button-secondary button-compact" type="button" onClick={() => loadUsers(usersPage.page || 1)} disabled={usersLoading}>
             Refresh
           </button>
         </div>
@@ -4976,6 +5324,7 @@ function AdminUsersPanel({ accessToken }) {
       </article>
 
       <DataTable
+        loading={usersLoading}
         title="Accounts"
         columns={["User", "Tier", "Power", "Account lock", "Phone", "Detail"]}
         rows={
@@ -4987,7 +5336,7 @@ function AdminUsersPanel({ accessToken }) {
                 item.canUseDesktopPowerFeatures ? "Enabled" : "Standard",
                 item.isManualLockActive ? "Locked" : "Open",
                 item.phoneVerified ? "Verified" : "Pending",
-                <button className="table-action" type="button" onClick={() => setSelectedUserId(item.userId)}>
+                <button className="table-action" type="button" aria-label={`Inspect account ${item.email}`} onClick={() => setSelectedUserId(item.userId)}>
                   Inspect
                 </button>
               ])
@@ -4998,8 +5347,9 @@ function AdminUsersPanel({ accessToken }) {
             page={usersPage.page || 1}
             hasNextPage={Boolean(usersPage.hasNextPage)}
             totalCount={usersPage.totalCount || 0}
-            onPrevious={() => loadAdminUsersPage(accessToken, usersPage.page - 1, query, setUsersPage)}
-            onNext={() => loadAdminUsersPage(accessToken, (usersPage.page || 1) + 1, query, setUsersPage)}
+            disabled={usersLoading}
+            onPrevious={() => loadUsers(usersPage.page - 1)}
+            onNext={() => loadUsers((usersPage.page || 1) + 1)}
           />
         }
       />
@@ -5047,15 +5397,15 @@ function AdminUsersPanel({ accessToken }) {
               </label>
               <label>
                 Pro credits
-                <input value={accountForm.proAvailableCredits} onChange={(event) => setAccountForm((current) => ({ ...current, proAvailableCredits: event.target.value }))} />
+                <input type="number" min="0" max="100000" step="0.01" required value={accountForm.proAvailableCredits} onChange={(event) => setAccountForm((current) => ({ ...current, proAvailableCredits: event.target.value }))} />
               </label>
               <label>
                 Premium credits
-                <input value={accountForm.premiumAvailableCredits} onChange={(event) => setAccountForm((current) => ({ ...current, premiumAvailableCredits: event.target.value }))} />
+                <input type="number" min="0" max="100000" step="0.01" required value={accountForm.premiumAvailableCredits} onChange={(event) => setAccountForm((current) => ({ ...current, premiumAvailableCredits: event.target.value }))} />
               </label>
               <label>
                 Premium debt
-                <input value={accountForm.premiumNegativeCredits} onChange={(event) => setAccountForm((current) => ({ ...current, premiumNegativeCredits: event.target.value }))} />
+                <input type="number" min="0" max="100000" step="0.01" required value={accountForm.premiumNegativeCredits} onChange={(event) => setAccountForm((current) => ({ ...current, premiumNegativeCredits: event.target.value }))} />
               </label>
               <label className="admin-toggle">
                 <input type="checkbox" checked={accountForm.offlineModeEnabled} onChange={(event) => setAccountForm((current) => ({ ...current, offlineModeEnabled: event.target.checked }))} />
@@ -5070,7 +5420,7 @@ function AdminUsersPanel({ accessToken }) {
               </div>
               <label>
                 Reason
-                <input value={accountForm.reason} onChange={(event) => setAccountForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Why this manual update is needed" />
+                <input value={accountForm.reason} onChange={(event) => setAccountForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Why this manual update is needed" minLength={8} maxLength={500} required />
               </label>
             </div>
             <button className="button button-primary" type="submit" disabled={busyAction === "account"}>
@@ -5083,15 +5433,15 @@ function AdminUsersPanel({ accessToken }) {
             <div className="admin-form">
               <label>
                 Add Pro credits
-                <input value={creditForm.proCreditsToAdd} onChange={(event) => setCreditForm((current) => ({ ...current, proCreditsToAdd: event.target.value }))} />
+                <input type="number" min="0" max="10000" step="0.01" required value={creditForm.proCreditsToAdd} onChange={(event) => setCreditForm((current) => ({ ...current, proCreditsToAdd: event.target.value }))} />
               </label>
               <label>
                 Add Premium credits
-                <input value={creditForm.premiumCreditsToAdd} onChange={(event) => setCreditForm((current) => ({ ...current, premiumCreditsToAdd: event.target.value }))} />
+                <input type="number" min="0" max="10000" step="0.01" required value={creditForm.premiumCreditsToAdd} onChange={(event) => setCreditForm((current) => ({ ...current, premiumCreditsToAdd: event.target.value }))} />
               </label>
               <label>
                 Reason
-                <input value={creditForm.reason} onChange={(event) => setCreditForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Promo credit, support fix, manual correction" />
+                <input value={creditForm.reason} onChange={(event) => setCreditForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Promo credit, support fix, manual correction" minLength={8} maxLength={500} required />
               </label>
             </div>
             <button className="button button-primary" type="submit" disabled={busyAction === "credits"}>
@@ -5122,7 +5472,11 @@ function AdminUsersPanel({ accessToken }) {
               </label>
               <label>
                 Interview lock clear reason
-                <input value={interviewLockReason} onChange={(event) => setInterviewLockReason(event.target.value)} />
+                <input value={interviewLockReason} onChange={(event) => setInterviewLockReason(event.target.value)} minLength={8} maxLength={500} required />
+              </label>
+              <label>
+                Premium debt waiver reason
+                <input value={debtWaiverReason} onChange={(event) => setDebtWaiverReason(event.target.value)} placeholder="Why the debt should be waived" minLength={8} maxLength={500} />
               </label>
             </div>
             <div className="inline-actions">
@@ -5130,14 +5484,14 @@ function AdminUsersPanel({ accessToken }) {
                 {busyAction === "manual-lock" ? "Updating..." : "Temporarily Lock User"}
               </button>
               {selectedUser.isManualLockActive ? (
-                <button className="button button-secondary" type="button" onClick={() => handleManualLock(false)} disabled={busyAction === "manual-lock"}>
+                <button className="button button-secondary" type="button" onClick={() => handleManualLock(false)} disabled={busyAction === "manual-lock" || manualLockForm.reason.trim().length < 8}>
                   Remove Account Lock
                 </button>
               ) : null}
-              <button className="button button-secondary" type="button" onClick={handleClearLock} disabled={busyAction === "lock"}>
+              <button className="button button-secondary" type="button" onClick={handleClearLock} disabled={busyAction === "lock" || interviewLockReason.trim().length < 8 || !selectedUser.activeLockSessionId}>
                 {busyAction === "lock" ? "Clearing..." : "Clear Interview Lock"}
               </button>
-              <button className="button button-ghost" type="button" onClick={handleWaiveDebt} disabled={busyAction === "waive"}>
+              <button className="button button-ghost" type="button" onClick={handleWaiveDebt} disabled={busyAction === "waive" || debtWaiverReason.trim().length < 8 || Number(selectedUser.premiumNegativeCredits) <= 0}>
                 {busyAction === "waive" ? "Waiving..." : "Waive Premium Debt"}
               </button>
             </div>
@@ -5171,8 +5525,7 @@ function AdminUsersPanel({ accessToken }) {
         </>
       ) : null}
 
-      {error ? <article className="glass-panel table-span-full"><p className="status-message status-error">{error}</p></article> : null}
-      {status ? <article className="glass-panel table-span-full"><p className="status-message">{status}</p></article> : null}
+      {status ? <article className="glass-panel table-span-full"><p className="status-message" role="status" aria-live="polite">{status}</p></article> : null}
     </div>
   );
 }
@@ -5182,38 +5535,66 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
   const [paymentWebhooksPage, setPaymentWebhooksPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedWebhook, setSelectedWebhook] = useState(null);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [webhooksLoading, setWebhooksLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  async function loadOrders(page = 1) {
+    setOrdersLoading(true);
+    setLoadError("");
+    try {
+      const orders = await fetchAdminPaymentOrders(accessToken, { page: Math.max(1, page), pageSize: 20, query: deferredQuery, status: statusFilter });
+      setPaymentOrdersPage(orders || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    } catch (error) {
+      setLoadError(error.message || "Could not load payment orders.");
+    } finally {
+      setOrdersLoading(false);
+    }
+  }
+
+  async function loadWebhooks(page = 1) {
+    setWebhooksLoading(true);
+    setLoadError("");
+    try {
+      const webhooks = await fetchAdminPaymentWebhooks(accessToken, { page: Math.max(1, page), pageSize: 20 });
+      setPaymentWebhooksPage(webhooks || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
+    } catch (error) {
+      setLoadError(error.message || "Could not load payment callbacks.");
+    } finally {
+      setWebhooksLoading(false);
+    }
+  }
+
+  async function handleRefresh() {
+    setLoadError("");
+    setOrdersLoading(true);
+    setWebhooksLoading(true);
+    try {
+      await refreshAdminPayments(accessToken, deferredQuery, statusFilter, setPaymentOrdersPage, setPaymentWebhooksPage, onRefreshOverview);
+    } catch (error) {
+      setLoadError(error.message || "Could not refresh payment operations.");
+    } finally {
+      setOrdersLoading(false);
+      setWebhooksLoading(false);
+    }
+  }
 
   useEffect(() => {
-    Promise.all([
-      fetchAdminPaymentOrders(accessToken, { page: 1, pageSize: 20 }),
-      fetchAdminPaymentWebhooks(accessToken, { page: 1, pageSize: 20 })
-    ]).then(([orders, webhooks]) => {
-      setPaymentOrdersPage(orders || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
-      setPaymentWebhooksPage(webhooks || { items: [], page: 1, hasNextPage: false, totalCount: 0 });
-    });
+    loadOrders(1);
+  }, [accessToken, deferredQuery, statusFilter]);
+
+  useEffect(() => {
+    loadWebhooks(1);
   }, [accessToken]);
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredOrders = (paymentOrdersPage.items || []).filter((item) => {
-    const matchesStatus = statusFilter === "all" || item.status === statusFilter;
-    const haystack = [
-      item.checkoutId,
-      item.email,
-      item.userId,
-      item.razorpayOrderId,
-      item.razorpayPaymentId,
-      item.displayLabel,
-      item.target
-    ].join(" ").toLowerCase();
-    const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
-    return matchesStatus && matchesQuery;
-  });
+  const filteredOrders = paymentOrdersPage.items || [];
 
   const filteredWebhooks = (paymentWebhooksPage.items || []).filter((item) => {
     const haystack = [item.externalEventId, item.eventType, item.payloadJson].join(" ").toLowerCase();
-    return !normalizedQuery || haystack.includes(normalizedQuery);
+    return !deferredQuery.trim() || haystack.includes(deferredQuery.trim().toLowerCase());
   });
 
   return (
@@ -5222,6 +5603,8 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
         <p className="eyebrow">Payment operations</p>
         <h1>Track checkout, confirmation, and wallet credit application in one place.</h1>
       </article>
+
+      <RetryNotice message={loadError} onRetry={handleRefresh} className="table-span-full" />
 
       <MetricCard label="Payment orders" value={String(overview?.paymentOrderCount ?? 0)} />
       <MetricCard label="Credited orders" value={String(overview?.creditedPaymentCount ?? 0)} />
@@ -5234,8 +5617,8 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
             <p className="eyebrow">Filters</p>
             <h3>Transactions and callbacks</h3>
           </div>
-          <button className="button button-secondary button-compact" type="button" onClick={() => refreshAdminPayments(accessToken, setPaymentOrdersPage, setPaymentWebhooksPage, onRefreshOverview)}>
-            Refresh
+          <button className="button button-secondary button-compact" type="button" onClick={handleRefresh} disabled={ordersLoading || webhooksLoading}>
+            {ordersLoading || webhooksLoading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         <div className="admin-form">
@@ -5256,6 +5639,7 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
       </article>
 
       <DataTable
+        loading={ordersLoading}
         title="Recent payment orders"
         columns={["User", "Purchase", "Amount", "Status", "Ops state", "Checkout", "Created", "Detail"]}
         rows={
@@ -5269,7 +5653,7 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
                 describePaymentOpsState(item),
                 item.checkoutId,
                 formatDate(item.createdAtUtc),
-                <button className="table-action" type="button" onClick={() => setSelectedOrder(item)}>
+                <button className="table-action" type="button" aria-label={`Inspect payment ${item.checkoutId}`} onClick={() => setSelectedOrder(item)}>
                   Inspect
                 </button>
               ])
@@ -5280,8 +5664,9 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
             page={paymentOrdersPage.page || 1}
             hasNextPage={Boolean(paymentOrdersPage.hasNextPage)}
             totalCount={paymentOrdersPage.totalCount || 0}
-            onPrevious={() => loadAdminPaymentOrdersPage(accessToken, paymentOrdersPage.page - 1, setPaymentOrdersPage)}
-            onNext={() => loadAdminPaymentOrdersPage(accessToken, (paymentOrdersPage.page || 1) + 1, setPaymentOrdersPage)}
+            disabled={ordersLoading}
+            onPrevious={() => loadOrders(paymentOrdersPage.page - 1)}
+            onNext={() => loadOrders((paymentOrdersPage.page || 1) + 1)}
           />
         }
       />
@@ -5318,6 +5703,7 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
       ) : null}
 
       <DataTable
+        loading={webhooksLoading}
         title="Recent webhook callbacks"
         columns={["Event ID", "Type", "Created", "Processed", "Detail"]}
         rows={
@@ -5328,7 +5714,7 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
                 item.eventType,
                 formatDate(item.createdAtUtc),
                 formatDate(item.processedAtUtc),
-                <button className="table-action" type="button" onClick={() => setSelectedWebhook(item)}>
+                <button className="table-action" type="button" aria-label={`Inspect webhook ${item.externalEventId}`} onClick={() => setSelectedWebhook(item)}>
                   Inspect
                 </button>
               ])
@@ -5339,8 +5725,9 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
             page={paymentWebhooksPage.page || 1}
             hasNextPage={Boolean(paymentWebhooksPage.hasNextPage)}
             totalCount={paymentWebhooksPage.totalCount || 0}
-            onPrevious={() => loadAdminPaymentWebhooksPage(accessToken, paymentWebhooksPage.page - 1, setPaymentWebhooksPage)}
-            onNext={() => loadAdminPaymentWebhooksPage(accessToken, (paymentWebhooksPage.page || 1) + 1, setPaymentWebhooksPage)}
+            disabled={webhooksLoading}
+            onPrevious={() => loadWebhooks(paymentWebhooksPage.page - 1)}
+            onNext={() => loadWebhooks((paymentWebhooksPage.page || 1) + 1)}
           />
         }
       />
@@ -5359,6 +5746,7 @@ function AdminPaymentsPanel({ accessToken, overview, onRefreshOverview }) {
 function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
   const [ticketsPage, setTicketsPage] = useState({ items: [], page: 1, hasNextPage: false, totalCount: 0 });
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [ticketForm, setTicketForm] = useState({
@@ -5369,10 +5757,24 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
   });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  async function load(page = 1) {
+    setLoading(true);
+    setLoadError("");
+    try {
+      await loadAdminSupportTicketsPage(accessToken, page, deferredQuery, statusFilter, setTicketsPage);
+    } catch (error) {
+      setLoadError(error.message || "Could not load support tickets.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    loadAdminSupportTicketsPage(accessToken, 1, query, statusFilter, setTicketsPage);
-  }, [accessToken, query, statusFilter]);
+    load(1);
+  }, [accessToken, deferredQuery, statusFilter]);
 
   useEffect(() => {
     if (!selectedTicket && (ticketsPage.items || []).length > 0) {
@@ -5414,7 +5816,7 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
         resolutionSummary: ticketForm.resolutionSummary
       });
       setSelectedTicket(updated);
-      await loadAdminSupportTicketsPage(accessToken, ticketsPage.page || 1, query, statusFilter, setTicketsPage);
+      await load(ticketsPage.page || 1);
       await onRefreshOverview();
       setFeedback("Support ticket updated.");
     } catch (error) {
@@ -5430,6 +5832,8 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
         <p className="eyebrow">Support tickets</p>
         <h1>Handle user-reported issues in the admin plane, not through ad hoc account edits.</h1>
       </article>
+
+      <RetryNotice message={loadError} onRetry={() => load(ticketsPage.page || 1)} className="table-span-full" />
 
       <MetricCard label="Open tickets" value={String(overview?.openSupportTicketCount ?? 0)} />
       <MetricCard label="Total tickets" value={String(overview?.supportTicketCount ?? 0)} />
@@ -5455,6 +5859,7 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
       </article>
 
       <DataTable
+        loading={loading}
         title="Ticket queue"
         columns={["Ticket", "User", "Priority", "Status", "Updated", "Detail"]}
         rows={
@@ -5466,7 +5871,7 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
                 item.priority,
                 item.status,
                 formatDate(item.updatedAtUtc),
-                <button className="table-action" type="button" onClick={() => selectTicket(item)}>
+                <button className="table-action" type="button" aria-label={`Inspect support ticket ${item.ticketId}`} onClick={() => selectTicket(item)}>
                   Inspect
                 </button>
               ])
@@ -5477,8 +5882,9 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
             page={ticketsPage.page || 1}
             hasNextPage={Boolean(ticketsPage.hasNextPage)}
             totalCount={ticketsPage.totalCount || 0}
-            onPrevious={() => loadAdminSupportTicketsPage(accessToken, ticketsPage.page - 1, query, statusFilter, setTicketsPage)}
-            onNext={() => loadAdminSupportTicketsPage(accessToken, (ticketsPage.page || 1) + 1, query, statusFilter, setTicketsPage)}
+            disabled={loading}
+            onPrevious={() => load(ticketsPage.page - 1)}
+            onNext={() => load((ticketsPage.page || 1) + 1)}
           />
         }
       />
@@ -5542,7 +5948,7 @@ function AdminTicketsPanel({ accessToken, overview, onRefreshOverview }) {
             <button className="button button-primary" type="submit" disabled={busy}>
               {busy ? "Saving..." : "Save Ticket Update"}
             </button>
-            {feedback ? <p className={`status-message ${feedback.toLowerCase().includes("could not") ? "status-error" : ""}`}>{feedback}</p> : null}
+            {feedback ? <p className={`status-message ${feedback.toLowerCase().includes("could not") ? "status-error" : ""}`} role="status" aria-live="polite">{feedback}</p> : null}
           </form>
         </>
       ) : null}
@@ -5561,148 +5967,6 @@ function PackCard({ label, pack, buttonLabel, loading, onClick }) {
         {loading ? "Opening..." : buttonLabel}
       </button>
     </article>
-  );
-}
-
-function DataTable({ title, columns, rows, emptyLabel = "No records found.", footer = null, scrollClassName = "" }) {
-  return (
-    <div className="glass-panel table-panel table-span-full">
-      <div className="table-header">
-        <div>
-          <p className="eyebrow">{title}</p>
-        </div>
-      </div>
-      <TableScroll className={scrollClassName}>
-        <table>
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column}>{column}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {!rows || rows.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length}>{emptyLabel}</td>
-              </tr>
-            ) : (
-              rows.map((row, index) => (
-                <tr key={`${title}-${index}`}>
-                  {row.map((cell, cellIndex) => (
-                    <td key={`${title}-${index}-${cellIndex}`}>{cell}</td>
-                  ))}
-                </tr>
-              ))
-          )}
-        </tbody>
-      </table>
-      </TableScroll>
-      {footer}
-    </div>
-  );
-}
-
-function TableScroll({ children, className = "" }) {
-  return <div className={`table-scroll ${className}`.trim()}>{children}</div>;
-}
-
-function PaginationBar({ page, hasNextPage, totalCount, onPrevious, onNext }) {
-  return (
-    <div className="pagination-bar">
-      <span>{totalCount} total</span>
-      <div className="inline-actions">
-        <button className="button button-ghost button-compact" type="button" onClick={onPrevious} disabled={page <= 1}>
-          Previous
-        </button>
-        <span className="status-pill">Page {page}</span>
-        <button className="button button-ghost button-compact" type="button" onClick={onNext} disabled={!hasNextPage}>
-          Next
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TimelineStep({ index, title, body }) {
-  return (
-    <article className="timeline-step">
-      <span>{index}</span>
-      <h3>{title}</h3>
-      <p>{body}</p>
-    </article>
-  );
-}
-
-function MetricCard({ label, value, tone = "default" }) {
-  return (
-    <article className={`glass-panel metric-card tone-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
-}
-
-function MetricDefinition({ title, detail }) {
-  return (
-    <article className="definition-card">
-      <h3>{title}</h3>
-      <p>{detail}</p>
-    </article>
-  );
-}
-
-function InfoRow({ label, value }) {
-  return (
-    <div className="info-row">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function MiniBarList({ items }) {
-  const maxValue = Math.max(...items.map((item) => item.value), 1);
-  return (
-    <div className="mini-bars">
-      {items.map((item) => (
-        <div className="mini-bar-row" key={item.label}>
-          <div className="mini-bar-meta">
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-          </div>
-          <div className="mini-bar-track">
-            <div className="mini-bar-fill" style={{ width: `${(item.value / maxValue) * 100}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SimpleSparkline({ values }) {
-  const points = useMemo(() => {
-    const usable = values.length > 0 ? values : [0, 0, 0];
-    const max = Math.max(...usable, 1);
-    return usable
-      .map((value, index) => {
-        const x = (index / Math.max(usable.length - 1, 1)) * 100;
-        const y = 100 - (Number(value || 0) / max) * 100;
-        return `${x},${y}`;
-      })
-      .join(" ");
-  }, [values]);
-
-  return (
-    <svg className="sparkline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <polyline fill="none" stroke="url(#spark-gradient)" strokeWidth="4" points={points} />
-      <defs>
-        <linearGradient id="spark-gradient" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#4cc9f0" />
-          <stop offset="100%" stopColor="#34d399" />
-        </linearGradient>
-      </defs>
-    </svg>
   );
 }
 
@@ -5739,17 +6003,17 @@ async function loadAdminUserLedgerPage(accessToken, userId, page, setter) {
   setter(await fetchAdminUserLedger(accessToken, userId, { page: Math.max(1, page), pageSize: 10 }));
 }
 
-async function loadAdminPaymentOrdersPage(accessToken, page, setter) {
-  setter(await fetchAdminPaymentOrders(accessToken, { page: Math.max(1, page), pageSize: 20 }));
+async function loadAdminPaymentOrdersPage(accessToken, page, query, status, setter) {
+  setter(await fetchAdminPaymentOrders(accessToken, { page: Math.max(1, page), pageSize: 20, query, status }));
 }
 
 async function loadAdminPaymentWebhooksPage(accessToken, page, setter) {
   setter(await fetchAdminPaymentWebhooks(accessToken, { page: Math.max(1, page), pageSize: 20 }));
 }
 
-async function refreshAdminPayments(accessToken, ordersSetter, webhooksSetter, refreshOverview) {
+async function refreshAdminPayments(accessToken, query, status, ordersSetter, webhooksSetter, refreshOverview) {
   const [orders, webhooks] = await Promise.all([
-    fetchAdminPaymentOrders(accessToken, { page: 1, pageSize: 20 }),
+    fetchAdminPaymentOrders(accessToken, { page: 1, pageSize: 20, query, status }),
     fetchAdminPaymentWebhooks(accessToken, { page: 1, pageSize: 20 }),
     refreshOverview()
   ]);
@@ -5774,14 +6038,6 @@ function setMeta(name, content, attribute = "name") {
     document.head.appendChild(node);
   }
   node.setAttribute("content", content);
-}
-
-function parseUtcMillis(value) {
-  if (!value) {
-    return 0;
-  }
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function readStoredJson(key) {
@@ -5816,80 +6072,6 @@ function getBrowserRegistrationFingerprint() {
   };
   writeStoredJson("phantom.website.device-profile", deviceProfile);
   return deviceProfile.deviceFingerprintHash;
-}
-
-function trimAdminTesterHistory(history) {
-  return history.slice(-8);
-}
-
-function formatManagedAiLatencyStatus(status) {
-  switch (status) {
-    case "ok":
-      return "Ready";
-    case "queued":
-      return "Queued";
-    case "running":
-      return "Running";
-    case "completed":
-      return "Completed";
-    case "timeout":
-      return "Timeout (>20s)";
-    case "not_chat_capable":
-      return "Not chat-capable";
-    case "failed":
-      return "Failed";
-    case "untested":
-      return "Untested";
-    default:
-      return status || "Unknown";
-  }
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "n/a";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(new Date(value));
-}
-
-function toDateTimeLocal(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-}
-
-function formatInr(value) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0
-  }).format(value || 0);
-}
-
-function prettyJson(value) {
-  if (!value) {
-    return "n/a";
-  }
-  try {
-    return JSON.stringify(typeof value === "string" ? JSON.parse(value) : value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function countBy(items, keyFn) {
-  return items.reduce((accumulator, item) => {
-    const key = keyFn(item);
-    accumulator[key] = (accumulator[key] || 0) + 1;
-    return accumulator;
-  }, {});
 }
 
 async function loadRazorpayScript() {
@@ -5941,30 +6123,4 @@ async function openRazorpayCheckout(checkout, onSuccess) {
 
     razorpay.open();
   });
-}
-
-function getPaymentOpsState(order) {
-  if (order.creditedAtUtc || order.status === "credited") {
-    return "credited";
-  }
-  if (order.clientConfirmed || order.status === "client_confirmed") {
-    const createdAt = order.createdAtUtc ? new Date(order.createdAtUtc).getTime() : 0;
-    const minutesOpen = createdAt ? (Date.now() - createdAt) / 60000 : 0;
-    return minutesOpen >= 2 ? "stuck_waiting_webhook" : "waiting_webhook";
-  }
-  return "created";
-}
-
-function describePaymentOpsState(order) {
-  const state = getPaymentOpsState(order);
-  switch (state) {
-    case "credited":
-      return "Wallet mutation applied after trusted backend confirmation.";
-    case "waiting_webhook":
-      return "Checkout succeeded in the browser and the backend is waiting for the webhook to credit the wallet.";
-    case "stuck_waiting_webhook":
-      return "Client confirmed but still not credited after 2+ minutes. Check delivery, webhook URL, secret, and backend logs.";
-    default:
-      return "Order created, but browser confirmation has not been recorded yet.";
-  }
 }

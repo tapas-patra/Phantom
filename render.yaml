@@ -23,14 +23,20 @@ services:
         value: "false"
       - key: PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING
         value: "false"
+      - key: PHANTOM_WINDOWS_BACKEND_TRUST_FORWARDED_HEADERS
+        value: "true"
       - key: PHANTOM_WINDOWS_BACKEND_DATABASE_URL
-        sync: false
-      - key: PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY
         sync: false
       - key: PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY
         sync: false
       - key: PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY
         sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY
+        value: tapas-patra/phantom-release-repo
+      - key: PHANTOM_WINDOWS_BACKEND_RELEASE_TAG
+        value: desktop-latest
       - key: PHANTOM_BOOTSTRAP_ADMIN_EMAIL
         sync: false
       - key: PHANTOM_BOOTSTRAP_ADMIN_PASSWORD
@@ -38,6 +44,8 @@ services:
       - key: PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME
         sync: false
       - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON
+        sync: false
+      - key: PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN
         sync: false
       - key: PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID
         sync: false
@@ -66,9 +74,9 @@ services:
         value: https://phantom-interview.vercel.app
       - key: PHANTOM_SHARED_COOKIE_DOMAIN
         value: ""
+      - key: PHANTOM_DASHBOARD_BACKEND_TRUST_FORWARDED_HEADERS
+        value: "true"
       - key: PHANTOM_DASHBOARD_BACKEND_DATABASE_URL
-        sync: false
-      - key: PHANTOM_DASHBOARD_ADMIN_API_KEY
         sync: false
       - key: PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY
         sync: false

@@ -49,6 +49,11 @@ public sealed class RegistrationService
 
     public RegistrationSettingsDto UpdateSettings(RegistrationSettingsUpdateRequestDto request)
     {
+        if (request.PhoneVerificationRequired && !_options.HasOtpApiKey)
+        {
+            throw new BackendValidationException("Configure a production phone OTP provider before requiring phone verification.");
+        }
+
         return new RegistrationSettingsDto
         {
             PhoneVerificationRequired = request.PhoneVerificationRequired,

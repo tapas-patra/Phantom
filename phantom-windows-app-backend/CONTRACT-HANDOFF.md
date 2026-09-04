@@ -65,3 +65,20 @@ The Windows app currently assumes:
 - same-device locked resume can be trusted locally only when the backend-issued lock model agrees
 - usage reconciliation is an explicit post-session operation
 - wallet mutation authority stays on the backend
+
+## Production Security Additions
+
+- Admin sessions require password plus an email OTP challenge. Challenges expire, are single-use, are hashed at rest, and lock after a bounded number of failed attempts.
+- Admin mutations are role-gated: `super_admin` has full access; `support_admin` is limited to support updates and interview-lock clearing; other active admin roles are read-only.
+- Every allowed admin mutation writes an `admin_action_audit` record with operator, route, target, reason, outcome, IP address, and correlation ID.
+- Browser session DTOs are sanitized; bearer and refresh tokens remain in secure HttpOnly cookies.
+- Installer links are HMAC-signed, short-lived, account-bound, and re-check email verification and manual-lock state when redeemed.
+
+Required production settings:
+
+- `PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_TAG`
+- working Gmail OAuth or SMTP delivery for admin OTP
+
+GitHub Releases remains the current asset origin. A public GitHub release is still discoverable outside Phantom; move the same signed-link service to private object storage when strict asset confidentiality is required.

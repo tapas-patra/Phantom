@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Phantom interview intelligence</title>
+  <desc id="description">Think clearly when the room gets loud.</desc>
+  <rect width="1200" height="630" fill="#08111e"/>
+  <path d="M0 496C240 410 418 568 650 472s350-66 550-10v168H0Z" fill="#101f34"/>
+  <circle cx="990" cy="92" r="225" fill="none" stroke="#315cf5" stroke-opacity=".2" stroke-width="2"/>
+  <circle cx="990" cy="92" r="155" fill="none" stroke="#a995ff" stroke-opacity=".18" stroke-width="2"/>
+  <g transform="translate(92 82)">
+    <rect width="64" height="64" rx="16" fill="#315cf5"/>
+    <path d="M17 16h18c10 0 16 6 16 15s-6 15-16 15h-7v8H17V16Zm11 10v10h7c3 0 5-2 5-5s-2-5-5-5h-7Z" fill="white"/>
+    <text x="84" y="44" fill="#edf3fb" font-family="DM Sans, Arial, sans-serif" font-size="36" font-weight="600">Phantom</text>
+  </g>
+  <text x="92" y="286" fill="#edf3fb" font-family="Georgia, serif" font-size="82" letter-spacing="-3">Think clearly when</text>
+  <text x="92" y="378" fill="#edf3fb" font-family="Georgia, serif" font-size="82" letter-spacing="-3">the room gets loud.</text>
+  <text x="96" y="460" fill="#9badc0" font-family="DM Sans, Arial, sans-serif" font-size="28">Interview context, voice, screenshots, and AI—one focused workspace.</text>
+  <g transform="translate(96 530)" fill="#8be5c3" font-family="DM Sans, Arial, sans-serif" font-size="22">
+    <text x="0">Windows 10/11</text><text x="206">macOS 12.3+</text><text x="402">Hosted or BYO AI</text>
+  </g>
+</svg>

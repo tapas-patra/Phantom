@@ -1,34 +1,100 @@
 const HOSTED_DASHBOARD_API_BASE = "/api/dashboard-backend";
 const HOSTED_WINDOWS_BACKEND_API_BASE = "/api/windows";
+const viteEnvironment = import.meta.env || {};
 const DASHBOARD_API_BASE =
-  import.meta.env.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
+  viteEnvironment.VITE_PHANTOM_DASHBOARD_API_BASE_URL?.replace(/\/$/, "") ||
   HOSTED_DASHBOARD_API_BASE;
 
 const WINDOWS_BACKEND_API_BASE =
-  import.meta.env.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
+  viteEnvironment.VITE_PHANTOM_WINDOWS_BACKEND_API_BASE_URL?.replace(/\/$/, "") ||
   HOSTED_WINDOWS_BACKEND_API_BASE;
 
 const BROWSER_DEVICE_STORAGE_KEY = "phantom.website.device-profile";
 
-async function request(baseUrl, path, init) {
-  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  const correlationId = init?.correlationId || crypto.randomUUID();
-  const response = await fetch(`${baseUrl}${path}`, {
-    credentials: "include",
-    ...init,
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      "X-Phantom-Correlation-Id": correlationId,
-      "X-Phantom-Operation-Id": crypto.randomUUID(),
-      ...(init?.headers || {})
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
+export async function request(baseUrl, path, init = {}) {
+  const method = (init.method || "GET").toUpperCase();
+  const retries = ["GET", "HEAD"].includes(method) ? Math.max(0, init.retries ?? 1) : 0;
+  const correlationId = init.correlationId || crypto.randomUUID();
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestOnce(baseUrl, path, { ...init, correlationId });
+    } catch (error) {
+      if (init.signal?.aborted || attempt >= retries || !error?.retryable) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 250 * (attempt + 1)));
     }
-  });
+  }
+}
+
+async function requestOnce(baseUrl, path, init) {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const correlationId = init.correlationId;
+  const controller = new AbortController();
+  const method = (init.method || "GET").toUpperCase();
+  const isUnsafeMethod = !["GET", "HEAD", "OPTIONS"].includes(method);
+  const timeoutId = globalThis.setTimeout(() => controller.abort("timeout"), init.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS);
+  const externalSignal = init.signal;
+  const abortFromCaller = () => controller.abort(externalSignal?.reason || "cancelled");
+  if (externalSignal?.aborted) abortFromCaller();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const { timeoutMs: _timeoutMs, correlationId: _correlationId, retries: _retries, signal: _signal, ...fetchInit } = init;
+  let response;
+
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      credentials: "include",
+      ...fetchInit,
+      signal: controller.signal,
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        "X-Phantom-Correlation-Id": correlationId,
+        "X-Phantom-Operation-Id": crypto.randomUUID(),
+        ...(isUnsafeMethod ? { "X-Phantom-CSRF": "1" } : {}),
+        ...(init.headers || {})
+      }
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      if (externalSignal?.aborted) throw error;
+      const timeoutError = new Error("The request timed out. Please try again.");
+      timeoutError.code = "request_timeout";
+      timeoutError.retryable = true;
+      throw timeoutError;
+    }
+    const networkError = new Error("Could not reach Phantom. Check your connection and try again.");
+    networkError.code = "network_unavailable";
+    networkError.retryable = true;
+    networkError.cause = error;
+    throw networkError;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
 
   if (!response.ok) {
     const acceptedCorrelationId = response.headers.get("X-Phantom-Correlation-Id") || correlationId;
-    const error = new Error(`Request failed (${response.status}). Reference: ${acceptedCorrelationId}`);
+    const contentType = response.headers.get("content-type") || "";
+    const responseBody = await response.text();
+    let serverError = "";
+    if (responseBody) {
+      if (contentType.includes("application/json")) {
+        try {
+          const parsed = JSON.parse(responseBody);
+          serverError = parsed.message || parsed.error || parsed.detail || "";
+        } catch {
+          serverError = "";
+        }
+      } else if (responseBody.length < 240) {
+        serverError = responseBody;
+      }
+    }
+    const message = serverError || `Request failed (${response.status}).`;
+    const error = new Error(`${message} Reference: ${acceptedCorrelationId}`);
     error.status = response.status;
     error.correlationId = acceptedCorrelationId;
+    error.retryable = response.status === 408 || response.status === 429 || response.status >= 500;
     throw error;
   }
 
@@ -43,7 +109,12 @@ async function request(baseUrl, path, init) {
 function getBrowserDeviceProfile() {
   const existing = window.localStorage.getItem(BROWSER_DEVICE_STORAGE_KEY);
   if (existing) {
-    return JSON.parse(existing);
+    try {
+      const parsed = JSON.parse(existing);
+      if (parsed?.installId && parsed?.deviceFingerprintHash) return parsed;
+    } catch {
+      window.localStorage.removeItem(BROWSER_DEVICE_STORAGE_KEY);
+    }
   }
 
   const installId = `web-${crypto.randomUUID()}`;
@@ -59,12 +130,14 @@ function getBrowserDeviceProfile() {
   return deviceProfile;
 }
 
-function authHeaders(accessToken) {
-  return accessToken
-    ? {
-        Authorization: `Bearer ${accessToken}`
-      }
-    : {};
+export function isCurrentBrowserDevice(deviceInstallId) {
+  return Boolean(deviceInstallId) && getBrowserDeviceProfile().installId === deviceInstallId;
+}
+
+function authHeaders() {
+  // Browser authentication is cookie-only. The HttpOnly session cookie is not
+  // exposed to JavaScript and is forwarded by the same-origin API proxies.
+  return {};
 }
 
 export async function loginAccount(payload) {
@@ -102,6 +175,29 @@ export async function loginAdmin(payload) {
   return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/login", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function verifyAdminOtp(challengeId, otpCode) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/auth/verify-otp", {
+    method: "POST",
+    body: JSON.stringify({ challengeId, otpCode })
+  });
+}
+
+export async function createSignedDownloadLink(accessToken, platform) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/downloads/signed-url", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ platform })
+  });
+}
+
+export async function revokeDeviceSession(accessToken, deviceInstallId, deviceFingerprintHash) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/desktop/sessions/revoke-device", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ deviceInstallId, deviceFingerprintHash })
   });
 }
 
@@ -274,6 +370,12 @@ export async function fetchAdminOverview(accessToken) {
   });
 }
 
+export async function fetchAdminAudit(accessToken, { page = 1, pageSize = 25 } = {}) {
+  return request(WINDOWS_BACKEND_API_BASE, `/api/admin/audit?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchAdminUsers(accessToken, { page = 1, pageSize = 20, query = "" } = {}) {
   const params = new URLSearchParams({
     page: String(page),
@@ -353,10 +455,12 @@ export async function fetchManagedAiAdminInventory(accessToken) {
   });
 }
 
-export async function fetchAdminPaymentOrders(accessToken, { page = 1, pageSize = 20 } = {}) {
+export async function fetchAdminPaymentOrders(accessToken, { page = 1, pageSize = 20, query = "", status = "all" } = {}) {
   const params = new URLSearchParams({
     page: String(page),
-    pageSize: String(pageSize)
+    pageSize: String(pageSize),
+    query,
+    status
   });
 
   return request(WINDOWS_BACKEND_API_BASE, `/api/admin/payments/orders?${params.toString()}`, {

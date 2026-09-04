@@ -83,9 +83,10 @@ PHANTOM_WINDOWS_BACKEND_DATABASE_URL="Host=db.your-project.supabase.co;Port=5432
 If you prefer URI form and the password contains `@`, encode it as `%40`.
 
 Recommended env vars:
-- `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 - `PHANTOM_PUBLIC_WEBSITE_BASE_URL`
+- `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY`
+- `PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY`
 - `PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_ENABLED`
 - `PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_PROVIDER`
 - `PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BASE_URL`
@@ -96,6 +97,7 @@ Recommended env vars:
 - `PHANTOM_WINDOWS_BACKEND_KB_EMBEDDING_BATCH_SIZE`
 - `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_PATH`
 - `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI`
+- `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN` (cold-deployment email bootstrap; store only as a secret)
 - `PHANTOM_WINDOWS_BACKEND_LEASE_HOURS`
 - `PHANTOM_WINDOWS_BACKEND_LOCK_TTL_MINUTES`
 - `PHANTOM_WINDOWS_BACKEND_DEFAULT_PRO_CREDITS`
@@ -148,8 +150,7 @@ Changing chat providers does not require KB reindexing. Changing the KB embeddin
 
 Current storage supports variable embedding dimensions. Configure the exact output dimension for the selected model and keep the endpoint OpenAI-compatible at `/embeddings`.
 
-Browser admin auth uses the `/api/admin/auth/*` session endpoints.
-Backend-to-backend calls may still use the `X-Phantom-Admin-Key` header.
+Browser admin auth uses the `/api/admin/auth/*` password-plus-email-OTP session endpoints. Backend-to-backend session validation uses `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`; static admin keys are not accepted by admin routes.
 
 Production notes:
 - `PHANTOM_WINDOWS_BACKEND_ALLOW_IMPLICIT_LOCAL_ADMIN_BOOTSTRAP` defaults to `false` and should stay `false` outside local recovery scenarios.

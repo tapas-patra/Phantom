@@ -123,17 +123,32 @@ LIMIT @maxCount;";
         return items;
     }
 
-    public IReadOnlyList<PaymentOrderRecord> ListOrdersPage(int offset, int pageSize)
+    public IReadOnlyList<PaymentOrderRecord> ListOrdersPage(int offset, int pageSize, string query = "", string status = "")
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT * FROM payment_orders
+WHERE (
+    @query = ''
+    OR lower(email) LIKE @queryPattern
+    OR lower(user_id) LIKE @queryPattern
+    OR lower(checkout_id) LIKE @queryPattern
+    OR lower(razorpay_order_id) LIKE @queryPattern
+    OR lower(razorpay_payment_id) LIKE @queryPattern
+)
+AND (
+    @status = ''
+    OR CASE WHEN credited_at_utc IS NOT NULL THEN 'credited' ELSE lower(status) END = @status
+)
 ORDER BY created_at_utc DESC
 OFFSET @offset
 LIMIT @pageSize;";
         command.Parameters.AddWithValue("offset", Math.Max(0, offset));
         command.Parameters.AddWithValue("pageSize", Math.Max(1, pageSize));
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("queryPattern", $"%{query.ToLowerInvariant()}%");
+        command.Parameters.AddWithValue("status", status.ToLowerInvariant());
         using var reader = command.ExecuteReader();
         var items = new List<PaymentOrderRecord>();
         while (reader.Read())
@@ -144,11 +159,27 @@ LIMIT @pageSize;";
         return items;
     }
 
-    public int CountOrders()
+    public int CountOrders(string query = "", string status = "")
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM payment_orders;";
+        command.CommandText = @"
+SELECT COUNT(*) FROM payment_orders
+WHERE (
+    @query = ''
+    OR lower(email) LIKE @queryPattern
+    OR lower(user_id) LIKE @queryPattern
+    OR lower(checkout_id) LIKE @queryPattern
+    OR lower(razorpay_order_id) LIKE @queryPattern
+    OR lower(razorpay_payment_id) LIKE @queryPattern
+)
+AND (
+    @status = ''
+    OR CASE WHEN credited_at_utc IS NOT NULL THEN 'credited' ELSE lower(status) END = @status
+);";
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("queryPattern", $"%{query.ToLowerInvariant()}%");
+        command.Parameters.AddWithValue("status", status.ToLowerInvariant());
         return Convert.ToInt32(command.ExecuteScalar() ?? 0);
     }
 

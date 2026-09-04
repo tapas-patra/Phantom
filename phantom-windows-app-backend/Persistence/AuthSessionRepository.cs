@@ -151,6 +151,32 @@ WHERE user_id = @userId
         command.ExecuteNonQuery();
     }
 
+    public int RevokeByUserAndDevice(string userId, string deviceInstallId, string deviceFingerprintHash)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+UPDATE auth_sessions
+SET is_authenticated = FALSE, revoked_at_utc = @revokedAt
+WHERE user_id = @userId
+  AND device_install_id = @deviceInstallId
+  AND device_fingerprint_hash = @deviceFingerprintHash
+  AND is_authenticated = TRUE;";
+        command.Parameters.AddWithValue("revokedAt", DateTime.UtcNow);
+        command.Parameters.AddWithValue("userId", userId);
+        command.Parameters.AddWithValue("deviceInstallId", deviceInstallId);
+        command.Parameters.AddWithValue("deviceFingerprintHash", deviceFingerprintHash);
+        var revokedCount = command.ExecuteNonQuery();
+
+        using var refresh = connection.CreateCommand();
+        refresh.CommandText = @"
+SELECT refresh_dashboard_device_inventory(@userId);
+SELECT refresh_dashboard_account_summary(@userId);";
+        refresh.Parameters.AddWithValue("userId", userId);
+        refresh.ExecuteNonQuery();
+        return revokedCount;
+    }
+
     public void DeleteExpired()
     {
         using var connection = _store.OpenConnection();

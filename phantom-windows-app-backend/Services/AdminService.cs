@@ -6,6 +6,8 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class AdminService
 {
+    private const decimal MaximumCreditAdjustment = 10_000m;
+    private const decimal MaximumAccountBalance = 100_000m;
     private readonly PostgresBackendStore _store;
     private readonly AccountRepository _accounts;
     private readonly LockRepository _locks;
@@ -114,6 +116,7 @@ public sealed class AdminService
         }
 
         var normalizedTier = NormalizeAccessTier(request.AccessTier);
+        RequireReason(request.Reason);
         if (request.ProAvailableCredits < 0m)
         {
             throw new BackendValidationException("Pro credits cannot be negative.");
@@ -127,6 +130,13 @@ public sealed class AdminService
         if (request.PremiumNegativeCredits < 0m)
         {
             throw new BackendValidationException("Premium negative credits cannot be negative.");
+        }
+
+        if (request.ProAvailableCredits > MaximumAccountBalance
+            || request.PremiumAvailableCredits > MaximumAccountBalance
+            || request.PremiumNegativeCredits > MaximumAccountBalance)
+        {
+            throw new BackendValidationException($"Account credit values cannot exceed {MaximumAccountBalance:0}.");
         }
 
         var account = _accounts.FindByUserId(request.UserId)
@@ -157,9 +167,11 @@ public sealed class AdminService
             throw new BackendValidationException("Temporary lock expiry must be in the future.");
         }
 
-        if (request.ExpiresAtUtc.HasValue && string.IsNullOrWhiteSpace(request.Reason))
+        RequireReason(request.Reason);
+
+        if (request.ExpiresAtUtc.HasValue && request.ExpiresAtUtc.Value > DateTime.UtcNow.AddDays(365))
         {
-            throw new BackendValidationException("A reason is required when temporarily locking an account.");
+            throw new BackendValidationException("Temporary lock expiry cannot be more than one year in the future.");
         }
 
         var account = _accounts.FindByUserId(request.UserId)
@@ -196,12 +208,21 @@ public sealed class AdminService
         };
     }
 
-    public object GetPaymentOrders(int page = 1, int pageSize = 25)
+    public object GetPaymentOrders(int page = 1, int pageSize = 25, string query = "", string status = "")
     {
         var normalizedPage = NormalizePage(page);
         var normalizedPageSize = NormalizePageSize(pageSize);
         var offset = (normalizedPage - 1) * normalizedPageSize;
-        var items = _payments.ListOrdersPage(offset, normalizedPageSize)
+        var normalizedQuery = query?.Trim().ToLowerInvariant() ?? string.Empty;
+        var normalizedStatus = status?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (normalizedStatus == "all") normalizedStatus = string.Empty;
+        var supportedStatuses = new[] { "", "created", "client_confirmed", "credited", "failed" };
+        if (!supportedStatuses.Contains(normalizedStatus, StringComparer.Ordinal))
+        {
+            throw new BackendValidationException("Unsupported payment status filter.");
+        }
+
+        var items = _payments.ListOrdersPage(offset, normalizedPageSize, normalizedQuery, normalizedStatus)
             .Select(order => (object)new
             {
                 order.CheckoutId,
@@ -224,7 +245,7 @@ public sealed class AdminService
                 order.UpdatedAtUtc
             })
             .ToList();
-        var totalCount = _payments.CountOrders();
+        var totalCount = _payments.CountOrders(normalizedQuery, normalizedStatus);
         return new
         {
             items,
@@ -302,6 +323,7 @@ public sealed class AdminService
         {
             throw new BackendValidationException("UserId is required.");
         }
+        RequireReason(request.Reason);
 
         var activeLock = _locks.FindActiveByUser(request.UserId);
         if (activeLock == null)
@@ -319,9 +341,14 @@ public sealed class AdminService
         {
             throw new BackendValidationException("UserId is required.");
         }
+        RequireReason(request.Reason);
 
         var account = _accounts.FindByUserId(request.UserId)
             ?? throw new BackendValidationException("Account not found.");
+        if (account.PremiumNegativeCredits <= 0m)
+        {
+            throw new BackendValidationException("This account has no Premium debt to waive.");
+        }
         var before = account.PremiumNegativeCredits;
         account.PremiumNegativeCredits = 0m;
         account.AccessTier = AccessModeResolver.GetEffectiveAccessTier(account);
@@ -338,9 +365,30 @@ public sealed class AdminService
         {
             throw new BackendValidationException("UserId is required.");
         }
+        RequireReason(request.Reason);
+        if (request.ProCreditsToAdd < 0m || request.PremiumCreditsToAdd < 0m)
+        {
+            throw new BackendValidationException("Credit grants cannot be negative.");
+        }
+
+        if (request.ProCreditsToAdd == 0m && request.PremiumCreditsToAdd == 0m)
+        {
+            throw new BackendValidationException("Enter at least one positive credit amount.");
+        }
+
+        if (request.ProCreditsToAdd > MaximumCreditAdjustment || request.PremiumCreditsToAdd > MaximumCreditAdjustment)
+        {
+            throw new BackendValidationException($"A single credit grant cannot exceed {MaximumCreditAdjustment:0} per wallet.");
+        }
 
         var account = _accounts.FindByUserId(request.UserId)
             ?? throw new BackendValidationException("Account not found.");
+
+        if (account.ProAvailableCredits + request.ProCreditsToAdd > MaximumAccountBalance
+            || account.PremiumAvailableCredits + request.PremiumCreditsToAdd > MaximumAccountBalance)
+        {
+            throw new BackendValidationException($"The resulting account balance cannot exceed {MaximumAccountBalance:0}.");
+        }
 
         account.ProAvailableCredits += request.ProCreditsToAdd;
         account.PremiumAvailableCredits += request.PremiumCreditsToAdd;
@@ -385,6 +433,20 @@ public sealed class AdminService
         }
 
         throw new BackendValidationException("Unsupported access tier.");
+    }
+
+    private static void RequireReason(string reason)
+    {
+        var normalizedReason = reason?.Trim() ?? string.Empty;
+        if (normalizedReason.Length < 8)
+        {
+            throw new BackendValidationException("Provide an operational reason of at least 8 characters.");
+        }
+
+        if (normalizedReason.Length > 500)
+        {
+            throw new BackendValidationException("Operational reason cannot exceed 500 characters.");
+        }
     }
 
     private static int NormalizePage(int page) => Math.Max(1, page);

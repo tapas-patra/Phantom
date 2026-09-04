@@ -52,7 +52,7 @@ namespace SecureOverlay.Services
                 }
                 catch (Exception ex)
                 {
-                    Log.WriteLine($"BYO model refresh skipped for {provider}: {ex.GetType().Name} - {ex.Message}");
+                    Log.WriteLine($"BYO model refresh skipped for {provider}: {ex.GetType().Name}");
                 }
             }
         }

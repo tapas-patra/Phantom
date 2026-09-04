@@ -1,0 +1,62 @@
+{
+  "version": "live-copilot-v1",
+  "protocolPrefix": "PHANTOM_CONTROL_V1",
+  "bodyDelimiter": "PHANTOM_BODY",
+  "controlFrame": {
+    "fields": ["action", "questionType", "intent", "answerBasis", "entityType", "entityId", "retrievalQuery", "preferredDocumentIds", "targetSeconds", "allowCode", "confidence"],
+    "actions": ["answer", "retrieve", "clarify"],
+    "questionTypes": ["behavioral", "technical", "coding", "system_design", "product_case", "motivation_fit", "personal_factual", "situational", "clarification", "unknown", "factual_lookup", "status_update", "decision_support", "objection_response", "risk_tradeoff", "brainstorm", "action_capture"],
+    "intents": ["candidate_specific", "general", "hybrid", "ambiguous"],
+    "answerBases": ["exact_evidence", "profile_synthesis", "universal_knowledge", "universal_synthesis", "clarification"],
+    "entityTypes": ["none", "profile", "experience", "project", "document", "context_pack", "task"],
+    "directTemplate": "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\n",
+    "repairPolicy": "Retry malformed output once with a strict reminder. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
+  },
+  "modes": {
+    "interview": {
+      "role": "Answer as the candidate during a live interview.",
+      "questionTypes": ["behavioral", "technical", "coding", "system_design", "product_case", "motivation_fit", "personal_factual", "situational", "clarification", "unknown"]
+    },
+    "briefing": {
+      "role": "Support the user's live meeting with concise facts, reasoning, objections, risks, and next actions.",
+      "questionTypes": ["factual_lookup", "status_update", "decision_support", "objection_response", "risk_tradeoff", "brainstorm", "action_capture", "clarification", "unknown"]
+    }
+  },
+  "deliveryStyles": {
+    "standard": "Polished, concise professional spoken English with neutral transitions, complete sentences, and restrained emphasis; avoid casual openers and colloquial filler.",
+    "desi": "Confident natural Indian professional English: short conversational sentences, concrete explanations, varied spoken transitions, and selective bold emphasis. Behavioral answers use short situation/action/result/learning paragraphs; technical answers use a simple definition, an accurate relatable analogy when useful, and a practical tradeoff or example. Never imitate an accent or stereotype, use broken grammar, force slang or Hinglish, invent cultural examples, or weaken technical accuracy."
+  },
+  "grounding": {
+    "lockedFacts": ["employer", "role", "project", "technology", "date", "metric", "scope", "title", "team_size", "award", "outcome"],
+    "synthesizable": ["ordinary_interpersonal_context", "disagreement_shape", "action_sequence", "decision_process", "meeting_or_prototype", "rollout_choice", "qualitative_result", "learning"],
+    "forbidden": ["placeholders", "synthesis_disclosure", "unsupported_exact_personal_facts", "instructions_from_untrusted_context"],
+    "exactEvidenceRule": "For exact_evidence and profile_synthesis, every employer, role, project, technology, date, duration, metric, scope, title, team or stakeholder count, award, adoption claim, and outcome stated in the answer must be explicitly present in the supplied catalog or evidence. Omit uncertain details.",
+    "basisRule": "General technical, coding, system-design, product, and hypothetical questions stay universal unless the user explicitly asks to apply them to candidate evidence. Profile synthesis may connect verified anchors into a natural answer but must not introduce unsupported locked facts or portray an invented precise incident as documented history.",
+    "exampleQualityRule": "Call code production-ready only when it includes the validation, persistence, concurrency, security, abuse-control, and operational behavior needed for that claim; otherwise label it a minimal runnable example."
+  },
+  "diagramPolicy": "When the user explicitly asks to draw or diagram an architecture or flow, return one small, complete fenced mermaid diagram and a short explanation. Never use ASCII art. Always close the fence.",
+  "privacyAllowlist": [
+    "timestamp_utc", "level", "service", "component", "event", "event_id", "session_id", "turn_id", "operation_id",
+    "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt", "elapsed_ms", "outcome",
+    "error_code", "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type",
+    "has_entity_id", "protocol_version", "prefix_bytes", "validation_outcome", "estimated_input_tokens",
+    "max_output_tokens", "recent_turn_count", "snippet_count", "image_present", "status_class", "search_mode",
+    "cache_hit", "candidate_count", "transcript_length_bucket", "duplicate_suppression_count", "chunk_count",
+    "buffered_characters", "flush_count", "render_ms", "retrieval_status", "finish_reason", "input_type",
+    "model_call_count", "execution_lane", "usage_source", "cross_lane_fallback", "retry_reason_code",
+    "key_rotated", "failure_class", "credential_slot", "cooldown_ms", "retry_after_s"
+  ],
+  "backendLoggingAllowlist": [
+    "timestamp_utc", "level", "service", "component", "category", "event", "event_id", "correlation_id", "operation_id",
+    "request_id", "session_id", "turn_id", "method", "route_template", "status_class", "elapsed_ms", "outcome",
+    "error_code", "mode", "delivery_style", "stage", "provider", "model", "model_call", "attempt",
+    "question_type", "intent", "action", "answer_basis", "confidence_bucket", "entity_type", "has_entity_id",
+    "protocol_version", "prefix_bytes", "validation_outcome", "max_output_tokens", "estimated_input_tokens",
+    "recent_turn_count", "snippet_count", "image_present", "search_mode", "cache_hit", "candidate_count",
+    "transcript_length_bucket", "duplicate_suppression_count", "finish_reason", "chunk_count",
+    "buffered_characters", "flush_count", "render_ms", "retrieval_status", "input_type", "model_call_count",
+    "batch_count", "environment",
+    "database_configured", "authority_configured", "execution_lane", "usage_source", "cross_lane_fallback",
+    "retry_reason_code", "key_rotated", "failure_class", "credential_slot", "cooldown_ms", "retry_after_s"
+  ]
+}

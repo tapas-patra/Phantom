@@ -1,61 +1,262 @@
-using System.Reflection;
+using System.Text.Json;
+using SecureOverlay.Domain;
+using SecureOverlay.Domain.Entities;
+using SecureOverlay.Helpers;
 using SecureOverlay.Services;
+using BackendPolicy = Phantom.WindowsApp.Backend.Services.ProviderResiliencePolicy;
 
-var manager = new ConversationManager(new FakeAiService("HYBRID"), "", new ModelConfig());
-
-AssertRoute(manager, "Explain dependency injection", "Direct");
-AssertRoute(manager, "Tell me about Kubernetes", "SemanticProbe");
-AssertSemanticIntent(manager, "How did you use caching, and why?", "Hybrid");
-
-Console.WriteLine("Semantic routing checks passed.");
-
-static void AssertRoute(ConversationManager manager, string question, string expectedType)
+var fixtures = JsonSerializer.Deserialize<FixtureRoot>(File.ReadAllText(FindFixtures()), new JsonSerializerOptions
 {
-    var method = typeof(ConversationManager).GetMethod("RouteResponse", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("RouteResponse was not found.");
-    var plan = method.Invoke(manager, new object[] { question })
-        ?? throw new InvalidOperationException("RouteResponse returned null.");
-    var type = plan.GetType().GetProperty("Type")?.GetValue(plan)?.ToString();
-    if (!string.Equals(type, expectedType, StringComparison.Ordinal))
-    {
-        throw new InvalidOperationException($"Expected {expectedType} for '{question}', got {type}.");
-    }
+    PropertyNameCaseInsensitive = true
+}) ?? throw new InvalidOperationException("Shared live-copilot fixtures could not be decoded.");
+
+foreach (var fixture in fixtures.Parser)
+{
+    var parser = new PhantomControlFrameParser(fixture.AllowedEntityIds, fixture.AllowedDocumentIds);
+    var body = string.Empty;
+    foreach (var chunk in fixture.Chunks) body += parser.Feed(chunk);
+    var decision = parser.Complete();
+    Equal(fixture.ExpectedAction, decision.Action.ToString().ToLowerInvariant(), fixture.Name + " action");
+    Equal(fixture.ExpectedBody, body, fixture.Name + " body");
+    if (body.Contains(PhantomControlFrameParser.ProtocolLine, StringComparison.Ordinal))
+        throw new InvalidOperationException(fixture.Name + " leaked the private control prefix.");
 }
 
-static void AssertSemanticIntent(ConversationManager manager, string question, string expectedIntent)
+foreach (var fixture in fixtures.Invalid)
 {
-    var method = typeof(ConversationManager).GetMethod("ClassifySemanticIntentAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("ClassifySemanticIntentAsync was not found.");
-    var task = method.Invoke(manager, new object[] { question, CancellationToken.None }) as Task
-        ?? throw new InvalidOperationException("Semantic classifier did not return a task.");
-    task.GetAwaiter().GetResult();
-    var intent = task.GetType().GetProperty("Result")?.GetValue(task)?.ToString();
-    if (!string.Equals(intent, expectedIntent, StringComparison.Ordinal))
+    var rejected = false;
+    try
     {
-        throw new InvalidOperationException($"Expected {expectedIntent} semantic intent, got {intent}.");
+        var parser = new PhantomControlFrameParser(new[] { "payment-migration" }, new[] { "resume-document-id" });
+        _ = parser.Feed(fixture.Frame);
+        _ = parser.Complete();
     }
+    catch (PhantomProtocolException) { rejected = true; }
+    if (!rejected) throw new InvalidOperationException(fixture.Name + " was accepted.");
 }
 
-sealed class FakeAiService : IAIService
+foreach (var fixture in fixtures.AnswerCompletion)
+    Equal(fixture.ExpectedComplete.ToString(), LiveCopilotOrchestrator.IsCompleteAnswer(fixture.Body).ToString(), fixture.Name + " completion");
+
+if (fixtures.Contracts.Count < 30 || fixtures.Contracts.Select(x => x.Id).Distinct().Count() != fixtures.Contracts.Count)
+    throw new InvalidOperationException("The shared golden corpus is incomplete or has duplicate IDs.");
+if (fixtures.Contracts.Where(x => x.Mode == "interview").Select(x => x.Id).Intersect(Enumerable.Range(1, 26)).Count() != 26)
+    throw new InvalidOperationException("Interview fixtures 1 through 26 are required.");
+if (fixtures.Contracts.Any(x => x.MaxNormalCalls is < 1 or > 2))
+    throw new InvalidOperationException("A fixture permits an invalid normal model-call count.");
+if (fixtures.Logging.Count < 4 || fixtures.Logging.Any(x => x.TerminalEvents != 1))
+    throw new InvalidOperationException("Logging correlation fixtures are incomplete.");
+Equal(fixtures.Resilience.ManagedBackendMaxAttempts.ToString(), BackendPolicy.ManagedBackendMaxAttempts.ToString(), "backend max attempts");
+Equal(fixtures.Resilience.ManagedDesktopMaxAttempts.ToString(), ProviderResiliencePolicy.ManagedDesktopMaxAttempts.ToString(), "managed desktop max attempts");
+Equal(fixtures.Resilience.ByoDesktopMaxAttempts.ToString(), ProviderResiliencePolicy.ByoDesktopMaxAttempts.ToString(), "BYO desktop max attempts");
+foreach (var fixture in fixtures.Resilience.Classification)
 {
-    private readonly string _response;
-
-    public FakeAiService(string response) => _response = response;
-
-    public bool IsConfigured() => true;
-
-    public string GetProviderName() => "Test";
-
-    public Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
-        => Task.FromResult(_response);
-
-    public Task<string> SendMessageStreamAsync(
-        List<ConversationMessage> messages,
-        Action<string> onChunkReceived,
-        CancellationToken cancellationToken = default,
-        string? imageBase64 = null)
-    {
-        onChunkReceived(_response);
-        return Task.FromResult(_response);
-    }
+    var input = fixture.StatusCode?.ToString() ?? fixture.Message;
+    var desktop = ProviderResiliencePolicy.Classify(input);
+    Equal(fixture.ExpectedKind, FailureName(desktop.Kind), fixture.Name + " desktop kind");
+    Equal(fixture.CooldownSeconds.ToString(), ((int)desktop.Cooldown.TotalSeconds).ToString(), fixture.Name + " desktop cooldown");
+    var backend = BackendPolicy.Classify(BackendFixtureError(fixture));
+    Equal(fixture.ExpectedKind, BackendFailureName(backend.Kind), fixture.Name + " backend kind");
+    Equal(fixture.CooldownSeconds.ToString(), ((int)backend.Cooldown.TotalSeconds).ToString(), fixture.Name + " backend cooldown");
 }
+foreach (var fixture in fixtures.Resilience.Retry)
+{
+    var failure = Failure(fixture.FailureKind);
+    var actual = fixture.Lane switch
+    {
+        "managed_backend" => BackendPolicy.CanRetry(BackendFailure(fixture.FailureKind), fixture.Attempt, fixture.HasOutput),
+        "managed_desktop" => ProviderResiliencePolicy.CanRetry(failure, fixture.Attempt, ProviderResiliencePolicy.ManagedDesktopMaxAttempts, fixture.HasOutput),
+        _ => ProviderResiliencePolicy.CanRetry(failure, fixture.Attempt, ProviderResiliencePolicy.ByoDesktopMaxAttempts, fixture.HasOutput)
+    };
+    Equal(fixture.Expected.ToString(), actual.ToString(), fixture.Name);
+}
+foreach (var fixture in fixtures.Resilience.LaneTransitions)
+    Equal(fixture.Expected.ToString(), ProviderResiliencePolicy.CanCrossLane(fixture.From, fixture.To, fixture.OptedIn, fixture.HasOutput).ToString(), fixture.Name);
+var firstCallPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>());
+if (fixtures.PromptRequirements.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows prompt is missing a shared grounding requirement.");
+if (fixtures.DeliveryStyleRequirements.Standard.Any(requirement => !firstCallPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows Standard prompt is missing a shared delivery-style requirement.");
+var desiPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Desi, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>());
+if (fixtures.DeliveryStyleRequirements.Desi.Any(requirement => !desiPrompt.Contains(requirement, StringComparison.Ordinal)))
+    throw new InvalidOperationException("The Windows Desi prompt is missing a shared delivery-style requirement.");
+if (string.Equals(firstCallPrompt, desiPrompt, StringComparison.Ordinal) ||
+    firstCallPrompt.Contains("Delivery style is Desi", StringComparison.Ordinal) ||
+    desiPrompt.Contains("Delivery style is Standard", StringComparison.Ordinal))
+    throw new InvalidOperationException("The Windows delivery-style prompts are not isolated.");
+var repairPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
+    CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
+    Array.Empty<RetrievedContextSnippet>(), protocolRepair: true);
+if (!repairPrompt.EndsWith(fixtures.RepairPromptSuffix, StringComparison.Ordinal))
+    throw new InvalidOperationException("The Windows protocol-repair instruction is not the final prompt authority.");
+
+var directFrame = fixtures.Parser.First(x => x.ExpectedAction == "answer").Chunks;
+var directCalls = 0;
+var directVisible = string.Empty;
+var direct = await new LiveCopilotOrchestrator().ExecuteAsync(
+    Array.Empty<string>(), Array.Empty<string>(),
+    (publish, _, _) =>
+    {
+        directCalls++;
+        foreach (var chunk in directFrame) publish(chunk);
+        return Task.FromResult((string.Concat(directFrame), string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Direct fixture retrieved."),
+    (_, _) => throw new InvalidOperationException("Direct fixture used a second call."),
+    chunk => directVisible += chunk, null, CancellationToken.None);
+Equal("1", directCalls.ToString(), "direct model calls");
+Equal(direct.Answer, directVisible, "direct visible body");
+
+var retrieveFixture = fixtures.Parser.First(x => x.ExpectedAction == "retrieve");
+var retrieveCalls = 0;
+var finalVisible = string.Empty;
+var retrieved = await new LiveCopilotOrchestrator().ExecuteAsync(
+    retrieveFixture.AllowedEntityIds, retrieveFixture.AllowedDocumentIds,
+    (publish, _, _) =>
+    {
+        retrieveCalls++;
+        var raw = string.Concat(retrieveFixture.Chunks);
+        publish(raw);
+        return Task.FromResult((raw, string.Empty));
+    },
+    (_, _) => Task.FromResult(new LiveCopilotRetrieval("found", new[]
+    {
+        new RetrievedContextSnippet { DocumentId = "resume-document-id", Text = "verified evidence" }
+    }, "1")),
+    (_, _) => (publish, _, _) =>
+    {
+        retrieveCalls++;
+        publish("Grounded final answer.");
+        return Task.FromResult(("Grounded final answer.", string.Empty));
+    },
+    chunk => finalVisible += chunk, null, CancellationToken.None);
+Equal("2", retrieveCalls.ToString(), "retrieve model calls");
+Equal("Grounded final answer.", retrieved.Answer, "retrieve final answer");
+Equal(retrieved.Answer, finalVisible, "retrieve visible body");
+
+foreach (var secret in fixtures.SensitiveSamples)
+{
+    var allowlist = new[] { "question_length_bucket", "provider", "model", "answer_basis" };
+    if (allowlist.Any(value => value.Contains(secret, StringComparison.Ordinal)))
+        throw new InvalidOperationException("Sensitive fixture leaked into the telemetry allowlist.");
+}
+
+Console.WriteLine($"Shared live-copilot fixture suite passed ({fixtures.Version}).");
+
+static string FindFixtures()
+{
+    foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+    {
+        var current = new DirectoryInfo(start);
+        while (current != null)
+        {
+            var candidate = Path.Combine(current.FullName, "shared", "live-copilot", "fixtures.json");
+            if (File.Exists(candidate)) return candidate;
+            current = current.Parent;
+        }
+    }
+    throw new FileNotFoundException("shared/live-copilot/fixtures.json was not found.");
+}
+
+static void Equal(string expected, string actual, string label)
+{
+    if (!string.Equals(expected, actual, StringComparison.Ordinal))
+        throw new InvalidOperationException($"{label}: expected '{expected}', got '{actual}'.");
+}
+
+static string FailureName(ProviderFailureKind kind) => kind switch
+{
+    ProviderFailureKind.RateLimited => "rate_limited",
+    ProviderFailureKind.Authentication => "authentication_failed",
+    ProviderFailureKind.Transient => "provider_transient",
+    ProviderFailureKind.Cancelled => "cancelled",
+    _ => "provider_error"
+};
+
+static string BackendFailureName(Phantom.WindowsApp.Backend.Services.ProviderFailureKind kind) => kind switch
+{
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.RateLimited => "rate_limited",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Authentication => "authentication_failed",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Transient => "provider_transient",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Cancelled => "cancelled",
+    _ => "provider_error"
+};
+
+static ProviderFailureDecision Failure(string kind) => kind switch
+{
+    "rate_limited" => ProviderResiliencePolicy.Classify("429"),
+    "authentication_failed" => ProviderResiliencePolicy.Classify("401"),
+    "provider_transient" => ProviderResiliencePolicy.Classify("503"),
+    "cancelled" => ProviderResiliencePolicy.Classify("cancelled"),
+    _ => ProviderResiliencePolicy.Classify("400")
+};
+
+static Phantom.WindowsApp.Backend.Services.ProviderFailureDecision BackendFailure(string kind) => kind switch
+{
+    "rate_limited" => BackendPolicy.FromStatus(429),
+    "authentication_failed" => BackendPolicy.FromStatus(401),
+    "provider_transient" => BackendPolicy.FromStatus(503),
+    "cancelled" => BackendPolicy.FromStatus(null, "cancelled"),
+    _ => BackendPolicy.FromStatus(400)
+};
+
+static Exception BackendFixtureError(FailureFixture fixture)
+{
+    if (fixture.StatusCode.HasValue)
+        return new Phantom.WindowsApp.Backend.Services.ManagedAiProviderException(
+            $"provider_{fixture.StatusCode / 100}xx",
+            fixture.StatusCode == 429 || fixture.StatusCode >= 500,
+            providerStatusCode: fixture.StatusCode);
+    if (fixture.Name == "network-timeout") return new HttpRequestException(fixture.Message);
+    if (fixture.Name == "cancelled") return new OperationCanceledException(fixture.Message);
+    return new InvalidOperationException(fixture.Message);
+}
+
+sealed class FixtureRoot
+{
+    public string Version { get; set; } = "";
+    public List<ParserFixture> Parser { get; set; } = new();
+    public List<InvalidFixture> Invalid { get; set; } = new();
+    public List<AnswerCompletionFixture> AnswerCompletion { get; set; } = new();
+    public List<ContractFixture> Contracts { get; set; } = new();
+    public List<LoggingFixture> Logging { get; set; } = new();
+    public ResilienceFixture Resilience { get; set; } = new();
+    public List<string> PromptRequirements { get; set; } = new();
+    public DeliveryStyleRequirements DeliveryStyleRequirements { get; set; } = new();
+    public string RepairPromptSuffix { get; set; } = "";
+    public List<string> SensitiveSamples { get; set; } = new();
+}
+sealed class DeliveryStyleRequirements
+{
+    public List<string> Standard { get; set; } = new();
+    public List<string> Desi { get; set; } = new();
+}
+sealed class ParserFixture
+{
+    public string Name { get; set; } = "";
+    public List<string> AllowedEntityIds { get; set; } = new();
+    public List<string> AllowedDocumentIds { get; set; } = new();
+    public List<string> Chunks { get; set; } = new();
+    public string ExpectedAction { get; set; } = "";
+    public string ExpectedBody { get; set; } = "";
+}
+sealed class InvalidFixture { public string Name { get; set; } = ""; public string Frame { get; set; } = ""; }
+sealed class AnswerCompletionFixture { public string Name { get; set; } = ""; public string Body { get; set; } = ""; public bool ExpectedComplete { get; set; } }
+sealed class ContractFixture { public int Id { get; set; } public string Mode { get; set; } = ""; public int MaxNormalCalls { get; set; } }
+sealed class LoggingFixture { public string Name { get; set; } = ""; public int TerminalEvents { get; set; } }
+sealed class ResilienceFixture
+{
+    public int ManagedBackendMaxAttempts { get; set; }
+    public int ManagedDesktopMaxAttempts { get; set; }
+    public int ByoDesktopMaxAttempts { get; set; }
+    public List<FailureFixture> Classification { get; set; } = new();
+    public List<RetryFixture> Retry { get; set; } = new();
+    public List<LaneFixture> LaneTransitions { get; set; } = new();
+}
+sealed class FailureFixture { public string Name { get; set; } = ""; public int? StatusCode { get; set; } public string Message { get; set; } = ""; public string ExpectedKind { get; set; } = ""; public int CooldownSeconds { get; set; } }
+sealed class RetryFixture { public string Name { get; set; } = ""; public string Lane { get; set; } = ""; public string FailureKind { get; set; } = ""; public int Attempt { get; set; } public bool HasOutput { get; set; } public bool Expected { get; set; } }
+sealed class LaneFixture { public string Name { get; set; } = ""; public string From { get; set; } = ""; public string To { get; set; } = ""; public bool OptedIn { get; set; } public bool HasOutput { get; set; } public bool Expected { get; set; } }

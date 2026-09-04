@@ -1,5 +1,7 @@
 # phantom-windows-app-backend
 
+Operational logging and Render search instructions: [`../shared/observability/README.md`](../shared/observability/README.md).
+
 Backend authority for the Windows desktop runtime.
 
 Implemented:

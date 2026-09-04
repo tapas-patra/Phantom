@@ -3,6 +3,7 @@ namespace Phantom.WindowsApp.Backend.Contracts;
 public sealed class DesktopAiChatRequestDto
 {
     public string RequestId { get; set; } = string.Empty;
+    public string TurnId { get; set; } = string.Empty;
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public bool AllowPaidSessionExtension { get; set; }

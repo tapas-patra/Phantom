@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using SecureOverlay;
 
 namespace SecureOverlay.Infrastructure.Hosted
 {
@@ -78,16 +78,13 @@ namespace SecureOverlay.Infrastructure.Hosted
                 {
                     message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
                 }
+                AddCorrelationHeaders(message);
 
                 using var response = await HttpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorMessage = TryExtractErrorMessage(body);
-                    throw new HostedServiceException(
-                        string.IsNullOrWhiteSpace(errorMessage)
-                            ? $"Hosted request failed ({(int)response.StatusCode}) for {relativePath}."
-                            : errorMessage);
+                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);
@@ -144,16 +141,13 @@ namespace SecureOverlay.Infrastructure.Hosted
                 {
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
                 }
+                AddCorrelationHeaders(request);
 
                 using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorMessage = TryExtractErrorMessage(body);
-                    throw new HostedServiceException(
-                        string.IsNullOrWhiteSpace(errorMessage)
-                            ? $"Hosted request failed ({(int)response.StatusCode}) for {relativePath}."
-                            : errorMessage);
+                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);
@@ -180,22 +174,12 @@ namespace SecureOverlay.Infrastructure.Hosted
             }
         }
 
-        private static string? TryExtractErrorMessage(string body)
+        private static void AddCorrelationHeaders(HttpRequestMessage request)
         {
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                return null;
-            }
-
-            try
-            {
-                var payload = JObject.Parse(body);
-                return payload["error"]?.Value<string>();
-            }
-            catch
-            {
-                return body;
-            }
+            var trace = LiveRequestTrace.Current;
+            if (trace == null) return;
+            request.Headers.TryAddWithoutValidation("X-Phantom-Correlation-Id", trace.TurnId);
+            request.Headers.TryAddWithoutValidation("X-Phantom-Operation-Id", trace.OperationId);
         }
     }
 }

@@ -11,7 +11,7 @@ final class SpeechInputService {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var tapInstalled = false
 
-    var onTranscript: ((String) -> Void)?
+    var onTranscript: ((String, Bool) -> Void)?
     var onStateChange: ((String) -> Void)?
     private(set) var isListening = false
 
@@ -45,7 +45,7 @@ final class SpeechInputService {
             let errorText = error?.localizedDescription
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let transcript { self.onTranscript?(transcript) }
+                if let transcript { self.onTranscript?(transcript, result?.isFinal == true) }
                 if let errorText { self.onStateChange?(errorText) }
                 if finished { self.stop() }
             }

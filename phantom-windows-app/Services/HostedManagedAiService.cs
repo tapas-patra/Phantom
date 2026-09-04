@@ -43,6 +43,7 @@ namespace SecureOverlay.Services
         }
 
         public string GetProviderName() => _provider;
+        public string GetModelName() => _model;
 
         public bool IsConfigured()
         {
@@ -80,7 +81,8 @@ namespace SecureOverlay.Services
             {
                 var payload = new
                 {
-                    requestId = LiveRequestTrace.Current?.CorrelationId ?? string.Empty,
+                    requestId = LiveRequestTrace.Current?.OperationId ?? Guid.NewGuid().ToString("N"),
+                    turnId = LiveRequestTrace.Current?.TurnId ?? string.Empty,
                     provider = _provider,
                     model = _model,
                     allowPaidSessionExtension = _allowPaidSessionExtension,
@@ -94,6 +96,7 @@ namespace SecureOverlay.Services
 
                 using var request = new HttpRequestMessage(HttpMethod.Post, $"{_options.DesktopBackendBaseUrl}/api/desktop/ai/chat");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+                AddCorrelationHeaders(request);
                 request.Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
 
                 using var response = await HttpClient.SendAsync(
@@ -119,10 +122,11 @@ namespace SecureOverlay.Services
                         }
                     }
 
-                    return $"Error: {(int)response.StatusCode} - {errorBody}";
+                    return $"Error: provider_http_{(int)response.StatusCode}";
                 }
 
                 var fullResponse = new StringBuilder();
+                var sawDone = false;
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
                 {
@@ -139,6 +143,7 @@ namespace SecureOverlay.Services
                         var data = line.Substring(6);
                         if (data == "[DONE]")
                         {
+                            sawDone = true;
                             break;
                         }
 
@@ -148,9 +153,7 @@ namespace SecureOverlay.Services
                             var streamError = chunk["error"]?.Value<string>();
                             if (!string.IsNullOrWhiteSpace(streamError))
                             {
-                                return fullResponse.Length == 0
-                                    ? $"Error: {streamError}"
-                                    : fullResponse.ToString() + $"\n\n[Stream ended: {streamError}]";
+                                return "Error: provider_stream_error";
                             }
                             var delta = chunk["delta"]?.Value<string>();
                             if (!string.IsNullOrWhiteSpace(delta))
@@ -166,16 +169,16 @@ namespace SecureOverlay.Services
                         }
                     }
                 }
-
+                if (!sawDone) return "Error: provider_stream_incomplete";
                 return fullResponse.ToString();
             }
             catch (OperationCanceledException)
             {
                 return "Error: Request cancelled";
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return $"Error: {ex.Message}";
+                return "Error: provider_transport_error";
             }
         }
 
@@ -209,7 +212,8 @@ namespace SecureOverlay.Services
         {
             var payload = new
             {
-                requestId = LiveRequestTrace.Current?.CorrelationId ?? string.Empty,
+                requestId = LiveRequestTrace.Current?.OperationId ?? Guid.NewGuid().ToString("N"),
+                turnId = LiveRequestTrace.Current?.TurnId ?? string.Empty,
                 provider = _provider,
                 model = _model,
                 allowPaidSessionExtension = _allowPaidSessionExtension,
@@ -223,6 +227,7 @@ namespace SecureOverlay.Services
 
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{_options.DesktopBackendBaseUrl}/api/desktop/ai/chat");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+            AddCorrelationHeaders(request);
             request.Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
 
             using var response = await HttpClient.SendAsync(
@@ -234,10 +239,11 @@ namespace SecureOverlay.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                return $"Error: {(int)response.StatusCode} - {errorBody}";
+                return $"Error: provider_http_{(int)response.StatusCode}";
             }
 
             var fullResponse = new StringBuilder();
+            var sawDone = false;
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new StreamReader(stream))
             {
@@ -254,6 +260,7 @@ namespace SecureOverlay.Services
                     var data = line.Substring(6);
                     if (data == "[DONE]")
                     {
+                        sawDone = true;
                         break;
                     }
 
@@ -263,9 +270,7 @@ namespace SecureOverlay.Services
                         var streamError = chunk["error"]?.Value<string>();
                         if (!string.IsNullOrWhiteSpace(streamError))
                         {
-                            return fullResponse.Length == 0
-                                ? $"Error: {streamError}"
-                                : fullResponse.ToString() + $"\n\n[Stream ended: {streamError}]";
+                            return "Error: provider_stream_error";
                         }
                         var delta = chunk["delta"]?.Value<string>();
                     if (!string.IsNullOrWhiteSpace(delta))
@@ -280,7 +285,7 @@ namespace SecureOverlay.Services
                     }
                 }
             }
-
+            if (!sawDone) return "Error: provider_stream_incomplete";
             return fullResponse.ToString();
         }
 
@@ -343,6 +348,14 @@ namespace SecureOverlay.Services
 
             return errorBody.IndexOf("Desktop session is no longer valid", StringComparison.OrdinalIgnoreCase) >= 0
                 || errorBody.IndexOf("Desktop session not found", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static void AddCorrelationHeaders(HttpRequestMessage request)
+        {
+            var trace = LiveRequestTrace.Current;
+            if (trace == null) return;
+            request.Headers.TryAddWithoutValidation("X-Phantom-Correlation-Id", trace.TurnId);
+            request.Headers.TryAddWithoutValidation("X-Phantom-Operation-Id", trace.OperationId);
         }
 
         private static AuthSessionCache MapAuthSession(AuthSessionDto sessionDto)

@@ -22,6 +22,7 @@ namespace SecureOverlay.Services
         {
             _settings = settings;
             _state = settings.RotationState;
+            MigrateLegacyFailureState();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -40,12 +41,17 @@ namespace SecureOverlay.Services
 
             if (keys.Count == 1)
             {
-                Log.WriteLine($"Only 1 key for {provider} - using it");
+                if (GetPermanentlyFailedKeyIndexes(provider).Contains(0) || GetCoolingKeyIndexes(provider).Contains(0))
+                {
+                    Log.WriteLine($"⚠️ The only {provider} key is unavailable");
+                    return "";
+                }
+                _state.LastKeyIndex[provider] = 0;
                 return keys[0];
             }
 
             var permanentlyFailedKeys = GetPermanentlyFailedKeyIndexes(provider);
-            var failedKeys = GetFailedKeys(provider);
+            var coolingKeys = GetCoolingKeyIndexes(provider);
             
             // Get last used index
             if (!_state.LastKeyIndex.ContainsKey(provider))
@@ -70,7 +76,7 @@ namespace SecureOverlay.Services
                 }
                 
                 // Check if this key is not in failed list
-                if (!failedKeys.Contains(key))
+                if (!coolingKeys.Contains(currentIndex))
                 {
                     _state.LastKeyIndex[provider] = currentIndex;
                     SaveRotationState();
@@ -80,14 +86,7 @@ namespace SecureOverlay.Services
                 }
             }
 
-            if (failedKeys.Count > 0)
-            {
-                Log.WriteLine($"⚠️ All non-invalid {provider} keys are rate limited - clearing temporary failures");
-                ClearFailedKeys(provider);
-                return GetNextApiKey(provider);
-            }
-
-            Log.WriteLine($"⚠️ No usable API keys remain for {provider}");
+            Log.WriteLine($"⚠️ No usable API keys remain for {provider}; cooling keys will not be retried early");
             return "";
         }
 
@@ -103,7 +102,9 @@ namespace SecureOverlay.Services
 
             if (keys.Count == 1)
             {
-                return keys[0];
+                return GetPermanentlyFailedKeyIndexes(provider).Contains(0) || GetCoolingKeyIndexes(provider).Contains(0)
+                    ? ""
+                    : keys[0];
             }
 
             if (_state.LastKeyIndex.TryGetValue(provider, out var currentIndex) &&
@@ -112,7 +113,7 @@ namespace SecureOverlay.Services
             {
                 var currentKey = keys[currentIndex];
                 if (!GetPermanentlyFailedKeyIndexes(provider).Contains(currentIndex) &&
-                    !GetFailedKeys(provider).Contains(currentKey))
+                    !GetCoolingKeyIndexes(provider).Contains(currentIndex))
                 {
                     return currentKey;
                 }
@@ -152,16 +153,10 @@ namespace SecureOverlay.Services
                 return;
             }
 
-            var key = keys[keyIndex];
-            var failedKeys = GetFailedKeys(provider);
-
-            if (!failedKeys.Contains(key))
-            {
-                failedKeys.Add(key);
-                _state.Last429Time[provider] = DateTime.UtcNow;
-                SaveRotationState();
-                Log.WriteLine($"✓ Marked Key #{keyIndex + 1} as rate limited for {provider}");
-            }
+            _state.Last429Time[provider] = DateTime.UtcNow;
+            _state.KeyCooldownUntilUtc[CooldownName(provider, keyIndex)] = DateTime.UtcNow.AddMinutes(5);
+            SaveRotationState();
+            Log.WriteLine($"✓ Put Key #{keyIndex + 1} on a 5-minute cooldown for {provider}");
         }
 
         private List<string> GetFailedKeys(string provider)
@@ -184,7 +179,32 @@ namespace SecureOverlay.Services
 
         public void ClearRateLimitedKeys(string provider)
         {
+            foreach (var key in _state.KeyCooldownUntilUtc.Keys.Where(key => key.StartsWith(provider + ":", StringComparison.OrdinalIgnoreCase)).ToArray())
+                _state.KeyCooldownUntilUtc.Remove(key);
             ClearFailedKeys(provider);
+            SaveRotationState();
+        }
+
+        public void RecordCurrentFailure(string provider, ProviderFailureDecision failure)
+        {
+            var index = GetCurrentKeyIndex(provider);
+            if (failure.Kind == ProviderFailureKind.Authentication)
+            {
+                MarkKeyAsFailed(provider, index);
+                return;
+            }
+            if (failure.CanRotateCredential && failure.Cooldown > TimeSpan.Zero)
+            {
+                _state.KeyCooldownUntilUtc[CooldownName(provider, index)] = DateTime.UtcNow.Add(failure.Cooldown);
+                if (failure.Kind == ProviderFailureKind.RateLimited) _state.Last429Time[provider] = DateTime.UtcNow;
+                SaveRotationState();
+            }
+        }
+
+        public void RecordCurrentSuccess(string provider)
+        {
+            var key = CooldownName(provider, GetCurrentKeyIndex(provider));
+            if (_state.KeyCooldownUntilUtc.Remove(key)) SaveRotationState();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -453,7 +473,7 @@ namespace SecureOverlay.Services
             if (keys == null || keys.Count == 0) return 0;
 
             var permanentlyFailedKeys = GetPermanentlyFailedKeyIndexes(provider);
-            var rateLimitedKeys = GetFailedKeys(provider);
+            var coolingKeys = GetCoolingKeyIndexes(provider);
             int available = 0;
 
             for (int i = 0; i < keys.Count; i++)
@@ -461,7 +481,7 @@ namespace SecureOverlay.Services
                 if (permanentlyFailedKeys.Contains(i))
                     continue;
 
-                if (rateLimitedKeys.Contains(keys[i]))
+                if (coolingKeys.Contains(i))
                     continue;
 
                 available++;
@@ -527,8 +547,7 @@ namespace SecureOverlay.Services
                 return "Key #1";
             
             var index = GetCurrentKeyIndex(provider);
-            var failedKeys = GetFailedKeys(provider);
-            var availableCount = keys.Count - failedKeys.Count;
+            var availableCount = GetAvailableKeyCount(provider);
             
             return $"Key #{index + 1}/{keys.Count} ({availableCount} available)";
         }
@@ -572,6 +591,44 @@ namespace SecureOverlay.Services
             _conversationModelIndex.Clear();
             Log.WriteLine($"✓ Reset all conversation model preferences");
         }
+
+        private HashSet<int> GetCoolingKeyIndexes(string provider)
+        {
+            var now = DateTime.UtcNow;
+            var expired = _state.KeyCooldownUntilUtc
+                .Where(item => item.Value <= now)
+                .Select(item => item.Key)
+                .ToArray();
+            foreach (var key in expired) _state.KeyCooldownUntilUtc.Remove(key);
+
+            var prefix = provider + ":";
+            return _state.KeyCooldownUntilUtc
+                .Where(item => item.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && item.Value > now)
+                .Select(item => int.TryParse(item.Key.Substring(prefix.Length), out var index) ? index : -1)
+                .Where(index => index >= 0)
+                .ToHashSet();
+        }
+
+        private void MigrateLegacyFailureState()
+        {
+            var changed = false;
+            foreach (var provider in _state.FailedKeys429.Keys.ToArray())
+            {
+                if (!_state.FailedKeys429.TryGetValue(provider, out var failed) || failed.Count == 0) continue;
+                var keys = GetKeysForProvider(provider);
+                var until = (_state.Last429Time.TryGetValue(provider, out var last) ? last : DateTime.UtcNow).AddMinutes(5);
+                foreach (var value in failed)
+                {
+                    var index = keys.IndexOf(value);
+                    if (index >= 0) _state.KeyCooldownUntilUtc[CooldownName(provider, index)] = until;
+                }
+                failed.Clear();
+                changed = true;
+            }
+            if (changed) SaveRotationState();
+        }
+
+        private static string CooldownName(string provider, int index) => $"{provider}:{index}";
 
     }
 }

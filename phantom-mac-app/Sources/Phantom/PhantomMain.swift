@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Darwin
 import SwiftUI
 
 @MainActor
@@ -8,8 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let window = ProtectedWindow()
     private var hotKeys: [GlobalHotKey] = []
     private var keyMonitor: Any?
-    private var restartExecutable: URL?
-    private var windowObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
     private var isQuitting = false
     private var isPreparingToQuit = false
     private var quitSheetOpen = false
@@ -40,11 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.store.send()
             return nil
         }
-        windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
-            guard let visible = notification.object as? NSWindow, NSApp.windows.contains(visible) else { return }
-            visible.sharingType = .none
-            visible.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
-        }
+        windowObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
+            // Only request capture exclusion here; changing collectionBehavior can close transient AppKit windows.
+            (notification.object as? NSWindow)?.sharingType = .none
+        })
         showWindow()
         store.bootstrap()
     }
@@ -88,10 +87,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onCompactModeChanged = { [weak self] compact in self?.setCompact(compact) }
         store.onLogout = { [weak self] in self?.showWindow() }
         store.onRestart = { [weak self] in
-            guard let self else { return }
-            self.restartExecutable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-            self.isQuitting = true
-            NSApp.terminate(nil)
+            guard let self else { return false }
+            let process = Process()
+            process.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+            process.arguments = ["--restart-parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
+            do {
+                try process.run()
+                self.isQuitting = true
+                NSApp.terminate(nil)
+                return true
+            } catch {
+                return false
+            }
         }
         store.onLegacyHandoff = { [weak self] in
             self?.isQuitting = true
@@ -149,11 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isPreparingToQuit = true
         Task {
             await store.prepareForTermination()
-            if let executable = restartExecutable {
-                let process = Process()
-                process.executableURL = executable
-                try? process.run()
-            }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -185,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 
@@ -196,6 +198,7 @@ enum PhantomMain {
             precondition(GlobalHotKey.handles(registeredID: 1, eventID: 1))
             precondition(!GlobalHotKey.handles(registeredID: 1, eventID: 4))
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")
+            precondition(ChatMessage(role: "assistant", content: "ok", responseTimeMs: 1_234).responseTimeText == "1.2 s")
             precondition(MermaidDiagram.html("flowchart TD\nA[\"quoted\"] --> B", hasLocalRuntime: true).contains("mermaid.min.js"))
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
@@ -219,6 +222,10 @@ enum PhantomMain {
             precondition(!CreditMeteringService.shouldFinalizeBoundary(tier: "free", elapsed: 900, projectedCharge: 0.25, paidAvailable: 0, existingDebt: 0, allowFreeTrialExtension: true, allowPaidExtension: false))
             precondition(CreditMeteringService.shouldFinalizeBoundary(tier: "premium", elapsed: 7_200, projectedCharge: 2, paidAvailable: 1, existingDebt: 0, allowFreeTrialExtension: false, allowPaidExtension: true))
             precondition(BYOClient.failure(from: "data: {\"error\":{\"message\":\"rate limited\"}}") == "rate limited")
+            precondition(BYOClient.terminal(from: "data: [DONE]", provider: "Mistral") == .complete)
+            precondition(BYOClient.terminal(from: "data: {\"choices\":[{\"finish_reason\":\"length\"}]}", provider: "Mistral") == .truncated)
+            precondition(BYOClient.terminal(from: "data: {\"type\":\"message_stop\"}", provider: "Claude") == .complete)
+            precondition(BYOClient.terminal(from: "data: {\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}", provider: "Gemini") == .truncated)
             precondition(ContextSummaryStore.summarize(kind: "job", source: String(repeating: "word ", count: 120)).split(separator: " ").count == 100)
             let emptyKnowledge = StartupSnapshot.KnowledgeBase(knowledgeBaseId: "", name: "", description: "", status: "not_created", embeddingModel: "", embeddingVersion: 0, documentCount: 0, chunkCount: 0, canUseInInterview: false, blockedReason: "", lastProcessedAtUtc: nil, profileCard: nil, experienceCards: [], projectCards: [])
             let restricted = StartupSnapshot(userId: "user", email: "user@example.com", emailVerified: true, accessTier: "premium", wallet: .init(proAvailableCredits: 0, premiumAvailableCredits: 0, premiumNegativeCredits: 0), leaseExpiresAtUtc: Date(timeIntervalSince1970: 0), hasResumableLockedSession: true, lastLockTokenHash: "hash", lastLockedSessionId: "session", offlineModeEnabled: true, canUseDesktopPowerFeatures: false, lastValidatedAtUtc: Date(), hostedKnowledgeBase: emptyKnowledge, source: "self-check")
@@ -227,50 +234,25 @@ enum PhantomMain {
             let legacyStartupJSON = #"{"email":"user@example.com","emailVerified":true,"accessTier":"premium","wallet":{"proAvailableCredits":0,"premiumAvailableCredits":1,"premiumNegativeCredits":0}}"#.data(using: .utf8)!
             let legacyStartup = try! JSONDecoder().decode(StartupSnapshot.self, from: legacyStartupJSON)
             precondition(legacyStartup.emailVerified && legacyStartup.hostedKnowledgeBase.status == "not_created")
-            let conversation = (0..<14).map { ChatMessage(role: $0.isMultiple(of: 2) ? "user" : "assistant", content: "message \($0)") }
-            let built = ConversationManager().requestMessages(
-                question: "next",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: conversation,
-                modelId: "gpt-4",
-                knowledgeEnabled: false,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "technical_concept", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "next", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(built.first?.role == "system" && built.count == 15)
-            let designBuilt = ConversationManager().requestMessages(
-                question: "Build a link shortener",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: [],
-                modelId: "gpt-4",
-                knowledgeEnabled: false,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "general", source: "Universal", entityType: "none", entityId: "", retrieve: false, answerMode: "system_design", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Build a link shortener", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(designBuilt.first?.content.contains("System Design Response Mode") == true)
-            let missingPersonalEvidence = ConversationManager()
-            _ = missingPersonalEvidence.requestMessages(
-                question: "Tell me about yourself",
-                interviewType: InterviewPrompt.types[0],
-                resume: "",
-                jobDescription: "",
-                conversation: [],
-                modelId: "gpt-4",
-                knowledgeEnabled: true,
-                knowledgeBase: nil,
-                knowledgeSnippets: [],
-                plan: InterviewAnswerPlan(intent: "personal", source: "Template", entityType: "none", entityId: "", retrieve: false, answerMode: "profile", answerOutline: [], allowCode: false, confidence: 1, retrievalQuery: "Tell me about yourself", preferredDocumentIds: [], clarificationQuestion: nil, clarificationOptions: nil)
-            )
-            precondition(missingPersonalEvidence.lastAnswerResolution.source == .template)
-            let parsed = ConversationManager().finalizeAssistantResponse("Answer\nSUMMARY: concise")
-            precondition(parsed.content == "Answer" && parsed.summary == "concise")
-            print("Phantom self-check passed.")
+            precondition(restartParentPID(arguments: ["Phantom", "--restart-parent-pid", "123"]) == 123)
+            precondition(restartParentPID(arguments: ["Phantom"]) == nil)
+            precondition(InWindowPickerSizing.height(optionCount: 0) == InWindowPickerSizing.minimumHeight)
+            precondition(InWindowPickerSizing.height(optionCount: 100) == InWindowPickerSizing.maximumHeight)
+            runLiveCopilotFixtures()
+            print("Phantom self-check and shared live-copilot fixture suite passed.")
+            return
+        }
+
+        let restartParent = restartParentPID(arguments: CommandLine.arguments)
+        if let restartParent { waitForRestartParent(restartParent) }
+
+        if let bundleIdentifier = Bundle.main.bundleIdentifier,
+           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first(where: {
+                $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                    && $0.processIdentifier != restartParent
+            }) {
+            existing.activate(options: [.activateAllWindows])
             return
         }
 
@@ -278,5 +260,167 @@ enum PhantomMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
+    }
+
+    private static func restartParentPID(arguments: [String]) -> pid_t? {
+        guard let flag = arguments.firstIndex(of: "--restart-parent-pid"),
+              arguments.indices.contains(flag + 1),
+              let value = Int32(arguments[flag + 1]), value > 0 else { return nil }
+        return value
+    }
+
+    private static func waitForRestartParent(_ parentPID: pid_t) {
+        let deadline = Date().addingTimeInterval(30)
+        while kill(parentPID, 0) == 0 && Date() < deadline {
+            usleep(100_000)
+        }
+    }
+
+    private static func runLiveCopilotFixtures() {
+        struct ParserFixture: Decodable {
+            let name: String
+            let allowedEntityIds: [String]?
+            let allowedDocumentIds: [String]?
+            let chunks: [String]
+            let expectedAction: String
+            let expectedBody: String
+            let maxNormalCalls: Int
+        }
+        struct InvalidFixture: Decodable { let name: String; let frame: String }
+        struct AnswerCompletionFixture: Decodable { let name: String; let body: String; let expectedComplete: Bool }
+        struct ContractFixture: Decodable { let id: Int; let mode: String; let maxNormalCalls: Int }
+        struct LoggingFixture: Decodable { let name: String; let terminalEvents: Int }
+        struct FailureFixture: Decodable { let name: String; let statusCode: Int?; let message: String; let expectedKind: String; let cooldownSeconds: Int }
+        struct RetryFixture: Decodable { let name: String; let lane: String; let failureKind: String; let attempt: Int; let hasOutput: Bool; let expected: Bool }
+        struct LaneFixture: Decodable { let name: String; let from: String; let to: String; let optedIn: Bool; let hasOutput: Bool; let expected: Bool }
+        struct ResilienceFixture: Decodable {
+            let managedBackendMaxAttempts: Int
+            let managedDesktopMaxAttempts: Int
+            let byoDesktopMaxAttempts: Int
+            let classification: [FailureFixture]
+            let retry: [RetryFixture]
+            let laneTransitions: [LaneFixture]
+        }
+        struct Root: Decodable {
+            struct DeliveryStyleRequirements: Decodable {
+                let standard: [String]
+                let desi: [String]
+            }
+            let version: String
+            let parser: [ParserFixture]
+            let invalid: [InvalidFixture]
+            let answerCompletion: [AnswerCompletionFixture]
+            let contracts: [ContractFixture]
+            let logging: [LoggingFixture]
+            let resilience: ResilienceFixture
+            let promptRequirements: [String]
+            let deliveryStyleRequirements: DeliveryStyleRequirements
+            let repairPromptSuffix: String
+            let sensitiveSamples: [String]
+        }
+
+        let data = try! Data(contentsOf: fixtureURL())
+        let fixtures = try! JSONDecoder().decode(Root.self, from: data)
+        precondition(fixtures.version == "live-copilot-v1")
+        precondition(fixtures.contracts.count >= 30)
+        precondition(Set(fixtures.contracts.map(\.id)).count == fixtures.contracts.count)
+        precondition(Set(fixtures.contracts.filter { $0.mode == "interview" }.map(\.id)).isSuperset(of: Set(1...26)))
+        precondition(fixtures.contracts.allSatisfy { (1...2).contains($0.maxNormalCalls) })
+        precondition(fixtures.logging.count >= 4 && fixtures.logging.allSatisfy { $0.terminalEvents == 1 })
+        precondition(fixtures.resilience.managedBackendMaxAttempts == 2)
+        precondition(fixtures.resilience.managedDesktopMaxAttempts == ProviderResiliencePolicy.managedDesktopMaxAttempts)
+        precondition(fixtures.resilience.byoDesktopMaxAttempts == ProviderResiliencePolicy.byoDesktopMaxAttempts)
+        for fixture in fixtures.resilience.classification {
+            let decision = ProviderResiliencePolicy.classify(statusCode: fixture.statusCode, message: fixture.message)
+            precondition(decision.kind.rawValue == fixture.expectedKind, fixture.name)
+            precondition(Int(decision.cooldown) == fixture.cooldownSeconds, fixture.name)
+        }
+        for fixture in fixtures.resilience.retry {
+            let decision = resilienceDecision(fixture.failureKind)
+            let maxAttempts = fixture.lane == "managed_desktop"
+                ? ProviderResiliencePolicy.managedDesktopMaxAttempts
+                : (fixture.lane == "managed_backend" ? fixtures.resilience.managedBackendMaxAttempts : ProviderResiliencePolicy.byoDesktopMaxAttempts)
+            let actual = ProviderResiliencePolicy.canRetry(decision, attempt: fixture.attempt, maxAttempts: maxAttempts, hasOutput: fixture.hasOutput)
+            precondition(actual == fixture.expected, fixture.name)
+        }
+        for fixture in fixtures.resilience.laneTransitions {
+            precondition(ProviderResiliencePolicy.canCrossLane(from: fixture.from, to: fixture.to, explicitlyOptedIn: fixture.optedIn, hasOutput: fixture.hasOutput) == fixture.expected, fixture.name)
+        }
+        let firstCallPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .standard, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: []
+        )
+        precondition(fixtures.promptRequirements.allSatisfy { firstCallPrompt.contains($0) })
+        precondition(fixtures.deliveryStyleRequirements.standard.allSatisfy { firstCallPrompt.contains($0) })
+        let desiPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .desi, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: []
+        )
+        precondition(fixtures.deliveryStyleRequirements.desi.allSatisfy { desiPrompt.contains($0) })
+        precondition(firstCallPrompt != desiPrompt)
+        precondition(!firstCallPrompt.contains("Delivery style is Desi"))
+        precondition(!desiPrompt.contains("Delivery style is Standard"))
+        precondition(ChatDisplayFormatter.blocks("Short answer.").count == 1)
+        precondition(ChatDisplayFormatter.blocks("First paragraph.\n\nSecond paragraph.").count == 2)
+        let denseAnswer = Array(repeating: "This is a complete sentence that explains one focused part of the answer.", count: 6).joined(separator: " ")
+        precondition(ChatDisplayFormatter.blocks(denseAnswer).count == 3)
+        let repairPrompt = CopilotPrompt.firstCall(
+            mode: .interview, style: .standard, knowledge: nil, resume: "",
+            roleOrMeetingContext: "", activeEvidence: [], protocolRepair: true
+        )
+        precondition(repairPrompt.hasSuffix(fixtures.repairPromptSuffix))
+        for fixture in fixtures.parser {
+            let parser = PhantomControlFrameParser(
+                allowedEntityIds: fixture.allowedEntityIds ?? [],
+                allowedDocumentIds: fixture.allowedDocumentIds ?? []
+            )
+            var body = ""
+            for chunk in fixture.chunks { body += try! parser.feed(chunk) }
+            let decision = try! parser.complete()
+            precondition(decision.action.rawValue == fixture.expectedAction, fixture.name)
+            precondition(body == fixture.expectedBody, fixture.name)
+            precondition(!body.contains(PhantomControlFrameParser.protocolLine), fixture.name)
+            precondition(fixture.maxNormalCalls == (decision.action == .retrieve ? 2 : 1), fixture.name)
+        }
+        for fixture in fixtures.invalid {
+            let parser = PhantomControlFrameParser(
+                allowedEntityIds: ["payment-migration"], allowedDocumentIds: ["resume-document-id"]
+            )
+            do {
+                _ = try parser.feed(fixture.frame)
+                _ = try parser.complete()
+                preconditionFailure("\(fixture.name) was accepted")
+            } catch is PhantomProtocolError { }
+            catch { preconditionFailure("\(fixture.name) failed with the wrong error") }
+        }
+        for fixture in fixtures.answerCompletion {
+            precondition(LiveCopilotOrchestrator.isCompleteAnswer(fixture.body) == fixture.expectedComplete, fixture.name)
+        }
+        let allowedFields = ["question_length_bucket", "provider", "model", "answer_basis"]
+        for sample in fixtures.sensitiveSamples {
+            precondition(!allowedFields.contains(where: { $0.contains(sample) }))
+        }
+
+        func resilienceDecision(_ kind: String) -> ProviderFailureDecision {
+            switch kind {
+            case "rate_limited": return ProviderResiliencePolicy.classify(statusCode: 429)
+            case "authentication_failed": return ProviderResiliencePolicy.classify(statusCode: 401)
+            case "provider_transient": return ProviderResiliencePolicy.classify(statusCode: 503)
+            case "cancelled": return ProviderResiliencePolicy.classify(message: "cancelled")
+            default: return ProviderResiliencePolicy.classify(statusCode: 400)
+            }
+        }
+    }
+
+    private static func fixtureURL() -> URL {
+        for start in [URL(fileURLWithPath: FileManager.default.currentDirectoryPath), Bundle.main.bundleURL] {
+            var directory = start
+            for _ in 0..<10 {
+                let candidate = directory.appendingPathComponent("shared/live-copilot/fixtures.json")
+                if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+                directory.deleteLastPathComponent()
+            }
+        }
+        fatalError("shared/live-copilot/fixtures.json was not found")
     }
 }

@@ -115,6 +115,7 @@ namespace SecureOverlay.Services
                 }
 
                 var fullResponse = new StringBuilder();
+                var sawDone = false;
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
                 {
@@ -130,6 +131,7 @@ namespace SecureOverlay.Services
                         var data = line.Substring(6);
                         if (data == "[DONE]")
                         {
+                            sawDone = true;
                             break;
                         }
 
@@ -149,6 +151,7 @@ namespace SecureOverlay.Services
                     }
                 }
 
+                if (!sawDone) return "Error: provider_stream_incomplete";
                 return fullResponse.ToString();
             }
             catch (OperationCanceledException)

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phantom.local/schemas/provider-resilience-v1.json",
+  "title": "Phantom provider resilience fixtures",
+  "type": "object",
+  "required": ["managedBackendMaxAttempts", "managedDesktopMaxAttempts", "byoDesktopMaxAttempts", "classification", "retry", "laneTransitions"],
+  "properties": {
+    "managedBackendMaxAttempts": { "const": 2 },
+    "managedDesktopMaxAttempts": { "const": 1 },
+    "byoDesktopMaxAttempts": { "const": 2 },
+    "classification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "statusCode", "message", "expectedKind", "cooldownSeconds"],
+        "properties": {
+          "name": { "type": "string" },
+          "statusCode": { "type": ["integer", "null"] },
+          "message": { "type": "string" },
+          "expectedKind": { "enum": ["rate_limited", "authentication_failed", "provider_transient", "provider_error", "cancelled"] },
+          "cooldownSeconds": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "retry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "lane", "failureKind", "attempt", "hasOutput", "expected"],
+        "properties": {
+          "name": { "type": "string" },
+          "lane": { "enum": ["managed_backend", "managed_desktop", "byo"] },
+          "failureKind": { "type": "string" },
+          "attempt": { "type": "integer", "minimum": 1 },
+          "hasOutput": { "type": "boolean" },
+          "expected": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "laneTransitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "from", "to", "optedIn", "hasOutput", "expected"],
+        "properties": {
+          "name": { "type": "string" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "optedIn": { "type": "boolean" },
+          "hasOutput": { "type": "boolean" },
+          "expected": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

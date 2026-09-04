@@ -12,7 +12,4 @@
   <ItemGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
     <SourceRoot Include="/Users/tapaskumarpatra/.nuget/packages/" />
   </ItemGroup>
-  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
-    <PkgMicrosoft_Web_WebView2 Condition=" '$(PkgMicrosoft_Web_WebView2)' == '' ">/Users/tapaskumarpatra/.nuget/packages/microsoft.web.webview2/1.0.2739.15</PkgMicrosoft_Web_WebView2>
-  </PropertyGroup>
 </Project>

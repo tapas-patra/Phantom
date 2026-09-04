@@ -57,7 +57,11 @@ actor RuntimePersistence {
 
     func appendTelemetry(_ event: PhantomTelemetryEvent) throws {
         state.telemetry.append(event)
-        if state.telemetry.count > 500 { state.telemetry.removeFirst(state.telemetry.count - 500) }
+        if state.telemetry.count > 500 {
+            let overflow = state.telemetry.count - 500
+            state.telemetry.removeFirst(overflow)
+            state.droppedTelemetry = (state.droppedTelemetry ?? 0) + overflow
+        }
         try save()
     }
 
@@ -68,7 +72,8 @@ actor RuntimePersistence {
             pendingUsage: state.reconciliations.filter { $0.status == .pending }.count,
             failedUsage: state.reconciliations.filter { $0.status == .failed }.count,
             deadLetters: Array(state.reconciliations.filter { $0.status == .deadLetter }.suffix(10)),
-            queuedTelemetry: state.telemetry.count
+            queuedTelemetry: state.telemetry.count,
+            droppedTelemetry: state.droppedTelemetry ?? 0
         )
     }
 

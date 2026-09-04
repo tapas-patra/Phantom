@@ -27,6 +27,7 @@ using SecureOverlay.Application.Sync;
 using SecureOverlay.Application.Telemetry;
 using SecureOverlay.Services;
 using SecureOverlay.Helpers;
+using SecureOverlay.Domain;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Infrastructure.Context;
 using SecureOverlay.Infrastructure.Billing;
@@ -156,12 +157,6 @@ namespace SecureOverlay
 
             _debugLogger = DebugLogger.Instance;
             Log.WriteLine($"Debug logger instance obtained ({_debugLogger.LogMessages.Count} messages already captured)");
-            Log.WriteLine($"RAG trace logging config: {RagTraceLogger.GetConfigurationSummary()}");
-            if (RagTraceLogger.IsEnabled)
-            {
-                Log.WriteLine($"RAG trace logging enabled: {RagTraceLogger.GetLogPath()}");
-            }
-            
             DebugLogsList.ItemsSource = _debugLogger.LogMessages;
             Log.WriteLine("Debug logs bound to UI");
             
@@ -179,9 +174,11 @@ namespace SecureOverlay
             Log.WriteLine("Loading settings...");
             _settings = SettingsManager.Load();
             Log.WriteLine($"Settings loaded: AI={_settings.SelectedAI}, Voice={_settings.VoiceInputEnabled}");
+            LiveModeComboBox.SelectedIndex = string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             HeaderOpacitySlider.Value = _settings.WindowOpacity;
             ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
             UpdateLegacyFallbackButtonState();
+            UpdateClickThroughButtonState();
 
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _authSessionRepository = new SqliteAuthSessionRepository(store);
@@ -282,7 +279,7 @@ namespace SecureOverlay
                 }
                 catch (Exception ex)
                 {
-                    Log.WriteLine($"✗ Error restoring conversation: {ex.Message}");
+                    Log.WriteLine($"✗ Error restoring conversation: {ex.GetType().Name}");
                     hasRestoredConversation = false;
                 }
             }
@@ -361,7 +358,10 @@ namespace SecureOverlay
                             var isUser = msg.Role == "user";
                             var aiName = GetCurrentDisplayProvider();
                             var prefix = isUser ? "**You:** " : $"**{aiName}:** ";
-                            var fullText = prefix + msg.Content;
+                            var timing = !isUser && msg.ResponseTimeMs.HasValue
+                                ? $"\n\n_Response time: {FormatResponseTime(msg.ResponseTimeMs.Value)}_"
+                                : string.Empty;
+                            var fullText = prefix + msg.Content + timing;
                             _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(isUser, fullText));
                             rebuilt++;
                         }
@@ -401,7 +401,7 @@ namespace SecureOverlay
                     }
                     catch (Exception ex)
                     {
-                        Log.WriteLine($"✗ Error rebuilding chat UI: {ex.Message}");
+                        Log.WriteLine($"✗ Error rebuilding chat UI: {ex.GetType().Name}");
                         Log.WriteLine($"Stack trace: {ex.StackTrace}");
                         _chatMessages.Clear();
                         await RefreshChatSurfaceAsync();
@@ -987,7 +987,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Managed catalog refresh skipped: {ex.Message}");
+                Log.WriteLine($"Managed catalog refresh skipped: {ex.GetType().Name}");
             }
         }
 
@@ -1214,8 +1214,16 @@ namespace SecureOverlay
         private string GetCurrentRuntimeProviderId()
         {
             return _currentAI is HostedManagedAiService
-                ? GetManagedRuntimeProviderId()
+                ? _conversationManager?.CurrentProvider ?? GetManagedRuntimeProviderId()
                 : _settings.SelectedAI;
+        }
+
+        private string GetCurrentRuntimeModelId()
+        {
+            var provider = GetCurrentRuntimeProviderId();
+            return _currentAI is HostedManagedAiService
+                ? _conversationManager?.CurrentModel ?? GetManagedRuntimeModelId(provider)
+                : _rotationManager?.GetCurrentModel(provider) ?? string.Empty;
         }
 
         private void SyncRuntimeWithCurrentCreditLane()
@@ -1379,6 +1387,8 @@ namespace SecureOverlay
 
             Log.WriteLine("Applying screen capture protection...");
             WindowProtection.ApplyProtection(_windowHandle);
+            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            UpdateClickThroughButtonState();
             
             uint affinity;
             if (NativeMethods.GetWindowDisplayAffinity(_windowHandle, out affinity) && 
@@ -1512,19 +1522,24 @@ namespace SecureOverlay
                     _settings.AllowByoSessionExtension);
 
             var modelConfig = GetModelConfigForCurrentSelection(runtimeProvider, runtimeModel);
-            
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
             if (_conversationManager != null)
             {
                 _conversationManager.APISwitchNotification -= OnAPISwitchNotification;
+                _conversationManager.StageChanged -= OnCopilotStageChanged;
+                _conversationManager.DecisionParsed -= OnCopilotDecisionParsed;
                 _conversationManager.UpdateAIService(newAI);
                 _conversationManager.UpdateModelConfig(modelConfig);
-                _conversationManager.UpdateSystemPrompt(_settings.SystemPrompt);
+                _conversationManager.ConfigureCopilot(
+                    string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
+                    string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
                 _conversationManager.SetRotationManager(rotationManager);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
+                _conversationManager.StageChanged += OnCopilotStageChanged;
+                _conversationManager.DecisionParsed += OnCopilotDecisionParsed;
                 
                 Log.WriteLine("✓ AI service updated - conversation history PRESERVED");
             }
@@ -1532,7 +1547,7 @@ namespace SecureOverlay
             {
                 _conversationManager = new ConversationManager(
                     newAI,
-                    _settings.SystemPrompt,
+                    string.Empty,
                     modelConfig,
                     _rotationManager,
                     (query, preferredDocumentIds, cancellationToken) => _knowledgeRetrievalService.RetrieveForPromptAsync(
@@ -1552,23 +1567,15 @@ namespace SecureOverlay
 
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
                     },
-                    () => !IsByoAccount() && HasPremiumManagedEntitlement(),
-                    async (request, cancellationToken) =>
-                    {
-                        var session = _authSessionRepository.Load();
-                        if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
-                        {
-                            throw new InvalidOperationException("Account validation is required for interview planning.");
-                        }
-
-                        return await _hostedAccountClient.GetInterviewAnswerPlanAsync(
-                            session.AccessToken,
-                            request,
-                            cancellationToken);
-                    });
+                    () => !IsByoAccount() && HasPremiumManagedEntitlement());
+                _conversationManager.ConfigureCopilot(
+                    string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
+                    string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
+                _conversationManager.StageChanged += OnCopilotStageChanged;
+                _conversationManager.DecisionParsed += OnCopilotDecisionParsed;
                 
                 var selectedPack = _contextPackService.GetSelectedPack();
 
@@ -1728,6 +1735,46 @@ namespace SecureOverlay
             });
         }
 
+        private void OnCopilotStageChanged(object? sender, string stage)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                StatusText.Text = stage;
+                StatusIndicator.Fill = stage.StartsWith("Searching", StringComparison.Ordinal)
+                    ? Brushes.DeepSkyBlue
+                    : Brushes.Yellow;
+            }));
+        }
+
+        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount)
+        {
+            if (_activeRequestTrace is not { } trace) return;
+            TrackLiveCopilotAsync("control_frame_parsed", trace, new Dictionary<string, string>
+            {
+                ["question_type"] = decision.QuestionType,
+                ["intent"] = decision.Intent,
+                ["action"] = decision.Action.ToString().ToLowerInvariant(),
+                ["answer_basis"] = decision.AnswerBasis,
+                ["confidence_bucket"] = decision.Confidence < .5 ? "low" : decision.Confidence < .8 ? "medium" : "high",
+                ["entity_type"] = decision.EntityType,
+                ["has_entity_id"] = (!string.IsNullOrEmpty(decision.EntityId)).ToString().ToLowerInvariant(),
+                ["protocol_version"] = decision.ProtocolVersion.ToString(),
+                ["validation_outcome"] = "accepted",
+                ["model_call_count"] = modelCallCount.ToString(),
+                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested"
+            });
+        }
+
+        private void LiveModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settings == null || LiveModeComboBox.SelectedItem is not ComboBoxItem item) return;
+            _settings.CopilotMode = item.Content?.ToString() == "Briefing" ? "Briefing" : "Interview";
+            SettingsManager.Save(_settings);
+            _conversationManager?.ConfigureCopilot(
+                _settings.CopilotMode == "Briefing" ? CopilotMode.Briefing : CopilotMode.Interview,
+                _settings.InterviewDeliveryStyle == "Desi" ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
+            _ = RefreshChatSurfaceAsync();
+        }
 
         // Add animation for visual feedback
         private void FlashAPIKeyIndicator()
@@ -1862,10 +1909,20 @@ namespace SecureOverlay
 
             using var requestTrace = LiveRequestTrace.Begin(
                 GetCurrentRuntimeProviderId(),
-                _rotationManager?.GetCurrentModel(GetCurrentRuntimeProviderId()) ?? string.Empty,
+                GetCurrentRuntimeModelId(),
                 _nextRequestIsVoice,
-                _attachedScreenshot != null);
+                _attachedScreenshot != null,
+                _settings.CopilotMode.ToLowerInvariant(),
+                _settings.InterviewDeliveryStyle.ToLowerInvariant(),
+                _currentAI is HostedManagedAiService ? "managed" : "byo",
+                DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI).ToString().ToLowerInvariant());
             _activeRequestTrace = requestTrace;
+            TrackLiveCopilotAsync("request_dispatched", requestTrace, new Dictionary<string, string>
+            {
+                ["stage"] = "dispatch", ["provider"] = requestTrace.Provider, ["model"] = requestTrace.Model,
+                ["image_present"] = requestTrace.HasImage.ToString().ToLowerInvariant(),
+                ["execution_lane"] = requestTrace.ExecutionLane, ["usage_source"] = requestTrace.UsageSource
+            });
             _nextRequestIsVoice = false;
 
             if (_currentAI == null || !_currentAI.IsConfigured())
@@ -2009,11 +2066,11 @@ namespace SecureOverlay
             _isProcessingRequest = true;
             RegenerateButton.IsEnabled = false;
 
-            Log.WriteLine($"Sending message: '{message}'");
+            Log.WriteLine($"Sending message length_bucket={LengthBucket(message.Length)}");
             AddToChat($"**You:** {message}", false);
             InputTextBox.Text = "";
 
-            StatusText.Text = "🔄 Thinking...";
+            StatusText.Text = "Understanding…";
             StatusIndicator.Fill = Brushes.Yellow;
             
             var aiName = GetCurrentDisplayProvider();
@@ -2046,8 +2103,12 @@ namespace SecureOverlay
                     {
                         lock (_streamBuffer)
                         {
-                            if (requestTrace.Mark("first_desktop_chunk"))
+                            if (requestTrace.Mark("model_first_byte_received", uniquePerOperation: true))
                             {
+                                TrackLiveCopilotAsync("model_first_byte_received", requestTrace, new Dictionary<string, string>
+                                {
+                                    ["stage"] = "answer", ["elapsed_ms"] = requestTrace.ElapsedMilliseconds.ToString("F0")
+                                });
                                 Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                             }
                             _streamBuffer.Append(chunk);
@@ -2070,13 +2131,24 @@ namespace SecureOverlay
                     !string.IsNullOrEmpty(error) &&
                     !string.Equals(error, "Cancelled", StringComparison.OrdinalIgnoreCase) &&
                     !(_currentAI is HostedManagedAiService) &&
-                    CanUseManagedExtensionFallbackForProvider(_settings.SelectedAI);
+                    CanUseManagedExtensionFallbackForProvider(_settings.SelectedAI) &&
+                    ProviderResiliencePolicy.CanCrossLane(
+                        "byo", "managed_extension", _settings.AllowByoSessionExtension,
+                        _conversationManager.LastOperationHadOutput);
 
                 if (canRetryWithManagedFallback)
                 {
                     Log.WriteLine($"BYO runtime failed for {_settings.SelectedAI}. Retrying same request with managed extension fallback.");
                     ForceManagedExtensionForCurrentProvider(_settings.SelectedAI);
                     _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
+                    requestTrace.SwitchLane(
+                        "managed_extension",
+                        DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI).ToString().ToLowerInvariant());
+                    TrackLiveCopilotAsync("execution_lane_changed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "fallback", ["execution_lane"] = requestTrace.ExecutionLane,
+                        ["usage_source"] = requestTrace.UsageSource, ["cross_lane_fallback"] = "true"
+                    });
 
                     lock (_streamBuffer)
                     {
@@ -2113,6 +2185,7 @@ namespace SecureOverlay
                 if (error == "Cancelled")
                 {
                     requestTrace.Complete(0, "cancelled");
+                    TrackLiveCopilotAsync("turn_cancelled", requestTrace, new Dictionary<string, string> { ["outcome"] = "cancelled" });
                     Log.WriteLine("✗ Request was cancelled");
                     _streamingChatMarkdown = null;
                     _streamMessageId = null;
@@ -2126,6 +2199,7 @@ namespace SecureOverlay
                 else if (!string.IsNullOrEmpty(error))
                 {
                     requestTrace.Complete(0, "error");
+                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string> { ["outcome"] = "error", ["error_code"] = "provider_error" });
                     Log.WriteLine($"✗ AI Error: {error}");
 
                     var isDesktopAuthFailure =
@@ -2164,11 +2238,19 @@ namespace SecureOverlay
                 else
                 {
                     requestTrace.Complete(response.Length, "success");
+                    TrackLiveCopilotAsync("answer_completed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "success", ["elapsed_ms"] = ((int)Math.Max(0, elapsed * 1000)).ToString(),
+                        ["buffered_characters"] = response.Length.ToString(), ["model_call"] = _conversationManager.LastModelCallCount.ToString(),
+                        ["answer_basis"] = _conversationManager.LastDecision?.AnswerBasis ?? string.Empty,
+                        ["question_type"] = _conversationManager.LastDecision?.QuestionType ?? string.Empty
+                    });
                     ResumeInterviewSessionAfterSuccess();
+                    _conversationManager.CompleteLastAssistantTiming((int)Math.Max(0, elapsed * 1000));
                     Log.WriteLine($"✓ Received response ({response.Length} chars) in {elapsed:F1}s");
                     await FlushStreamingDeltaAsync();
                     _streamingChatMarkdown = null;
-                    var finalMarkdown = $"**{aiName}:**\n\n{response}";
+                    var finalMarkdown = $"**{aiName}:**\n\n{response}\n\n_Response time: {FormatResponseTime((int)Math.Max(0, elapsed * 1000))}_";
                     await MarkdownHelper.FinalizeAssistantMessageAsync(ChatWebView, _streamMessageId!, finalMarkdown);
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
@@ -2190,16 +2272,20 @@ namespace SecureOverlay
                         Log.WriteLine("✓ Job description summary cached to context pack");
                     }
                     
-                    StatusText.Text = $"✓ Response in {elapsed:F1}s | Two-cursor active";
-                    StatusIndicator.Fill = Brushes.LightGreen;
+                    var needsClarification = _conversationManager.LastDecision?.Action == LiveCopilotAction.Clarify;
+                    StatusText.Text = needsClarification ? "Needs clarification" : $"✓ Response in {elapsed:F1}s | Two-cursor active";
+                    StatusIndicator.Fill = needsClarification ? Brushes.Orange : Brushes.LightGreen;
                     
-                    var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-                    timer.Tick += (s, args) =>
+                    if (!needsClarification)
                     {
-                        StatusText.Text = "✓ Protected | Two-cursor system active";
-                        timer.Stop();
-                    };
-                    timer.Start();
+                        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                        timer.Tick += (s, args) =>
+                        {
+                            StatusText.Text = "✓ Protected | Two-cursor system active";
+                            timer.Stop();
+                        };
+                        timer.Start();
+                    }
                     RecordInterviewActivity("response_completed");
                     
                 }
@@ -2238,7 +2324,7 @@ namespace SecureOverlay
             catch (Exception ex)
             {
                 requestTrace.Complete(0, "error");
-                Log.WriteLine($"✗ Exception: {ex.Message}");
+                Log.WriteLine($"✗ Live request failed: {ex.GetType().Name}");
                 
                 _streamUpdateTimer?.Stop();
                 _streamingChatMarkdown = null;
@@ -2325,7 +2411,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error adding to chat: {ex.Message}");
+                Log.WriteLine($"Error adding to chat: {ex.GetType().Name}");
             }
         }
 
@@ -2577,7 +2663,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Chat surface render failed: {ex.Message}");
+                Log.WriteLine($"Chat surface render failed: {ex.GetType().Name}");
             }
             finally
             {
@@ -3043,7 +3129,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"✗ Voice init exception: {ex.Message}");
+                Log.WriteLine($"✗ Voice init exception: {ex.GetType().Name}");
                 
                 VoiceButton.IsEnabled = false;
                 VoiceButton.Opacity = 0.5;
@@ -3063,7 +3149,8 @@ namespace SecureOverlay
             Dispatcher.Invoke(() =>
             {
                 Log.WriteLine("─────────────────────────────────────────────────────");
-                Log.WriteLine($"Speech recognized: '{text}'");
+                Log.WriteLine($"Speech finalized length_bucket={LengthBucket(text.Length)}");
+                LiveRequestTrace.Current?.Mark("transcript_finalized");
                 
                 if (_isHidden) 
                 {
@@ -3231,7 +3318,7 @@ namespace SecureOverlay
                     _voiceService != null &&
                     !_voiceService.IsListening())
                 {
-                    Log.WriteLine($"  ✓ Speech FULLY completed. Auto-sending: '{InputTextBox.Text}'");
+                    Log.WriteLine($"  ✓ Speech fully completed length_bucket={LengthBucket(InputTextBox.Text.Length)}");
 
                     StatusText.Text = "✓ Speech captured - Sending automatically...";
                     StatusIndicator.Fill = Brushes.LightGreen;
@@ -3348,6 +3435,54 @@ namespace SecureOverlay
             }
         }
 
+        private void CopyChatButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var messages = _conversationManager?.GetAllMessages()
+                    .Where(message => !string.IsNullOrWhiteSpace(message.Content))
+                    .ToList() ?? new List<ConversationMessage>();
+                if (messages.Count == 0)
+                {
+                    StatusText.Text = "No chat to copy";
+                    return;
+                }
+
+                var transcript = string.Join("\n\n", messages.Select(message =>
+                {
+                    var role = message.Role == "assistant" ? "PHANTOM" : "YOU";
+                    var timestamp = message.Timestamp.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+                    var timing = message.Role == "assistant" && message.ResponseTimeMs.HasValue
+                        ? $" • Response time: {FormatResponseTime(message.ResponseTimeMs.Value)}"
+                        : string.Empty;
+                    return $"{role} • {timestamp}{timing}\n{message.Content}";
+                }));
+                Clipboard.SetText(transcript);
+                StatusText.Text = "✓ Chat copied with timings";
+                Log.WriteLine($"Chat transcript copied message_count={messages.Count}");
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Failed to copy chat error_code={ex.GetType().Name}");
+                StatusText.Text = "✗ Failed to copy chat";
+            }
+        }
+
+        private static string FormatResponseTime(int milliseconds)
+            => milliseconds < 1000 ? $"{milliseconds} ms" : $"{milliseconds / 1000d:F1} s";
+
+        private void TrackLiveCopilotAsync(string eventName, LiveRequestTrace trace, Dictionary<string, string> fields)
+        {
+            fields["session_id"] = trace.SessionId;
+            fields["turn_id"] = trace.TurnId;
+            fields["operation_id"] = trace.OperationId;
+            fields["mode"] = trace.Mode;
+            fields["delivery_style"] = trace.DeliveryStyle;
+            fields["execution_lane"] = trace.ExecutionLane;
+            fields["usage_source"] = trace.UsageSource;
+            _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
+        }
+
         private void ClearLogsButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Clear logs button clicked");
@@ -3420,7 +3555,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"✗ Context view error: {ex.Message}");
+                Log.WriteLine($"✗ Context view error: {ex.GetType().Name}");
                 InvisibleMessageBox.Show($"Error viewing context: {ex.Message}", "Error");
             }
         }
@@ -3431,6 +3566,7 @@ namespace SecureOverlay
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            DisableClickThroughForInteraction("settings_opened");
             if (_isHidden)
             {
                 Log.WriteLine("Settings requested while hidden - restoring window before opening settings");
@@ -3468,7 +3604,9 @@ namespace SecureOverlay
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
+                WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
                 UpdateLegacyFallbackButtonState();
+                UpdateClickThroughButtonState();
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
                 
@@ -3629,7 +3767,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Context preparation will retry later: {ex.Message}");
+                Log.WriteLine($"Context preparation will retry later: {ex.GetType().Name}");
             }
         }
 
@@ -3924,23 +4062,23 @@ namespace SecureOverlay
             {
                 int vkCode = Marshal.ReadInt32(lParam);
 
-                // Ctrl + Alt + ` - Toggle visibility
+                // Ctrl + Alt + ` - disable click-through first; otherwise toggle visibility
                 if (vkCode == NativeMethods.VK_OEM_3)
                 {
                     if (NativeMethods.IsKeyPressed(NativeMethods.VK_CONTROL) && 
                         NativeMethods.IsKeyPressed(NativeMethods.VK_MENU))
                     {
                         Log.WriteLine("Hotkey: Ctrl+Alt+` pressed");
-                        Dispatcher.Invoke(() => ToggleVisibility());
+                        Dispatcher.Invoke(() => HandleVisibilityShortcut("ctrl_alt_backtick"));
                         return (IntPtr)1;
                     }
                 }
 
-                // F13 - Toggle visibility
+                // F13 - same hardware-key behavior as Ctrl+Alt+`
                 if (vkCode == NativeMethods.VK_F13)
                 {
                     Log.WriteLine("Hotkey: F13 pressed");
-                    Dispatcher.Invoke(() => ToggleVisibility());
+                    Dispatcher.Invoke(() => HandleVisibilityShortcut("f13"));
                     return (IntPtr)1;
                 }
 
@@ -4005,6 +4143,7 @@ namespace SecureOverlay
             if (_isHidden)
             {
                 Log.WriteLine("Showing window...");
+                DisableClickThroughForInteraction("window_restored");
                 this.Show();
                 this.Opacity = 1.0;
                 IsHitTestVisible = true;
@@ -4032,6 +4171,66 @@ namespace SecureOverlay
                 
                 Log.WriteLine("✓ Window hidden");
             }
+        }
+
+        private void HandleVisibilityShortcut(string source)
+        {
+            if (_settings.ClickThroughEnabled)
+            {
+                DisableClickThroughForInteraction(source);
+                if (_isHidden)
+                {
+                    ToggleVisibility();
+                }
+                else
+                {
+                    Show();
+                    Activate();
+                    FocusInput();
+                }
+                return;
+            }
+
+            ToggleVisibility();
+        }
+
+        private void ClickThroughButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseCurrentDropdownMenu();
+            _settings.ClickThroughEnabled = !_settings.ClickThroughEnabled;
+            SettingsManager.Save(_settings);
+            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            UpdateClickThroughButtonState();
+            Log.WriteLine($"Click-through {(_settings.ClickThroughEnabled ? "enabled" : "disabled")} reason=header_button");
+        }
+
+        private void UpdateClickThroughButtonState()
+        {
+            if (ClickThroughButton == null) return;
+
+            var enabled = _settings.ClickThroughEnabled;
+            ClickThroughButton.Background = new SolidColorBrush(enabled
+                ? Color.FromArgb(96, 34, 197, 94)
+                : Color.FromArgb(80, 80, 80, 80));
+            ClickThroughButton.BorderBrush = new SolidColorBrush(enabled
+                ? Color.FromArgb(210, 74, 222, 128)
+                : Color.FromArgb(144, 255, 255, 255));
+            ClickThroughButton.ToolTip = enabled
+                ? "Click-through is enabled. Press Ctrl+Alt+` to disable."
+                : "Enable click-through. Press Ctrl+Alt+` to disable.";
+            System.Windows.Automation.AutomationProperties.SetName(
+                ClickThroughButton,
+                enabled ? "Click-through enabled. Press Control Alt backtick to disable." : "Enable click-through");
+        }
+
+        private void DisableClickThroughForInteraction(string reason)
+        {
+            if (!_settings.ClickThroughEnabled) return;
+            _settings.ClickThroughEnabled = false;
+            SettingsManager.Save(_settings);
+            WindowProtection.SetClickThrough(_windowHandle, false);
+            UpdateClickThroughButtonState();
+            Log.WriteLine($"Click-through disabled reason={reason}");
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -4085,7 +4284,8 @@ namespace SecureOverlay
                 );
 
                 // Get current executable path
-                var exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                var exePath = Environment.ProcessPath
+                    ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
                 
                 if (string.IsNullOrEmpty(exePath))
                 {
@@ -4101,13 +4301,18 @@ namespace SecureOverlay
                 _isRestarting = true;
 
                 // Start new instance
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                var restartedProcess = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = exePath,
                     Arguments = "--restart-main-window",
                     UseShellExecute = true,
-                    WorkingDirectory = Environment.CurrentDirectory
+                    WorkingDirectory = AppContext.BaseDirectory
                 });
+
+                if (restartedProcess == null)
+                {
+                    throw new InvalidOperationException("Windows did not create the replacement Phantom process.");
+                }
 
                 Log.WriteLine("✓ New instance started");
                 Log.WriteLine("✓ Conversation saved for restoration");
@@ -4517,7 +4722,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Error capturing screenshot: {ex.Message}");
+                Log.WriteLine($"Error capturing screenshot: {ex.GetType().Name}");
                 this.Show();
             }
         }
@@ -4610,7 +4815,7 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"✗ Error converting screenshot to base64: {ex.Message}");
+                Log.WriteLine($"✗ Error converting screenshot to base64: {ex.GetType().Name}");
                 return null;
             }
         }
@@ -5404,6 +5609,15 @@ namespace SecureOverlay
                 Log.WriteLine($"⚠️ Failed to hide main window: {ex.Message}");
             }
         }
+
+        private static string LengthBucket(int length) => length switch
+        {
+            <= 0 => "empty",
+            <= 40 => "1-40",
+            <= 160 => "41-160",
+            <= 640 => "161-640",
+            _ => "641+"
+        };
         
     }
 }

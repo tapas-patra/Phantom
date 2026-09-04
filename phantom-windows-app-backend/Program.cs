@@ -11,6 +11,24 @@ using Phantom.WindowsApp.Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options =>
+{
+    options.IncludeScopes = false;
+    options.UseUtcTimestamp = true;
+    options.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
+});
+builder.Logging.SetMinimumLevel(LogLevel.Information);
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware", LogLevel.None);
+builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+builder.Logging.AddFilter("Npgsql", LogLevel.Warning);
+builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
+{
+    options.MaxQueueLength = 2048;
+    options.QueueFullMode = Microsoft.Extensions.Logging.Console.ConsoleLoggerQueueFullMode.DropWrite;
+});
+
 var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(backendOptions);
 builder.Services.AddSingleton<PostgresBackendStore>();
@@ -65,7 +83,6 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
-builder.Services.AddSingleton<InterviewAnswerPlanningService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
@@ -113,6 +130,16 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = async (context, cancellationToken) =>
     {
+        var request = context.HttpContext.Request;
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.RateLimit");
+        logger.LogWarning(
+            "request_rate_limited service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-windows-app-backend", "http", "request_rate_limited",
+            request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+            request.Method,
+            (context.HttpContext.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched",
+            "4xx", "rate_limited", "error");
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
         context.HttpContext.Response.Headers["Retry-After"] = "5";
@@ -160,7 +187,8 @@ builder.Services.AddRateLimiter(options =>
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 240,
+                // One bounded desktop backlog can contain 500 events; allow one drain without 429 churn.
+                PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true
@@ -192,6 +220,68 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
 }
+
+app.UseRouting();
+app.Use(async (context, next) =>
+{
+    var incomingCorrelation = context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault();
+    var incomingOperation = context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault();
+    var correlationId = IsValidOpaqueId(incomingCorrelation) ? incomingCorrelation! : Guid.NewGuid().ToString("N");
+    var operationId = IsValidOpaqueId(incomingOperation) ? incomingOperation! : Guid.NewGuid().ToString("N");
+    context.Request.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    context.Request.Headers["X-Phantom-Operation-Id"] = operationId;
+    context.Response.Headers["X-Phantom-Correlation-Id"] = correlationId;
+    context.Response.Headers["X-Phantom-Operation-Id"] = operationId;
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Request");
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    var routineHealth = string.Equals(context.Request.Path.Value, "/health", StringComparison.OrdinalIgnoreCase);
+    var routeTemplate = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+    Exception? requestError = null;
+    using (logger.BeginScope(new Dictionary<string, object>
+    {
+        ["correlation_id"] = correlationId,
+        ["operation_id"] = operationId,
+        ["service"] = "phantom-windows-app-backend"
+    }))
+    {
+        if (!routineHealth)
+        {
+            logger.LogInformation(
+                "request_started service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method}",
+                "phantom-windows-app-backend", "http", "request_started", correlationId, operationId, context.Request.Method);
+        }
+        try { await next(); }
+        catch (Exception ex)
+        {
+            requestError = ex;
+            logger.LogError(
+                "request_failed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} error_code={ErrorCode} elapsed_ms={ElapsedMs}",
+                "phantom-windows-app-backend", "http", "request_failed", correlationId, operationId,
+                context.Request.Method, ex.GetType().Name, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            throw;
+        }
+        finally
+        {
+            var statusCode = requestError == null ? context.Response.StatusCode : StatusCodes.Status500InternalServerError;
+            if (!routineHealth || requestError != null || context.Response.StatusCode >= 400)
+            {
+                logger.LogInformation(
+                    "request_completed service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} route_template={RouteTemplate} status_class={StatusClass} elapsed_ms={ElapsedMs} outcome={Outcome}",
+                    "phantom-windows-app-backend", "http", "request_completed", correlationId, operationId,
+                    context.Request.Method, routeTemplate, $"{statusCode / 100}xx",
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, statusCode < 400 ? "success" : "error");
+            }
+        }
+    }
+});
+
+var lifecycleLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Lifecycle");
+app.Lifetime.ApplicationStarted.Register(() => lifecycleLogger.LogInformation(
+    "service_started service={Service} component={Component} event={Event} environment={Environment} database_configured={DatabaseConfigured}",
+    "phantom-windows-app-backend", "lifecycle", "service_started", app.Environment.EnvironmentName, !string.IsNullOrWhiteSpace(backendOptions.DatabaseUrl)));
+app.Lifetime.ApplicationStopping.Register(() => lifecycleLogger.LogInformation(
+    "service_stopping service={Service} component={Component} event={Event}",
+    "phantom-windows-app-backend", "lifecycle", "service_stopping"));
 
 using (var scope = app.Services.CreateScope())
 {
@@ -229,9 +319,16 @@ app.UseExceptionHandler(exceptionApp =>
     exceptionApp.Run(async context =>
     {
         var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Error");
         if (exception is BackendValidationException validationException)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            logger.LogWarning(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "4xx", validationException.Code, "error");
             await context.Response.WriteAsJsonAsync(new { error = validationException.Message });
             return;
         }
@@ -239,9 +336,41 @@ app.UseExceptionHandler(exceptionApp =>
         if (exception is NpgsqlException || exception is SocketException)
         {
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", "database_unavailable", "error");
             await context.Response.WriteAsJsonAsync(new
             {
                 error = "Database unavailable."
+            });
+            return;
+        }
+
+        if (exception is ManagedAiProviderException managedAiException)
+        {
+            context.Response.StatusCode = managedAiException.IsTransient
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status502BadGateway;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} provider_status_code={ProviderStatusCode} retryable={Retryable} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", managedAiException.Code,
+                managedAiException.ProviderStatusCode, managedAiException.IsTransient, "error");
+            if (managedAiException.RetryAfterSeconds is > 0)
+            {
+                context.Response.Headers.RetryAfter = managedAiException.RetryAfterSeconds.Value.ToString();
+            }
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = managedAiException.Message,
+                code = managedAiException.Code,
+                retryable = managedAiException.IsTransient,
+                retryAfterSeconds = managedAiException.RetryAfterSeconds
             });
             return;
         }
@@ -251,6 +380,12 @@ app.UseExceptionHandler(exceptionApp =>
             context.Response.StatusCode = embeddingException.IsTransient
                 ? StatusCodes.Status503ServiceUnavailable
                 : StatusCodes.Status502BadGateway;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", "embedding_provider_failed", "error");
             if (embeddingException.RetryAfterSeconds.HasValue && embeddingException.RetryAfterSeconds.Value > 0)
             {
                 context.Response.Headers["Retry-After"] = embeddingException.RetryAfterSeconds.Value.ToString();
@@ -267,6 +402,12 @@ app.UseExceptionHandler(exceptionApp =>
         }
 
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        logger.LogError(
+            "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-windows-app-backend", "http", "request_error_handled",
+            context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+            context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+            context.Request.Method, "5xx", exception?.GetType().Name ?? "unhandled_error", "error");
         await context.Response.WriteAsJsonAsync(new
         {
             error = "An unexpected server error occurred."
@@ -780,17 +921,6 @@ app.MapPost("/api/desktop/ai/chat", async (
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
-}).RequireRateLimiting("desktop-api");
-
-app.MapPost("/api/desktop/interview/plan", async (
-    HttpContext httpContext,
-    InterviewAnswerPlanRequestDto request,
-    ManagedAiService managedAi,
-    InterviewAnswerPlanningService planner,
-    CancellationToken cancellationToken) =>
-{
-    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(await planner.PlanAsync(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/desktop/kb", (
@@ -1447,5 +1577,8 @@ static string ResolveUserAuthorization(HttpRequest request) =>
     RequestTokenResolver.GetAuthorizationHeader(
         request,
         request.Cookies.TryGetValue(BrowserSessionCookieService.UserAccessCookie, out var cookieToken) ? cookieToken : null);
+
+static bool IsValidOpaqueId(string? value) => value is { Length: >= 8 and <= 128 }
+    && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
 app.Run();

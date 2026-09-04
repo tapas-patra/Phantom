@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phantom.local/schemas/live-copilot/control-frame-v1.json",
+  "title": "Phantom Live Copilot control frame v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "questionType",
+    "intent",
+    "answerBasis",
+    "entityType",
+    "entityId",
+    "retrievalQuery",
+    "preferredDocumentIds",
+    "targetSeconds",
+    "allowCode",
+    "confidence"
+  ],
+  "properties": {
+    "action": { "enum": ["answer", "retrieve", "clarify"] },
+    "questionType": {
+      "enum": [
+        "behavioral",
+        "technical",
+        "coding",
+        "system_design",
+        "product_case",
+        "motivation_fit",
+        "personal_factual",
+        "situational",
+        "clarification",
+        "unknown",
+        "factual_lookup",
+        "status_update",
+        "decision_support",
+        "objection_response",
+        "risk_tradeoff",
+        "brainstorm",
+        "action_capture"
+      ]
+    },
+    "intent": { "enum": ["candidate_specific", "general", "hybrid", "ambiguous"] },
+    "answerBasis": {
+      "enum": ["exact_evidence", "profile_synthesis", "universal_knowledge", "universal_synthesis", "clarification"]
+    },
+    "entityType": { "enum": ["none", "profile", "experience", "project", "document", "context_pack", "task"] },
+    "entityId": { "type": "string", "maxLength": 160 },
+    "retrievalQuery": { "type": "string", "maxLength": 500 },
+    "preferredDocumentIds": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+    },
+    "targetSeconds": { "type": "integer", "minimum": 5, "maximum": 180 },
+    "allowCode": { "type": "boolean" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

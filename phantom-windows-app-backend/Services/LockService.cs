@@ -39,8 +39,9 @@ public sealed class LockService
 
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
+        var now = DateTime.UtcNow;
         var existing = _locks.FindActiveByUser(request.UserId, connection, transaction, forUpdate: true);
-        if (existing != null && existing.ExpiresAtUtc > DateTime.UtcNow
+        if (existing != null && existing.ExpiresAtUtc > now
             && (!string.Equals(existing.DeviceId, request.DeviceId, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(existing.SessionId, request.SessionId, StringComparison.OrdinalIgnoreCase)))
         {
@@ -55,14 +56,31 @@ public sealed class LockService
             };
         }
 
+        if (existing != null && existing.ExpiresAtUtc > now)
+        {
+            existing.LastHeartbeatAtUtc = now;
+            existing.ExpiresAtUtc = now.AddMinutes(_options.LockTtlMinutes);
+            existing.AppVersion = request.AppVersion;
+            _locks.Save(existing, connection, transaction);
+            transaction.Commit();
+            return new DeviceLockAcquireResultDto
+            {
+                Acquired = true,
+                LockToken = existing.LockToken,
+                ExpiresAtUtc = existing.ExpiresAtUtc,
+                HolderDeviceId = existing.DeviceId,
+                HolderSessionId = existing.SessionId
+            };
+        }
+
         var record = new DesktopLockRecord
         {
             SessionId = request.SessionId,
             UserId = request.UserId,
             DeviceId = request.DeviceId,
             LockToken = Hash($"{request.UserId}:{request.DeviceId}:{Guid.NewGuid():N}"),
-            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(_options.LockTtlMinutes),
-            LastHeartbeatAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = now.AddMinutes(_options.LockTtlMinutes),
+            LastHeartbeatAtUtc = now,
             AppVersion = request.AppVersion
         };
         _locks.Save(record, connection, transaction);
@@ -83,7 +101,7 @@ public sealed class LockService
         using var connection = _store.OpenConnection();
         using var transaction = connection.BeginTransaction();
         var record = _locks.FindBySessionId(request.SessionId, connection, transaction, forUpdate: true)
-            ?? throw new BackendValidationException("Active lock not found.");
+            ?? throw new BackendValidationException("Active lock not found.", "lock_not_found");
 
         if (!string.Equals(record.UserId, session.UserId, StringComparison.Ordinal))
         {
@@ -98,7 +116,7 @@ public sealed class LockService
         if (!string.Equals(record.LockToken, request.LockToken, StringComparison.Ordinal)
             || !string.Equals(record.DeviceId, request.DeviceId, StringComparison.OrdinalIgnoreCase))
         {
-            throw new BackendValidationException("Lock token mismatch.");
+            throw new BackendValidationException("Lock token mismatch.", "lock_token_mismatch");
         }
 
         record.LastHeartbeatAtUtc = DateTime.UtcNow;
@@ -139,7 +157,7 @@ public sealed class LockService
 
         if (!string.Equals(record.LockToken, request.LockToken, StringComparison.Ordinal))
         {
-            throw new BackendValidationException("Lock token mismatch.");
+            throw new BackendValidationException("Lock token mismatch.", "lock_token_mismatch");
         }
 
         _locks.Delete(request.SessionId, connection, transaction);

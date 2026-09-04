@@ -134,6 +134,27 @@ struct BYOClient {
         return String(describing: error)
     }
 
+    static func terminal(from line: String, provider: String) -> BYOStreamTerminal? {
+        guard line.hasPrefix("data: ") else { return nil }
+        let payload = String(line.dropFirst(6))
+        if payload == "[DONE]" { return .complete }
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if provider == "Claude" {
+            if object["type"] as? String == "message_stop" { return .complete }
+            let delta = object["delta"] as? [String: Any]
+            return delta?["stop_reason"] as? String == "max_tokens" ? .truncated : nil
+        }
+        if provider == "Gemini" {
+            let reason = ((object["candidates"] as? [[String: Any]])?.first?["finishReason"] as? String)?.uppercased()
+            if reason == "MAX_TOKENS" { return .truncated }
+            return reason == "STOP" ? .complete : nil
+        }
+        let reason = ((object["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String)?.lowercased()
+        if reason == "length" { return .truncated }
+        return reason == "stop" ? .complete : nil
+    }
+
     private func payload(
         provider: String,
         model: String,
@@ -225,6 +246,11 @@ struct BYOClient {
             return ["role": role, "parts": parts]
         }
     }
+}
+
+enum BYOStreamTerminal: Equatable {
+    case complete
+    case truncated
 }
 
 enum BYOError: LocalizedError {

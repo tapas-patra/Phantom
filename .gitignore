@@ -10,3 +10,4 @@ phantom-website-dashboard/dist/
 */.build/
 */.build-cache/
 */dist/
+graphify-out/

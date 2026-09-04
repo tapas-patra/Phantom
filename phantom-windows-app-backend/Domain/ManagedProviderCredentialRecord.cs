@@ -8,6 +8,9 @@ public sealed class ManagedProviderCredentialRecord
     public string EncryptedApiKey { get; set; } = string.Empty;
     public bool IsEnabled { get; set; }
     public int Priority { get; set; }
+    public DateTime? CooldownUntilUtc { get; set; }
+    public string LastFailureCode { get; set; } = string.Empty;
+    public int ConsecutiveFailureCount { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
 }

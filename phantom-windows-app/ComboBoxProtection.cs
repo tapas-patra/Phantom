@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
-using System.Diagnostics;
 
 namespace SecureOverlay
 {
@@ -19,8 +18,8 @@ namespace SecureOverlay
             {
                 try
                 {
-                    // Find the popup
-                    var popup = FindVisualChild<Popup>(comboBox);
+                    // PART_Popup owns a separate HWND and is not in the ComboBox visual tree.
+                    var popup = comboBox.Template.FindName("PART_Popup", comboBox) as Popup;
                     if (popup?.Child != null)
                     {
                         // Wait for popup to be fully rendered
@@ -32,7 +31,7 @@ namespace SecureOverlay
                                 if (hwndSource != null)
                                 {
                                     var hwnd = hwndSource.Handle;
-                                    WindowProtection.ApplyProtection(hwnd);
+                                    WindowProtection.ApplyCaptureExclusion(hwnd);
                                     Log.WriteLine($"✓ ComboBox popup protected: 0x{hwnd:X}");
                                 }
                             }
@@ -50,19 +49,5 @@ namespace SecureOverlay
             };
         }
 
-        private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
-        {
-            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
-                if (child is T typedChild)
-                    return typedChild;
-
-                var result = FindVisualChild<T>(child);
-                if (result != null)
-                    return result;
-            }
-            return null;
-        }
     }
 }

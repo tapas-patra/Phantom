@@ -6,6 +6,7 @@ actor RuntimeCoordinator {
     private let persistence: RuntimePersistence
     private let backend: BackendClient
     private let device: DeviceIdentity
+    private var telemetryFlushTask: Task<Void, Never>?
 
     init(backend: BackendClient, device: DeviceIdentity) {
         let persistence = RuntimePersistence()
@@ -46,6 +47,11 @@ actor RuntimeCoordinator {
         )
         guard activation.allowed, let local = activation.session else { return activation }
 
+        let needsHostedLock = activation.startedNewSession
+            || local.lockToken.isEmpty
+            || (local.lockExpiresAtUtc ?? .distantPast) <= Date()
+        guard needsHostedLock else { return activation }
+
         do {
             let hosted = try await backend.acquireLock(
                 accessToken: auth.accessToken,
@@ -67,9 +73,13 @@ actor RuntimeCoordinator {
                 )
             }
             try await metering.replaceLock(token: hosted.lockToken, expiresAt: hosted.expiresAtUtc)
-        } catch {
+        } catch where !Self.isAuthorityRejection(error) {
             // Matches Windows: hosted lock transport failures retain the five-minute local lock.
-            await track(category: "interview", event: "hosted_lock_fallback", attributes: ["error": error.localizedDescription])
+            await track(category: "interview", event: "hosted_lock_fallback", attributes: ["error_code": Self.errorCode(error)])
+        } catch {
+            try? await metering.pause()
+            await track(category: "interview", event: "hosted_lock_rejected", attributes: ["error_code": Self.errorCode(error)])
+            throw error
         }
         return activation
     }
@@ -86,8 +96,19 @@ actor RuntimeCoordinator {
             try await metering.heartbeat(expiresAt: result.expiresAtUtc)
             await track(category: "interview", event: "lock_heartbeat", attributes: ["sessionId": session.sessionId])
         } catch {
-            try? await metering.heartbeat(expiresAt: Date().addingTimeInterval(300))
-            await track(category: "interview", event: "lock_heartbeat_failed", attributes: ["error": error.localizedDescription])
+            if Self.isAuthorityRejection(error),
+               let recovered = try? await backend.acquireLock(
+                   accessToken: auth.accessToken,
+                   userId: auth.userId,
+                   deviceId: device.installId,
+                   sessionId: session.sessionId
+               ), recovered.acquired {
+                try? await metering.replaceLock(token: recovered.lockToken, expiresAt: recovered.expiresAtUtc)
+                await track(category: "interview", event: "lock_heartbeat_recovered", attributes: ["error_code": "authority_token_refreshed"])
+                return
+            }
+            if Self.isAuthorityRejection(error) { try? await metering.pause() }
+            await track(category: "interview", event: "lock_heartbeat_failed", attributes: ["error_code": Self.errorCode(error)])
         }
     }
 
@@ -129,7 +150,8 @@ actor RuntimeCoordinator {
         }
         if let auth {
             await flushUsage(accessToken: auth.accessToken)
-            await flushTelemetry(accessToken: auth.accessToken)
+            scheduleTelemetryFlush(accessToken: auth.accessToken)
+            await telemetryFlushTask?.value
         }
         return completion
     }
@@ -156,12 +178,13 @@ actor RuntimeCoordinator {
             attributes: attributes
         )
         try? await persistence.appendTelemetry(value)
-        if let accessToken { await flushTelemetry(accessToken: accessToken) }
+        if let accessToken { scheduleTelemetryFlush(accessToken: accessToken) }
     }
 
     func flush(accessToken: String) async {
         await flushUsage(accessToken: accessToken)
-        await flushTelemetry(accessToken: accessToken)
+        scheduleTelemetryFlush(accessToken: accessToken)
+        await telemetryFlushTask?.value
     }
 
     func diagnostics() async -> RuntimeDiagnostics { await persistence.diagnostics() }
@@ -190,21 +213,52 @@ actor RuntimeCoordinator {
                 }
             } catch {
                 record.status = record.attemptCount >= 3 ? .deadLetter : .failed
-                record.lastError = error.localizedDescription
+                record.lastError = Self.errorCode(error)
                 if record.status == .deadLetter { record.deadLetteredAtUtc = Date() }
             }
             try? await persistence.updateReconciliation(record)
         }
     }
 
-    private func flushTelemetry(accessToken: String) async {
-        var sent = Set<String>()
-        for event in await persistence.pendingTelemetry().sorted(by: { $0.occurredAtUtc < $1.occurredAtUtc }) {
-            do {
-                try await backend.ingestTelemetry(accessToken: accessToken, event: event)
-                sent.insert(event.eventId)
-            } catch { break }
+    private func scheduleTelemetryFlush(accessToken: String) {
+        guard telemetryFlushTask == nil else { return }
+        telemetryFlushTask = Task { await runTelemetryFlush(accessToken: accessToken) }
+    }
+
+    private func runTelemetryFlush(accessToken: String) async {
+        defer { telemetryFlushTask = nil }
+        while true {
+            let pending = await persistence.pendingTelemetry().sorted(by: { $0.occurredAtUtc < $1.occurredAtUtc })
+            guard !pending.isEmpty else { return }
+            var sent = Set<String>()
+            for event in pending {
+                do {
+                    try await backend.ingestTelemetry(accessToken: accessToken, event: event)
+                    sent.insert(event.eventId)
+                } catch {
+                    if !sent.isEmpty { try? await persistence.removeTelemetry(ids: sent) }
+                    return
+                }
+            }
+            try? await persistence.removeTelemetry(ids: sent)
         }
-        if !sent.isEmpty { try? await persistence.removeTelemetry(ids: sent) }
+    }
+
+    private static func isAuthorityRejection(_ error: Error) -> Bool {
+        guard case BackendError.http(let status, _) = error else { return false }
+        return (400..<500).contains(status)
+    }
+
+    private static func errorCode(_ error: Error) -> String {
+        if let error = error as? BackendError {
+            switch error {
+            case .http(let status, _): return "backend_\(status)"
+            case .invalidResponse: return "invalid_response"
+            case .decoding: return "decoding_failed"
+            case .server: return "backend_failed"
+            }
+        }
+        if let error = error as? URLError { return "url_\(error.code.rawValue)" }
+        return "request_failed"
     }
 }

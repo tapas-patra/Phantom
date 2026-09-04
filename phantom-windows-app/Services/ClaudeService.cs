@@ -200,6 +200,7 @@ namespace SecureOverlay.Services
                 }
 
                 var fullResponse = new StringBuilder();
+                var sawMessageStop = false;
 
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new System.IO.StreamReader(stream))
@@ -225,6 +226,11 @@ namespace SecureOverlay.Services
                         {
                             dynamic? chunk = JsonConvert.DeserializeObject(data);
                             var eventType = chunk?.type?.ToString();
+                            if (eventType == "message_stop")
+                            {
+                                sawMessageStop = true;
+                                break;
+                            }
                             
                             if (eventType == "content_block_delta")
                             {
@@ -244,6 +250,7 @@ namespace SecureOverlay.Services
                     }
                 }
 
+                if (!sawMessageStop) return "Error: provider_stream_incomplete";
                 return fullResponse.ToString();
             }
             catch (OperationCanceledException)

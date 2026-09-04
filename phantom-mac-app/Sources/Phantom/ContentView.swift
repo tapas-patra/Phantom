@@ -459,7 +459,7 @@ private struct SettingsView: View {
                         Text("Click-through activates after Save closes Settings. Press ⌘ ⌃ ` to show Phantom and automatically disable it.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
-                        Toggle("Use an experimental fake cursor inside Phantom", isOn: $store.useFakeCursor)
+                        Toggle("Use a fake cursor inside Phantom", isOn: $store.useFakeCursor)
                             .disabled(store.settingsClickThrough)
                         if store.useFakeCursor {
                             HStack {

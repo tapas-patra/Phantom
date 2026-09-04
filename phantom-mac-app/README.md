@@ -63,7 +63,7 @@ The app uses `phantom.hosted.json`. Environment variables override it:
 4. Test area screenshot attachment and its preview/replace/remove controls.
 5. In Settings, request both Microphone and Speech Recognition permissions; if previously denied, use the privacy-pane buttons and reopen Phantom.
 6. Collapse Phantom to its bar and confirm the compact microphone button works.
-7. Open Settings and test opacity, click-through, the experimental fake cursor, tier restrictions, Knowledge Base status, context, and BYO Keychain storage. Verify the fake cursor both locally and in the capture preview, then confirm disabling it immediately restores the system pointer.
+7. Open Settings and test opacity, click-through, the fake cursor, tier restrictions, Knowledge Base status, context, and BYO Keychain storage. Verify the fake cursor both locally and in the capture preview, confirm focus loss immediately restores the system pointer, then confirm disabling it does the same.
 8. Press **Command + Control + `** to hide and show Phantom.
 9. Press the red close button, cancel once, then confirm that Quit terminates Phantom.
 10. Start a Zoom, Teams, Meet, OBS, and QuickTime recording one at a time.

@@ -27,6 +27,7 @@ namespace SecureOverlay
         private FakeCursorWindow? _fakeCursorWindow;
         private bool _useFakeCursor = true;
         private bool _clickThroughActive;
+        private bool _applicationFocusActive;
 
         // Debounce timers to prevent flickering at borders
         private System.Windows.Threading.DispatcherTimer? _activateTimer;
@@ -64,6 +65,7 @@ namespace SecureOverlay
             _parentWindow = parentWindow;
             _cursorCanvas = cursorCanvas;
             _useFakeCursor = useFakeCursor;
+            _applicationFocusActive = parentWindow.IsActive;
             
             // Create debounce timers
             _activateTimer = new System.Windows.Threading.DispatcherTimer
@@ -73,7 +75,7 @@ namespace SecureOverlay
             _activateTimer.Tick += (s, e) =>
             {
                 _activateTimer.Stop();
-                if (!_isSuspended && !_clickThroughActive)
+                if (CanActivateCursor())
                     ActivateCustomCursorImmediate();
             };
 
@@ -191,7 +193,7 @@ namespace SecureOverlay
 
         public void ActivateCustomCursor()
         {
-            if (!_useFakeCursor || _isSuspended || _clickThroughActive)
+            if (!CanActivateCursor())
                 return;
 
             _deactivateTimer?.Stop();
@@ -205,7 +207,7 @@ namespace SecureOverlay
 
         private void ActivateCustomCursorImmediate()
         {
-            if (_customCursorActive || _isSuspended || _clickThroughActive)
+            if (_customCursorActive || !CanActivateCursor())
                 return;
 
             try
@@ -371,7 +373,7 @@ namespace SecureOverlay
 
         public void UpdateCustomCursorPosition(Point position)
         {
-            if (_useFakeCursor && _cursorDot != null && _customCursorActive && !_isSuspended && !_clickThroughActive)
+            if (CanActivateCursor() && _cursorDot != null && _customCursorActive)
             {
                 // Position custom cursor
                 Canvas.SetLeft(_cursorDot, position.X - 8);
@@ -466,18 +468,40 @@ namespace SecureOverlay
                 return;
             }
 
-            if (_useFakeCursor && !_isSuspended && _parentWindow?.IsVisible == true)
+            TryActivateForCurrentPointer();
+        }
+
+        public void SetApplicationFocusActive(bool active)
+        {
+            _applicationFocusActive = active;
+            if (!active)
             {
-                POINT cursorPos;
-                if (GetCursorPos(out cursorPos))
-                {
-                    var local = _parentWindow.PointFromScreen(new Point(cursorPos.X, cursorPos.Y));
-                    if (local.X >= 0 && local.Y >= 0 &&
-                        local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight)
-                    {
-                        ActivateCustomCursor();
-                    }
-                }
+                ResetCursorImmediately();
+                return;
+            }
+
+            TryActivateForCurrentPointer();
+        }
+
+        private bool CanActivateCursor()
+        {
+            return _useFakeCursor && !_isSuspended && !_clickThroughActive && _applicationFocusActive;
+        }
+
+        private void TryActivateForCurrentPointer()
+        {
+            if (!CanActivateCursor() || _parentWindow?.IsVisible != true)
+                return;
+
+            POINT cursorPos;
+            if (!GetCursorPos(out cursorPos))
+                return;
+
+            var local = _parentWindow.PointFromScreen(new Point(cursorPos.X, cursorPos.Y));
+            if (local.X >= 0 && local.Y >= 0 &&
+                local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight)
+            {
+                ActivateCustomCursor();
             }
         }
 
@@ -500,7 +524,7 @@ namespace SecureOverlay
 
         public void ShowFakeCursorPreview()
         {
-            if (_fakeCursorWindow != null && !_clickThroughActive)
+            if (_fakeCursorWindow != null && CanActivateCursor())
             {
                 POINT cursorPos;
                 GetCursorPos(out cursorPos);

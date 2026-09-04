@@ -297,7 +297,12 @@ namespace SecureOverlay
             this.Loaded += MainWindow_Loaded;
             this.Closing += (s, e) => Cleanup();
 
-            this.Activated += (s, e) => FocusInput();
+            this.Activated += (s, e) =>
+            {
+                _cursorManager?.SetApplicationFocusActive(true);
+                FocusInput();
+            };
+            this.Deactivated += (s, e) => _cursorManager?.SetApplicationFocusActive(false);
 
             this.MouseEnter += MainWindow_MouseEnter;
             this.MouseLeave += MainWindow_MouseLeave;

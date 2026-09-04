@@ -152,7 +152,7 @@ final class PhantomStore: ObservableObject {
     var onCaptureScreenshot: (() async throws -> Data)?
     var onCompactModeChanged: ((Bool) -> Void)?
     var onLogout: (() -> Void)?
-    var onRestart: (() -> Void)?
+    var onRestart: (() -> Bool)?
     var onLegacyHandoff: (() -> Void)?
 
     let configuration: HostedConfiguration
@@ -1346,6 +1346,10 @@ final class PhantomStore: ObservableObject {
         if error is CancellationError { return "cancelled" }
         if let protocolError = error as? PhantomProtocolError { return protocolError.code }
         if let urlError = error as? URLError, urlError.code == .timedOut { return "timeout" }
+        if let backend = error as? BackendError, case .http(let status, _) = backend {
+            if status == 429 { return "rate_limited" }
+            return status > 0 ? "backend_\(status / 100)xx" : "backend_invalid_response"
+        }
         return "provider_error"
     }
 
@@ -1428,7 +1432,16 @@ final class PhantomStore: ObservableObject {
         preserveConversationOnTermination = true
         ConversationStore.save(messages)
         UserDefaults.standard.set(true, forKey: "conversation.restoreAfterRestart")
-        onRestart?()
+        UserDefaults.standard.synchronize()
+        guard onRestart?() == true else {
+            preserveConversationOnTermination = false
+            UserDefaults.standard.removeObject(forKey: "conversation.restoreAfterRestart")
+            UserDefaults.standard.synchronize()
+            status = "Phantom could not restart. This window remains open."
+            Diagnostics.log("restart:launch_failed error_code=process_start_failed outcome=error")
+            return
+        }
+        Diagnostics.log("restart:child_started outcome=success")
     }
 
     private func finishInterview(auth: AuthSession?, account snapshot: StartupSnapshot?) async {

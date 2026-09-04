@@ -68,6 +68,7 @@ namespace SecureOverlay.Services
         public bool AutoSendAfterVoiceStopEnabled { get; set; } = true;
         public bool MicrophonePermissionGranted { get; set; } = false;
         public double WindowOpacity { get; set; } = 0.85;
+        public bool ClickThroughEnabled { get; set; } = false;
         public bool UseFakeCursor { get; set; } = true;
         public double FakeCursorSize { get; set; } = 1.0;
         public string LegacyFallbackAppPath { get; set; } = "";

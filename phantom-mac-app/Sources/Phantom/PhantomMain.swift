@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Darwin
 import SwiftUI
 
 @MainActor
@@ -8,7 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let window = ProtectedWindow()
     private var hotKeys: [GlobalHotKey] = []
     private var keyMonitor: Any?
-    private var restartExecutable: URL?
     private var windowObservers: [NSObjectProtocol] = []
     private var isQuitting = false
     private var isPreparingToQuit = false
@@ -41,12 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return nil
         }
         windowObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
-            // Only request capture exclusion here; changing collectionBehavior can close transient pickers.
+            // Only request capture exclusion here; changing collectionBehavior can close transient AppKit windows.
             (notification.object as? NSWindow)?.sharingType = .none
-        })
-        windowObservers.append(NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in
-            // SwiftUI Picker menus are transient windows; protect them after AppKit orders the menu onscreen.
-            DispatchQueue.main.async { NSApp.windows.forEach { $0.sharingType = .none } }
         })
         showWindow()
         store.bootstrap()
@@ -91,10 +87,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onCompactModeChanged = { [weak self] compact in self?.setCompact(compact) }
         store.onLogout = { [weak self] in self?.showWindow() }
         store.onRestart = { [weak self] in
-            guard let self else { return }
-            self.restartExecutable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-            self.isQuitting = true
-            NSApp.terminate(nil)
+            guard let self else { return false }
+            let process = Process()
+            process.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+            process.arguments = ["--restart-parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
+            do {
+                try process.run()
+                self.isQuitting = true
+                NSApp.terminate(nil)
+                return true
+            } catch {
+                return false
+            }
         }
         store.onLegacyHandoff = { [weak self] in
             self?.isQuitting = true
@@ -152,11 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isPreparingToQuit = true
         Task {
             await store.prepareForTermination()
-            if let executable = restartExecutable {
-                let process = Process()
-                process.executableURL = executable
-                try? process.run()
-            }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -235,14 +234,24 @@ enum PhantomMain {
             let legacyStartupJSON = #"{"email":"user@example.com","emailVerified":true,"accessTier":"premium","wallet":{"proAvailableCredits":0,"premiumAvailableCredits":1,"premiumNegativeCredits":0}}"#.data(using: .utf8)!
             let legacyStartup = try! JSONDecoder().decode(StartupSnapshot.self, from: legacyStartupJSON)
             precondition(legacyStartup.emailVerified && legacyStartup.hostedKnowledgeBase.status == "not_created")
+            precondition(restartParentPID(arguments: ["Phantom", "--restart-parent-pid", "123"]) == 123)
+            precondition(restartParentPID(arguments: ["Phantom"]) == nil)
+            precondition(InWindowPickerSizing.height(optionCount: 0) == InWindowPickerSizing.minimumHeight)
+            precondition(InWindowPickerSizing.height(optionCount: 100) == InWindowPickerSizing.maximumHeight)
             runLiveCopilotFixtures()
             print("Phantom self-check and shared live-copilot fixture suite passed.")
             return
         }
 
+        let restartParent = restartParentPID(arguments: CommandLine.arguments)
+        if let restartParent { waitForRestartParent(restartParent) }
+
         if let bundleIdentifier = Bundle.main.bundleIdentifier,
            let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
-            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            .first(where: {
+                $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                    && $0.processIdentifier != restartParent
+            }) {
             existing.activate(options: [.activateAllWindows])
             return
         }
@@ -251,6 +260,20 @@ enum PhantomMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
+    }
+
+    private static func restartParentPID(arguments: [String]) -> pid_t? {
+        guard let flag = arguments.firstIndex(of: "--restart-parent-pid"),
+              arguments.indices.contains(flag + 1),
+              let value = Int32(arguments[flag + 1]), value > 0 else { return nil }
+        return value
+    }
+
+    private static func waitForRestartParent(_ parentPID: pid_t) {
+        let deadline = Date().addingTimeInterval(30)
+        while kill(parentPID, 0) == 0 && Date() < deadline {
+            usleep(100_000)
+        }
     }
 
     private static func runLiveCopilotFixtures() {

@@ -75,5 +75,29 @@ namespace SecureOverlay
                 Log.WriteLine($"  Affinity: 0x{affinity:X}");
             }
         }
+
+        public static void SetClickThrough(IntPtr hwnd, bool enabled)
+        {
+            if (hwnd == IntPtr.Zero) return;
+
+            var exStyle = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
+            exStyle = enabled
+                ? exStyle | NativeMethods.WS_EX_TRANSPARENT
+                : exStyle & ~NativeMethods.WS_EX_TRANSPARENT;
+            NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE, exStyle);
+            NativeMethods.SetWindowPos(
+                hwnd,
+                IntPtr.Zero,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SWP_NOMOVE
+                    | NativeMethods.SWP_NOSIZE
+                    | NativeMethods.SWP_NOZORDER
+                    | NativeMethods.SWP_NOACTIVATE
+                    | NativeMethods.SWP_FRAMECHANGED);
+            Log.WriteLine($"Window click-through {(enabled ? "enabled" : "disabled")}");
+        }
     }
 }

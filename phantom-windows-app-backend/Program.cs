@@ -349,6 +349,27 @@ app.UseExceptionHandler(exceptionApp =>
             return;
         }
 
+        if (exception is ManagedAiProviderException managedAiException)
+        {
+            context.Response.StatusCode = managedAiException.IsTransient
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status502BadGateway;
+            logger.LogError(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} provider_status_code={ProviderStatusCode} retryable={Retryable} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "5xx", managedAiException.Code,
+                managedAiException.ProviderStatusCode, true, "error");
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = managedAiException.Message,
+                code = managedAiException.Code,
+                retryable = true
+            });
+            return;
+        }
+
         if (exception is EmbeddingProviderException embeddingException)
         {
             context.Response.StatusCode = embeddingException.IsTransient

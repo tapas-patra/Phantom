@@ -22,6 +22,7 @@ Native Swift/AppKit and SwiftUI client for the existing Phantom hosted backend.
 - optional click-through and adjustable opacity
 - global **Command + Control + `** hide/show shortcut
 - `NSWindow.sharingType = .none` on every Phantom surface
+- settings selectors expand inside the protected Phantom panel instead of creating briefly visible menu windows
 - no Dock or menu-bar status icon
 - red close button asks for confirmation and then terminates the process
 - protected in-window clear/new-topic confirmations and no hover tooltips

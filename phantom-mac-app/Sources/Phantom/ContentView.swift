@@ -480,12 +480,16 @@ private struct SettingsView: View {
                     SettingsSection(title: "Managed AI", systemImage: "cpu") {
                         ReadOnlyRow(label: "Runtime", value: store.useBYOProvider ? "Pro BYO" : "Phantom managed")
                         if store.useBYOProvider, !store.isPremiumAccount {
-                            Picker("Provider", selection: $store.selectedProviderId) {
-                                ForEach(store.providers) { Text($0.label).tag($0.providerId) }
-                            }
-                            Picker("Model", selection: $store.selectedModelId) {
-                                ForEach(store.selectedProvider?.models ?? []) { Text($0.displayName).tag($0.modelId) }
-                            }
+                            InWindowPicker(
+                                "Provider",
+                                selection: $store.selectedProviderId,
+                                options: store.providers.map { ($0.label, $0.providerId) }
+                            )
+                            InWindowPicker(
+                                "Model",
+                                selection: $store.selectedModelId,
+                                options: (store.selectedProvider?.models ?? []).map { ($0.displayName, $0.modelId) }
+                            )
                         }
                         if store.isFreeTrialAccount {
                             Toggle("Allow the second 15-minute free-trial block", isOn: $store.allowFreeTrialSessionExtension)
@@ -517,9 +521,11 @@ private struct SettingsView: View {
                                 .foregroundColor(PhantomColors.muted)
                             Toggle("Enable BYO error simulator", isOn: $store.debugModeEnabled)
                             if store.debugModeEnabled {
-                                Picker("Simulated error", selection: $store.debugErrorSimulation) {
-                                    ForEach(["None", "429", "Timeout", "Random", "Alternating keys", "First two fail"], id: \.self) { Text($0).tag($0) }
-                                }
+                                InWindowPicker(
+                                    "Simulated error",
+                                    selection: $store.debugErrorSimulation,
+                                    options: ["None", "429", "Timeout", "Random", "Alternating keys", "First two fail"].map { ($0, $0) }
+                                )
                                 Text("Debug simulation is active and intentionally changes provider requests.").font(.caption).foregroundColor(.red)
                             }
                         } else {
@@ -541,16 +547,14 @@ private struct SettingsView: View {
 
                     SettingsSection(title: "Interview context", systemImage: "doc.text") {
                         if store.isPremiumAccount {
-                        Picker(
+                        InWindowPicker(
                             "Saved context pack",
                             selection: Binding(
                                 get: { store.selectedContextPackId },
                                 set: { store.selectContextPack($0) }
-                            )
-                        ) {
-                            Text("Local draft").tag("")
-                            ForEach(store.contextPacks) { Text($0.name).tag($0.packId) }
-                        }
+                            ),
+                            options: [("Local draft", "")] + store.contextPacks.map { ($0.name, $0.packId) }
+                        )
                         TextField("Context pack name", text: $store.contextPackName)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Context pack name")
@@ -569,15 +573,17 @@ private struct SettingsView: View {
                             Text("Unsaved context-pack changes").font(.caption).foregroundColor(PhantomColors.amber)
                         }
                         }
-                        Picker("Live Copilot mode", selection: $store.copilotMode) {
-                            Text("Interview").tag(CopilotMode.interview)
-                            Text("Briefing").tag(CopilotMode.briefing)
-                        }
+                        InWindowPicker(
+                            "Live Copilot mode",
+                            selection: $store.copilotMode,
+                            options: [("Interview", .interview), ("Briefing", .briefing)]
+                        )
                         if store.copilotMode == .interview {
-                            Picker("Interview delivery", selection: $store.interviewDeliveryStyle) {
-                                Text("Standard").tag(InterviewDeliveryStyle.standard)
-                                Text("Desi — Natural Indian English").tag(InterviewDeliveryStyle.desi)
-                            }
+                            InWindowPicker(
+                                "Interview delivery",
+                                selection: $store.interviewDeliveryStyle,
+                                options: [("Standard", .standard), ("Desi — Natural Indian English", .desi)]
+                            )
                         }
                         Text("Resume • \(store.resumeWordCount) words")
                             .font(.system(size: 12, weight: .semibold))
@@ -648,6 +654,92 @@ private struct SettingsView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+    }
+}
+
+enum InWindowPickerSizing {
+    static let minimumHeight: CGFloat = 36
+    static let maximumHeight: CGFloat = 180
+    private static let rowHeight: CGFloat = 32
+
+    static func height(optionCount: Int) -> CGFloat {
+        min(maximumHeight, max(minimumHeight, CGFloat(optionCount) * rowHeight + 8))
+    }
+}
+
+private struct InWindowPicker<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(title: String, value: Value)]
+    @State private var isExpanded = false
+
+    init(_ title: String, selection: Binding<Value>, options: [(String, Value)]) {
+        self.title = title
+        _selection = selection
+        self.options = options
+    }
+
+    private var selectedTitle: String {
+        options.first(where: { $0.value == selection })?.title ?? "—"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Text(title).foregroundColor(PhantomColors.muted)
+                    Spacer()
+                    Text(selectedTitle).foregroundColor(PhantomColors.frost).lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .foregroundColor(PhantomColors.muted)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .padding(.horizontal, 10)
+                .frame(minHeight: 32)
+                .frame(maxWidth: .infinity)
+                .background(PhantomColors.obsidian)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(PhantomColors.stroke))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityValue(selectedTitle)
+
+            if isExpanded {
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 2) {
+                        ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                            Button {
+                                selection = option.value
+                                isExpanded = false
+                            } label: {
+                                HStack {
+                                    Text(option.title).foregroundColor(PhantomColors.frost)
+                                    Spacer()
+                                    if option.value == selection {
+                                        Image(systemName: "checkmark").foregroundColor(PhantomColors.blue)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(minHeight: 30)
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(option.value == selection ? .isSelected : [])
+                        }
+                    }
+                }
+                .padding(4)
+                .frame(height: InWindowPickerSizing.height(optionCount: options.count))
+                .background(PhantomColors.obsidian)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(PhantomColors.stroke))
+            }
+        }
+        .onExitCommand { isExpanded = false }
     }
 }
 
@@ -779,6 +871,7 @@ private struct MarkdownMessageText: View {
                 if !mermaid.explanation.isEmpty {
                     Text((try? AttributedString(markdown: mermaid.explanation)) ?? AttributedString(mermaid.explanation))
                         .textSelection(.enabled)
+                        .lineSpacing(4)
                         .foregroundColor(PhantomColors.frost)
                 }
                 MermaidDiagram(source: correctedDiagram ?? mermaid.diagram, reloadID: diagramReloadID) { renderFailed = $0 }
@@ -813,10 +906,12 @@ private struct MarkdownMessageText: View {
         ) {
             Text(markdown)
                 .textSelection(.enabled)
+                .lineSpacing(4)
                 .foregroundColor(PhantomColors.frost)
         } else {
             Text(content)
                 .textSelection(.enabled)
+                .lineSpacing(4)
                 .foregroundColor(PhantomColors.frost)
         }
     }

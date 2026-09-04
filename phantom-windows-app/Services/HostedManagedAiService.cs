@@ -43,6 +43,7 @@ namespace SecureOverlay.Services
         }
 
         public string GetProviderName() => _provider;
+        public string GetModelName() => _model;
 
         public bool IsConfigured()
         {

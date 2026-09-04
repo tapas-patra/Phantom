@@ -230,10 +230,7 @@ public sealed class ManagedAiService
             }
         }
 
-        throw new BackendValidationException(
-            lastError == null
-                ? "Managed AI request failed."
-                : $"Managed AI request failed: {lastError.Message}");
+        throw ManagedAiProviderException.FromFailure(lastError);
     }
 
     public async Task<string> GenerateManagedResponseAsync(
@@ -553,8 +550,7 @@ public sealed class ManagedAiService
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -633,8 +629,7 @@ public sealed class ManagedAiService
         using var response = await HttpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -680,8 +675,7 @@ public sealed class ManagedAiService
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -768,8 +762,7 @@ public sealed class ManagedAiService
         using var response = await HttpClient.SendAsync(outbound, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -811,8 +804,7 @@ public sealed class ManagedAiService
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -892,8 +884,7 @@ public sealed class ManagedAiService
         using var response = await HttpClient.SendAsync(outbound, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{(int)response.StatusCode}: {errorBody}");
+            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -1118,6 +1109,7 @@ public sealed class ManagedAiService
 
     private static string StreamErrorCode(Exception ex)
     {
+        if (ex is ManagedAiProviderException providerError) return providerError.Code;
         if (ex is OperationCanceledException) return "cancelled";
         if (ex.Message.Contains("provider_output_truncated", StringComparison.Ordinal)) return "provider_output_truncated";
         if (ex.Message.Contains("provider_stream_incomplete", StringComparison.Ordinal)) return "provider_stream_incomplete";

@@ -135,7 +135,8 @@
   ],
   "promptRequirements": [
     "General technical, coding, system-design, and product questions stay universal",
-    "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes"
+    "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes",
+    "For answers longer than three sentences, separate ideas with blank lines"
   ],
   "repairPromptSuffix": "Do not mention the repair or the protocol.",
   "logging": [

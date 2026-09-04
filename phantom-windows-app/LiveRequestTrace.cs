@@ -54,8 +54,8 @@ namespace SecureOverlay
         public string SessionId => ProcessSessionId;
         public string TurnId { get; }
         public string CorrelationId => TurnId;
-        public string Provider { get; }
-        public string Model { get; }
+        public string Provider { get; private set; }
+        public string Model { get; private set; }
         public bool IsVoice { get; }
         public bool HasImage { get; }
         public string Mode { get; }
@@ -110,6 +110,13 @@ namespace SecureOverlay
         {
             Interlocked.Increment(ref _retryCount);
             Write("provider_retry_started", "retry");
+        }
+
+        public void RotateProvider(string provider, string model)
+        {
+            Provider = string.IsNullOrWhiteSpace(provider) ? Provider : provider;
+            Model = string.IsNullOrWhiteSpace(model) ? Model : model;
+            Mark("provider_rotated", uniquePerOperation: true);
         }
 
         public void RejectControl(string errorCode)

@@ -28,6 +28,7 @@ namespace SecureOverlay.Services
         private IAIService _aiService;
         private ModelConfig _modelConfig;
         private APIRotationManager? _rotationManager;
+        private Func<IAIService?>? _retryServiceFactory;
         private string _currentProvider;
         private string _systemPrompt;
         private string _resumeText = string.Empty;
@@ -69,8 +70,13 @@ namespace SecureOverlay.Services
 
         public void UpdateAIService(IAIService service) { _aiService = service; _currentProvider = service.GetProviderName(); }
         public void SetRotationManager(APIRotationManager manager) => _rotationManager = manager;
+        public void SetRetryServiceFactory(Func<IAIService?>? factory) => _retryServiceFactory = factory;
         public void UpdateModelConfig(ModelConfig config) => _modelConfig = config;
         public void UpdateSystemPrompt(string prompt) => _systemPrompt = prompt ?? string.Empty;
+        public string CurrentProvider => _aiService.GetProviderName();
+        public string CurrentModel => _aiService is HostedManagedAiService hosted
+            ? hosted.GetModelName()
+            : _rotationManager?.GetCurrentModel(_currentProvider) ?? string.Empty;
 
         public void ConfigureCopilot(CopilotMode mode, InterviewDeliveryStyle style)
         {
@@ -317,12 +323,28 @@ namespace SecureOverlay.Services
 
         private void RotateProviderIfAvailable()
         {
-            if (_rotationManager == null) return;
             try
             {
+                if (_retryServiceFactory != null)
+                {
+                    var retryService = _retryServiceFactory();
+                    if (retryService != null)
+                    {
+                        _aiService = retryService;
+                        _currentProvider = retryService.GetProviderName();
+                        var model = retryService is HostedManagedAiService hosted
+                            ? hosted.GetModelName()
+                            : _rotationManager?.GetCurrentModel(_currentProvider) ?? string.Empty;
+                        LiveRequestTrace.Current?.RotateProvider(_currentProvider, model);
+                        APISwitchNotification?.Invoke(this, "Switched managed provider or model after a retryable failure.");
+                        return;
+                    }
+                }
+
+                if (_rotationManager == null) return;
                 var key = _rotationManager.GetNextApiKey(_currentProvider);
                 _aiService = AIServiceFactory.CreateService(_currentProvider, key, _rotationManager.GetCurrentModel(_currentProvider));
-                LiveRequestTrace.Current?.Mark("provider_rotated", uniquePerOperation: true);
+                LiveRequestTrace.Current?.RotateProvider(_currentProvider, _rotationManager.GetCurrentModel(_currentProvider));
                 APISwitchNotification?.Invoke(this, "Switched provider credential after a retryable failure.");
             }
             catch { }

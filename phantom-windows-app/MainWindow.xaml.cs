@@ -1213,8 +1213,50 @@ namespace SecureOverlay
         private string GetCurrentRuntimeProviderId()
         {
             return _currentAI is HostedManagedAiService
-                ? GetManagedRuntimeProviderId()
+                ? _conversationManager?.CurrentProvider ?? GetManagedRuntimeProviderId()
                 : _settings.SelectedAI;
+        }
+
+        private string GetCurrentRuntimeModelId()
+        {
+            var provider = GetCurrentRuntimeProviderId();
+            return _currentAI is HostedManagedAiService
+                ? _conversationManager?.CurrentModel ?? GetManagedRuntimeModelId(provider)
+                : _rotationManager?.GetCurrentModel(provider) ?? string.Empty;
+        }
+
+        private Func<IAIService?> CreateManagedRetryServiceFactory(string initialProvider, string initialModel)
+        {
+            var candidates = (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .SelectMany(provider => (provider.Models ?? new List<ManagedAiModelOptionDto>())
+                    .Select(model => (Provider: provider.ProviderId, Model: model.ModelId)))
+                .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Provider) && !string.IsNullOrWhiteSpace(candidate.Model))
+                .Distinct()
+                .ToList();
+            if (candidates.Count == 0) candidates.Add((initialProvider, initialModel));
+
+            var index = candidates.FindIndex(candidate =>
+                string.Equals(candidate.Provider, initialProvider, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(candidate.Model, initialModel, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                candidates.Insert(0, (initialProvider, initialModel));
+                index = 0;
+            }
+
+            var nextIndex = index;
+            var allowPaidSessionExtension = _settings.AllowByoSessionExtension;
+            return () =>
+            {
+                nextIndex = (nextIndex + 1) % candidates.Count;
+                var candidate = candidates[nextIndex];
+                return new HostedManagedAiService(
+                    _authSessionRepository,
+                    _hostedRuntimeOptions,
+                    candidate.Provider,
+                    candidate.Model,
+                    allowPaidSessionExtension);
+            };
         }
 
         private void SyncRuntimeWithCurrentCreditLane()
@@ -1378,6 +1420,7 @@ namespace SecureOverlay
 
             Log.WriteLine("Applying screen capture protection...");
             WindowProtection.ApplyProtection(_windowHandle);
+            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
             
             uint affinity;
             if (NativeMethods.GetWindowDisplayAffinity(_windowHandle, out affinity) && 
@@ -1511,6 +1554,9 @@ namespace SecureOverlay
                     _settings.AllowByoSessionExtension);
 
             var modelConfig = GetModelConfigForCurrentSelection(runtimeProvider, runtimeModel);
+            Func<IAIService?>? managedRetryFactory = useByoRuntime
+                ? null
+                : CreateManagedRetryServiceFactory(runtimeProvider, runtimeModel);
             
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
@@ -1525,6 +1571,7 @@ namespace SecureOverlay
                     string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
                     string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
                 _conversationManager.SetRotationManager(rotationManager);
+                _conversationManager.SetRetryServiceFactory(managedRetryFactory);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
@@ -1558,6 +1605,7 @@ namespace SecureOverlay
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
                     },
                     () => !IsByoAccount() && HasPremiumManagedEntitlement());
+                _conversationManager.SetRetryServiceFactory(managedRetryFactory);
                 _conversationManager.ConfigureCopilot(
                     string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
                     string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
@@ -1899,7 +1947,7 @@ namespace SecureOverlay
 
             using var requestTrace = LiveRequestTrace.Begin(
                 GetCurrentRuntimeProviderId(),
-                _rotationManager?.GetCurrentModel(GetCurrentRuntimeProviderId()) ?? string.Empty,
+                GetCurrentRuntimeModelId(),
                 _nextRequestIsVoice,
                 _attachedScreenshot != null,
                 _settings.CopilotMode.ToLowerInvariant(),
@@ -3540,6 +3588,7 @@ namespace SecureOverlay
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            DisableClickThroughForInteraction("settings_opened");
             if (_isHidden)
             {
                 Log.WriteLine("Settings requested while hidden - restoring window before opening settings");
@@ -3577,6 +3626,7 @@ namespace SecureOverlay
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
+                WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
                 UpdateLegacyFallbackButtonState();
                 
                 Log.WriteLine($"Model before settings reload: {oldModel}");
@@ -4114,6 +4164,7 @@ namespace SecureOverlay
             if (_isHidden)
             {
                 Log.WriteLine("Showing window...");
+                DisableClickThroughForInteraction("window_restored");
                 this.Show();
                 this.Opacity = 1.0;
                 IsHitTestVisible = true;
@@ -4141,6 +4192,15 @@ namespace SecureOverlay
                 
                 Log.WriteLine("✓ Window hidden");
             }
+        }
+
+        private void DisableClickThroughForInteraction(string reason)
+        {
+            if (!_settings.ClickThroughEnabled) return;
+            _settings.ClickThroughEnabled = false;
+            SettingsManager.Save(_settings);
+            WindowProtection.SetClickThrough(_windowHandle, false);
+            Log.WriteLine($"Click-through disabled reason={reason}");
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -4194,7 +4254,8 @@ namespace SecureOverlay
                 );
 
                 // Get current executable path
-                var exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                var exePath = Environment.ProcessPath
+                    ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
                 
                 if (string.IsNullOrEmpty(exePath))
                 {
@@ -4210,13 +4271,18 @@ namespace SecureOverlay
                 _isRestarting = true;
 
                 // Start new instance
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                var restartedProcess = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = exePath,
                     Arguments = "--restart-main-window",
                     UseShellExecute = true,
-                    WorkingDirectory = Environment.CurrentDirectory
+                    WorkingDirectory = AppContext.BaseDirectory
                 });
+
+                if (restartedProcess == null)
+                {
+                    throw new InvalidOperationException("Windows did not create the replacement Phantom process.");
+                }
 
                 Log.WriteLine("✓ New instance started");
                 Log.WriteLine("✓ Conversation saved for restoration");

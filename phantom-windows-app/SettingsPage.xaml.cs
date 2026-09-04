@@ -191,6 +191,7 @@ namespace SecureOverlay
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
             AutoSendAfterVoiceStopCheckBox.IsChecked = _settings.AutoSendAfterVoiceStopEnabled;
+            ClickThroughCheckBox.IsChecked = _settings.ClickThroughEnabled;
             
             // Rotation settings
             AutoSwitchKeysCheckBox.IsChecked = _settings.AutoSwitchKeysOnError;
@@ -1298,6 +1299,7 @@ namespace SecureOverlay
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
+                _settings.ClickThroughEnabled = ClickThroughCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
                 

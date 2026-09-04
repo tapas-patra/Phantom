@@ -243,7 +243,8 @@ enum Diagnostics {
         "status_class", "search_mode", "cache_hit", "candidate_count", "transcript_length_bucket",
         "duplicate_suppression_count", "chunk_count", "buffered_characters", "flush_count", "render_ms",
         "retrieval_status", "provider", "model", "model_call", "attempt", "elapsed_ms", "stage", "finish_reason",
-        "input_type", "model_call_count"
+        "input_type", "model_call_count", "execution_lane", "usage_source", "cross_lane_fallback",
+        "retry_reason_code", "key_rotated"
     ])
     private static var root: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?

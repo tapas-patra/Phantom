@@ -35,7 +35,7 @@ namespace SecureOverlay
         private string _stage = "dispatch";
         private int _modelCall;
 
-        private LiveRequestTrace(string provider, string model, bool isVoice, bool hasImage, string mode, string deliveryStyle)
+        private LiveRequestTrace(string provider, string model, bool isVoice, bool hasImage, string mode, string deliveryStyle, string executionLane, string usageSource)
         {
             TurnId = Guid.NewGuid().ToString("N");
             Provider = provider;
@@ -44,6 +44,8 @@ namespace SecureOverlay
             HasImage = hasImage;
             Mode = mode;
             DeliveryStyle = deliveryStyle;
+            ExecutionLane = executionLane;
+            UsageSource = usageSource;
             CurrentTrace.Value = this;
             Mark("session_started");
             Mark("request_dispatched");
@@ -60,6 +62,8 @@ namespace SecureOverlay
         public bool HasImage { get; }
         public string Mode { get; }
         public string DeliveryStyle { get; }
+        public string ExecutionLane { get; private set; }
+        public string UsageSource { get; private set; }
         public string Route { get; private set; } = "unknown";
         public bool UsedRetrieval { get; private set; }
         public int InputTokenEstimate { get; private set; }
@@ -67,8 +71,15 @@ namespace SecureOverlay
         public string OperationId => _operationId;
         public double ElapsedMilliseconds => Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds;
 
-        public static LiveRequestTrace Begin(string provider, string model, bool isVoice, bool hasImage, string mode = "interview", string deliveryStyle = "standard")
-            => new(provider, model, isVoice, hasImage, mode, deliveryStyle);
+        public static LiveRequestTrace Begin(string provider, string model, bool isVoice, bool hasImage, string mode = "interview", string deliveryStyle = "standard", string executionLane = "managed", string usageSource = "premium_managed")
+            => new(provider, model, isVoice, hasImage, mode, deliveryStyle, executionLane, usageSource);
+
+        public void SwitchLane(string executionLane, string usageSource)
+        {
+            ExecutionLane = executionLane;
+            UsageSource = usageSource;
+            Write("execution_lane_changed", "fallback");
+        }
 
         public void SetContext(string route, bool usedRetrieval, int inputTokenEstimate)
         {
@@ -106,10 +117,10 @@ namespace SecureOverlay
                 retrievalStatus: retrievalStatus);
         }
 
-        public void MarkRetry()
+        public void MarkRetry(string errorCode = "provider_error")
         {
             Interlocked.Increment(ref _retryCount);
-            Write("provider_retry_started", "retry");
+            Write("provider_retry_started", "retry", errorCode);
         }
 
         public void RotateProvider(string provider, string model)
@@ -170,6 +181,8 @@ namespace SecureOverlay
                 operation_id = _operationId,
                 mode = Mode,
                 delivery_style = DeliveryStyle,
+                execution_lane = ExecutionLane,
+                usage_source = UsageSource,
                 stage = _stage,
                 provider = Provider,
                 model = Model,

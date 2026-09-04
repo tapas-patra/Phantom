@@ -360,12 +360,17 @@ app.UseExceptionHandler(exceptionApp =>
                 context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
                 context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
                 context.Request.Method, "5xx", managedAiException.Code,
-                managedAiException.ProviderStatusCode, true, "error");
+                managedAiException.ProviderStatusCode, managedAiException.IsTransient, "error");
+            if (managedAiException.RetryAfterSeconds is > 0)
+            {
+                context.Response.Headers.RetryAfter = managedAiException.RetryAfterSeconds.Value.ToString();
+            }
             await context.Response.WriteAsJsonAsync(new
             {
                 error = managedAiException.Message,
                 code = managedAiException.Code,
-                retryable = true
+                retryable = managedAiException.IsTransient,
+                retryAfterSeconds = managedAiException.RetryAfterSeconds
             });
             return;
         }

@@ -182,6 +182,9 @@ final class PhantomStore: ObservableObject {
     private let copilotSessionId = UUID().uuidString
     private var activeTurnId = ""
     private var activeOperationId = ""
+    private var activeExecutionLane = "managed"
+    private var activeUsageSource = "premium_managed"
+    private var lastProviderOperationHadOutput = false
     private var activeRequestStartedAt = Date()
     private var firstChunkRecorded = false
     private var settingsSnapshot: SettingsSnapshot?
@@ -848,6 +851,10 @@ final class PhantomStore: ObservableObject {
         let provider = selectedProviderId
         let model = selectedModelId
         let usesBYO = useBYOProvider
+        activeExecutionLane = usesBYO ? "byo" : "managed"
+        activeUsageSource = usesBYO
+            ? "pro_byo"
+            : (isFreeTrialAccount ? "free_trial_managed" : (startingPaidExtension ? "premium_debt_extension" : "premium_managed"))
         let requestId = pendingVoiceTurnId ?? UUID().uuidString
         pendingVoiceTurnId = nil
         activeRequestId = requestId
@@ -857,8 +864,8 @@ final class PhantomStore: ObservableObject {
         isSending = true
         status = copilotMode == .interview ? "Starting interview session…" : "Starting briefing session…"
         Diagnostics.event("session_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
-        Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch"])
-        mirrorLiveEvent("request_dispatched", turnId: requestId, fields: ["provider": provider, "model": model, "stage": "dispatch"])
+        Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
+        mirrorLiveEvent("request_dispatched", turnId: requestId, fields: ["provider": provider, "model": model, "stage": "dispatch", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
 
         chatTask = Task {
             defer { isSending = false }
@@ -930,7 +937,7 @@ final class PhantomStore: ObservableObject {
                 let makeStream: ([ChatMessage], String, Int) -> LiveCopilotOrchestrator.ModelStream = { outbound, operationId, attempt in
                     return { onDelta, onRetryCleanup in
                         self.activeOperationId = operationId
-                        Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model, "attempt": "\(attempt)"])
+                        Diagnostics.event("model_call_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["provider": provider, "model": model, "attempt": "\(attempt)", "execution_lane": self.activeExecutionLane, "usage_source": self.activeUsageSource])
                         self.mirrorLiveEvent("model_call_started", turnId: requestId, operationId: operationId, fields: ["provider": provider, "model": model, "attempt": "\(attempt)"])
                         if usesBYO {
                             do {
@@ -944,11 +951,32 @@ final class PhantomStore: ObservableObject {
                                 )
                                 self.selectedModelId = selected.model
                                 return selected.response
-                            } catch where self.allowPaidSessionExtension && !self.managedProviders.isEmpty {
+                            } catch {
+                                guard ProviderResiliencePolicy.canCrossLane(
+                                    from: "byo",
+                                    to: "managed_extension",
+                                    explicitlyOptedIn: self.allowPaidSessionExtension,
+                                    hasOutput: self.lastProviderOperationHadOutput
+                                ), !self.managedProviders.isEmpty else { throw error }
                                 self.status = "Switching to managed extension…"
+                                let managedProvider = self.managedProviders.first?.providerId ?? provider
+                                let managedSource: InterviewUsageSource = (self.account?.wallet.premiumAvailableCredits ?? 0) > 0
+                                    ? .premiumManaged
+                                    : .premiumDebtExtension
+                                try await self.runtime.metering.trackSource(managedSource, providerId: managedProvider)
+                                self.activeExecutionLane = "managed_extension"
+                                self.activeUsageSource = managedSource == .premiumManaged ? "premium_managed" : "premium_debt_extension"
+                                let laneFields = [
+                                    "outcome": "fallback",
+                                    "execution_lane": self.activeExecutionLane,
+                                    "usage_source": self.activeUsageSource,
+                                    "cross_lane_fallback": "true"
+                                ]
+                                Diagnostics.event("execution_lane_changed", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: laneFields)
+                                self.mirrorLiveEvent("execution_lane_changed", turnId: requestId, operationId: operationId, fields: laneFields)
                                 let selected = try await self.managedResponseWithRetry(
                                     session: session,
-                                    provider: self.managedProviders.first?.providerId ?? provider,
+                                    provider: managedProvider,
                                     model: self.managedProviders.first?.models.first?.modelId ?? model,
                                     allowPaidSessionExtension: true,
                                     imageBase64: imageBase64,
@@ -1083,14 +1111,14 @@ final class PhantomStore: ObservableObject {
                     messages[index].responseTimeMs = responseTimeMs
                     messages[index].createdAtUtc = Date()
                 }
-                Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)"])
+                Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
                 try await runtime.metering.resume()
                 await runtime.track(category: "billing", event: "interview_session_resumed", attributes: ["reason": "response_succeeded"], accessToken: session.accessToken)
                 lastInterviewActivityAt = Date()
                 await runtime.track(
                     category: "live_copilot",
                     event: "answer_completed",
-                    attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "model": selectedModelId, "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "outcome": "success"],
+                    attributes: ["session_id": copilotSessionId, "turn_id": requestId, "mode": copilotMode.rawValue, "delivery_style": interviewDeliveryStyle.rawValue, "provider": provider, "model": selectedModelId, "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "outcome": "success", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource],
                     accessToken: session.accessToken
                 )
                 status = result.decision.action == .clarify ? "Needs clarification" : "Ready"
@@ -1103,7 +1131,9 @@ final class PhantomStore: ObservableObject {
                     "model": selectedModelId,
                     "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))",
                     "outcome": "error",
-                    "error_code": Self.errorCode(error)
+                    "error_code": Self.errorCode(error),
+                    "execution_lane": activeExecutionLane,
+                    "usage_source": activeUsageSource
                 ]
                 Diagnostics.event("turn_failed", level: "Error", sessionId: copilotSessionId, turnId: requestId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: failureFields)
                 if let backendError = error as? BackendError, case .http(401, _) = backendError {
@@ -1172,10 +1202,10 @@ final class PhantomStore: ObservableObject {
         guard var key = rotation.currentKey(provider: provider) else { throw BackendError.server("No usable \(provider) API key remains.") }
         var model = rotation.model(provider: provider, models: models, selected: selectedModel)
         var triedModel = false
-        var triedKey = false
         var lastError: Error = BackendError.server("Provider request failed.")
+        lastProviderOperationHadOutput = false
 
-        for attempt in 1...5 {
+        for attempt in 1...ProviderResiliencePolicy.byoDesktopMaxAttempts {
             do {
                 if debugModeEnabled {
                     debugRequestCount += 1
@@ -1191,16 +1221,16 @@ final class PhantomStore: ObservableObject {
                 )
                 Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model])
                 mirrorLiveEvent("provider_headers_received", operationId: activeOperationId, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model])
-                onRetryCleanup()
                 var received = false
                 var response = ""
                 var terminal: BYOStreamTerminal?
                 var chunkCount = 0
                 for try await line in bytes.lines {
                     try Task.checkCancellation()
-                    if BYOClient.failure(from: line) != nil { throw BackendError.server("The provider stream failed.") }
+                    if let failure = BYOClient.failure(from: line) { throw BYOError.server(status: 0, message: failure) }
                     if let delta = BYOClient.delta(from: line, provider: provider) {
                         received = true
+                        lastProviderOperationHadOutput = true
                         chunkCount += 1
                         response += delta
                         onDelta(delta)
@@ -1215,44 +1245,49 @@ final class PhantomStore: ObservableObject {
                 guard terminal == .complete else { throw BackendError.server("The AI provider stream ended unexpectedly.") }
                 Diagnostics.event("model_call_completed", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
                 mirrorLiveEvent("model_call_completed", operationId: activeOperationId, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
+                rotation.recordSuccess(provider: provider, index: key.index)
                 byoKeyStatus = "Key \(key.index + 1)/\(rotation.keys(for: provider).count) • \(model)"
                 return (model, response)
             } catch {
                 lastError = error
-                switch rotation.classify(error) {
-                case .rateLimited:
-                    rotation.markRateLimited(provider: provider, index: key.index)
-                    if autoSwitchKeysOnError, rotation.availableKeyCount(provider: provider) > 0,
-                       let next = rotation.nextKey(provider: provider) {
-                        key = next
-                    } else if autoSwitchModelsOnError, !triedModel,
-                              let next = rotation.nextModel(provider: provider, models: models, selected: model) {
-                        model = next; triedModel = true
-                        rotation.clearRateLimits(provider: provider)
-                        if let first = rotation.nextKey(provider: provider) { key = first }
-                    } else { throw error }
-                case .authentication:
-                    rotation.markInvalid(provider: provider, index: key.index)
-                    guard autoSwitchKeysOnError, rotation.availableKeyCount(provider: provider) > 0,
-                          let next = rotation.nextKey(provider: provider) else { throw error }
+                let decision = rotation.classify(error)
+                rotation.recordFailure(provider: provider, index: key.index, decision: decision)
+                guard ProviderResiliencePolicy.canRetry(
+                    decision,
+                    attempt: attempt,
+                    maxAttempts: ProviderResiliencePolicy.byoDesktopMaxAttempts,
+                    hasOutput: lastProviderOperationHadOutput
+                ) else { throw error }
+
+                var keyRotated = false
+                if autoSwitchKeysOnError, rotation.availableKeyCount(provider: provider) > 0,
+                   let next = rotation.nextKey(provider: provider) {
                     key = next
-                case .retryable:
-                    if attempt == 1 {
-                        try await Task.sleep(nanoseconds: 2_000_000_000)
-                    } else if autoSwitchModelsOnError, !triedModel,
-                              let next = rotation.nextModel(provider: provider, models: models, selected: model) {
-                        model = next; triedModel = true
-                    } else if autoSwitchKeysOnError, !triedKey, rotation.keys(for: provider).count > 1,
-                              let next = rotation.nextKey(provider: provider) {
-                        key = next; triedKey = true
-                    } else { throw error }
-                case .terminal:
+                    keyRotated = true
+                } else if decision.kind == .transient, autoSwitchModelsOnError, !triedModel,
+                          let next = rotation.nextModel(provider: provider, models: models, selected: model) {
+                    model = next
+                    triedModel = true
+                    rotation.recordSuccess(provider: provider, index: key.index)
+                } else {
                     throw error
                 }
-                Diagnostics.event("provider_retry_started", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "error_code": Self.errorCode(error)])
-                mirrorLiveEvent("provider_retry_started", operationId: activeOperationId, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "error_code": Self.errorCode(error)])
-                status = "Retry \(attempt + 1)/5 • Key #\(key.index + 1) • \(model)"
-                try await Task.sleep(nanoseconds: 500_000_000)
+
+                onRetryCleanup()
+                let fields = [
+                    "outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider,
+                    "model": model, "error_code": decision.kind.rawValue,
+                    "retry_reason_code": decision.kind.rawValue, "key_rotated": keyRotated ? "true" : "false",
+                    "execution_lane": "byo", "usage_source": "pro_byo"
+                ]
+                Diagnostics.event("provider_retry_started", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: fields)
+                mirrorLiveEvent("provider_retry_started", operationId: activeOperationId, fields: fields)
+                if keyRotated {
+                    Diagnostics.event("provider_rotated", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "key_rotated": "true", "execution_lane": "byo", "usage_source": "pro_byo"])
+                    mirrorLiveEvent("provider_rotated", operationId: activeOperationId, fields: ["outcome": "retry", "attempt": "\(attempt + 1)", "provider": provider, "model": model, "key_rotated": "true"])
+                }
+                status = "Retry \(attempt + 1)/\(ProviderResiliencePolicy.byoDesktopMaxAttempts) • Key #\(key.index + 1) • \(model)"
+                try await Task.sleep(nanoseconds: 300_000_000)
             }
         }
         throw lastError
@@ -1270,31 +1305,24 @@ final class PhantomStore: ObservableObject {
         onDelta: @escaping (String) -> Void,
         onRetryCleanup: @escaping () -> Void
     ) async throws -> (provider: String, model: String, response: String) {
-        var candidates = managedProviders.flatMap { candidate in
-            candidate.models.map { (candidate.providerId, $0.modelId) }
-        }
-        candidates.removeAll { $0.0 == provider && $0.1 == model }
-        candidates.insert((provider, model), at: 0)
         var authenticated = self.session ?? session
         var refreshed = false
-        var lastError: Error = BackendError.server("Managed provider request failed.")
-        for attempt in 0..<5 {
-            let candidate = candidates[attempt % candidates.count]
+        lastProviderOperationHadOutput = false
+        while true {
             do {
                 let modelStartedAt = Date()
                 let bytes = try await backend.chatStream(
                     session: authenticated,
-                    provider: candidate.0,
-                    model: candidate.1,
+                    provider: provider,
+                    model: model,
                     allowPaidSessionExtension: allowPaidSessionExtension,
                     imageBase64: imageBase64,
                     messages: messages,
                     turnId: turnId,
                     operationId: operationId
                 )
-                Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": candidate.0, "model": candidate.1])
-                mirrorLiveEvent("provider_headers_received", operationId: activeOperationId, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": candidate.0, "model": candidate.1])
-                onRetryCleanup()
+                Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model, "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
+                mirrorLiveEvent("provider_headers_received", operationId: activeOperationId, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model, "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
                 var received = false
                 var response = ""
                 var completed = false
@@ -1302,7 +1330,7 @@ final class PhantomStore: ObservableObject {
                 streamLoop: for try await line in bytes.lines {
                     try Task.checkCancellation()
                     switch SSEParser.parse(line) {
-                    case .delta(let delta): received = true; chunkCount += 1; response += delta; onDelta(delta)
+                    case .delta(let delta): received = true; lastProviderOperationHadOutput = true; chunkCount += 1; response += delta; onDelta(delta)
                     case .failure: throw BackendError.server("The managed provider stream failed.")
                     case .done: completed = true; break streamLoop
                     case nil: continue
@@ -1312,22 +1340,19 @@ final class PhantomStore: ObservableObject {
                 guard completed else { throw BackendError.server("The managed provider stream ended unexpectedly.") }
                 Diagnostics.event("model_call_completed", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
                 mirrorLiveEvent("model_call_completed", operationId: activeOperationId, fields: ["outcome": "success", "elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "chunk_count": "\(chunkCount)", "buffered_characters": "\(response.count)"])
-                return (candidate.0, candidate.1, response)
+                return (provider, model, response)
             } catch BackendError.http(401, _) where !refreshed {
+                guard !lastProviderOperationHadOutput else { throw BackendError.server("The managed provider stream ended unexpectedly.") }
                 authenticated = try await backend.refresh(authenticated, device: device)
                 try SessionStore.save(authenticated)
                 self.session = authenticated
                 refreshed = true
+                onRetryCleanup()
+                continue
             } catch {
-                lastError = error
-                guard rotation.classify(error) == .retryable || rotation.classify(error) == .rateLimited else { throw error }
-                Diagnostics.event("provider_retry_started", level: "Warning", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "retry", "attempt": "\(attempt + 2)", "provider": candidate.0, "model": candidate.1, "error_code": Self.errorCode(error)])
-                mirrorLiveEvent("provider_retry_started", operationId: activeOperationId, fields: ["outcome": "retry", "attempt": "\(attempt + 2)", "provider": candidate.0, "model": candidate.1, "error_code": Self.errorCode(error)])
-                status = "Managed retry \(min(attempt + 2, 5))/5 • \(candidate.1)"
-                try await Task.sleep(nanoseconds: UInt64(min(attempt + 1, 3)) * 500_000_000)
+                throw error
             }
         }
-        throw lastError
     }
 
     private func append(_ delta: String, to replyId: UUID) {
@@ -1365,6 +1390,8 @@ final class PhantomStore: ObservableObject {
         attributes["operation_id"] = operationId
         attributes["mode"] = copilotMode.rawValue
         attributes["delivery_style"] = interviewDeliveryStyle.rawValue
+        attributes["execution_lane"] = activeExecutionLane
+        attributes["usage_source"] = activeUsageSource
         let payload = attributes
         Task { await runtime.track(category: "live_copilot", event: event, attributes: payload, accessToken: session?.accessToken) }
     }

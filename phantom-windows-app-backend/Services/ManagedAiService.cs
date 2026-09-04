@@ -60,6 +60,8 @@ public sealed class ManagedAiService
                 Label = record.Label,
                 IsEnabled = record.IsEnabled,
                 Priority = record.Priority,
+                CooldownUntilUtc = record.CooldownUntilUtc,
+                LastFailureCode = record.LastFailureCode,
                 UpdatedAtUtc = record.UpdatedAtUtc
             })
             .ToArray();
@@ -95,6 +97,9 @@ public sealed class ManagedAiService
         record.EncryptedApiKey = _protector.Protect(request.ApiKey.Trim());
         record.IsEnabled = request.IsEnabled;
         record.Priority = request.Priority;
+        record.CooldownUntilUtc = null;
+        record.LastFailureCode = string.Empty;
+        record.ConsecutiveFailureCount = 0;
         record.UpdatedAtUtc = now;
 
         _credentials.Save(record);
@@ -105,6 +110,8 @@ public sealed class ManagedAiService
             Label = record.Label,
             IsEnabled = record.IsEnabled,
             Priority = record.Priority,
+            CooldownUntilUtc = record.CooldownUntilUtc,
+            LastFailureCode = record.LastFailureCode,
             UpdatedAtUtc = record.UpdatedAtUtc
         };
     }
@@ -150,7 +157,7 @@ public sealed class ManagedAiService
     public async Task StreamChatAsync(HttpResponse response, DesktopAccountRecord account, DesktopAiChatRequestDto request, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        LogTiming(request, "provider_request_started", stopwatch);
+        LogTiming(request, "managed_request_started", stopwatch);
         EnsureManagedAccess(account, request.AllowPaidSessionExtension);
 
         if (string.IsNullOrWhiteSpace(request.Provider) || !ManagedAiCatalog.IsAllowedProvider(request.Provider))
@@ -183,24 +190,28 @@ public sealed class ManagedAiService
         CancellationTokenSource? firstTokenDeadline = null;
 
         Exception? lastError = null;
-        foreach (var credential in providerCredentials)
+        for (var credentialIndex = 0; credentialIndex < providerCredentials.Length; credentialIndex++)
         {
+            var credential = providerCredentials[credentialIndex];
+            var attempt = credentialIndex + 1;
             var streamWriter = new SseDeltaWriter(
                 response,
                 milestone => LogTiming(request, milestone, stopwatch),
                 () => firstTokenDeadline?.CancelAfter(Timeout.InfiniteTimeSpan));
             try
             {
+                LogProviderAttempt(request.Provider, request.Model, request.RequestId, request.RequestId, request.TurnId, attempt, credentialIndex + 1);
                 var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 firstTokenDeadline = deadline;
                 deadline.CancelAfter(FirstTokenDeadline);
                 await StreamProviderAsync(streamWriter, request, apiKey, deadline.Token);
                 await streamWriter.FlushAsync(cancellationToken);
+                RecordCredentialSuccess(credential);
                 _logger.LogInformation(
-                    "managed_ai_stream_completed service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} finish_reason={FinishReason} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} outcome={Outcome}",
-                    "phantom-windows-app-backend", "managed_ai", "provider_stream_completed", request.RequestId, request.TurnId,
-                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, streamWriter.FinishReason,
+                    "managed_ai_stream_completed service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} elapsed_ms={ElapsedMs} finish_reason={FinishReason} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_stream_completed", request.RequestId, request.RequestId, request.TurnId,
+                    request.Provider, request.Model, "managed", stopwatch.Elapsed.TotalMilliseconds, streamWriter.FinishReason,
                     streamWriter.ChunkCount, streamWriter.BufferedCharacters, streamWriter.FlushCount, "success");
                 await WriteSseDataAsync(response, "[DONE]", cancellationToken);
                 return;
@@ -208,25 +219,37 @@ public sealed class ManagedAiService
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !streamWriter.HasWritten)
             {
                 lastError = new TimeoutException("provider_first_token_timeout");
+                var failure = ProviderResiliencePolicy.Classify(lastError);
+                RecordCredentialFailure(credential, failure);
                 _logger.LogWarning(
-                    "managed_ai_first_token_timeout service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} outcome={Outcome}",
-                    "phantom-windows-app-backend", "managed_ai", "provider_first_token_timeout", request.RequestId, request.TurnId,
-                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, "first_token_timeout", "retry");
+                    "managed_ai_first_token_timeout service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} credential_slot={CredentialSlot} elapsed_ms={ElapsedMs} error_code={ErrorCode} failure_class={FailureClass} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_first_token_timeout", request.RequestId, request.RequestId, request.TurnId,
+                    request.Provider, request.Model, "managed", attempt, credentialIndex + 1, stopwatch.Elapsed.TotalMilliseconds,
+                    failure.ErrorCode, failure.Kind.ToString().ToLowerInvariant(), "retry");
+                if (!ProviderResiliencePolicy.CanRetry(failure, attempt, streamWriter.HasWritten))
+                    throw ManagedAiProviderException.FromFailure(lastError);
+                LogProviderRetry(request.Provider, request.Model, request.RequestId, request.RequestId, request.TurnId, attempt + 1, failure);
             }
             catch (Exception ex) when (ex is not BackendValidationException && ex is not OperationCanceledException)
             {
                 lastError = ex;
+                var failure = ProviderResiliencePolicy.Classify(ex);
+                RecordCredentialFailure(credential, failure);
                 _logger.LogWarning(
-                    "managed_ai_stream_failed service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} outcome={Outcome}",
-                    "phantom-windows-app-backend", "managed_ai", "provider_stream_failed", request.RequestId, request.TurnId,
-                    request.Provider, request.Model, stopwatch.Elapsed.TotalMilliseconds, StreamErrorCode(ex),
-                    streamWriter.ChunkCount, streamWriter.BufferedCharacters, "error");
+                    "managed_ai_stream_failed service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} credential_slot={CredentialSlot} elapsed_ms={ElapsedMs} error_code={ErrorCode} failure_class={FailureClass} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_ai", "provider_stream_failed", request.RequestId, request.RequestId, request.TurnId,
+                    request.Provider, request.Model, "managed", attempt, credentialIndex + 1, stopwatch.Elapsed.TotalMilliseconds,
+                    failure.ErrorCode, failure.Kind.ToString().ToLowerInvariant(), streamWriter.ChunkCount,
+                    streamWriter.BufferedCharacters, "error");
                 if (streamWriter.HasWritten || response.HasStarted)
                 {
                     await streamWriter.FlushAsync(cancellationToken);
                     await WriteSseJsonAsync(response, new { error = "The managed provider stream ended unexpectedly." }, cancellationToken);
                     return;
                 }
+                if (!ProviderResiliencePolicy.CanRetry(failure, attempt, streamWriter.HasWritten))
+                    throw ManagedAiProviderException.FromFailure(ex);
+                LogProviderRetry(request.Provider, request.Model, request.RequestId, request.RequestId, request.TurnId, attempt + 1, failure);
             }
         }
 
@@ -262,9 +285,9 @@ public sealed class ManagedAiService
     private void LogTiming(DesktopAiChatRequestDto request, string milestone, Stopwatch stopwatch)
     {
         _logger.LogInformation(
-            "managed_ai_milestone service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} stage={Stage} elapsed_ms={ElapsedMs} provider={Provider} model={Model} image_present={ImagePresent}",
-            "phantom-windows-app-backend", "managed_ai", "provider_milestone", request.RequestId, request.TurnId,
-            milestone, stopwatch.Elapsed.TotalMilliseconds, request.Provider, request.Model,
+            "managed_ai_milestone service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} stage={Stage} execution_lane={ExecutionLane} elapsed_ms={ElapsedMs} provider={Provider} model={Model} image_present={ImagePresent}",
+            "phantom-windows-app-backend", "managed_ai", milestone, request.RequestId, request.RequestId, request.TurnId,
+            milestone, "managed", stopwatch.Elapsed.TotalMilliseconds, request.Provider, request.Model,
             !string.IsNullOrWhiteSpace(request.ImageBase64));
     }
 
@@ -366,18 +389,27 @@ public sealed class ManagedAiService
 
     private ManagedProviderCredentialRecord[] GetEnabledProviderCredentials(string providerId)
     {
-        var providerCredentials = _credentials.ListByProvider(providerId)
+        var now = DateTime.UtcNow;
+        var enabled = _credentials.ListByProvider(providerId)
             .Where(item => item.IsEnabled)
             .OrderBy(item => item.Priority)
             .ThenByDescending(item => item.UpdatedAtUtc)
             .ToArray();
 
-        if (providerCredentials.Length == 0)
+        if (enabled.Length == 0)
         {
             throw new BackendValidationException($"No managed credentials are configured for {providerId}.");
         }
 
-        return providerCredentials;
+        var healthy = enabled
+            .Where(item => !item.CooldownUntilUtc.HasValue || item.CooldownUntilUtc.Value <= now)
+            .Take(ProviderResiliencePolicy.ManagedBackendMaxAttempts)
+            .ToArray();
+        if (healthy.Length > 0) return healthy;
+
+        var retryAfter = Math.Max(1, (int)Math.Ceiling(enabled.Min(item => item.CooldownUntilUtc!.Value).Subtract(now).TotalSeconds));
+        throw new ManagedAiProviderException(
+            "provider_credentials_cooling_down", true, retryAfterSeconds: retryAfter);
     }
 
     private async Task<string> GenerateProviderResponseWithFallbackAsync(
@@ -389,14 +421,18 @@ public sealed class ManagedAiService
         int maxOutputTokens = 64)
     {
         var providerCredentials = GetEnabledProviderCredentials(providerId);
+        var operationId = Guid.NewGuid().ToString("N");
         Exception? lastError = null;
 
-        foreach (var credential in providerCredentials)
+        for (var credentialIndex = 0; credentialIndex < providerCredentials.Length; credentialIndex++)
         {
+            var credential = providerCredentials[credentialIndex];
+            var attempt = credentialIndex + 1;
             try
             {
+                LogProviderAttempt(providerId, modelId, string.Empty, operationId, string.Empty, attempt, credentialIndex + 1);
                 var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                return await GenerateProviderResponseAsync(
+                var result = await GenerateProviderResponseAsync(
                     providerId,
                     modelId,
                     messages,
@@ -404,6 +440,8 @@ public sealed class ManagedAiService
                     apiKey,
                     cancellationToken,
                     maxOutputTokens);
+                RecordCredentialSuccess(credential);
+                return result;
             }
             catch (OperationCanceledException)
             {
@@ -412,10 +450,65 @@ public sealed class ManagedAiService
             catch (Exception ex) when (ex is not BackendValidationException)
             {
                 lastError = ex;
+                var failure = ProviderResiliencePolicy.Classify(ex);
+                RecordCredentialFailure(credential, failure);
+                if (!ProviderResiliencePolicy.CanRetry(failure, attempt, hasOutput: false))
+                    throw ManagedAiProviderException.FromFailure(ex);
+                LogProviderRetry(providerId, modelId, string.Empty, operationId, string.Empty, attempt + 1, failure);
             }
         }
 
         throw lastError ?? new InvalidOperationException("Managed AI request failed.");
+    }
+
+    private void RecordCredentialFailure(ManagedProviderCredentialRecord credential, ProviderFailureDecision failure)
+    {
+        if (!failure.CanRotateCredential || failure.Cooldown <= TimeSpan.Zero) return;
+        try
+        {
+            _credentials.RecordFailure(credential.CredentialId, failure.ErrorCode, DateTime.UtcNow.Add(failure.Cooldown));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "managed_ai_credential_health_write_failed service={Service} component={Component} event={Event} provider={Provider} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "credential_health_write_failed", credential.ProviderId,
+                "credential_health_store_failed", "degraded");
+        }
+    }
+
+    private void RecordCredentialSuccess(ManagedProviderCredentialRecord credential)
+    {
+        if (!credential.CooldownUntilUtc.HasValue && credential.ConsecutiveFailureCount == 0 && string.IsNullOrEmpty(credential.LastFailureCode)) return;
+        try { _credentials.RecordSuccess(credential.CredentialId); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "managed_ai_credential_health_write_failed service={Service} component={Component} event={Event} provider={Provider} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "credential_health_write_failed", credential.ProviderId,
+                "credential_health_store_failed", "degraded");
+        }
+    }
+
+    private void LogProviderAttempt(string provider, string model, string requestId, string operationId, string turnId, int attempt, int credentialSlot)
+    {
+        _logger.LogInformation(
+            "managed_ai_attempt service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} credential_slot={CredentialSlot} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_ai", "provider_attempt_started", requestId, operationId, turnId,
+            provider, model, "managed", attempt, credentialSlot, "started");
+    }
+
+    private void LogProviderRetry(string provider, string model, string requestId, string operationId, string turnId, int nextAttempt, ProviderFailureDecision failure)
+    {
+        _logger.LogWarning(
+            "managed_ai_retry service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} error_code={ErrorCode} failure_class={FailureClass} cooldown_ms={CooldownMs} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_ai", "provider_retry_started", requestId, operationId, turnId,
+            provider, model, "managed", nextAttempt, failure.ErrorCode, failure.Kind.ToString().ToLowerInvariant(),
+            failure.Cooldown.TotalMilliseconds, "retry");
+        _logger.LogWarning(
+            "managed_ai_rotation service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} key_rotated={KeyRotated} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_ai", "provider_rotated", requestId, operationId, turnId,
+            provider, model, "managed", nextAttempt, true, "retry");
     }
 
     private async Task StreamProviderAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
@@ -423,9 +516,9 @@ public sealed class ManagedAiService
         RunOutputBudgetSelfCheck();
         var outputBudget = GetLiveOutputBudget(request.Messages);
         _logger.LogInformation(
-            "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} turn_id={TurnId} provider={Provider} model={Model} max_output_tokens={MaxOutputTokens} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
-            "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.TurnId,
-            request.Provider, request.Model, outputBudget, request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
+            "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} max_output_tokens={MaxOutputTokens} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
+            "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.RequestId, request.TurnId,
+            request.Provider, request.Model, "managed", outputBudget, request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
             request.Messages.Count, !string.IsNullOrWhiteSpace(request.ImageBase64));
         switch (request.Provider)
         {
@@ -1105,17 +1198,6 @@ public sealed class ManagedAiService
         var message = ex.Message?.Trim() ?? "Managed AI request failed.";
         var newlineIndex = message.IndexOfAny(['\r', '\n']);
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
-    }
-
-    private static string StreamErrorCode(Exception ex)
-    {
-        if (ex is ManagedAiProviderException providerError) return providerError.Code;
-        if (ex is OperationCanceledException) return "cancelled";
-        if (ex.Message.Contains("provider_output_truncated", StringComparison.Ordinal)) return "provider_output_truncated";
-        if (ex.Message.Contains("provider_stream_incomplete", StringComparison.Ordinal)) return "provider_stream_incomplete";
-        if (ex.Message.StartsWith("429", StringComparison.Ordinal)) return "rate_limited";
-        if (ex.Message.Length >= 3 && int.TryParse(ex.Message[..3], out var status)) return $"provider_{status / 100}xx";
-        return "provider_error";
     }
 
     private static int GetLiveOutputBudget(IReadOnlyList<DesktopAiChatMessageDto> messages)

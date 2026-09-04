@@ -118,6 +118,9 @@ namespace SecureOverlay.Services
         
         // Timestamp of last 429 error per provider (for logging)
         public Dictionary<string, DateTime> Last429Time { get; set; } = new Dictionary<string, DateTime>();
+
+        // Provider/key-index cooldowns contain no API-key material and are safe to persist.
+        public Dictionary<string, DateTime> KeyCooldownUntilUtc { get; set; } = new Dictionary<string, DateTime>();
     }
 
     // ═══════════════════════════════════════════════════════════════

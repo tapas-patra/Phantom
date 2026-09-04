@@ -43,7 +43,8 @@
     "max_output_tokens", "recent_turn_count", "snippet_count", "image_present", "status_class", "search_mode",
     "cache_hit", "candidate_count", "transcript_length_bucket", "duplicate_suppression_count", "chunk_count",
     "buffered_characters", "flush_count", "render_ms", "retrieval_status", "finish_reason", "input_type",
-    "model_call_count"
+    "model_call_count", "execution_lane", "usage_source", "cross_lane_fallback", "retry_reason_code",
+    "key_rotated", "failure_class", "credential_slot", "cooldown_ms", "retry_after_s"
   ],
   "backendLoggingAllowlist": [
     "timestamp_utc", "level", "service", "component", "category", "event", "event_id", "correlation_id", "operation_id",
@@ -55,6 +56,7 @@
     "transcript_length_bucket", "duplicate_suppression_count", "finish_reason", "chunk_count",
     "buffered_characters", "flush_count", "render_ms", "retrieval_status", "input_type", "model_call_count",
     "batch_count", "environment",
-    "database_configured", "authority_configured"
+    "database_configured", "authority_configured", "execution_lane", "usage_source", "cross_lane_fallback",
+    "retry_reason_code", "key_rotated", "failure_class", "credential_slot", "cooldown_ms", "retry_after_s"
   ]
 }

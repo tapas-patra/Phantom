@@ -7,5 +7,7 @@ public sealed class ManagedAiProviderKeyDto
     public string Label { get; set; } = string.Empty;
     public bool IsEnabled { get; set; }
     public int Priority { get; set; }
+    public DateTime? CooldownUntilUtc { get; set; }
+    public string LastFailureCode { get; set; } = string.Empty;
     public DateTime UpdatedAtUtc { get; set; }
 }

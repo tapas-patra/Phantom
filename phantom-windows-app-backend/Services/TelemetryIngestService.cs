@@ -21,7 +21,8 @@ public sealed class TelemetryIngestService
         "validation_outcome", "estimated_input_tokens", "max_output_tokens", "recent_turn_count", "snippet_count",
         "image_present", "status_class", "search_mode", "cache_hit", "candidate_count", "transcript_length_bucket",
         "duplicate_suppression_count", "chunk_count", "buffered_characters", "flush_count", "render_ms", "retrieval_status", "finish_reason",
-        "input_type", "model_call_count"
+        "input_type", "model_call_count", "execution_lane", "usage_source", "cross_lane_fallback",
+        "retry_reason_code", "key_rotated"
     };
     private static readonly string[] SensitiveKeyFragments =
     {
@@ -92,11 +93,11 @@ public sealed class TelemetryIngestService
         if (accepted && !duplicate && string.Equals(request.Category, "live_copilot", StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "desktop_telemetry service={Service} component={Component} category={Category} event={Event} event_id={EventId} session_id={SessionId} turn_id={TurnId} operation_id={OperationId} mode={Mode} delivery_style={DeliveryStyle} stage={Stage} provider={Provider} model={Model} model_call={ModelCall} attempt={Attempt} outcome={Outcome} error_code={ErrorCode} elapsed_ms={ElapsedMs} question_type={QuestionType} action={Action} answer_basis={AnswerBasis} retrieval_status={RetrievalStatus} snippet_count={SnippetCount} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} finish_reason={FinishReason}",
+                "desktop_telemetry service={Service} component={Component} category={Category} event={Event} event_id={EventId} session_id={SessionId} turn_id={TurnId} operation_id={OperationId} mode={Mode} delivery_style={DeliveryStyle} stage={Stage} provider={Provider} model={Model} execution_lane={ExecutionLane} usage_source={UsageSource} model_call={ModelCall} attempt={Attempt} outcome={Outcome} error_code={ErrorCode} elapsed_ms={ElapsedMs} question_type={QuestionType} action={Action} answer_basis={AnswerBasis} retrieval_status={RetrievalStatus} snippet_count={SnippetCount} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} flush_count={FlushCount} finish_reason={FinishReason}",
                 "phantom-windows-app-backend", "desktop_telemetry",
                 request.Category, Safe(request.EventName), string.IsNullOrEmpty(request.EventId) ? string.Empty : request.EventId,
                 Value("session_id"), Value("turn_id"), Value("operation_id"), Value("mode"), Value("delivery_style"), Value("stage"),
-                Value("provider"), Value("model"), Value("model_call"), Value("attempt"), Value("outcome"), Value("error_code"), Value("elapsed_ms"),
+                Value("provider"), Value("model"), Value("execution_lane"), Value("usage_source"), Value("model_call"), Value("attempt"), Value("outcome"), Value("error_code"), Value("elapsed_ms"),
                 Value("question_type"), Value("action"), Value("answer_basis"), Value("retrieval_status"), Value("snippet_count"),
                 Value("chunk_count"), Value("buffered_characters"), Value("flush_count"), Value("finish_reason"));
         }

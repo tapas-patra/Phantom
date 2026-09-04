@@ -145,6 +145,34 @@
     { "name": "retry-chain", "events": ["model_call_started", "provider_retry_started", "provider_rotated", "answer_completed"], "sameTurn": true, "sameOperation": true, "terminalEvents": 1 },
     { "name": "cancel-chain", "events": ["request_dispatched", "turn_cancelled"], "terminalEvents": 1 }
   ],
+  "resilience": {
+    "managedBackendMaxAttempts": 2,
+    "managedDesktopMaxAttempts": 1,
+    "byoDesktopMaxAttempts": 2,
+    "classification": [
+      { "name": "rate-limit-status", "statusCode": 429, "message": "", "expectedKind": "rate_limited", "cooldownSeconds": 300 },
+      { "name": "quota-message", "statusCode": null, "message": "resource_exhausted quota", "expectedKind": "rate_limited", "cooldownSeconds": 300 },
+      { "name": "invalid-key", "statusCode": 401, "message": "", "expectedKind": "authentication_failed", "cooldownSeconds": 86400 },
+      { "name": "upstream-unavailable", "statusCode": 503, "message": "", "expectedKind": "provider_transient", "cooldownSeconds": 30 },
+      { "name": "network-timeout", "statusCode": null, "message": "network connection timed out", "expectedKind": "provider_transient", "cooldownSeconds": 30 },
+      { "name": "bad-request", "statusCode": 400, "message": "invalid request", "expectedKind": "provider_error", "cooldownSeconds": 0 },
+      { "name": "cancelled", "statusCode": null, "message": "request cancelled", "expectedKind": "cancelled", "cooldownSeconds": 0 }
+    ],
+    "retry": [
+      { "name": "backend-rotates-before-output", "lane": "managed_backend", "failureKind": "rate_limited", "attempt": 1, "hasOutput": false, "expected": true },
+      { "name": "backend-stops-at-two", "lane": "managed_backend", "failureKind": "provider_transient", "attempt": 2, "hasOutput": false, "expected": false },
+      { "name": "desktop-never-amplifies-managed", "lane": "managed_desktop", "failureKind": "provider_transient", "attempt": 1, "hasOutput": false, "expected": false },
+      { "name": "byo-rotates-before-output", "lane": "byo", "failureKind": "authentication_failed", "attempt": 1, "hasOutput": false, "expected": true },
+      { "name": "no-replay-after-output", "lane": "byo", "failureKind": "rate_limited", "attempt": 1, "hasOutput": true, "expected": false },
+      { "name": "terminal-never-retries", "lane": "byo", "failureKind": "provider_error", "attempt": 1, "hasOutput": false, "expected": false }
+    ],
+    "laneTransitions": [
+      { "name": "explicit-byo-extension", "from": "byo", "to": "managed_extension", "optedIn": true, "hasOutput": false, "expected": true },
+      { "name": "no-silent-charge", "from": "byo", "to": "managed_extension", "optedIn": false, "hasOutput": false, "expected": false },
+      { "name": "no-cross-lane-replay", "from": "byo", "to": "managed_extension", "optedIn": true, "hasOutput": true, "expected": false },
+      { "name": "managed-never-falls-into-byo", "from": "managed", "to": "byo", "optedIn": true, "hasOutput": false, "expected": false }
+    ]
+  },
   "sensitiveSamples": [
     "Tell me about the private payment migration",
     "sk-live-secret-value",

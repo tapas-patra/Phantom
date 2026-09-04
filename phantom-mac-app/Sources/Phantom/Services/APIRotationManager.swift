@@ -2,9 +2,6 @@ import Foundation
 
 @MainActor
 final class APIRotationManager {
-    enum FailureKind: Equatable { case rateLimited, authentication, retryable, terminal }
-
-    private var rateLimited: [String: Set<Int>] = [:]
     private var conversationModelIndex: [String: Int] = [:]
 
     func keys(for provider: String) -> [String] {
@@ -45,7 +42,7 @@ final class APIRotationManager {
         let values = keys(for: provider)
         guard !values.isEmpty else { return nil }
         let invalid = invalidIndexes(provider)
-        let temporary = rateLimitedIndexes(provider)
+        let temporary = cooldownIndexes(provider)
         let saved = UserDefaults.standard.integer(forKey: indexName(provider))
         if values.indices.contains(saved), !invalid.contains(saved), !temporary.contains(saved) {
             return (saved, values[saved])
@@ -57,7 +54,7 @@ final class APIRotationManager {
         let values = keys(for: provider)
         guard !values.isEmpty else { return nil }
         let invalid = invalidIndexes(provider)
-        var temporary = rateLimitedIndexes(provider)
+        let temporary = cooldownIndexes(provider)
         let last = UserDefaults.standard.object(forKey: indexName(provider)) == nil
             ? -1
             : UserDefaults.standard.integer(forKey: indexName(provider))
@@ -68,23 +65,14 @@ final class APIRotationManager {
                 return (index, values[index])
             }
         }
-        if !temporary.isEmpty {
-            temporary.removeAll()
-            rateLimited[provider] = temporary
-            UserDefaults.standard.removeObject(forKey: rateLimitName(provider))
-            UserDefaults.standard.removeObject(forKey: rateLimitDateName(provider))
-            return nextKey(provider: provider)
-        }
         return nil
     }
 
     func markRateLimited(provider: String, index: Int) {
-        rateLimited[provider, default: []].insert(index)
-        UserDefaults.standard.set(Array(rateLimited[provider, default: []]), forKey: rateLimitName(provider))
-        UserDefaults.standard.set(Date(), forKey: rateLimitDateName(provider))
+        markCooldown(provider: provider, index: index, seconds: 5 * 60)
     }
     func clearRateLimits(provider: String) {
-        rateLimited[provider] = []
+        UserDefaults.standard.removeObject(forKey: cooldownName(provider))
         UserDefaults.standard.removeObject(forKey: rateLimitName(provider))
         UserDefaults.standard.removeObject(forKey: rateLimitDateName(provider))
     }
@@ -98,7 +86,7 @@ final class APIRotationManager {
     func availableKeyCount(provider: String) -> Int {
         let count = keys(for: provider).count
         return (0..<count).filter {
-            !invalidIndexes(provider).contains($0) && !rateLimitedIndexes(provider).contains($0)
+            !invalidIndexes(provider).contains($0) && !cooldownIndexes(provider).contains($0)
         }.count
     }
 
@@ -126,25 +114,36 @@ final class APIRotationManager {
 
     func resetConversation() {
         conversationModelIndex.removeAll()
-        rateLimited.removeAll()
     }
 
-    func classify(_ error: Error) -> FailureKind {
-        let message = error.localizedDescription.lowercased()
+    func classify(_ error: Error) -> ProviderFailureDecision {
         let status: Int? = {
             if let value = (error as? BYOError)?.statusCode { return value }
             if let backend = error as? BackendError, case .http(let value, _) = backend { return value }
             return nil
         }()
-        if status == 429 || ["rate_limit", "ratelimit", "too many requests", "quota", "resource_exhausted"].contains(where: message.contains) { return .rateLimited }
-        if status == 401 || status == 403 || (message.contains("invalid") && message.contains("key")) { return .authentication }
-        if [408, 500, 502, 503, 504].contains(status ?? 0)
-            || ["timeout", "overloaded", "capacity", "network"].contains(where: message.contains) { return .retryable }
-        return .terminal
+        return ProviderResiliencePolicy.classify(statusCode: status, message: error.localizedDescription)
+    }
+
+    func recordFailure(provider: String, index: Int, decision: ProviderFailureDecision) {
+        switch decision.kind {
+        case .authentication: markInvalid(provider: provider, index: index)
+        case .rateLimited, .transient: markCooldown(provider: provider, index: index, seconds: decision.cooldown)
+        case .terminal, .cancelled: break
+        }
+    }
+
+    func recordSuccess(provider: String, index: Int) {
+        var values = cooldowns(provider)
+        if values.removeValue(forKey: String(index)) != nil {
+            UserDefaults.standard.set(values, forKey: cooldownName(provider))
+        }
     }
 
     private func clearFailures(_ provider: String) {
-        rateLimited[provider] = []
+        UserDefaults.standard.removeObject(forKey: cooldownName(provider))
+        UserDefaults.standard.removeObject(forKey: rateLimitName(provider))
+        UserDefaults.standard.removeObject(forKey: rateLimitDateName(provider))
         UserDefaults.standard.removeObject(forKey: invalidName(provider))
         UserDefaults.standard.removeObject(forKey: indexName(provider))
     }
@@ -153,18 +152,36 @@ final class APIRotationManager {
         Set(UserDefaults.standard.array(forKey: invalidName(provider)) as? [Int] ?? [])
     }
 
-    private func rateLimitedIndexes(_ provider: String) -> Set<Int> {
-        if let date = UserDefaults.standard.object(forKey: rateLimitDateName(provider)) as? Date,
-           Date().timeIntervalSince(date) < 60 * 60 {
-            return rateLimited[provider] ?? Set(UserDefaults.standard.array(forKey: rateLimitName(provider)) as? [Int] ?? [])
+    private func cooldownIndexes(_ provider: String) -> Set<Int> {
+        var values = cooldowns(provider)
+        if values.isEmpty,
+           let legacy = UserDefaults.standard.array(forKey: rateLimitName(provider)) as? [Int],
+           let date = UserDefaults.standard.object(forKey: rateLimitDateName(provider)) as? Date {
+            let expiry = date.addingTimeInterval(5 * 60).timeIntervalSince1970
+            legacy.forEach { values[String($0)] = expiry }
+            UserDefaults.standard.removeObject(forKey: rateLimitName(provider))
+            UserDefaults.standard.removeObject(forKey: rateLimitDateName(provider))
         }
-        clearRateLimits(provider: provider)
-        return []
+        let now = Date().timeIntervalSince1970
+        values = values.filter { $0.value > now }
+        UserDefaults.standard.set(values, forKey: cooldownName(provider))
+        return Set(values.keys.compactMap(Int.init))
+    }
+
+    private func markCooldown(provider: String, index: Int, seconds: TimeInterval) {
+        var values = cooldowns(provider)
+        values[String(index)] = Date().addingTimeInterval(seconds).timeIntervalSince1970
+        UserDefaults.standard.set(values, forKey: cooldownName(provider))
+    }
+
+    private func cooldowns(_ provider: String) -> [String: Double] {
+        UserDefaults.standard.dictionary(forKey: cooldownName(provider)) as? [String: Double] ?? [:]
     }
 
     private func keyName(_ provider: String, _ index: Int) -> String { "provider.\(provider.lowercased()).apiKey.\(index)" }
     private func indexName(_ provider: String) -> String { "rotation.\(provider.lowercased()).lastKey" }
     private func invalidName(_ provider: String) -> String { "rotation.\(provider.lowercased()).invalidKeys" }
+    private func cooldownName(_ provider: String) -> String { "rotation.\(provider.lowercased()).cooldowns" }
     private func rateLimitName(_ provider: String) -> String { "rotation.\(provider.lowercased()).rateLimitedKeys" }
     private func rateLimitDateName(_ provider: String) -> String { "rotation.\(provider.lowercased()).last429" }
 }

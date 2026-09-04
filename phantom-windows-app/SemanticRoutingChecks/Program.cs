@@ -3,6 +3,7 @@ using SecureOverlay.Domain;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Helpers;
 using SecureOverlay.Services;
+using BackendPolicy = Phantom.WindowsApp.Backend.Services.ProviderResiliencePolicy;
 
 var fixtures = JsonSerializer.Deserialize<FixtureRoot>(File.ReadAllText(FindFixtures()), new JsonSerializerOptions
 {
@@ -45,6 +46,32 @@ if (fixtures.Contracts.Any(x => x.MaxNormalCalls is < 1 or > 2))
     throw new InvalidOperationException("A fixture permits an invalid normal model-call count.");
 if (fixtures.Logging.Count < 4 || fixtures.Logging.Any(x => x.TerminalEvents != 1))
     throw new InvalidOperationException("Logging correlation fixtures are incomplete.");
+Equal(fixtures.Resilience.ManagedBackendMaxAttempts.ToString(), BackendPolicy.ManagedBackendMaxAttempts.ToString(), "backend max attempts");
+Equal(fixtures.Resilience.ManagedDesktopMaxAttempts.ToString(), ProviderResiliencePolicy.ManagedDesktopMaxAttempts.ToString(), "managed desktop max attempts");
+Equal(fixtures.Resilience.ByoDesktopMaxAttempts.ToString(), ProviderResiliencePolicy.ByoDesktopMaxAttempts.ToString(), "BYO desktop max attempts");
+foreach (var fixture in fixtures.Resilience.Classification)
+{
+    var input = fixture.StatusCode?.ToString() ?? fixture.Message;
+    var desktop = ProviderResiliencePolicy.Classify(input);
+    Equal(fixture.ExpectedKind, FailureName(desktop.Kind), fixture.Name + " desktop kind");
+    Equal(fixture.CooldownSeconds.ToString(), ((int)desktop.Cooldown.TotalSeconds).ToString(), fixture.Name + " desktop cooldown");
+    var backend = BackendPolicy.Classify(BackendFixtureError(fixture));
+    Equal(fixture.ExpectedKind, BackendFailureName(backend.Kind), fixture.Name + " backend kind");
+    Equal(fixture.CooldownSeconds.ToString(), ((int)backend.Cooldown.TotalSeconds).ToString(), fixture.Name + " backend cooldown");
+}
+foreach (var fixture in fixtures.Resilience.Retry)
+{
+    var failure = Failure(fixture.FailureKind);
+    var actual = fixture.Lane switch
+    {
+        "managed_backend" => BackendPolicy.CanRetry(BackendFailure(fixture.FailureKind), fixture.Attempt, fixture.HasOutput),
+        "managed_desktop" => ProviderResiliencePolicy.CanRetry(failure, fixture.Attempt, ProviderResiliencePolicy.ManagedDesktopMaxAttempts, fixture.HasOutput),
+        _ => ProviderResiliencePolicy.CanRetry(failure, fixture.Attempt, ProviderResiliencePolicy.ByoDesktopMaxAttempts, fixture.HasOutput)
+    };
+    Equal(fixture.Expected.ToString(), actual.ToString(), fixture.Name);
+}
+foreach (var fixture in fixtures.Resilience.LaneTransitions)
+    Equal(fixture.Expected.ToString(), ProviderResiliencePolicy.CanCrossLane(fixture.From, fixture.To, fixture.OptedIn, fixture.HasOutput).ToString(), fixture.Name);
 var firstCallPrompt = CopilotPromptRegistry.BuildFirstCallPrompt(
     CopilotMode.Interview, InterviewDeliveryStyle.Standard, null, string.Empty, string.Empty,
     Array.Empty<RetrievedContextSnippet>());
@@ -130,6 +157,54 @@ static void Equal(string expected, string actual, string label)
         throw new InvalidOperationException($"{label}: expected '{expected}', got '{actual}'.");
 }
 
+static string FailureName(ProviderFailureKind kind) => kind switch
+{
+    ProviderFailureKind.RateLimited => "rate_limited",
+    ProviderFailureKind.Authentication => "authentication_failed",
+    ProviderFailureKind.Transient => "provider_transient",
+    ProviderFailureKind.Cancelled => "cancelled",
+    _ => "provider_error"
+};
+
+static string BackendFailureName(Phantom.WindowsApp.Backend.Services.ProviderFailureKind kind) => kind switch
+{
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.RateLimited => "rate_limited",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Authentication => "authentication_failed",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Transient => "provider_transient",
+    Phantom.WindowsApp.Backend.Services.ProviderFailureKind.Cancelled => "cancelled",
+    _ => "provider_error"
+};
+
+static ProviderFailureDecision Failure(string kind) => kind switch
+{
+    "rate_limited" => ProviderResiliencePolicy.Classify("429"),
+    "authentication_failed" => ProviderResiliencePolicy.Classify("401"),
+    "provider_transient" => ProviderResiliencePolicy.Classify("503"),
+    "cancelled" => ProviderResiliencePolicy.Classify("cancelled"),
+    _ => ProviderResiliencePolicy.Classify("400")
+};
+
+static Phantom.WindowsApp.Backend.Services.ProviderFailureDecision BackendFailure(string kind) => kind switch
+{
+    "rate_limited" => BackendPolicy.FromStatus(429),
+    "authentication_failed" => BackendPolicy.FromStatus(401),
+    "provider_transient" => BackendPolicy.FromStatus(503),
+    "cancelled" => BackendPolicy.FromStatus(null, "cancelled"),
+    _ => BackendPolicy.FromStatus(400)
+};
+
+static Exception BackendFixtureError(FailureFixture fixture)
+{
+    if (fixture.StatusCode.HasValue)
+        return new Phantom.WindowsApp.Backend.Services.ManagedAiProviderException(
+            $"provider_{fixture.StatusCode / 100}xx",
+            fixture.StatusCode == 429 || fixture.StatusCode >= 500,
+            providerStatusCode: fixture.StatusCode);
+    if (fixture.Name == "network-timeout") return new HttpRequestException(fixture.Message);
+    if (fixture.Name == "cancelled") return new OperationCanceledException(fixture.Message);
+    return new InvalidOperationException(fixture.Message);
+}
+
 sealed class FixtureRoot
 {
     public string Version { get; set; } = "";
@@ -138,6 +213,7 @@ sealed class FixtureRoot
     public List<AnswerCompletionFixture> AnswerCompletion { get; set; } = new();
     public List<ContractFixture> Contracts { get; set; } = new();
     public List<LoggingFixture> Logging { get; set; } = new();
+    public ResilienceFixture Resilience { get; set; } = new();
     public List<string> PromptRequirements { get; set; } = new();
     public string RepairPromptSuffix { get; set; } = "";
     public List<string> SensitiveSamples { get; set; } = new();
@@ -155,3 +231,15 @@ sealed class InvalidFixture { public string Name { get; set; } = ""; public stri
 sealed class AnswerCompletionFixture { public string Name { get; set; } = ""; public string Body { get; set; } = ""; public bool ExpectedComplete { get; set; } }
 sealed class ContractFixture { public int Id { get; set; } public string Mode { get; set; } = ""; public int MaxNormalCalls { get; set; } }
 sealed class LoggingFixture { public string Name { get; set; } = ""; public int TerminalEvents { get; set; } }
+sealed class ResilienceFixture
+{
+    public int ManagedBackendMaxAttempts { get; set; }
+    public int ManagedDesktopMaxAttempts { get; set; }
+    public int ByoDesktopMaxAttempts { get; set; }
+    public List<FailureFixture> Classification { get; set; } = new();
+    public List<RetryFixture> Retry { get; set; } = new();
+    public List<LaneFixture> LaneTransitions { get; set; } = new();
+}
+sealed class FailureFixture { public string Name { get; set; } = ""; public int? StatusCode { get; set; } public string Message { get; set; } = ""; public string ExpectedKind { get; set; } = ""; public int CooldownSeconds { get; set; } }
+sealed class RetryFixture { public string Name { get; set; } = ""; public string Lane { get; set; } = ""; public string FailureKind { get; set; } = ""; public int Attempt { get; set; } public bool HasOutput { get; set; } public bool Expected { get; set; } }
+sealed class LaneFixture { public string Name { get; set; } = ""; public string From { get; set; } = ""; public string To { get; set; } = ""; public bool OptedIn { get; set; } public bool HasOutput { get; set; } public bool Expected { get; set; } }

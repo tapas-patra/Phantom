@@ -142,6 +142,7 @@ namespace SecureOverlay.Services
                 }
 
                 var fullResponse = new StringBuilder();
+                var completed = false;
 
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
@@ -163,6 +164,8 @@ namespace SecureOverlay.Services
                         try
                         {
                             dynamic? chunk = JsonConvert.DeserializeObject(data);
+                            var finishReason = chunk?.candidates[0]?.finishReason?.ToString();
+                            if (string.Equals(finishReason, "STOP", StringComparison.OrdinalIgnoreCase)) completed = true;
                             var delta = chunk?.candidates[0]?.content?.parts[0]?.text?.ToString();
 
                             if (!string.IsNullOrEmpty(delta))
@@ -178,6 +181,7 @@ namespace SecureOverlay.Services
                     }
                 }
 
+                if (!completed) return "Error: provider_stream_incomplete";
                 return fullResponse.ToString();
             }
             catch (OperationCanceledException)

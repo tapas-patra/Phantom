@@ -290,6 +290,17 @@ enum PhantomMain {
         struct AnswerCompletionFixture: Decodable { let name: String; let body: String; let expectedComplete: Bool }
         struct ContractFixture: Decodable { let id: Int; let mode: String; let maxNormalCalls: Int }
         struct LoggingFixture: Decodable { let name: String; let terminalEvents: Int }
+        struct FailureFixture: Decodable { let name: String; let statusCode: Int?; let message: String; let expectedKind: String; let cooldownSeconds: Int }
+        struct RetryFixture: Decodable { let name: String; let lane: String; let failureKind: String; let attempt: Int; let hasOutput: Bool; let expected: Bool }
+        struct LaneFixture: Decodable { let name: String; let from: String; let to: String; let optedIn: Bool; let hasOutput: Bool; let expected: Bool }
+        struct ResilienceFixture: Decodable {
+            let managedBackendMaxAttempts: Int
+            let managedDesktopMaxAttempts: Int
+            let byoDesktopMaxAttempts: Int
+            let classification: [FailureFixture]
+            let retry: [RetryFixture]
+            let laneTransitions: [LaneFixture]
+        }
         struct Root: Decodable {
             let version: String
             let parser: [ParserFixture]
@@ -297,6 +308,7 @@ enum PhantomMain {
             let answerCompletion: [AnswerCompletionFixture]
             let contracts: [ContractFixture]
             let logging: [LoggingFixture]
+            let resilience: ResilienceFixture
             let promptRequirements: [String]
             let repairPromptSuffix: String
             let sensitiveSamples: [String]
@@ -310,6 +322,25 @@ enum PhantomMain {
         precondition(Set(fixtures.contracts.filter { $0.mode == "interview" }.map(\.id)).isSuperset(of: Set(1...26)))
         precondition(fixtures.contracts.allSatisfy { (1...2).contains($0.maxNormalCalls) })
         precondition(fixtures.logging.count >= 4 && fixtures.logging.allSatisfy { $0.terminalEvents == 1 })
+        precondition(fixtures.resilience.managedBackendMaxAttempts == 2)
+        precondition(fixtures.resilience.managedDesktopMaxAttempts == ProviderResiliencePolicy.managedDesktopMaxAttempts)
+        precondition(fixtures.resilience.byoDesktopMaxAttempts == ProviderResiliencePolicy.byoDesktopMaxAttempts)
+        for fixture in fixtures.resilience.classification {
+            let decision = ProviderResiliencePolicy.classify(statusCode: fixture.statusCode, message: fixture.message)
+            precondition(decision.kind.rawValue == fixture.expectedKind, fixture.name)
+            precondition(Int(decision.cooldown) == fixture.cooldownSeconds, fixture.name)
+        }
+        for fixture in fixtures.resilience.retry {
+            let decision = resilienceDecision(fixture.failureKind)
+            let maxAttempts = fixture.lane == "managed_desktop"
+                ? ProviderResiliencePolicy.managedDesktopMaxAttempts
+                : (fixture.lane == "managed_backend" ? fixtures.resilience.managedBackendMaxAttempts : ProviderResiliencePolicy.byoDesktopMaxAttempts)
+            let actual = ProviderResiliencePolicy.canRetry(decision, attempt: fixture.attempt, maxAttempts: maxAttempts, hasOutput: fixture.hasOutput)
+            precondition(actual == fixture.expected, fixture.name)
+        }
+        for fixture in fixtures.resilience.laneTransitions {
+            precondition(ProviderResiliencePolicy.canCrossLane(from: fixture.from, to: fixture.to, explicitlyOptedIn: fixture.optedIn, hasOutput: fixture.hasOutput) == fixture.expected, fixture.name)
+        }
         let firstCallPrompt = CopilotPrompt.firstCall(
             mode: .interview, style: .standard, knowledge: nil, resume: "",
             roleOrMeetingContext: "", activeEvidence: []
@@ -350,6 +381,16 @@ enum PhantomMain {
         let allowedFields = ["question_length_bucket", "provider", "model", "answer_basis"]
         for sample in fixtures.sensitiveSamples {
             precondition(!allowedFields.contains(where: { $0.contains(sample) }))
+        }
+
+        func resilienceDecision(_ kind: String) -> ProviderFailureDecision {
+            switch kind {
+            case "rate_limited": return ProviderResiliencePolicy.classify(statusCode: 429)
+            case "authentication_failed": return ProviderResiliencePolicy.classify(statusCode: 401)
+            case "provider_transient": return ProviderResiliencePolicy.classify(statusCode: 503)
+            case "cancelled": return ProviderResiliencePolicy.classify(message: "cancelled")
+            default: return ProviderResiliencePolicy.classify(statusCode: 400)
+            }
         }
     }
 

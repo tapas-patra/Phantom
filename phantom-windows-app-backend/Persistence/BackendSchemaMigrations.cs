@@ -26,7 +26,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("018_registration_settings", RegistrationSettingsSql),
         new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql),
         new SchemaMigration("020_hosted_kb_experience_cards", HostedKnowledgeBaseExperienceCardsSql),
-        new SchemaMigration("021_single_experience_current", SingleExperienceCurrentSql)
+        new SchemaMigration("021_single_experience_current", SingleExperienceCurrentSql),
+        new SchemaMigration("022_managed_ai_credential_health", ManagedAiCredentialHealthSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -43,6 +44,18 @@ ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_accepted_at_utc TIMESTAMPTZ NULL;
 ALTER TABLE desktop_accounts
     ADD COLUMN IF NOT EXISTS terms_version TEXT NOT NULL DEFAULT '';
+";
+
+    private const string ManagedAiCredentialHealthSql = @"
+ALTER TABLE managed_provider_credentials
+    ADD COLUMN IF NOT EXISTS cooldown_until_utc TIMESTAMPTZ NULL;
+ALTER TABLE managed_provider_credentials
+    ADD COLUMN IF NOT EXISTS last_failure_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_provider_credentials
+    ADD COLUMN IF NOT EXISTS consecutive_failure_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_managed_provider_credentials_health
+    ON managed_provider_credentials(provider_id, is_enabled, cooldown_until_utc, priority);
 ";
 
     private const string RegistrationSettingsSql = @"

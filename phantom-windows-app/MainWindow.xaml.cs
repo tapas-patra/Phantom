@@ -1225,40 +1225,6 @@ namespace SecureOverlay
                 : _rotationManager?.GetCurrentModel(provider) ?? string.Empty;
         }
 
-        private Func<IAIService?> CreateManagedRetryServiceFactory(string initialProvider, string initialModel)
-        {
-            var candidates = (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
-                .SelectMany(provider => (provider.Models ?? new List<ManagedAiModelOptionDto>())
-                    .Select(model => (Provider: provider.ProviderId, Model: model.ModelId)))
-                .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Provider) && !string.IsNullOrWhiteSpace(candidate.Model))
-                .Distinct()
-                .ToList();
-            if (candidates.Count == 0) candidates.Add((initialProvider, initialModel));
-
-            var index = candidates.FindIndex(candidate =>
-                string.Equals(candidate.Provider, initialProvider, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(candidate.Model, initialModel, StringComparison.OrdinalIgnoreCase));
-            if (index < 0)
-            {
-                candidates.Insert(0, (initialProvider, initialModel));
-                index = 0;
-            }
-
-            var nextIndex = index;
-            var allowPaidSessionExtension = _settings.AllowByoSessionExtension;
-            return () =>
-            {
-                nextIndex = (nextIndex + 1) % candidates.Count;
-                var candidate = candidates[nextIndex];
-                return new HostedManagedAiService(
-                    _authSessionRepository,
-                    _hostedRuntimeOptions,
-                    candidate.Provider,
-                    candidate.Model,
-                    allowPaidSessionExtension);
-            };
-        }
-
         private void SyncRuntimeWithCurrentCreditLane()
         {
             if (_currentAI == null)
@@ -1554,10 +1520,6 @@ namespace SecureOverlay
                     _settings.AllowByoSessionExtension);
 
             var modelConfig = GetModelConfigForCurrentSelection(runtimeProvider, runtimeModel);
-            Func<IAIService?>? managedRetryFactory = useByoRuntime
-                ? null
-                : CreateManagedRetryServiceFactory(runtimeProvider, runtimeModel);
-            
             Log.WriteLine($"Model config: {modelConfig.Name} ({modelConfig.MaxContextTokens} tokens)");
 
             if (_conversationManager != null)
@@ -1571,7 +1533,6 @@ namespace SecureOverlay
                     string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
                     string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
                 _conversationManager.SetRotationManager(rotationManager);
-                _conversationManager.SetRetryServiceFactory(managedRetryFactory);
                 
                 // Subscribe to API switch notifications
                 _conversationManager.APISwitchNotification += OnAPISwitchNotification;
@@ -1605,7 +1566,6 @@ namespace SecureOverlay
                         return await _hostedAccountClient.GetKnowledgeBaseAsync(session.AccessToken, cancellationToken);
                     },
                     () => !IsByoAccount() && HasPremiumManagedEntitlement());
-                _conversationManager.SetRetryServiceFactory(managedRetryFactory);
                 _conversationManager.ConfigureCopilot(
                     string.Equals(_settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase) ? CopilotMode.Briefing : CopilotMode.Interview,
                     string.Equals(_settings.InterviewDeliveryStyle, "Desi", StringComparison.OrdinalIgnoreCase) ? InterviewDeliveryStyle.Desi : InterviewDeliveryStyle.Standard);
@@ -1951,12 +1911,15 @@ namespace SecureOverlay
                 _nextRequestIsVoice,
                 _attachedScreenshot != null,
                 _settings.CopilotMode.ToLowerInvariant(),
-                _settings.InterviewDeliveryStyle.ToLowerInvariant());
+                _settings.InterviewDeliveryStyle.ToLowerInvariant(),
+                _currentAI is HostedManagedAiService ? "managed" : "byo",
+                DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI).ToString().ToLowerInvariant());
             _activeRequestTrace = requestTrace;
             TrackLiveCopilotAsync("request_dispatched", requestTrace, new Dictionary<string, string>
             {
                 ["stage"] = "dispatch", ["provider"] = requestTrace.Provider, ["model"] = requestTrace.Model,
-                ["image_present"] = requestTrace.HasImage.ToString().ToLowerInvariant()
+                ["image_present"] = requestTrace.HasImage.ToString().ToLowerInvariant(),
+                ["execution_lane"] = requestTrace.ExecutionLane, ["usage_source"] = requestTrace.UsageSource
             });
             _nextRequestIsVoice = false;
 
@@ -2166,13 +2129,24 @@ namespace SecureOverlay
                     !string.IsNullOrEmpty(error) &&
                     !string.Equals(error, "Cancelled", StringComparison.OrdinalIgnoreCase) &&
                     !(_currentAI is HostedManagedAiService) &&
-                    CanUseManagedExtensionFallbackForProvider(_settings.SelectedAI);
+                    CanUseManagedExtensionFallbackForProvider(_settings.SelectedAI) &&
+                    ProviderResiliencePolicy.CanCrossLane(
+                        "byo", "managed_extension", _settings.AllowByoSessionExtension,
+                        _conversationManager.LastOperationHadOutput);
 
                 if (canRetryWithManagedFallback)
                 {
                     Log.WriteLine($"BYO runtime failed for {_settings.SelectedAI}. Retrying same request with managed extension fallback.");
                     ForceManagedExtensionForCurrentProvider(_settings.SelectedAI);
                     _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
+                    requestTrace.SwitchLane(
+                        "managed_extension",
+                        DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI).ToString().ToLowerInvariant());
+                    TrackLiveCopilotAsync("execution_lane_changed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "fallback", ["execution_lane"] = requestTrace.ExecutionLane,
+                        ["usage_source"] = requestTrace.UsageSource, ["cross_lane_fallback"] = "true"
+                    });
 
                     lock (_streamBuffer)
                     {
@@ -3502,6 +3476,8 @@ namespace SecureOverlay
             fields["operation_id"] = trace.OperationId;
             fields["mode"] = trace.Mode;
             fields["delivery_style"] = trace.DeliveryStyle;
+            fields["execution_lane"] = trace.ExecutionLane;
+            fields["usage_source"] = trace.UsageSource;
             _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
         }
 

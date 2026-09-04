@@ -15,10 +15,15 @@ Useful searches:
 - `component=desktop_telemetry` — content-free macOS or Windows client milestones received by the authority backend.
 - `component=authority_client` — dashboard-to-authority attempts, retries, status class, and latency.
 - `component=telemetry` — aggregate telemetry batch persistence.
+- `event=provider_retry_started` — a retry stayed inside the selected execution lane.
+- `event=provider_rotated` — the next managed credential or local BYO key slot was selected; key values and stable BYO key identifiers are never emitted.
+- `event=execution_lane_changed` — an explicitly opted-in BYO request moved to managed extension before any provider output was received.
 
 For one live turn, search its `turn_id`. For one provider attempt, search its `operation_id` or `request_id`. The expected managed chain is:
 
 `request_started → provider_request_started → provider_headers_received → first_upstream_token → first_backend_sse_write → provider_stream_completed → request_completed`
+
+Managed desktop clients dispatch once; the authority backend owns at most two credential attempts and persists rate-limit, authentication, and transient cooldowns in PostgreSQL so multiple Render instances share health state. BYO calls never send their keys to Render: Windows stores them in its encrypted vault, macOS stores them in Keychain, and each native client performs at most two local attempts. Neither lane retries or crosses lanes after output begins. BYO-to-managed fallback requires the paid-extension opt-in and records the new usage segment before dispatch.
 
 If `provider_headers_received` is slow, the delay is connection/provider admission. If headers are fast but `first_upstream_token` is slow, it is provider generation latency. If backend writes quickly but `model_first_byte_received` is late, inspect the desktop control-frame/parser path.
 

@@ -490,19 +490,20 @@ namespace SecureOverlay
 
         private void TryActivateForCurrentPointer()
         {
-            if (!CanActivateCursor() || _parentWindow?.IsVisible != true)
+            if (!CanActivateCursor() || !IsPointerInsideParentWindow())
                 return;
 
-            POINT cursorPos;
-            if (!GetCursorPos(out cursorPos))
-                return;
+            ActivateCustomCursor();
+        }
+
+        public bool IsPointerInsideParentWindow()
+        {
+            if (_parentWindow?.IsVisible != true || !GetCursorPos(out var cursorPos))
+                return false;
 
             var local = _parentWindow.PointFromScreen(new Point(cursorPos.X, cursorPos.Y));
-            if (local.X >= 0 && local.Y >= 0 &&
-                local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight)
-            {
-                ActivateCustomCursor();
-            }
+            return local.X >= 0 && local.Y >= 0 &&
+                   local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight;
         }
 
         private void ResetCursorImmediately()

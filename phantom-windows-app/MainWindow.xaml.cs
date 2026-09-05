@@ -302,7 +302,11 @@ namespace SecureOverlay
                 _cursorManager?.SetApplicationFocusActive(true);
                 FocusInput();
             };
-            this.Deactivated += (s, e) => _cursorManager?.SetApplicationFocusActive(false);
+            this.Deactivated += (s, e) =>
+            {
+                SetChatCursorHidden(false);
+                _cursorManager?.SetApplicationFocusActive(false);
+            };
 
             this.MouseEnter += MainWindow_MouseEnter;
             this.MouseLeave += MainWindow_MouseLeave;
@@ -1328,6 +1332,11 @@ namespace SecureOverlay
         private void MainWindow_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
         {
             if (_isDraggingWindow)
+                return;
+
+            // WebView2 is a child HWND and can raise a WPF MouseLeave even though
+            // the pointer is still inside the outer Phantom window.
+            if (_cursorManager?.IsPointerInsideParentWindow() == true)
                 return;
 
             ResetEmbeddedCursorState();
@@ -2482,9 +2491,10 @@ namespace SecureOverlay
                 return;
             }
 
-            if (!_settings.UseFakeCursor)
+            if (!_settings.UseFakeCursor || _settings.ClickThroughEnabled || !IsActive)
             {
                 SetChatCursorHidden(false);
+                _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
                 return;
             }
 
@@ -2501,7 +2511,6 @@ namespace SecureOverlay
             {
                 SetChatCursorHidden(false);
                 _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
-                _cursorManager?.DeactivateCustomCursor();
                 return;
             }
 

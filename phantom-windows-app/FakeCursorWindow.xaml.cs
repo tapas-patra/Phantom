@@ -67,6 +67,7 @@ namespace SecureOverlay
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
 
         private System.Windows.Threading.DispatcherTimer? _cursorUpdateTimer;
         private IntPtr _lastCursorHandle = IntPtr.Zero;
@@ -74,10 +75,13 @@ namespace SecureOverlay
         private double _cursorScale = 1.0;
         private double _hotspotPixelX;
         private double _hotspotPixelY;
+        private readonly bool _captureProtected;
 
-        public FakeCursorWindow()
+        public FakeCursorWindow(bool captureProtected = false)
         {
             InitializeComponent();
+            _captureProtected = captureProtected;
+            ShowActivated = false;
             
             // Start timer to update cursor image
             _cursorUpdateTimer = new System.Windows.Threading.DispatcherTimer
@@ -87,7 +91,9 @@ namespace SecureOverlay
             _cursorUpdateTimer.Tick += UpdateCursorImage;
             _cursorUpdateTimer.Start();
             
-            Log.WriteLine("✓ Fake cursor window created (VISIBLE to screen share)");
+            Log.WriteLine(captureProtected
+                ? "✓ Protected live cursor window created (HIDDEN from screen share)"
+                : "✓ Fake cursor window created (VISIBLE to screen share)");
             Log.WriteLine("✓ Real-time cursor cloning enabled");
         }
 
@@ -285,7 +291,13 @@ namespace SecureOverlay
                     int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
                     exStyle |= WS_EX_TOOLWINDOW;
                     exStyle |= WS_EX_NOACTIVATE;
+                    exStyle |= WS_EX_TRANSPARENT;
                     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+                    if (_captureProtected)
+                    {
+                        WindowProtection.ApplyCaptureExclusion(hwnd);
+                    }
                     
                     Log.WriteLine("✓ Fake cursor window hidden from Task View");
                 }
@@ -313,8 +325,6 @@ namespace SecureOverlay
             {
                 this.Topmost = false;
                 this.Topmost = true;
-                this.Activate();
-                
                 Log.WriteLine("✓ Fake cursor window forced to top");
             }
         }

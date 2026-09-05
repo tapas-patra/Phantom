@@ -25,6 +25,7 @@ namespace SecureOverlay
 
         // Fake cursor window (visible to screen share)
         private FakeCursorWindow? _fakeCursorWindow;
+        private FakeCursorWindow? _protectedCursorWindow;
         private bool _useFakeCursor = true;
         private bool _clickThroughActive;
         private bool _applicationFocusActive;
@@ -95,12 +96,16 @@ namespace SecureOverlay
             {
                 CreateCustomCursor();
                 _fakeCursorWindow = new FakeCursorWindow();
+                _protectedCursorWindow = new FakeCursorWindow(captureProtected: true);
                 
                 // IMPORTANT: Show window once to initialize, then hide it
                 _fakeCursorWindow.Show();
                 _fakeCursorWindow.Hide();
+                _protectedCursorWindow.Show();
+                _protectedCursorWindow.Hide();
                 
                 _fakeCursorWindow.SetScale(fakeCursorSize);
+                _protectedCursorWindow.SetScale(1.0);
                 Log.WriteLine($"✓ Two-cursor system enabled (fake cursor size: {fakeCursorSize * 100:F0}%)");
             }
             else
@@ -239,6 +244,14 @@ namespace SecureOverlay
                     Log.WriteLine($"  Topmost: {_fakeCursorWindow.Topmost}");
                     Log.WriteLine($"  Opacity: {_fakeCursorWindow.Opacity}");
                 }
+
+                if (_protectedCursorWindow != null)
+                {
+                    _protectedCursorWindow.UpdateCursorImageNow();
+                    _protectedCursorWindow.Topmost = true;
+                    _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+                    _protectedCursorWindow.Show();
+                }
                 
                 // Hide system cursor
                 if (_parentWindow != null)
@@ -246,11 +259,9 @@ namespace SecureOverlay
                     _parentWindow.Cursor = System.Windows.Input.Cursors.None;
                 }
                 
-                // Show custom cursor
-                if (_cursorDot != null)
-                {
-                    _cursorDot.Visibility = Visibility.Visible;
-                }
+                // The moving cursor is a protected window so it also works over WebView2.
+                if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
+                if (_cursorBadge != null) _cursorBadge.Visibility = Visibility.Collapsed;
                 UpdateCursorVisualState();
                 
                 Log.WriteLine($"🖱️ Cursor locked at entry: ({cursorPos.X}, {cursorPos.Y})");
@@ -328,6 +339,8 @@ namespace SecureOverlay
                         Log.WriteLine("🖱️ Cursor unlocked at exit");
                     });
                 }
+
+                _protectedCursorWindow?.Hide();
                 
                 // Hide custom cursor immediately
                 if (_cursorDot != null)
@@ -351,6 +364,7 @@ namespace SecureOverlay
                 {
                     _fakeCursorWindow.Hide();
                 }
+                _protectedCursorWindow?.Hide();
                 if (_parentWindow != null)
                 {
                     _parentWindow.Cursor = null;
@@ -373,17 +387,13 @@ namespace SecureOverlay
 
         public void UpdateCustomCursorPosition(Point position)
         {
-            if (CanActivateCursor() && _cursorDot != null && _customCursorActive)
+            if (CanActivateCursor() && _customCursorActive)
             {
-                // Position custom cursor
-                Canvas.SetLeft(_cursorDot, position.X - 8);
-                Canvas.SetTop(_cursorDot, position.Y - 8);
-                if (_cursorBadge != null)
+                if (_protectedCursorWindow != null && GetCursorPos(out var cursorPos))
                 {
-                    Canvas.SetLeft(_cursorBadge, position.X - (_cursorBadge.Width / 2));
-                    Canvas.SetTop(_cursorBadge, position.Y - (_cursorBadge.Height / 2));
+                    _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
                 }
-                
+
                 // Update last position for smooth exit
                 UpdateLastCursorPosition();
             }
@@ -418,6 +428,13 @@ namespace SecureOverlay
         {
             if (_cursorDot == null || _cursorBadge == null || _cursorGlyph == null)
             {
+                return;
+            }
+
+            if (_protectedCursorWindow != null)
+            {
+                _cursorDot.Visibility = Visibility.Collapsed;
+                _cursorBadge.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -520,6 +537,11 @@ namespace SecureOverlay
                 _fakeCursorWindow.CancelAnimation();
                 _fakeCursorWindow.Hide();
             }
+            if (_protectedCursorWindow != null)
+            {
+                _protectedCursorWindow.CancelAnimation();
+                _protectedCursorWindow.Hide();
+            }
             if (_parentWindow != null) _parentWindow.Cursor = null;
         }
 
@@ -617,6 +639,19 @@ namespace SecureOverlay
                     finally
                     {
                         _fakeCursorWindow = null;
+                    }
+                }
+
+                if (_protectedCursorWindow != null)
+                {
+                    try
+                    {
+                        _protectedCursorWindow.Hide();
+                        _protectedCursorWindow.Close();
+                    }
+                    finally
+                    {
+                        _protectedCursorWindow = null;
                     }
                 }
                 

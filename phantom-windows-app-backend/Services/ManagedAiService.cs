@@ -83,6 +83,10 @@ public sealed class ManagedAiService
         var existing = !string.IsNullOrWhiteSpace(request.CredentialId)
             ? _credentials.FindById(request.CredentialId)
             : null;
+        if (existing != null && !string.Equals(existing.Workload, "chat", StringComparison.Ordinal))
+        {
+            throw new BackendValidationException("Credential belongs to a different workload.");
+        }
 
         var record = existing ?? new ManagedProviderCredentialRecord
         {
@@ -91,6 +95,7 @@ public sealed class ManagedAiService
                 : request.CredentialId,
             CreatedAtUtc = now
         };
+        record.Workload = "chat";
 
         record.ProviderId = request.ProviderId.Trim();
         record.Label = string.IsNullOrWhiteSpace(request.Label) ? request.ProviderId.Trim() : request.Label.Trim();
@@ -123,7 +128,11 @@ public sealed class ManagedAiService
             throw new BackendValidationException("credentialId is required.");
         }
 
-        _credentials.Delete(credentialId.Trim());
+        var record = _credentials.FindById(credentialId.Trim())
+            ?? throw new BackendValidationException("Managed AI credential not found.");
+        if (!string.Equals(record.Workload, "chat", StringComparison.Ordinal))
+            throw new BackendValidationException("Credential belongs to a different workload.");
+        _credentials.Delete(record.CredentialId);
     }
 
     public DesktopAccountRecord RequireManagedAccountFromAccessToken(string? authorizationHeader)

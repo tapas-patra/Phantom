@@ -481,6 +481,12 @@ export async function fetchManagedAiAdminInventory(accessToken) {
   });
 }
 
+export async function fetchManagedSpeechAdminInventory(accessToken) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/credentials", {
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchAdminPaymentOrders(accessToken, { page = 1, pageSize = 20, query = "", status = "all" } = {}) {
   const params = new URLSearchParams({
     page: String(page),
@@ -544,6 +550,30 @@ export async function upsertManagedAiCredential(accessToken, payload) {
     method: "POST",
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
+  });
+}
+
+export async function upsertManagedSpeechCredential(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/credentials", {
+    method: "POST", headers: authHeaders(accessToken), body: JSON.stringify(payload)
+  });
+}
+
+export async function triggerManagedSpeechCatalogRefresh(accessToken) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/catalog/refresh", {
+    method: "POST", headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateManagedSpeechRuntimeSelection(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/selection", {
+    method: "POST", headers: authHeaders(accessToken), body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteManagedSpeechCredential(accessToken, credentialId) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/admin/managed-speech/credentials/${encodeURIComponent(credentialId)}`, {
+    method: "DELETE", headers: authHeaders(accessToken)
   });
 }
 

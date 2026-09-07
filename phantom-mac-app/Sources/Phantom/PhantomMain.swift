@@ -220,6 +220,7 @@ enum PhantomMain {
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
             precondition(PhantomStore.mergeTranscript(current: "Question: ", lastRendered: "Question: ", previous: "", next: "Tell me", prefix: "Question: ", preservingEdits: false).text == "Question: Tell me")
+            precondition(SpeechTranscriptionClient.selfCheck())
             precondition(SSEParser.parse("data: {\"delta\":\"hello\"}") == .delta("hello"))
             precondition(SSEParser.parse("data: {\"error\":\"stopped\"}") == .failure("stopped"))
             precondition(SSEParser.parse("data: [DONE]") == .done)

@@ -38,6 +38,29 @@ final class APIRotationManager {
         clearFailures(provider)
     }
 
+    func speechKeys(provider: String) -> [String] {
+        (0..<2).compactMap { index in
+            guard let data = Keychain.load("speech.\(provider.lowercased()).apiKey.\(index)"),
+                  let value = String(data: data, encoding: .utf8), !value.isEmpty else { return nil }
+            return value
+        }
+    }
+
+    func saveSpeech(provider: String, keys: [String]) throws {
+        let clean = Array(keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(2))
+        for index in 0..<2 {
+            let name = "speech.\(provider.lowercased()).apiKey.\(index)"
+            if index < clean.count { try Keychain.save(Data(clean[index].utf8), key: name) }
+            else { Keychain.delete(name) }
+        }
+        UserDefaults.standard.removeObject(forKey: "speech.rotation.\(provider.lowercased()):dedicated.cooldowns")
+    }
+
+    func removeSpeech(provider: String) {
+        for index in 0..<2 { Keychain.delete("speech.\(provider.lowercased()).apiKey.\(index)") }
+        UserDefaults.standard.removeObject(forKey: "speech.rotation.\(provider.lowercased()):dedicated.cooldowns")
+    }
+
     func currentKey(provider: String) -> (index: Int, value: String)? {
         let values = keys(for: provider)
         guard !values.isEmpty else { return nil }

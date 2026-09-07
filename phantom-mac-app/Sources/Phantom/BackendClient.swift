@@ -465,6 +465,29 @@ struct BackendClient {
         return try await send(request)
     }
 
+    func speechCatalog(accessToken: String) async throws -> ManagedCatalog {
+        var request = URLRequest(url: url("/api/desktop/speech/catalog"))
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func transcribeManagedSpeech(accessToken: String, wav: Data, language: String) async throws -> String {
+        let boundary = "Phantom-\(UUID().uuidString)"
+        var body = Data()
+        body.appendMultipart("--\(boundary)\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n\(language)\r\n")
+        body.appendMultipart("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        body.append(wav)
+        body.appendMultipart("\r\n--\(boundary)--\r\n")
+        var request = URLRequest(url: url("/api/desktop/speech/transcribe"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
+        let result: SpeechTranscriptionResult = try await send(request)
+        return result.text
+    }
+
     func logout(_ session: AuthSession) async throws {
         struct Body: Encodable { let refreshToken: String }
         let _: LogoutResult = try await post(
@@ -713,6 +736,12 @@ struct BackendClient {
         let path = (context.codingPath.map(\.stringValue) + [field]).filter { !$0.isEmpty }.joined(separator: ".")
         return "The backend response is missing or has an invalid field: \(path)."
     }
+}
+
+private struct SpeechTranscriptionResult: Decodable { let text: String }
+
+private extension Data {
+    mutating func appendMultipart(_ value: String) { append(Data(value.utf8)) }
 }
 
 private struct LogoutResult: Decodable {

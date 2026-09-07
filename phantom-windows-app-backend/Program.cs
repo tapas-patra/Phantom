@@ -63,6 +63,7 @@ builder.Services.AddSingleton<IntegrationSecretRepository>();
 builder.Services.AddSingleton<OAuthPendingStateRepository>();
 builder.Services.AddSingleton<ManagedProviderCredentialRepository>();
 builder.Services.AddSingleton<ManagedProviderCatalogRepository>();
+builder.Services.AddSingleton<ManagedSpeechCatalogRepository>();
 builder.Services.AddSingleton<ManagedAiRuntimeSelectionRepository>();
 builder.Services.AddSingleton<ManagedAiLatencyRepository>();
 builder.Services.AddSingleton<HostedKnowledgeBaseRepository>();
@@ -89,6 +90,7 @@ builder.Services.AddSingleton<SecretProtector>();
 builder.Services.AddSingleton<GoogleMailOAuthService>();
 builder.Services.AddSingleton<MagicLinkEmailService>();
 builder.Services.AddSingleton<ManagedAiCatalogService>();
+builder.Services.AddSingleton<ManagedSpeechCatalogService>();
 builder.Services.AddSingleton<ManagedAiDiagnosticsService>();
 builder.Services.AddSingleton<IKnowledgeBaseEmbeddingService, KnowledgeBaseEmbeddingService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseStructuredExtractionService>();
@@ -101,12 +103,14 @@ builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<ManagedAiService>();
+builder.Services.AddSingleton<ManagedSpeechService>();
 builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
 builder.Services.AddSingleton<FeedbackService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
+builder.Services.AddHostedService<ManagedSpeechCatalogRefreshWorker>();
 builder.Services.AddHostedService<ManagedAiLatencyWorker>();
 builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<InterviewQuestionBankService>());
@@ -1034,6 +1038,29 @@ app.MapPost("/api/desktop/ai/chat", async (
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/speech/catalog", (
+    HttpContext httpContext,
+    ManagedAiService managedAi,
+    ManagedSpeechCatalogService speechCatalog) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(speechCatalog.GetCatalogForAccount(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/speech/transcribe", async (
+    HttpContext httpContext,
+    ManagedAiService managedAi,
+    ManagedSpeechService speech,
+    CancellationToken cancellationToken) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    var form = await httpContext.Request.ReadFormAsync(cancellationToken);
+    var audio = form.Files.GetFile("audio") ?? throw new BackendValidationException("Audio file is required.");
+    return Results.Ok(await speech.TranscribeAsync(account, audio, form["language"].FirstOrDefault(), cancellationToken));
+}).DisableAntiforgery()
+  .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(6 * 1024 * 1024))
+  .RequireRateLimiting("desktop-api");
+
 app.MapGet("/api/desktop/kb", (
     HttpContext httpContext,
     HostedKnowledgeBaseService knowledgeBases) =>
@@ -1558,6 +1585,42 @@ adminGroup.MapGet("/managed-ai/credentials", (ManagedAiService managedAi) =>
     return Results.Ok(managedAi.ListAdminCredentials());
 });
 
+adminGroup.MapGet("/managed-speech/credentials", (ManagedSpeechService speech) =>
+{
+    return Results.Ok(speech.ListAdminCredentials());
+});
+
+adminGroup.MapPost("/managed-speech/credentials", (
+    ManagedAiProviderKeyUpsertRequestDto request,
+    ManagedSpeechService speech) =>
+{
+    return Results.Ok(speech.UpsertCredential(request));
+});
+
+adminGroup.MapPost("/managed-speech/catalog/refresh", async (
+    ManagedSpeechCatalogService catalog,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await catalog.ForceRefreshAsync(cancellationToken));
+});
+
+adminGroup.MapGet("/managed-speech/catalog", (ManagedSpeechCatalogService catalog) =>
+{
+    return Results.Ok(new { providers = catalog.ListCatalogProviders() });
+});
+
+adminGroup.MapGet("/managed-speech/selection", (ManagedSpeechCatalogService catalog) =>
+{
+    return Results.Ok(catalog.GetAdminRuntimeSelection());
+});
+
+adminGroup.MapPost("/managed-speech/selection", (
+    ManagedAiRuntimeSelectionUpdateRequestDto request,
+    ManagedSpeechCatalogService catalog) =>
+{
+    return Results.Ok(catalog.UpdateAdminRuntimeSelection(request));
+});
+
 adminGroup.MapPost("/managed-ai/credentials", (
     ManagedAiProviderKeyUpsertRequestDto request,
     ManagedAiService managedAi) =>
@@ -1636,6 +1699,14 @@ adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", (
     ManagedAiService managedAi) =>
 {
     managedAi.DeleteCredential(credentialId);
+    return Results.Ok(new { deleted = true, credentialId });
+});
+
+adminGroup.MapDelete("/managed-speech/credentials/{credentialId}", (
+    string credentialId,
+    ManagedSpeechService speech) =>
+{
+    speech.DeleteCredential(credentialId);
     return Results.Ok(new { deleted = true, credentialId });
 });
 

@@ -68,6 +68,7 @@ namespace SecureOverlay
             ProtectAllComboBoxes();
             
             _isInitializing = false;
+            _ = RefreshSpeechCatalogAsync();
         }
 
         private void ProtectAllComboBoxes()
@@ -84,6 +85,9 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
             ComboBoxProtection.ProtectComboBox(SavedContextPackComboBox);
             ComboBoxProtection.ProtectComboBox(DebugErrorTypeComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechModeComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechProviderComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechModelComboBox);
         }
 
         private void InitializeControls()
@@ -191,6 +195,7 @@ namespace SecureOverlay
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
             AutoSendAfterVoiceStopCheckBox.IsChecked = _settings.AutoSendAfterVoiceStopEnabled;
+            LoadSpeechSettings();
             ClickThroughCheckBox.IsChecked = _settings.ClickThroughEnabled;
             
             // Rotation settings
@@ -970,6 +975,87 @@ namespace SecureOverlay
             RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia));
         }
 
+        private void LoadSpeechSettings()
+        {
+            SpeechModeComboBox.SelectedIndex = string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            SpeechLanguageTextBox.Text = string.IsNullOrWhiteSpace(_settings.SpeechLanguage) ? "en" : _settings.SpeechLanguage;
+            UseChatKeysForSpeechCheckBox.IsChecked = _settings.UseChatProviderApiKeysForSpeech;
+            SpeechNativeFallbackCheckBox.IsChecked = _settings.AutoFallbackToNativeSpeech;
+            PopulateSpeechProviders();
+            UpdateSpeechControls();
+        }
+
+        private void PopulateSpeechProviders()
+        {
+            SpeechProviderComboBox.Items.Clear();
+            foreach (var provider in (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .Where(item => item.Models.Count > 0))
+                SpeechProviderComboBox.Items.Add(provider.ProviderId);
+            SpeechProviderComboBox.SelectedItem = SpeechProviderComboBox.Items.Contains(_settings.SpeechProviderId)
+                ? _settings.SpeechProviderId
+                : SpeechProviderComboBox.Items.OfType<string>().FirstOrDefault();
+            PopulateSpeechModels();
+        }
+
+        private void PopulateSpeechModels()
+        {
+            SpeechModelComboBox.Items.Clear();
+            var providerId = SpeechProviderComboBox.SelectedItem as string;
+            var provider = (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .FirstOrDefault(item => string.Equals(item.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+            foreach (var model in provider?.Models ?? new List<ManagedAiModelOptionDto>()) SpeechModelComboBox.Items.Add(model.ModelId);
+            SpeechModelComboBox.SelectedItem = SpeechModelComboBox.Items.Contains(_settings.SpeechModelId)
+                ? _settings.SpeechModelId
+                : SpeechModelComboBox.Items.OfType<string>().FirstOrDefault();
+            LoadDedicatedSpeechKeys();
+        }
+
+        private void LoadDedicatedSpeechKeys()
+        {
+            var provider = SpeechProviderComboBox.SelectedItem as string;
+            var keys = provider != null && _settings.SpeechApiKeys.TryGetValue(provider, out var configured) ? configured : new List<string>();
+            SpeechApiKeyOneBox.Password = keys.ElementAtOrDefault(0) ?? string.Empty;
+            SpeechApiKeyTwoBox.Password = keys.ElementAtOrDefault(1) ?? string.Empty;
+        }
+
+        private async Task RefreshSpeechCatalogAsync()
+        {
+            var session = _authSessionRepository.Load();
+            if (session?.IsAuthenticated != true || string.IsNullOrWhiteSpace(session.AccessToken)) return;
+            try
+            {
+                _settings.SpeechCatalogCache = await _hostedAccountClient.GetSpeechCatalogAsync(session.AccessToken);
+                SettingsManager.Save(_settings);
+                PopulateSpeechProviders();
+                UpdateSpeechControls();
+            }
+            catch (Exception ex)
+            {
+                SpeechRuntimeNotice.Text = $"Speech catalog unavailable; cached choices remain in use. {ex.Message}";
+            }
+        }
+
+        private void SpeechModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSpeechControls();
+
+        private void SpeechProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_isInitializing) PopulateSpeechModels();
+            UpdateSpeechControls();
+        }
+
+        private void UseChatKeysForSpeechCheckBox_Changed(object sender, RoutedEventArgs e) => UpdateSpeechControls();
+
+        private void UpdateSpeechControls()
+        {
+            if (SpeechCloudOptions == null) return;
+            var cloud = IsPremiumAccount() || (SpeechModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() == "Cloud";
+            SpeechCloudOptions.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
+            DedicatedSpeechKeysPanel.Visibility = !IsPremiumAccount() && UseChatKeysForSpeechCheckBox.IsChecked != true
+                ? Visibility.Visible : Visibility.Collapsed;
+            UseChatKeysForSpeechCheckBox.Visibility = IsPremiumAccount() ? Visibility.Collapsed : Visibility.Visible;
+            SpeechNativeFallbackCheckBox.Visibility = IsPremiumAccount() ? Visibility.Collapsed : Visibility.Visible;
+        }
+
         private static void RebindModelCombo(ComboBox comboBox, IEnumerable<string> models)
         {
             comboBox.Items.Clear();
@@ -1299,6 +1385,19 @@ namespace SecureOverlay
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
+                _settings.SpeechRecognitionMode = IsPremiumAccount()
+                    ? "Cloud"
+                    : ((SpeechModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Native");
+                _settings.SpeechProviderId = SpeechProviderComboBox.SelectedItem as string ?? _settings.SpeechProviderId;
+                _settings.SpeechModelId = SpeechModelComboBox.SelectedItem as string ?? _settings.SpeechModelId;
+                _settings.SpeechLanguage = string.IsNullOrWhiteSpace(SpeechLanguageTextBox.Text) ? "en" : SpeechLanguageTextBox.Text.Trim();
+                _settings.UseChatProviderApiKeysForSpeech = UseChatKeysForSpeechCheckBox.IsChecked == true;
+                _settings.AutoFallbackToNativeSpeech = IsPremiumAccount() || SpeechNativeFallbackCheckBox.IsChecked == true;
+                if (!IsPremiumAccount() && !_settings.UseChatProviderApiKeysForSpeech && !string.IsNullOrWhiteSpace(_settings.SpeechProviderId))
+                {
+                    _settings.SpeechApiKeys[_settings.SpeechProviderId] = new[] { SpeechApiKeyOneBox.Password, SpeechApiKeyTwoBox.Password }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).Take(MaxKeysPerProvider).ToList();
+                }
                 _settings.ClickThroughEnabled = ClickThroughCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
@@ -1627,6 +1726,25 @@ namespace SecureOverlay
             ContextPackSection.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
             ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
             DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            SpeechModeComboBox.IsEnabled = !IsPremiumAccount() && isByo;
+            SpeechCloudOptions.IsEnabled = !IsPremiumAccount() && isByo;
+            SpeechNativeFallbackCheckBox.IsEnabled = !IsPremiumAccount() && isByo;
+            if (IsPremiumAccount())
+            {
+                SpeechModeComboBox.SelectedIndex = 1;
+                SpeechRuntimeNotice.Text = "Premium uses the global backend-managed speech recognizer and automatically falls back to native recognition if it fails.";
+                SpeechNativeFallbackCheckBox.IsChecked = true;
+            }
+            else if (isByo)
+            {
+                SpeechRuntimeNotice.Text = "Choose native recognition or a cloud speech model using shared chat keys or dedicated speech keys.";
+            }
+            else
+            {
+                SpeechModeComboBox.SelectedIndex = 0;
+                SpeechRuntimeNotice.Text = "Free accounts use native speech recognition.";
+            }
+            UpdateSpeechControls();
             var legacyFallbackVisibility = _accountSnapshot?.CanUseDesktopPowerFeatures == true
                 ? Visibility.Visible
                 : Visibility.Collapsed;

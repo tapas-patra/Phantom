@@ -11,6 +11,7 @@ import {
   deleteHostedKnowledgeBaseDocument,
   deleteHostedKnowledgeBaseExperience,
   deleteManagedAiCredential,
+  deleteManagedSpeechCredential,
   fetchAccountSummary,
   fetchAdminOverview,
   fetchAdminAudit,
@@ -33,6 +34,7 @@ import {
   markHostedKnowledgeBaseProjectRecent,
   pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
+  fetchManagedSpeechAdminInventory,
   fetchManagedAiLatencyStatus,
   fetchPaymentCatalog,
   fetchRegistrationSettings,
@@ -60,6 +62,7 @@ import {
   submitPublicFeedback,
   sendManagedAiAdminTest,
   triggerManagedAiCatalogRefresh,
+  triggerManagedSpeechCatalogRefresh,
   triggerManagedAiLatencyCheck,
   updateAdminUser,
   updateAdminFeedback,
@@ -71,9 +74,11 @@ import {
   updateInterviewQuestionBank,
   updateManagedAiModelVision,
   updateManagedAiRuntimeSelection,
+  updateManagedSpeechRuntimeSelection,
   updateRegistrationSettings,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
+  upsertManagedSpeechCredential,
   fetchUserSupportTickets,
   verifyPhoneOtp,
   verifyAdminOtp,
@@ -168,6 +173,7 @@ const adminNav = [
   { to: "/admin/tickets", label: "Tickets" },
   { to: "/admin/feedback", label: "Feedback" },
   { to: "/admin/managed-ai", label: "Managed AI" },
+  { to: "/admin/managed-speech", label: "Speech Recognition" },
   { to: "/admin/audit", label: "Audit" },
   { to: "/admin/settings", label: "Settings" }
 ];
@@ -3928,9 +3934,11 @@ function AdminResetPasswordPage() {
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
   const [inventory, setInventory] = useState(null);
+  const [speechInventory, setSpeechInventory] = useState(null);
   const [latencyStatus, setLatencyStatus] = useState(null);
   const [gmailStatus, setGmailStatus] = useState(null);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
+  const [speechCatalogRefreshResult, setSpeechCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -3946,14 +3954,16 @@ function AdminDashboardPage({ adminSession }) {
         fetchAdminOverview(adminSession.accessToken),
         fetchManagedAiAdminInventory(adminSession.accessToken),
         fetchManagedAiLatencyStatus(adminSession.accessToken),
-        fetchGmailOAuthStatus(adminSession.accessToken)
+        fetchGmailOAuthStatus(adminSession.accessToken),
+        fetchManagedSpeechAdminInventory(adminSession.accessToken)
       ]);
       if (!cancelled) {
-        const [overviewResult, inventoryResult, latencyResult, gmailResult] = results;
+        const [overviewResult, inventoryResult, latencyResult, gmailResult, speechInventoryResult] = results;
         if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
         if (inventoryResult.status === "fulfilled") setInventory(inventoryResult.value);
         if (latencyResult.status === "fulfilled") setLatencyStatus(latencyResult.value);
         if (gmailResult.status === "fulfilled") setGmailStatus(gmailResult.value);
+        if (speechInventoryResult.status === "fulfilled") setSpeechInventory(speechInventoryResult.value);
         const failedCount = results.filter((result) => result.status === "rejected").length;
         if (failedCount > 0) {
           const overviewError = overviewResult.status === "rejected" ? overviewResult.reason?.message : "";
@@ -3986,6 +3996,12 @@ function AdminDashboardPage({ adminSession }) {
       inventory: nextInventory,
       latencyStatus: nextLatencyStatus
     };
+  }
+
+  async function refreshManagedSpeechState() {
+    const nextInventory = await fetchManagedSpeechAdminInventory(adminSession.accessToken);
+    setSpeechInventory(nextInventory);
+    return nextInventory;
   }
 
   async function refreshOverview() {
@@ -4110,6 +4126,18 @@ function AdminDashboardPage({ adminSession }) {
                   onRefresh={refreshManagedAiState}
                   catalogRefreshResult={catalogRefreshResult}
                   onCatalogRefreshResult={setCatalogRefreshResult}
+                />
+              }
+            />
+            <Route
+              path="managed-speech"
+              element={
+                <ManagedSpeechAdminPanel
+                  accessToken={adminSession.accessToken}
+                  inventory={speechInventory}
+                  onRefresh={refreshManagedSpeechState}
+                  catalogRefreshResult={speechCatalogRefreshResult}
+                  onCatalogRefreshResult={setSpeechCatalogRefreshResult}
                 />
               }
             />
@@ -4451,10 +4479,12 @@ function ManagedRuntimeSelectionCard({
   accessToken,
   inventory,
   onRefresh,
+  updateSelection = updateManagedAiRuntimeSelection,
   className = "glass-panel admin-form-panel",
   title = "Choose the provider and model used for managed users",
   description,
-  showManageLink = false
+  showManageLink = false,
+  eyebrow = "Managed runtime selection"
 }) {
   const [selectionProviderId, setSelectionProviderId] = useState("");
   const [selectionModelId, setSelectionModelId] = useState("");
@@ -4497,7 +4527,7 @@ function ManagedRuntimeSelectionCard({
     setLocalError("");
     setSuccess("");
     try {
-      await updateManagedAiRuntimeSelection(accessToken, {
+      await updateSelection(accessToken, {
         providerId: selectionProviderId,
         modelId: selectionModelId
       });
@@ -4514,7 +4544,7 @@ function ManagedRuntimeSelectionCard({
     <article className={className}>
       <div className="table-header">
         <div>
-          <p className="eyebrow">Managed runtime selection</p>
+          <p className="eyebrow">{eyebrow}</p>
           <h3>{title}</h3>
         </div>
         {showManageLink ? (
@@ -5279,6 +5309,115 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function ManagedSpeechAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
+  const providers = inventory?.managedProviders || [];
+  const credentials = inventory?.credentials || [];
+  const catalogs = inventory?.catalogs?.providers || [];
+  const [providerId, setProviderId] = useState(providers[0]?.providerId || "ChatGPT");
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [priority, setPriority] = useState("0");
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (providers.length && !providers.some((item) => item.providerId === providerId)) setProviderId(providers[0].providerId);
+  }, [providerId, providers]);
+
+  async function saveCredential(event) {
+    event.preventDefault(); setBusy("save"); setError(""); setMessage("");
+    try {
+      await upsertManagedSpeechCredential(accessToken, {
+        providerId, label, apiKey, isEnabled,
+        priority: parseRequiredInteger(priority, "Credential priority", 0, 1000)
+      });
+      setLabel(""); setApiKey(""); setPriority("0");
+      setMessage("Speech credential saved.");
+      await onRefresh();
+    } catch (nextError) { setError(nextError.message || "Could not save speech credential."); }
+    finally { setBusy(""); }
+  }
+
+  async function refreshCatalog() {
+    setBusy("refresh"); setError(""); setMessage("");
+    try {
+      const result = await triggerManagedSpeechCatalogRefresh(accessToken);
+      onCatalogRefreshResult(result); await onRefresh(); setMessage("Speech model catalog refreshed.");
+    } catch (nextError) { setError(nextError.message || "Could not refresh speech models."); }
+    finally { setBusy(""); }
+  }
+
+  async function removeCredential(credentialId) {
+    if (!window.confirm("Remove this managed speech credential?")) return;
+    setError(""); setMessage("");
+    try { await deleteManagedSpeechCredential(accessToken, credentialId); await onRefresh(); setMessage("Speech credential removed."); }
+    catch (nextError) { setError(nextError.message || "Could not remove speech credential."); }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Managed speech recognition</p>
+        <h1>Choose one global speech model for Premium accounts.</h1>
+        <p>Premium audio uses backend-managed credentials and automatically returns to native recognition if this service is unavailable. BYO clients use the same dynamic catalog with their own local keys.</p>
+      </article>
+
+      <ManagedRuntimeSelectionCard
+        accessToken={accessToken}
+        inventory={inventory}
+        onRefresh={onRefresh}
+        updateSelection={updateManagedSpeechRuntimeSelection}
+        title="Choose the provider and model used for Premium speech"
+        eyebrow="Global speech recognizer"
+      />
+
+      <article className="glass-panel admin-form-panel">
+        <div className="table-header">
+          <div><p className="eyebrow">Speech credentials</p><h3>Provider rotation</h3></div>
+          <div className="inline-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>Refresh</button>
+            <button className="button button-primary button-compact" type="button" onClick={refreshCatalog} disabled={busy === "refresh"}>{busy === "refresh" ? "Updating..." : "Update Models"}</button>
+          </div>
+        </div>
+        {error ? <p className="status-message status-error" role="alert">{error}</p> : null}
+        {message ? <p className="status-message" role="status">{message}</p> : null}
+        <form className="admin-form" onSubmit={saveCredential}>
+          <label>Provider<select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option key={provider.providerId} value={provider.providerId}>{provider.label}</option>)}</select></label>
+          <label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Primary / backup" /></label>
+          <label>API key<textarea rows={4} required value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste backend-managed speech key" /></label>
+          <div className="admin-form-inline">
+            <label>Priority<input type="number" min="0" max="1000" required value={priority} onChange={(event) => setPriority(event.target.value)} /></label>
+            <label className="admin-toggle"><input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} /><span>Enabled for rotation</span></label>
+          </div>
+          <button className="button button-primary" type="submit" disabled={busy === "save"}>{busy === "save" ? "Saving..." : "Add Speech Credential"}</button>
+        </form>
+      </article>
+
+      <DataTable
+        title="Speech provider status"
+        columns={["Provider", "Enabled creds", "Fetched models", "Catalog refreshed", "Last refresh outcome"]}
+        rows={providers.map((provider) => {
+          const catalog = catalogs.find((item) => item.providerId === provider.providerId);
+          const result = catalogRefreshResult?.providers?.find((item) => item.providerId === provider.providerId);
+          return [provider.label, credentials.filter((item) => item.providerId === provider.providerId && item.isEnabled).length, catalog?.models?.length || 0, formatDate(catalog?.refreshedAtUtc), result?.message || "No refresh run in this session."];
+        })}
+      />
+      <DataTable
+        title="Managed speech credentials"
+        columns={["Provider", "Label", "Priority", "Status", "Updated", "Action"]}
+        rows={credentials.length ? credentials.map((item) => [item.providerId, item.label, item.priority, item.isEnabled ? "Enabled" : "Disabled", formatDate(item.updatedAtUtc), <button className="table-action" type="button" onClick={() => removeCredential(item.credentialId)}>Remove</button>]) : null}
+        emptyLabel="No managed speech credentials configured yet."
+      />
+      {catalogs.map((provider) => (
+        <DataTable key={provider.providerId} title={`${provider.label} speech models`} columns={["Model ID", "Display name"]}
+          rows={(provider.models || []).map((model) => [model.modelId, model.displayName])} emptyLabel="No speech models fetched." />
+      ))}
     </div>
   );
 }

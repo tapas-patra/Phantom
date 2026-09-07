@@ -31,7 +31,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("023_admin_email_otp", AdminEmailOtpSql),
         new SchemaMigration("024_admin_action_audit", AdminActionAuditSql),
         new SchemaMigration("025_dashboard_email_verification", DashboardEmailVerificationSql),
-        new SchemaMigration("026_download_and_feedback_analytics", DownloadAndFeedbackAnalyticsSql)
+        new SchemaMigration("026_download_and_feedback_analytics", DownloadAndFeedbackAnalyticsSql),
+        new SchemaMigration("027_managed_speech", ManagedSpeechSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -61,6 +62,21 @@ ALTER TABLE managed_provider_credentials
 
 CREATE INDEX IF NOT EXISTS idx_managed_provider_credentials_health
     ON managed_provider_credentials(provider_id, is_enabled, cooldown_until_utc, priority);
+";
+
+    private const string ManagedSpeechSql = @"
+ALTER TABLE managed_provider_credentials
+    ADD COLUMN IF NOT EXISTS workload TEXT NOT NULL DEFAULT 'chat';
+
+CREATE INDEX IF NOT EXISTS idx_managed_provider_credentials_workload_health
+    ON managed_provider_credentials(workload, provider_id, is_enabled, cooldown_until_utc, priority);
+
+CREATE TABLE IF NOT EXISTS managed_speech_provider_catalog (
+    provider_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    models_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    refreshed_at_utc TIMESTAMPTZ NOT NULL
+);
 ";
 
     private const string AdminEmailOtpSql = @"

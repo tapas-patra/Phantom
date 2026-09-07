@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SecureOverlay.Platform.Windows;
@@ -17,12 +18,21 @@ namespace SecureOverlay.Services
         private bool _permissionGranted = false;
         private bool _isDisposed = false;
         private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
+        private readonly Func<byte[], CancellationToken, Task<string>>? _cloudTranscriber;
+        private readonly bool _fallbackToNative;
+        private readonly SemaphoreSlim _audioGate = new SemaphoreSlim(1, 1);
+        private readonly CancellationTokenSource _disposeCancellation = new CancellationTokenSource();
+        private bool _useCloud;
+        private bool _fallbackStarted;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? StatusChanged;
 
-        public VoiceInputService()
+        public VoiceInputService(Func<byte[], CancellationToken, Task<string>>? cloudTranscriber = null, bool fallbackToNative = true)
         {
+            _cloudTranscriber = cloudTranscriber;
+            _useCloud = cloudTranscriber != null;
+            _fallbackToNative = fallbackToNative;
             Log.WriteLine("VoiceInputService constructor");
         }
 
@@ -133,7 +143,7 @@ namespace SecureOverlay.Services
                         }
 
                         var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
-                        System.IO.File.WriteAllText(htmlFilePath, GetSpeechRecognitionHTML());
+                        System.IO.File.WriteAllText(htmlFilePath, _useCloud ? GetCloudCaptureHTML() : GetSpeechRecognitionHTML());
 
                         Log.WriteLine($"  HTML saved to: {htmlFilePath}");
 
@@ -244,6 +254,10 @@ namespace SecureOverlay.Services
                     Log.WriteLine($"✓ Transcript received length_bucket={LengthBucket(text.Length)}");
                     SpeechRecognized?.Invoke(this, text);
                 }
+                else if (message.StartsWith("AUDIO:"))
+                {
+                    _ = ProcessCloudAudioAsync(message.Substring("AUDIO:".Length));
+                }
                 else if (message.StartsWith("STATUS:"))
                 {
                     var status = message.Substring("STATUS:".Length);
@@ -254,6 +268,11 @@ namespace SecureOverlay.Services
                 {
                     var error = message.Substring("ERROR:".Length);
                     Log.WriteLine($"Error: {error}");
+                    if (_useCloud && _fallbackToNative)
+                    {
+                        _ = FallbackToNativeAsync();
+                        return;
+                    }
                     
                     // Only show permission window if it's a permission error
                     if (error.Contains("not-allowed") || error.Contains("permission"))
@@ -289,6 +308,79 @@ namespace SecureOverlay.Services
             <= 640 => "161-640",
             _ => "641+"
         };
+
+        private async Task ProcessCloudAudioAsync(string base64)
+        {
+            if (!_useCloud || _cloudTranscriber == null || _fallbackStarted) return;
+            var acquired = false;
+            try
+            {
+                await _audioGate.WaitAsync(_disposeCancellation.Token);
+                acquired = true;
+                if (_fallbackStarted) return;
+                var pcm = Convert.FromBase64String(base64);
+                var transcript = await _cloudTranscriber(pcm, _disposeCancellation.Token);
+                if (!string.IsNullOrWhiteSpace(transcript)) SpeechRecognized?.Invoke(this, transcript.Trim());
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Cloud speech failed: {ex.GetType().Name}");
+                StatusChanged?.Invoke(this, "Cloud speech unavailable");
+                if (_fallbackToNative) await FallbackToNativeAsync();
+            }
+            finally { if (acquired) _audioGate.Release(); }
+        }
+
+        private async Task FallbackToNativeAsync()
+        {
+            if (_fallbackStarted || _webView?.CoreWebView2 == null) return;
+            _fallbackStarted = true;
+            _useCloud = false;
+            StatusChanged?.Invoke(this, "Using native speech fallback");
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
+                System.IO.File.WriteAllText(htmlFilePath, GetSpeechRecognitionHTML());
+                _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                await Task.Delay(500);
+                if (_isListening) await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
+            });
+        }
+
+        private static string GetCloudCaptureHTML()
+        {
+            return @"<!doctype html><html><body><p id='status'>Ready</p><script>
+let stream, context, source, processor, listening=false, samples=[];
+function sendChunk(force) {
+  const size = 64000;
+  while (samples.length >= size || (force && samples.length >= 8000)) {
+    const count = samples.length >= size ? size : samples.length;
+    const bytes = new Uint8Array(count * 2);
+    for (let i=0; i<count; i++) { const value=Math.max(-1,Math.min(1,samples[i])); const sample=value<0?value*32768:value*32767; bytes[i*2]=sample&255; bytes[i*2+1]=(sample>>8)&255; }
+    samples=samples.slice(count);
+    let binary=''; for (let i=0;i<bytes.length;i+=8192) binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+    window.chrome.webview.postMessage('AUDIO:'+btoa(binary));
+  }
+}
+async function startListening() {
+  if (listening) return;
+  try {
+    stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    context=new AudioContext(); source=context.createMediaStreamSource(stream); processor=context.createScriptProcessor(4096,1,1);
+    const ratio=context.sampleRate/16000;
+    processor.onaudioprocess=e=>{ const input=e.inputBuffer.getChannelData(0); for(let i=0;i<input.length;i+=ratio) samples.push(input[Math.floor(i)]); sendChunk(false); };
+    source.connect(processor); processor.connect(context.destination); listening=true;
+    window.chrome.webview.postMessage('STATUS:Listening with cloud speech');
+  } catch(e) { window.chrome.webview.postMessage('ERROR:'+e.message); }
+}
+function stopListening() {
+  if (!listening) return; listening=false; processor?.disconnect(); source?.disconnect(); stream?.getTracks().forEach(t=>t.stop()); context?.close(); sendChunk(true);
+  window.chrome.webview.postMessage('STATUS:Ready');
+}
+window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Ready'));
+</script></body></html>";
+        }
 
         private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
         {
@@ -596,6 +688,7 @@ namespace SecureOverlay.Services
 
         public bool IsListening() => _isListening;
         public bool IsInitialized() => _isInitialized;
+        public bool IsCloudMode() => _useCloud;
 
         public void Dispose()
         {
@@ -603,6 +696,7 @@ namespace SecureOverlay.Services
                 return;
 
             _isDisposed = true;
+            _disposeCancellation.Cancel();
             _isListening = false;
             _isInitializing = false;
 

@@ -3,6 +3,7 @@ namespace Phantom.WindowsApp.Backend.Domain;
 public sealed class ManagedProviderCredentialRecord
 {
     public string CredentialId { get; set; } = string.Empty;
+    public string Workload { get; set; } = "chat";
     public string ProviderId { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public string EncryptedApiKey { get; set; } = string.Empty;

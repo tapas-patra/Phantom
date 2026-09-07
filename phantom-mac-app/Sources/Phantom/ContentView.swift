@@ -479,6 +479,35 @@ private struct SettingsView: View {
                     SettingsSection(title: "Voice input", systemImage: "mic") {
                         Toggle("Enable microphone transcription", isOn: $store.voiceEnabled)
                         Toggle("Send automatically after stopping", isOn: $store.autoSendAfterVoiceStop)
+                        if store.usesManagedSpeech {
+                            ReadOnlyRow(label: "Recognizer", value: "Premium managed cloud")
+                            ReadOnlyRow(label: "Provider", value: store.selectedSpeechProvider?.label ?? "Not configured")
+                            ReadOnlyRow(label: "Model", value: store.selectedSpeechModelId.isEmpty ? "Not configured" : store.selectedSpeechModelId)
+                            Text("Premium speech uses the global admin selection and automatically falls back to native recognition on backend or provider failure.")
+                                .font(.caption).foregroundColor(PhantomColors.muted)
+                        } else if store.account?.accessTier.lowercased() == "pro_byo" {
+                            InWindowPicker("Recognizer", selection: $store.speechRecognitionMode, options: [("Native", "Native"), ("Cloud", "Cloud")])
+                            if store.speechRecognitionMode == "Cloud" {
+                                InWindowPicker("Speech provider", selection: $store.selectedSpeechProviderId, options: store.speechProviders.map { ($0.label, $0.providerId) })
+                                InWindowPicker("Speech model", selection: $store.selectedSpeechModelId, options: (store.selectedSpeechProvider?.models ?? []).map { ($0.displayName, $0.modelId) })
+                                TextField("Language code", text: $store.speechLanguage).textFieldStyle(.roundedBorder).accessibilityLabel("Speech language code")
+                                Toggle("Use chat provider API keys", isOn: $store.useChatKeysForSpeech)
+                                if !store.useChatKeysForSpeech {
+                                    SecureField("Dedicated speech API key #1", text: $store.speechAPIKey).textFieldStyle(.roundedBorder)
+                                    SecureField("Dedicated speech API key #2 (optional)", text: $store.speechSecondAPIKey).textFieldStyle(.roundedBorder)
+                                    HStack {
+                                        Button("Save Speech Keys", action: store.saveSpeechKeys)
+                                        Button("Remove Speech Keys", role: .destructive, action: store.removeSpeechKeys)
+                                    }
+                                    Text(store.speechKeyStatus).font(.caption).foregroundColor(PhantomColors.muted)
+                                }
+                                Toggle("Fall back to native recognition on errors or exhausted credit", isOn: $store.autoFallbackToNativeSpeech)
+                                Text("Speech model choices come from the Phantom backend catalog. BYO audio and keys stay between this Mac and the selected provider.")
+                                    .font(.caption).foregroundColor(PhantomColors.muted)
+                            }
+                        } else {
+                            ReadOnlyRow(label: "Recognizer", value: "Native")
+                        }
                         Text(store.voicePermissionStatus)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(PhantomColors.muted)

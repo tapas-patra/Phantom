@@ -973,6 +973,14 @@ namespace SecureOverlay
                 }
 
                 var catalog = await _hostedAccountClient.GetManagedCatalogAsync(session.AccessToken);
+                try
+                {
+                    _settings.SpeechCatalogCache = await _hostedAccountClient.GetSpeechCatalogAsync(session.AccessToken);
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Speech catalog refresh skipped: {ex.GetType().Name}");
+                }
                 if (catalog != null)
                 {
                     _settings.PremiumConfiguredProviders = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
@@ -3103,7 +3111,22 @@ namespace SecureOverlay
             try
             {
                 Log.WriteLine("Creating browser-based VoiceInputService...");
-                _voiceService = new VoiceInputService();
+                var session = _authSessionRepository.Load();
+                var useManagedSpeech = IsPremiumAccount();
+                var useByoCloudSpeech = IsByoAccount()
+                    && string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase);
+                SpeechTranscriptionClient? cloudSpeech = null;
+                if ((useManagedSpeech || useByoCloudSpeech) && session?.IsAuthenticated == true)
+                {
+                    cloudSpeech = new SpeechTranscriptionClient(
+                        _settings,
+                        _hostedRuntimeOptions.DesktopBackendBaseUrl,
+                        session.AccessToken,
+                        useManagedSpeech);
+                }
+                _voiceService = new VoiceInputService(
+                    cloudSpeech == null ? null : cloudSpeech.TranscribePcm16Async,
+                    useManagedSpeech || _settings.AutoFallbackToNativeSpeech);
                 
                 _voiceService.SpeechRecognized += OnSpeechRecognized;
                 _voiceService.StatusChanged += OnVoiceStatusChanged;
@@ -3265,7 +3288,7 @@ namespace SecureOverlay
             if (_voiceService.IsListening())
             {
                 Log.WriteLine("  Currently listening - stopping");
-                
+                var wasCloudSpeech = _voiceService.IsCloudMode();
                 _autoSendAfterVoice = _settings.AutoSendAfterVoiceStopEnabled;
                 
                 _voiceService.StopListening();
@@ -3277,9 +3300,16 @@ namespace SecureOverlay
 
                 if (_autoSendAfterVoice)
                 {
-                    Log.WriteLine("  Auto-send enabled - starting completion timer");
-                    StartVoiceCompletionTimer();
-                    Log.WriteLine("  Started 350 ms completion timer");
+                    if (!wasCloudSpeech)
+                    {
+                        Log.WriteLine("  Auto-send enabled - starting completion timer");
+                        StartVoiceCompletionTimer();
+                        Log.WriteLine("  Started 350 ms completion timer");
+                    }
+                    else
+                    {
+                        Log.WriteLine("  Waiting for cloud transcription before auto-send");
+                    }
                 }
                 else
                 {
@@ -3660,9 +3690,11 @@ namespace SecureOverlay
                 bool modelChanged = oldModel != newModel;
                 bool providerChanged = oldProvider != newProvider;
                 
-                if (_settings.VoiceInputEnabled && _voiceService == null)
+                if (_settings.VoiceInputEnabled)
                 {
-                    Log.WriteLine("Voice was disabled, now enabled - initializing");
+                    Log.WriteLine("Applying voice recognizer settings");
+                    _voiceService?.Dispose();
+                    _voiceService = null;
                     InitializeVoice();
                 }
                 else if (!_settings.VoiceInputEnabled && _voiceService != null)

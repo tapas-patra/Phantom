@@ -98,6 +98,16 @@ final class PhantomStore: ObservableObject {
     @Published var autoSendAfterVoiceStop: Bool {
         didSet { UserDefaults.standard.set(autoSendAfterVoiceStop, forKey: "voice.autoSend") }
     }
+    @Published var speechRecognitionMode: String { didSet { UserDefaults.standard.set(speechRecognitionMode, forKey: "speech.mode") } }
+    @Published var speechProviders: [ManagedProvider] = []
+    @Published var selectedSpeechProviderId: String { didSet { UserDefaults.standard.set(selectedSpeechProviderId, forKey: "speech.provider"); selectSpeechModel(); loadSpeechKeys() } }
+    @Published var selectedSpeechModelId: String { didSet { UserDefaults.standard.set(selectedSpeechModelId, forKey: "speech.model") } }
+    @Published var speechLanguage: String { didSet { UserDefaults.standard.set(speechLanguage, forKey: "speech.language") } }
+    @Published var useChatKeysForSpeech: Bool { didSet { UserDefaults.standard.set(useChatKeysForSpeech, forKey: "speech.useChatKeys") } }
+    @Published var autoFallbackToNativeSpeech: Bool { didSet { UserDefaults.standard.set(autoFallbackToNativeSpeech, forKey: "speech.nativeFallback") } }
+    @Published var speechAPIKey = ""
+    @Published var speechSecondAPIKey = ""
+    @Published var speechKeyStatus = "Dedicated speech keys are stored in macOS Keychain."
     @Published var opacity: Double {
         didSet {
             UserDefaults.standard.set(opacity, forKey: "window.opacity")
@@ -175,6 +185,7 @@ final class PhantomStore: ObservableObject {
     private let rotation = APIRotationManager()
     private let conversationManager = ConversationManager()
     private let speechInput = SpeechInputService()
+    private lazy var speechClient = SpeechTranscriptionClient(backend: backend, rotation: rotation)
     private var managedProviders: [ManagedProvider] = []
     private var byoProviders: [ManagedProvider] = BYOCatalog.providers.map { provider in
         ManagedProvider(providerId: provider.providerId, label: provider.label, models: BYOCatalogStore.models(provider: provider.providerId) ?? provider.models)
@@ -205,6 +216,7 @@ final class PhantomStore: ObservableObject {
         let provider: String, model: String, mode: CopilotMode, style: InterviewDeliveryStyle, resume: String, job: String
         let opacity: Double, fakeCursor: Bool, fakeCursorScale: Double, freeExtension: Bool, paidExtension: Bool
         let autoPause: Bool, inactivity: Int, preferBYO: Bool, voice: Bool, autoVoice: Bool
+        let speechMode: String, speechProvider: String, speechModel: String, speechLanguage: String, sharedSpeechKeys: Bool, speechFallback: Bool
         let legacyPath: String, debug: Bool, simulation: String
     }
     private var voicePromptPrefix = ""
@@ -255,6 +267,12 @@ final class PhantomStore: ObservableObject {
         autoSendAfterVoiceStop = defaults.object(forKey: "voice.autoSend") == nil
             ? true
             : defaults.bool(forKey: "voice.autoSend")
+        speechRecognitionMode = defaults.string(forKey: "speech.mode") ?? "Native"
+        selectedSpeechProviderId = defaults.string(forKey: "speech.provider") ?? "ChatGPT"
+        selectedSpeechModelId = defaults.string(forKey: "speech.model") ?? ""
+        speechLanguage = defaults.string(forKey: "speech.language") ?? "en"
+        useChatKeysForSpeech = defaults.object(forKey: "speech.useChatKeys") == nil ? true : defaults.bool(forKey: "speech.useChatKeys")
+        autoFallbackToNativeSpeech = defaults.object(forKey: "speech.nativeFallback") == nil ? true : defaults.bool(forKey: "speech.nativeFallback")
         copilotMode = CopilotMode(rawValue: defaults.string(forKey: "copilot.mode") ?? "") ?? .interview
         interviewDeliveryStyle = InterviewDeliveryStyle(rawValue: defaults.string(forKey: "copilot.deliveryStyle") ?? "") ?? .standard
         resumeText = defaults.string(forKey: "context.resume") ?? ""
@@ -266,6 +284,9 @@ final class PhantomStore: ObservableObject {
         selectedModelId = defaults.string(forKey: "chat.model") ?? ""
         messages = ConversationStore.load()
         loadBYOKey()
+        speechProviders = SpeechCatalogStore.load()?.providers ?? []
+        selectSpeechModel()
+        loadSpeechKeys()
         configureSpeechInput()
         scheduleContextWarmup()
     }
@@ -273,6 +294,11 @@ final class PhantomStore: ObservableObject {
     var selectedProvider: ManagedProvider? {
         providers.first(where: { $0.providerId == selectedProviderId })
     }
+
+    var selectedSpeechProvider: ManagedProvider? { speechProviders.first(where: { $0.providerId == selectedSpeechProviderId }) }
+    var usesManagedSpeech: Bool { isPremiumAccount }
+    var usesCloudSpeech: Bool { usesManagedSpeech || (isByoSpeechEligible && speechRecognitionMode == "Cloud") }
+    private var isByoSpeechEligible: Bool { account?.accessTier.lowercased() == "pro_byo" }
 
     var protectionStatus: String {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 15
@@ -466,6 +492,8 @@ final class PhantomStore: ObservableObject {
             freeExtension: allowFreeTrialSessionExtension, paidExtension: allowPaidSessionExtension,
             autoPause: autoPauseOnInactivity, inactivity: inactivityMinutes,
             preferBYO: preferBYOCreditsFirst, voice: voiceEnabled, autoVoice: autoSendAfterVoiceStop,
+            speechMode: speechRecognitionMode, speechProvider: selectedSpeechProviderId, speechModel: selectedSpeechModelId,
+            speechLanguage: speechLanguage, sharedSpeechKeys: useChatKeysForSpeech, speechFallback: autoFallbackToNativeSpeech,
             legacyPath: legacyAppPath, debug: debugModeEnabled, simulation: debugErrorSimulation
         )
         if canViewDiagnostics { refreshDiagnostics() }
@@ -497,6 +525,8 @@ final class PhantomStore: ObservableObject {
         allowFreeTrialSessionExtension = old.freeExtension; allowPaidSessionExtension = old.paidExtension
         autoPauseOnInactivity = old.autoPause; inactivityMinutes = old.inactivity
         preferBYOCreditsFirst = old.preferBYO; voiceEnabled = old.voice; autoSendAfterVoiceStop = old.autoVoice
+        speechRecognitionMode = old.speechMode; selectedSpeechProviderId = old.speechProvider; selectedSpeechModelId = old.speechModel
+        speechLanguage = old.speechLanguage; useChatKeysForSpeech = old.sharedSpeechKeys; autoFallbackToNativeSpeech = old.speechFallback
         legacyAppPath = old.legacyPath; debugModeEnabled = old.debug; debugErrorSimulation = old.simulation
         settingsSnapshot = nil
         screen = .chat
@@ -810,10 +840,12 @@ final class PhantomStore: ObservableObject {
         }
 
         if speechInput.isListening {
+            let wasCloud = speechInput.isCloudMode
             speechInput.stop()
             isListening = false
-            if autoSendAfterVoiceStop { scheduleVoiceDispatch() }
+            if autoSendAfterVoiceStop && !wasCloud { scheduleVoiceDispatch() }
         } else {
+            configureSpeechRuntime()
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             voicePromptPrefix = existing.isEmpty ? "" : existing + " "
             previousVoiceTranscript = ""
@@ -1575,6 +1607,12 @@ final class PhantomStore: ObservableObject {
             try ManagedCatalogStore.save(catalog)
         }
         managedProviders = catalog.providers.filter { !$0.models.isEmpty }
+        let speechCatalog = offline
+            ? (SpeechCatalogStore.load() ?? ManagedCatalog(providers: []))
+            : ((try? await backend.speechCatalog(accessToken: authenticated.accessToken)) ?? SpeechCatalogStore.load() ?? ManagedCatalog(providers: []))
+        if !offline, !speechCatalog.providers.isEmpty { SpeechCatalogStore.save(speechCatalog) }
+        speechProviders = speechCatalog.providers.filter { !$0.models.isEmpty }
+        selectSpeechModel()
         providers = managedProviders
         selectAvailableModel()
         syncRuntimeLane()
@@ -1710,6 +1748,53 @@ final class PhantomStore: ObservableObject {
         syncRuntimeLane()
     }
 
+    private func selectSpeechModel() {
+        if !speechProviders.contains(where: { $0.providerId == selectedSpeechProviderId }) {
+            selectedSpeechProviderId = speechProviders.first?.providerId ?? selectedSpeechProviderId
+        }
+        guard let provider = selectedSpeechProvider else { return }
+        if !provider.models.contains(where: { $0.modelId == selectedSpeechModelId }) {
+            selectedSpeechModelId = provider.models.first?.modelId ?? ""
+        }
+    }
+
+    private func loadSpeechKeys() {
+        let keys = rotation.speechKeys(provider: selectedSpeechProviderId)
+        speechAPIKey = keys.first ?? ""
+        speechSecondAPIKey = keys.dropFirst().first ?? ""
+    }
+
+    func saveSpeechKeys() {
+        guard isByoSpeechEligible else { speechKeyStatus = "Dedicated speech keys require Pro BYO."; return }
+        do {
+            try rotation.saveSpeech(provider: selectedSpeechProviderId, keys: [speechAPIKey, speechSecondAPIKey])
+            speechKeyStatus = "Dedicated speech keys saved."
+        } catch { speechKeyStatus = error.localizedDescription }
+    }
+
+    func removeSpeechKeys() {
+        rotation.removeSpeech(provider: selectedSpeechProviderId)
+        speechAPIKey = ""; speechSecondAPIKey = ""; speechKeyStatus = "Dedicated speech keys removed."
+    }
+
+    private func configureSpeechRuntime() {
+        guard usesCloudSpeech, let session else {
+            speechInput.configureCloud(transcriber: nil, fallbackToNative: true)
+            return
+        }
+        let managed = usesManagedSpeech
+        let provider = selectedSpeechProviderId
+        let model = selectedSpeechModelId
+        let language = speechLanguage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "en" : speechLanguage
+        let sharedKeys = useChatKeysForSpeech
+        speechInput.configureCloud(transcriber: { [weak self] pcm in
+            guard let self else { throw BackendError.server("Speech service is unavailable.") }
+            return try await self.speechClient.transcribe(
+                pcm16: pcm, session: session, managed: managed, provider: provider,
+                model: model, language: language, useChatKeys: sharedKeys)
+        }, fallbackToNative: managed || autoFallbackToNativeSpeech)
+    }
+
     private func syncRuntimeLane() {
         guard account != nil else { return }
         useBYOProvider = runtimeLaneOverride ?? AccountAccess.usesBYO(
@@ -1751,6 +1836,11 @@ final class PhantomStore: ObservableObject {
                 let catalog = try await backend.catalog(accessToken: session.accessToken)
                 try ManagedCatalogStore.save(catalog)
                 managedProviders = catalog.providers.filter { !$0.models.isEmpty }
+                if let speechCatalog = try? await backend.speechCatalog(accessToken: session.accessToken) {
+                    SpeechCatalogStore.save(speechCatalog)
+                    speechProviders = speechCatalog.providers.filter { !$0.models.isEmpty }
+                    selectSpeechModel()
+                }
                 if !useBYOProvider { providers = managedProviders; selectAvailableModel() }
             } catch {
                 Diagnostics.log("managed_catalog_refresh_failed code=catalog_unavailable")

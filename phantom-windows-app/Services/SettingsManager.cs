@@ -67,6 +67,15 @@ namespace SecureOverlay.Services
         public bool VoiceInputEnabled { get; set; } = true;
         public bool AutoSendAfterVoiceStopEnabled { get; set; } = true;
         public bool MicrophonePermissionGranted { get; set; } = false;
+        public string SpeechRecognitionMode { get; set; } = "Native";
+        public string SpeechProviderId { get; set; } = "ChatGPT";
+        public string SpeechModelId { get; set; } = "";
+        public string SpeechLanguage { get; set; } = "en";
+        public bool UseChatProviderApiKeysForSpeech { get; set; } = true;
+        public bool AutoFallbackToNativeSpeech { get; set; } = true;
+        public Dictionary<string, List<string>> SpeechApiKeys { get; set; } = new Dictionary<string, List<string>>();
+        public APIRotationState SpeechRotationState { get; set; } = new APIRotationState();
+        public ManagedAiCatalogDto SpeechCatalogCache { get; set; } = new ManagedAiCatalogDto();
         public double WindowOpacity { get; set; } = 0.85;
         public bool ClickThroughEnabled { get; set; } = false;
         public bool UseFakeCursor { get; set; } = true;
@@ -538,6 +547,11 @@ namespace SecureOverlay.Services
 
         private static void ApplyDerivedSettings(AppSettings settings)
         {
+            settings.SpeechApiKeys ??= new Dictionary<string, List<string>>();
+            settings.SpeechRotationState ??= new APIRotationState();
+            settings.SpeechCatalogCache ??= new ManagedAiCatalogDto();
+            settings.SpeechRecognitionMode = string.Equals(settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase) ? "Cloud" : "Native";
+            settings.SpeechLanguage = string.IsNullOrWhiteSpace(settings.SpeechLanguage) ? "en" : settings.SpeechLanguage.Trim();
             settings.CopilotMode = string.Equals(settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase)
                 ? "Briefing"
                 : "Interview";
@@ -610,6 +624,9 @@ namespace SecureOverlay.Services
             settings.GeminiApiKeys = providerKeys.TryGetValue("Gemini", out var geminiKeys) ? geminiKeys : new List<string>();
             settings.GroqApiKeys = providerKeys.TryGetValue("Groq", out var groqKeys) ? groqKeys : new List<string>();
             settings.NvidiaApiKeys = providerKeys.TryGetValue("NVIDIA", out var nvidiaKeys) ? nvidiaKeys : new List<string>();
+            settings.SpeechApiKeys = providerKeys
+                .Where(item => item.Key.StartsWith("speech:", StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(item => item.Key.Substring("speech:".Length), item => item.Value, StringComparer.OrdinalIgnoreCase);
 
             settings.ChatGPTApiKey = settings.ChatGPTApiKeys.FirstOrDefault() ?? "";
             settings.ClaudeApiKey = settings.ClaudeApiKeys.FirstOrDefault() ?? "";
@@ -621,7 +638,7 @@ namespace SecureOverlay.Services
 
         private static Dictionary<string, List<string>> ExtractProviderKeys(AppSettings settings)
         {
-            return new Dictionary<string, List<string>>
+            var keys = new Dictionary<string, List<string>>
             {
                 ["ChatGPT"] = settings.ChatGPTApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["Claude"] = settings.ClaudeApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
@@ -630,6 +647,9 @@ namespace SecureOverlay.Services
                 ["Groq"] = settings.GroqApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["NVIDIA"] = settings.NvidiaApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
             };
+            foreach (var item in settings.SpeechApiKeys)
+                keys[$"speech:{item.Key}"] = item.Value.Where(k => !string.IsNullOrWhiteSpace(k)).Take(2).ToList();
+            return keys;
         }
 
         private static AppSettings CloneSettingsWithoutSecrets(AppSettings source)
@@ -643,6 +663,7 @@ namespace SecureOverlay.Services
             clone.GeminiApiKeys = new List<string>();
             clone.GroqApiKeys = new List<string>();
             clone.NvidiaApiKeys = new List<string>();
+            clone.SpeechApiKeys = new Dictionary<string, List<string>>();
 
             clone.ChatGPTApiKey = "";
             clone.ClaudeApiKey = "";

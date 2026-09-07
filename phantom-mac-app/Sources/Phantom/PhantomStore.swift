@@ -1749,8 +1749,13 @@ final class PhantomStore: ObservableObject {
     }
 
     private func selectSpeechModel() {
+        guard let firstProvider = speechProviders.first else {
+            if !selectedSpeechModelId.isEmpty { selectedSpeechModelId = "" }
+            return
+        }
         if !speechProviders.contains(where: { $0.providerId == selectedSpeechProviderId }) {
-            selectedSpeechProviderId = speechProviders.first?.providerId ?? selectedSpeechProviderId
+            selectedSpeechProviderId = firstProvider.providerId
+            return
         }
         guard let provider = selectedSpeechProvider else { return }
         if !provider.models.contains(where: { $0.modelId == selectedSpeechModelId }) {

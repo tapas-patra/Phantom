@@ -203,6 +203,12 @@ enum PhantomMain {
             precondition(FakeCursorCoordinator.clampedScale(3.0) == 2.0)
             precondition(FakeCursorCoordinator.transitionDuration(distance: 0) == 0.09)
             precondition(FakeCursorCoordinator.transitionDuration(distance: 1_000) == 0.32)
+            precondition(ProtectedWindow.resizedFrame(
+                NSRect(x: 100, y: 100, width: 900, height: 600),
+                delta: NSPoint(x: 50, y: 25),
+                edges: [.left, .bottom],
+                minimumSize: NSSize(width: 820, height: 560)
+            ) == NSRect(x: 150, y: 125, width: 850, height: 575))
             precondition(FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: false, applicationIsActive: true))
             precondition(!FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: false, applicationIsActive: false))
             precondition(!FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: true, applicationIsActive: true))

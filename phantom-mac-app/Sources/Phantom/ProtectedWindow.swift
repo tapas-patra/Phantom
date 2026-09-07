@@ -3,11 +3,22 @@ import AppKit
 @MainActor
 final class ProtectedWindow: NSPanel {
     private let fakeCursor = FakeCursorCoordinator()
+    private static let resizeMargin: CGFloat = 8
+    private var resizeSession: (frame: NSRect, cursor: NSPoint, edges: ResizeEdges)?
+
+    struct ResizeEdges: OptionSet {
+        let rawValue: Int
+
+        static let left = ResizeEdges(rawValue: 1 << 0)
+        static let right = ResizeEdges(rawValue: 1 << 1)
+        static let bottom = ResizeEdges(rawValue: 1 << 2)
+        static let top = ResizeEdges(rawValue: 1 << 3)
+    }
 
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 640),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -34,12 +45,6 @@ final class ProtectedWindow: NSPanel {
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
         fakeCursor.attach(to: self)
-
-        // Cursor rectangles only control pointer appearance; native edge hit-testing
-        // remains active, so the window is still resizable with a stable arrow.
-        NSCursor.arrow.set()
-        discardCursorRects()
-        disableCursorRects()
     }
 
     func apply(opacity: Double, clickThrough: Bool) {
@@ -65,6 +70,39 @@ final class ProtectedWindow: NSPanel {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            if let edges = resizeEdges(at: event.locationInWindow) {
+                resizeSession = (frame, NSEvent.mouseLocation, edges)
+                NSCursor.arrow.set()
+                return
+            }
+        case .leftMouseDragged:
+            if let resizeSession {
+                let cursor = NSEvent.mouseLocation
+                let delta = NSPoint(
+                    x: cursor.x - resizeSession.cursor.x,
+                    y: cursor.y - resizeSession.cursor.y
+                )
+                setFrame(Self.resizedFrame(
+                    resizeSession.frame,
+                    delta: delta,
+                    edges: resizeSession.edges,
+                    minimumSize: minSize
+                ), display: true)
+                NSCursor.arrow.set()
+                return
+            }
+        case .leftMouseUp:
+            if resizeSession != nil {
+                resizeSession = nil
+                NSCursor.arrow.set()
+                return
+            }
+        default:
+            break
+        }
+
         super.sendEvent(event)
         switch event.type {
         case .cursorUpdate, .mouseMoved, .leftMouseDragged:
@@ -72,6 +110,40 @@ final class ProtectedWindow: NSPanel {
         default:
             break
         }
+    }
+
+    private func resizeEdges(at point: NSPoint) -> ResizeEdges? {
+        var edges: ResizeEdges = []
+        if point.x <= Self.resizeMargin { edges.insert(.left) }
+        if point.x >= frame.width - Self.resizeMargin { edges.insert(.right) }
+        if point.y <= Self.resizeMargin { edges.insert(.bottom) }
+        if point.y >= frame.height - Self.resizeMargin { edges.insert(.top) }
+        return edges.isEmpty ? nil : edges
+    }
+
+    static func resizedFrame(
+        _ start: NSRect,
+        delta: NSPoint,
+        edges: ResizeEdges,
+        minimumSize: NSSize
+    ) -> NSRect {
+        var result = start
+
+        if edges.contains(.left) {
+            result.size.width = max(minimumSize.width, start.width - delta.x)
+            result.origin.x = start.maxX - result.width
+        } else if edges.contains(.right) {
+            result.size.width = max(minimumSize.width, start.width + delta.x)
+        }
+
+        if edges.contains(.bottom) {
+            result.size.height = max(minimumSize.height, start.height - delta.y)
+            result.origin.y = start.maxY - result.height
+        } else if edges.contains(.top) {
+            result.size.height = max(minimumSize.height, start.height + delta.y)
+        }
+
+        return result
     }
 
     override var canBecomeKey: Bool { true }

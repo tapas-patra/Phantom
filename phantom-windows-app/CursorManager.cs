@@ -29,6 +29,8 @@ namespace SecureOverlay
         private bool _useFakeCursor = true;
         private bool _clickThroughActive;
         private bool _applicationFocusActive;
+        private bool _systemCursorHidden;
+        private int _transitionGeneration;
 
         // Debounce timers to prevent flickering at borders
         private System.Windows.Threading.DispatcherTimer? _activateTimer;
@@ -44,6 +46,9 @@ namespace SecureOverlay
         // Windows API for getting exact cursor position
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        private static extern int ShowCursor(bool bShow);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT
@@ -217,6 +222,8 @@ namespace SecureOverlay
 
             try
             {
+                _transitionGeneration++;
+                _fakeCursorWindow?.CancelAnimation();
                 _customCursorActive = true;
                 
                 // Get EXACT cursor position
@@ -258,6 +265,7 @@ namespace SecureOverlay
                 {
                     _parentWindow.Cursor = System.Windows.Input.Cursors.None;
                 }
+                HideSystemCursor();
                 
                 // The moving cursor is a protected window so it also works over WebView2.
                 if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
@@ -269,6 +277,7 @@ namespace SecureOverlay
             catch (Exception ex)
             {
                 Log.WriteLine($"✗ Failed to activate custom cursor: {ex.Message}");
+                ResetCursorImmediately();
             }
         }
 
@@ -290,13 +299,15 @@ namespace SecureOverlay
             _deactivateTimer?.Start();
         }
 
-        private void DeactivateCustomCursorImmediate()
+        private void DeactivateCustomCursorImmediate(bool force = false)
         {
-            if (!_customCursorActive || _isSuspended)
+            if (!_customCursorActive || (_isSuspended && !force))
                 return;
 
             try
             {
+                var transitionGeneration = ++_transitionGeneration;
+
                 // Get exit position
                 POINT exitPos;
                 GetCursorPos(out exitPos);
@@ -310,14 +321,13 @@ namespace SecureOverlay
                     Math.Pow(exitPoint.Y - animationStart.Y, 2)
                 );
                 
-                // NEW: Use constant speed for natural movement
-                // Speed: 600 pixels per second (0.6 pixels per millisecond)
-                const double PIXELS_PER_MS = 0.6;
+                // Keep the handoff visible, but short enough that it cannot be mistaken for lag.
+                const double PIXELS_PER_MS = 1.4;
                 
                 int animationMs = (int)(distance / PIXELS_PER_MS);
                 
                 // Clamp between reasonable limits
-                animationMs = Math.Max(100, Math.Min(800, animationMs));
+                animationMs = Math.Max(90, Math.Min(320, animationMs));
                 
                 Log.WriteLine($"🖱️ Animating cursor: ({animationStart.X:F0}, {animationStart.Y:F0}) → ({exitPoint.X}, {exitPoint.Y})");
                 Log.WriteLine($"   Distance: {distance:F0}px | Duration: {animationMs}ms | Speed: {(distance / animationMs):F1}px/ms");
@@ -327,6 +337,9 @@ namespace SecureOverlay
                     // Animate the fake cursor window position
                     _fakeCursorWindow.AnimateToPosition(exitPoint.X, exitPoint.Y, animationMs, () =>
                     {
+                        if (transitionGeneration != _transitionGeneration || _customCursorActive)
+                            return;
+
                         // After animation completes, hide fake cursor and show real cursor
                         _fakeCursorWindow.Hide();
                         
@@ -335,9 +348,14 @@ namespace SecureOverlay
                         {
                             _parentWindow.Cursor = null;
                         }
+                        RestoreSystemCursor();
                         
                         Log.WriteLine("🖱️ Cursor unlocked at exit");
                     });
+                }
+                else
+                {
+                    RestoreSystemCursor();
                 }
 
                 _protectedCursorWindow?.Hide();
@@ -369,6 +387,7 @@ namespace SecureOverlay
                 {
                     _parentWindow.Cursor = null;
                 }
+                RestoreSystemCursor();
                 _customCursorActive = false;
             }
         }
@@ -481,7 +500,9 @@ namespace SecureOverlay
             _clickThroughActive = active;
             if (active)
             {
-                ResetCursorImmediately();
+                _activateTimer?.Stop();
+                _deactivateTimer?.Stop();
+                DeactivateCustomCursorImmediate(force: true);
                 return;
             }
 
@@ -525,6 +546,7 @@ namespace SecureOverlay
 
         private void ResetCursorImmediately()
         {
+            _transitionGeneration++;
             _activateTimer?.Stop();
             _deactivateTimer?.Stop();
             _embeddedSurfaceCursorActive = false;
@@ -543,6 +565,21 @@ namespace SecureOverlay
                 _protectedCursorWindow.Hide();
             }
             if (_parentWindow != null) _parentWindow.Cursor = null;
+            RestoreSystemCursor();
+        }
+
+        private void HideSystemCursor()
+        {
+            if (_systemCursorHidden) return;
+            ShowCursor(false);
+            _systemCursorHidden = true;
+        }
+
+        private void RestoreSystemCursor()
+        {
+            if (!_systemCursorHidden) return;
+            ShowCursor(true);
+            _systemCursorHidden = false;
         }
 
         public void ShowFakeCursorPreview()
@@ -573,6 +610,8 @@ namespace SecureOverlay
             
             try
             {
+                ResetCursorImmediately();
+
                 // 1. Stop all timers
                 if (_activateTimer != null)
                 {

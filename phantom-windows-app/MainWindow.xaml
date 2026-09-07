@@ -191,7 +191,6 @@
                         <Button x:Name="ClickThroughButton" Width="40" Height="32" Click="ClickThroughButton_Click"
                             Background="#50505050" BorderBrush="#90FFFFFF" BorderThickness="1.5"
                             Foreground="White" Margin="0,0,8,0"
-                            ToolTip="Enable click-through. Press Ctrl+Alt+` to disable."
                             AutomationProperties.Name="Enable click-through"
                             Style="{StaticResource ButtonStyle}">
                             <Viewbox Width="17" Height="17">

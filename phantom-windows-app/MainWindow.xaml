@@ -526,43 +526,27 @@
 
         <Thumb Width="8" Height="Auto" HorizontalAlignment="Left" VerticalAlignment="Stretch"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Left"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="8" Height="Auto" HorizontalAlignment="Right" VerticalAlignment="Stretch"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Right"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Height="8" Width="Auto" HorizontalAlignment="Stretch" VerticalAlignment="Top"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Top"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Height="8" Width="Auto" HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="Bottom"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Top"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="TopLeft"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Top"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="TopRight"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Bottom"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="BottomLeft"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
         <Thumb Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom"
                Style="{StaticResource ResizeThumbStyle}" Cursor="Arrow" ForceCursor="True" Tag="BottomRight"
-               MouseEnter="ResizeThumb_MouseEnter" MouseLeave="ResizeThumb_MouseLeave"
-               DragStarted="ResizeThumb_DragStarted" DragCompleted="ResizeThumb_DragCompleted"
                DragDelta="ResizeThumb_DragDelta"/>
 
         <!-- ═══════════════════════════════════════════════════════════════ -->

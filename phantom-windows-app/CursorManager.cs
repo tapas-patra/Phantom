@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 
 namespace SecureOverlay
@@ -16,12 +15,9 @@ namespace SecureOverlay
         // Custom cursor visual (inside overlay - invisible to screen share)
         private Canvas? _cursorCanvas;
         private Ellipse? _cursorDot;
-        private Border? _cursorBadge;
-        private TextBlock? _cursorGlyph;
         private Window? _parentWindow;
         private bool _customCursorActive = false;
         private bool _embeddedSurfaceCursorActive;
-        private CursorVisualMode _cursorVisualMode = CursorVisualMode.Default;
 
         // Fake cursor window (visible to screen share)
         private FakeCursorWindow? _fakeCursorWindow;
@@ -55,15 +51,6 @@ namespace SecureOverlay
         {
             public int X;
             public int Y;
-        }
-
-        private enum CursorVisualMode
-        {
-            Default,
-            ResizeHorizontal,
-            ResizeVertical,
-            ResizeDiagonalForward,
-            ResizeDiagonalBackward
         }
 
         public CursorManager(Window parentWindow, Canvas cursorCanvas, bool useFakeCursor, double fakeCursorSize)
@@ -149,42 +136,6 @@ namespace SecureOverlay
                 Canvas.SetZIndex(_cursorDot, 10000);
             }
 
-            _cursorGlyph = new TextBlock
-            {
-                Text = "↔",
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment = TextAlignment.Center
-            };
-
-            _cursorBadge = new Border
-            {
-                Width = 22,
-                Height = 22,
-                Background = new SolidColorBrush(Color.FromArgb(210, 12, 24, 36)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(230, 187, 233, 255)),
-                BorderThickness = new Thickness(1.5),
-                CornerRadius = new CornerRadius(11),
-                Child = _cursorGlyph,
-                Visibility = Visibility.Collapsed,
-                IsHitTestVisible = false,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                {
-                    Color = Color.FromRgb(90, 190, 255),
-                    BlurRadius = 12,
-                    ShadowDepth = 0,
-                    Opacity = 0.95
-                }
-            };
-
-            if (_cursorCanvas != null)
-            {
-                _cursorCanvas.Children.Add(_cursorBadge);
-                Canvas.SetZIndex(_cursorBadge, 10001);
-            }
         }
 
         public void SuspendCursorChanges()
@@ -269,7 +220,6 @@ namespace SecureOverlay
                 
                 // The moving cursor is a protected window so it also works over WebView2.
                 if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
-                if (_cursorBadge != null) _cursorBadge.Visibility = Visibility.Collapsed;
                 UpdateCursorVisualState();
                 
                 Log.WriteLine($"🖱️ Cursor locked at entry: ({cursorPos.X}, {cursorPos.Y})");
@@ -366,11 +316,6 @@ namespace SecureOverlay
                     _cursorDot.Visibility = Visibility.Collapsed;
                 }
 
-                if (_cursorBadge != null)
-                {
-                    _cursorBadge.Visibility = Visibility.Collapsed;
-                }
-                
                 _customCursorActive = false;
             }
             catch (Exception ex)
@@ -424,70 +369,18 @@ namespace SecureOverlay
             UpdateCursorVisualState();
         }
 
-        public void SetResizeCursorHint(string resizeTag)
-        {
-            _cursorVisualMode = resizeTag switch
-            {
-                "Left" or "Right" => CursorVisualMode.ResizeHorizontal,
-                "Top" or "Bottom" => CursorVisualMode.ResizeVertical,
-                "TopLeft" or "BottomRight" => CursorVisualMode.ResizeDiagonalBackward,
-                "TopRight" or "BottomLeft" => CursorVisualMode.ResizeDiagonalForward,
-                _ => CursorVisualMode.Default
-            };
-            UpdateCursorVisualState();
-        }
-
-        public void ClearResizeCursorHint()
-        {
-            _cursorVisualMode = CursorVisualMode.Default;
-            UpdateCursorVisualState();
-        }
-
         private void UpdateCursorVisualState()
         {
-            if (_cursorDot == null || _cursorBadge == null || _cursorGlyph == null)
+            if (_cursorDot == null)
             {
                 return;
             }
 
-            if (_protectedCursorWindow != null)
-            {
-                _cursorDot.Visibility = Visibility.Collapsed;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (!_customCursorActive)
-            {
-                _cursorDot.Visibility = Visibility.Collapsed;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (_embeddedSurfaceCursorActive)
-            {
-                _cursorDot.Visibility = Visibility.Collapsed;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (_cursorVisualMode == CursorVisualMode.Default)
-            {
-                _cursorDot.Visibility = Visibility.Visible;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            _cursorDot.Visibility = Visibility.Collapsed;
-            _cursorBadge.Visibility = Visibility.Visible;
-            _cursorGlyph.Text = _cursorVisualMode switch
-            {
-                CursorVisualMode.ResizeHorizontal => "↔",
-                CursorVisualMode.ResizeVertical => "↕",
-                CursorVisualMode.ResizeDiagonalForward => "⤢",
-                CursorVisualMode.ResizeDiagonalBackward => "⤡",
-                _ => "↔"
-            };
+            _cursorDot.Visibility = _protectedCursorWindow == null &&
+                                    _customCursorActive &&
+                                    !_embeddedSurfaceCursorActive
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         public void UpdateFakeCursorSize(double scale)
@@ -553,7 +446,6 @@ namespace SecureOverlay
             _customCursorActive = false;
 
             if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
-            if (_cursorBadge != null) _cursorBadge.Visibility = Visibility.Collapsed;
             if (_fakeCursorWindow != null)
             {
                 _fakeCursorWindow.CancelAnimation();
@@ -645,15 +537,6 @@ namespace SecureOverlay
                     Log.WriteLine("  ✓ Custom cursor removed");
                 }
 
-                if (_cursorBadge != null && _cursorCanvas != null)
-                {
-                    _cursorBadge.Visibility = Visibility.Collapsed;
-                    _cursorCanvas.Children.Remove(_cursorBadge);
-                    _cursorBadge = null;
-                    _cursorGlyph = null;
-                    Log.WriteLine("  ✓ Cursor resize badge removed");
-                }
-                
                 // 4. FORCE CLOSE fake cursor window
                 if (_fakeCursorWindow != null)
                 {

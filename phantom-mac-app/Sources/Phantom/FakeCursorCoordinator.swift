@@ -24,7 +24,7 @@ final class FakeCursorCoordinator {
 
         guard self.enabled else {
             stopBoundaryTracking()
-            deactivate(at: NSEvent.mouseLocation, animated: false)
+            deactivate(at: NSEvent.mouseLocation, animated: clickThrough)
             return
         }
 
@@ -54,7 +54,7 @@ final class FakeCursorCoordinator {
     }
 
     static func transitionDuration(distance: CGFloat) -> TimeInterval {
-        min(0.8, max(0.1, TimeInterval(distance / 600.0)))
+        min(0.32, max(0.09, TimeInterval(distance / 1_400.0)))
     }
 
     static func canActivate(
@@ -109,7 +109,7 @@ final class FakeCursorCoordinator {
         transitionTimer?.invalidate()
         transitionTimer = nil
 
-        clonedCursor = NSCursor.currentSystem ?? NSCursor.current
+        clonedCursor = .arrow
         fakePanel.apply(cursor: clonedCursor, scale: scale)
         livePanel.apply(cursor: clonedCursor, scale: 1.0)
         fakePanel.moveHotspot(to: screenPoint)

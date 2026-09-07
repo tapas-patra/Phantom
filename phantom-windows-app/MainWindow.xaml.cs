@@ -4032,32 +4032,6 @@ namespace SecureOverlay
             }
         }
 
-        private void ResizeThumb_MouseEnter(object sender, MouseEventArgs e)
-        {
-            if (sender is Thumb thumb && thumb.Tag is string tag)
-            {
-                _cursorManager?.SetResizeCursorHint(tag);
-            }
-        }
-
-        private void ResizeThumb_MouseLeave(object sender, MouseEventArgs e)
-        {
-            _cursorManager?.ClearResizeCursorHint();
-        }
-
-        private void ResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
-        {
-            if (sender is Thumb thumb && thumb.Tag is string tag)
-            {
-                _cursorManager?.SetResizeCursorHint(tag);
-            }
-        }
-
-        private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
-        {
-            _cursorManager?.ClearResizeCursorHint();
-        }
-
         // ═══════════════════════════════════════════════════════════════
         // KEYBOARD HOOKS - GLOBAL HOTKEYS
         // ═══════════════════════════════════════════════════════════════

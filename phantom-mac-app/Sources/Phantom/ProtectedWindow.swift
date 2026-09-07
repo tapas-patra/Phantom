@@ -39,19 +39,13 @@ final class ProtectedWindow: NSPanel {
     func apply(opacity: Double, clickThrough: Bool) {
         alphaValue = max(0.35, min(opacity, 1.0))
         ignoresMouseEvents = clickThrough
-        fakeCursor.configure(enabled: fakeCursorEnabled, clickThrough: clickThrough, scale: fakeCursorScale)
     }
-
-    private var fakeCursorEnabled = false
-    private var fakeCursorScale = 1.0
 
     func installCursorTracking() {
         fakeCursor.attach(to: self)
     }
 
     func configureFakeCursor(enabled: Bool, clickThrough: Bool, scale: Double) {
-        fakeCursorEnabled = enabled
-        fakeCursorScale = scale
         fakeCursor.configure(enabled: enabled, clickThrough: clickThrough, scale: scale)
     }
 
@@ -62,6 +56,16 @@ final class ProtectedWindow: NSPanel {
     override func orderOut(_ sender: Any?) {
         fakeCursor.windowHidden()
         super.orderOut(sender)
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        switch event.type {
+        case .cursorUpdate, .mouseMoved, .leftMouseDragged:
+            NSCursor.arrow.set()
+        default:
+            break
+        }
     }
 
     override var canBecomeKey: Bool { true }

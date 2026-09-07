@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
 
+const testStartedAt = Date.now();
+const testTime = (offsetMs) => new Date(testStartedAt + offsetMs).toISOString();
+
 test("public site is navigable and does not overflow", async ({ page }) => {
   await mockApi(page, { user: null, admin: null });
   await page.goto("/");
@@ -99,7 +102,7 @@ async function mockApi(page, { user, admin, adminOtp = false }) {
     if (path.endsWith("/api/desktop/auth/me")) return user ? json(user) : json({ error: "Unauthorized" }, 401);
     if (path.endsWith("/api/admin/auth/me")) return currentAdmin ? json(currentAdmin) : json({ error: "Unauthorized" }, 401);
     if (adminOtp && method === "POST" && path.endsWith("/api/admin/auth/login")) {
-      return json({ challengeId: "admin-otp-test", maskedEmail: "a***n@example.com", expiresAtUtc: "2026-09-04T10:10:00Z" });
+      return json({ challengeId: "admin-otp-test", maskedEmail: "a***n@example.com", expiresAtUtc: testTime(10 * 60 * 1000) });
     }
     if (adminOtp && method === "POST" && path.endsWith("/api/admin/auth/verify-otp")) {
       const request = route.request().postDataJSON();
@@ -128,15 +131,15 @@ async function mockApi(page, { user, admin, adminOtp = false }) {
 }
 
 function userSession() {
-  return { userId: "user-1", email: "user@example.com", authMethod: "password", deviceInstallId: "web-test", authenticatedAtUtc: "2026-09-04T10:00:00Z", expiresAtUtc: "2026-09-05T10:00:00Z", isAuthenticated: true };
+  return { userId: "user-1", email: "user@example.com", authMethod: "password", deviceInstallId: "web-test", authenticatedAtUtc: testTime(-60 * 1000), expiresAtUtc: testTime(60 * 60 * 1000), isAuthenticated: true };
 }
 
 function adminSession() {
-  return { adminId: "admin-1", email: "admin@example.com", displayName: "Phantom Admin", role: "super_admin", authMethod: "admin:password+email_otp", authenticatedAtUtc: "2026-09-04T10:00:00Z", expiresAtUtc: "2026-09-05T10:00:00Z", isAuthenticated: true };
+  return { adminId: "admin-1", email: "admin@example.com", displayName: "Phantom Admin", role: "super_admin", authMethod: "admin:password+email_otp", authenticatedAtUtc: testTime(-60 * 1000), expiresAtUtc: testTime(60 * 60 * 1000), isAuthenticated: true };
 }
 
 function accountSummary() {
-  return { userId: "user-1", email: "user@example.com", planLabel: "Premium", accessTier: "premium", emailVerified: true, phoneVerified: true, canUseDesktopPowerFeatures: true, proAvailableCredits: 12, premiumAvailableCredits: 20, premiumNegativeCredits: 0, activeDeviceCount: 1, leaseExpiresAtUtc: "2026-09-05T10:00:00Z", lastActivityAtUtc: "2026-09-04T10:00:00Z" };
+  return { userId: "user-1", email: "user@example.com", planLabel: "Premium", accessTier: "premium", emailVerified: true, phoneVerified: true, canUseDesktopPowerFeatures: true, proAvailableCredits: 12, premiumAvailableCredits: 20, premiumNegativeCredits: 0, activeDeviceCount: 1, leaseExpiresAtUtc: testTime(60 * 60 * 1000), lastActivityAtUtc: testTime(-60 * 1000) };
 }
 
 function knowledgeBase() {

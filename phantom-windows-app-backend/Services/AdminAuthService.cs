@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -10,6 +13,7 @@ public sealed class AdminAuthService
     private readonly BackendOptions _options;
     private readonly AdminAccountRepository _admins;
     private readonly AdminPasswordResetRepository _passwordResets;
+    private readonly AdminLoginChallengeRepository _loginChallenges;
     private readonly AuthSessionRepository _sessions;
     private readonly PasswordHasher _passwordHasher;
     private readonly TokenService _tokenService;
@@ -20,6 +24,7 @@ public sealed class AdminAuthService
         BackendOptions options,
         AdminAccountRepository admins,
         AdminPasswordResetRepository passwordResets,
+        AdminLoginChallengeRepository loginChallenges,
         AuthSessionRepository sessions,
         PasswordHasher passwordHasher,
         TokenService tokenService,
@@ -29,6 +34,7 @@ public sealed class AdminAuthService
         _options = options;
         _admins = admins;
         _passwordResets = passwordResets;
+        _loginChallenges = loginChallenges;
         _sessions = sessions;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
@@ -36,7 +42,7 @@ public sealed class AdminAuthService
         _telemetry = telemetry;
     }
 
-    public AdminAuthSessionDto Login(AdminAuthLoginRequestDto request)
+    public AdminAuthChallengeDto BeginLogin(AdminAuthLoginRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
         {
@@ -65,11 +71,100 @@ public sealed class AdminAuthService
             throw new BackendValidationException("Invalid admin email or password.");
         }
 
+        var deliveryConfigurationError = _emailService.GetDeliveryConfigurationError();
+        if (!string.IsNullOrWhiteSpace(deliveryConfigurationError))
+        {
+            throw new BackendValidationException(deliveryConfigurationError);
+        }
+
+        _loginChallenges.ConsumeActiveForAdmin(admin.AdminId);
+        var challengeId = $"admin-otp-{Guid.NewGuid():N}";
+        var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(CultureInfo.InvariantCulture);
+        var expiresAtUtc = DateTime.UtcNow.AddMinutes(Math.Clamp(_options.AdminOtpTtlMinutes, 2, 30));
+        var challenge = new AdminLoginChallengeRecord
+        {
+            ChallengeId = challengeId,
+            AdminId = admin.AdminId,
+            Email = admin.Email,
+            CodeHash = _tokenService.HashToken($"{challengeId}:{code}"),
+            ExpiresAtUtc = expiresAtUtc,
+            CreatedAtUtc = DateTime.UtcNow,
+            DeliveryStatus = "pending"
+        };
+        _loginChallenges.Save(challenge);
+        var delivery = _emailService.SendAdminLoginCode(admin.Email, code, expiresAtUtc);
+        challenge.DeliveryStatus = delivery.Status;
+        challenge.DeliveryError = delivery.Error;
+        _loginChallenges.Save(challenge);
+        if (!string.Equals(delivery.Status, "sent", StringComparison.OrdinalIgnoreCase))
+        {
+            SaveTelemetry("admin_login_otp_delivery_failed", admin.Email);
+            throw new BackendValidationException("Could not send the admin verification code. Check email delivery configuration and try again.");
+        }
+
+        SaveTelemetry("admin_login_otp_sent", admin.Email);
+        return new AdminAuthChallengeDto
+        {
+            ChallengeId = challengeId,
+            MaskedEmail = MaskEmail(admin.Email),
+            ExpiresAtUtc = expiresAtUtc
+        };
+    }
+
+    public AdminAuthSessionDto CompleteLogin(AdminAuthOtpVerifyRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ChallengeId) || string.IsNullOrWhiteSpace(request.OtpCode))
+        {
+            throw new BackendValidationException("ChallengeId and verification code are required.");
+        }
+
+        var challenge = _loginChallenges.Find(request.ChallengeId.Trim())
+            ?? throw new BackendValidationException("Admin verification challenge not found.");
+        if (challenge.Consumed)
+        {
+            throw new BackendValidationException("Admin verification challenge has already been used.");
+        }
+
+        if (challenge.ExpiresAtUtc <= DateTime.UtcNow)
+        {
+            challenge.Consumed = true;
+            challenge.ConsumedAtUtc = DateTime.UtcNow;
+            _loginChallenges.Save(challenge);
+            throw new BackendValidationException("Admin verification code has expired.");
+        }
+
+        var maxAttempts = Math.Clamp(_options.AdminOtpMaxAttempts, 3, 10);
+        var providedHash = _tokenService.HashToken($"{challenge.ChallengeId}:{request.OtpCode.Trim()}");
+        if (!FixedTimeEquals(challenge.CodeHash, providedHash))
+        {
+            var failedChallenge = _loginChallenges.RegisterFailedAttempt(
+                challenge.ChallengeId,
+                maxAttempts,
+                DateTime.UtcNow);
+            if (failedChallenge == null)
+            {
+                throw new BackendValidationException("Admin verification challenge has expired or already been used.");
+            }
+            SaveTelemetry("admin_login_otp_failed", challenge.Email);
+            throw new BackendValidationException(
+                failedChallenge.Consumed
+                    ? "Too many invalid codes. Start a new admin sign-in."
+                    : "Invalid admin verification code.");
+        }
+
+        if (!_loginChallenges.TryConsumeValid(challenge.ChallengeId, providedHash, DateTime.UtcNow))
+        {
+            throw new BackendValidationException("Admin verification challenge has expired or already been used.");
+        }
+
+        var admin = _admins.FindByAdminId(challenge.AdminId)
+            ?? throw new BackendValidationException("Admin account not found.");
+        EnsureActiveAdmin(admin);
         admin.LastLoginAtUtc = DateTime.UtcNow;
         admin.UpdatedAtUtc = DateTime.UtcNow;
         _admins.Save(admin);
         SaveTelemetry("admin_login_succeeded", admin.Email);
-        return CreateSession(admin, "admin:password");
+        return CreateSession(admin, "admin:password+email_otp");
     }
 
     public AdminAuthSessionDto Refresh(AdminAuthRefreshRequestDto request)
@@ -274,6 +369,20 @@ public sealed class AdminAuthService
         }
 
         return accessToken;
+    }
+
+    private static bool FixedTimeEquals(string expected, string actual) =>
+        CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(actual));
+
+    private static string MaskEmail(string email)
+    {
+        var separator = email.IndexOf('@');
+        if (separator <= 1)
+        {
+            return $"***{email[Math.Max(0, separator)..]}";
+        }
+
+        return $"{email[0]}***{email[(separator - 1)..]}";
     }
 
     private static void ValidateAdminSessionRecord(DesktopSessionRecord session)

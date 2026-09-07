@@ -214,12 +214,12 @@ FOR UPDATE SKIP LOCKED;";
         command.Transaction = transaction;
         command.CommandText = @"
 INSERT INTO dashboard_account_summaries (
-    user_id, email, effective_access_tier, plan_label, phone_verified,
+    user_id, email, effective_access_tier, plan_label, email_verified, phone_verified,
     pro_available_credits, premium_available_credits, premium_negative_credits,
     lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features, last_validated_at_utc,
     active_device_count, last_activity_at_utc, updated_at_utc
 ) VALUES (
-    @userId, @email, @effectiveAccessTier, @planLabel, @phoneVerified,
+    @userId, @email, @effectiveAccessTier, @planLabel, @emailVerified, @phoneVerified,
     @proCredits, @premiumCredits, @premiumNegativeCredits, @leaseExpiresAtUtc,
     @offlineModeEnabled, @canUseDesktopPowerFeatures, @lastValidatedAtUtc, @activeDeviceCount, @lastActivityAtUtc, @updatedAtUtc
 )
@@ -227,6 +227,7 @@ ON CONFLICT (user_id) DO UPDATE SET
     email = EXCLUDED.email,
     effective_access_tier = EXCLUDED.effective_access_tier,
     plan_label = EXCLUDED.plan_label,
+    email_verified = EXCLUDED.email_verified,
     phone_verified = EXCLUDED.phone_verified,
     pro_available_credits = EXCLUDED.pro_available_credits,
     premium_available_credits = EXCLUDED.premium_available_credits,
@@ -242,6 +243,9 @@ ON CONFLICT (user_id) DO UPDATE SET
         command.Parameters.AddWithValue("email", root.GetProperty("email").GetString() ?? string.Empty);
         command.Parameters.AddWithValue("effectiveAccessTier", root.GetProperty("effective_access_tier").GetString() ?? string.Empty);
         command.Parameters.AddWithValue("planLabel", root.GetProperty("plan_label").GetString() ?? string.Empty);
+        command.Parameters.AddWithValue("emailVerified",
+            root.TryGetProperty("email_verified", out var emailVerified)
+                && emailVerified.GetBoolean());
         command.Parameters.AddWithValue("phoneVerified", root.GetProperty("phone_verified").GetBoolean());
         command.Parameters.AddWithValue("proCredits", root.GetProperty("pro_available_credits").GetDecimal());
         command.Parameters.AddWithValue("premiumCredits", root.GetProperty("premium_available_credits").GetDecimal());

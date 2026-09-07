@@ -101,13 +101,25 @@ final class PhantomStore: ObservableObject {
     @Published var opacity: Double {
         didSet {
             UserDefaults.standard.set(opacity, forKey: "window.opacity")
-            onWindowPreferencesChanged?(opacity, clickThrough)
+            onWindowPreferencesChanged?(opacity, clickThrough, useFakeCursor, fakeCursorScale)
         }
     }
     @Published var clickThrough: Bool {
         didSet {
             UserDefaults.standard.set(clickThrough, forKey: "window.clickThrough")
-            onWindowPreferencesChanged?(opacity, clickThrough)
+            onWindowPreferencesChanged?(opacity, clickThrough, useFakeCursor, fakeCursorScale)
+        }
+    }
+    @Published var useFakeCursor: Bool {
+        didSet {
+            UserDefaults.standard.set(useFakeCursor, forKey: "window.useFakeCursor")
+            onWindowPreferencesChanged?(opacity, clickThrough, useFakeCursor, fakeCursorScale)
+        }
+    }
+    @Published var fakeCursorScale: Double {
+        didSet {
+            UserDefaults.standard.set(fakeCursorScale, forKey: "window.fakeCursorScale")
+            onWindowPreferencesChanged?(opacity, clickThrough, useFakeCursor, fakeCursorScale)
         }
     }
     @Published var settingsClickThrough = false
@@ -148,7 +160,7 @@ final class PhantomStore: ObservableObject {
         didSet { UserDefaults.standard.set(autoSwitchModelsOnError, forKey: "rotation.autoSwitchModels") }
     }
 
-    var onWindowPreferencesChanged: ((Double, Bool) -> Void)?
+    var onWindowPreferencesChanged: ((Double, Bool, Bool, Double) -> Void)?
     var onCaptureScreenshot: (() async throws -> Data)?
     var onCompactModeChanged: ((Bool) -> Void)?
     var onLogout: (() -> Void)?
@@ -191,7 +203,7 @@ final class PhantomStore: ObservableObject {
 
     private struct SettingsSnapshot {
         let provider: String, model: String, mode: CopilotMode, style: InterviewDeliveryStyle, resume: String, job: String
-        let opacity: Double, freeExtension: Bool, paidExtension: Bool
+        let opacity: Double, fakeCursor: Bool, fakeCursorScale: Double, freeExtension: Bool, paidExtension: Bool
         let autoPause: Bool, inactivity: Int, preferBYO: Bool, voice: Bool, autoVoice: Bool
         let legacyPath: String, debug: Bool, simulation: String
     }
@@ -217,6 +229,12 @@ final class PhantomStore: ObservableObject {
             ? 0.92
             : defaults.double(forKey: "window.opacity")
         clickThrough = defaults.bool(forKey: "window.clickThrough")
+        useFakeCursor = defaults.bool(forKey: "window.useFakeCursor")
+        fakeCursorScale = FakeCursorCoordinator.clampedScale(
+            defaults.object(forKey: "window.fakeCursorScale") == nil
+                ? 1.0
+                : defaults.double(forKey: "window.fakeCursorScale")
+        )
         allowPaidSessionExtension = defaults.bool(forKey: "chat.allowPaidExtension")
         allowFreeTrialSessionExtension = defaults.bool(forKey: "chat.allowFreeTrialExtension")
         autoPauseOnInactivity = defaults.object(forKey: "chat.autoPauseOnInactivity") == nil
@@ -339,7 +357,7 @@ final class PhantomStore: ObservableObject {
 
     func bootstrap() {
         Diagnostics.log("bootstrap:start")
-        onWindowPreferencesChanged?(opacity, clickThrough)
+        onWindowPreferencesChanged?(opacity, clickThrough, useFakeCursor, fakeCursorScale)
         if let error = runtime.storageFailure {
             Diagnostics.log("bootstrap:storage_unavailable code=storage_unavailable")
             status = error
@@ -443,7 +461,8 @@ final class PhantomStore: ObservableObject {
         settingsClickThrough = clickThrough
         settingsSnapshot = SettingsSnapshot(
             provider: selectedProviderId, model: selectedModelId, mode: copilotMode, style: interviewDeliveryStyle,
-            resume: resumeText, job: jobDescriptionText, opacity: opacity,
+            resume: resumeText, job: jobDescriptionText, opacity: opacity, fakeCursor: useFakeCursor,
+            fakeCursorScale: fakeCursorScale,
             freeExtension: allowFreeTrialSessionExtension, paidExtension: allowPaidSessionExtension,
             autoPause: autoPauseOnInactivity, inactivity: inactivityMinutes,
             preferBYO: preferBYOCreditsFirst, voice: voiceEnabled, autoVoice: autoSendAfterVoiceStop,
@@ -473,7 +492,8 @@ final class PhantomStore: ObservableObject {
     func cancelSettings() {
         guard let old = settingsSnapshot else { screen = .chat; return }
         selectedProviderId = old.provider; selectedModelId = old.model; copilotMode = old.mode; interviewDeliveryStyle = old.style
-        resumeText = old.resume; jobDescriptionText = old.job; opacity = old.opacity
+        resumeText = old.resume; jobDescriptionText = old.job; opacity = old.opacity; useFakeCursor = old.fakeCursor
+        fakeCursorScale = old.fakeCursorScale
         allowFreeTrialSessionExtension = old.freeExtension; allowPaidSessionExtension = old.paidExtension
         autoPauseOnInactivity = old.autoPause; inactivityMinutes = old.inactivity
         preferBYOCreditsFirst = old.preferBYO; voiceEnabled = old.voice; autoSendAfterVoiceStop = old.autoVoice

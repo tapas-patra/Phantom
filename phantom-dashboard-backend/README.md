@@ -25,9 +25,8 @@ dotnet run --urls http://localhost:5067
 Environment:
 - `PHANTOM_DASHBOARD_BACKEND_DATABASE_URL`
 - falls back to `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
-- `PHANTOM_DASHBOARD_ADMIN_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL`
-- `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
+- `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`
 
 Recommended PostgreSQL connection string form:
 ```bash
@@ -51,6 +50,6 @@ Endpoints:
 
 Production notes:
 - The dashboard backend now treats the authority backend as the source of truth for user/admin session validation and admin operational reads.
-- `PHANTOM_WINDOWS_BACKEND_BASE_URL` and `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY` are required for production use.
+- `PHANTOM_WINDOWS_BACKEND_BASE_URL` and `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY` are required for production use.
 - `GET /health/details` exposes authority-backend circuit and connectivity state for operational checks.
 - `GET /health/ready` returns `503` when the read database is down or the authority bridge is not ready.

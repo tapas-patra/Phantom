@@ -27,7 +27,11 @@ public static class BackendSchemaMigrations
         new SchemaMigration("019_power_features_and_manual_locks", PowerFeaturesAndManualLocksSql),
         new SchemaMigration("020_hosted_kb_experience_cards", HostedKnowledgeBaseExperienceCardsSql),
         new SchemaMigration("021_single_experience_current", SingleExperienceCurrentSql),
-        new SchemaMigration("022_managed_ai_credential_health", ManagedAiCredentialHealthSql)
+        new SchemaMigration("022_managed_ai_credential_health", ManagedAiCredentialHealthSql),
+        new SchemaMigration("023_admin_email_otp", AdminEmailOtpSql),
+        new SchemaMigration("024_admin_action_audit", AdminActionAuditSql),
+        new SchemaMigration("025_dashboard_email_verification", DashboardEmailVerificationSql),
+        new SchemaMigration("026_download_and_feedback_analytics", DownloadAndFeedbackAnalyticsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -36,7 +40,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("002_dashboard_usage_credit_split", DashboardProjectionUsageCreditSplitSql),
         new SchemaMigration("003_dashboard_interview_question_banks", DashboardInterviewQuestionBanksSql),
         new SchemaMigration("004_dashboard_interview_question_bank_names", DashboardInterviewQuestionBankNamesSql),
-        new SchemaMigration("005_dashboard_power_features", DashboardPowerFeaturesSql)
+        new SchemaMigration("005_dashboard_power_features", DashboardPowerFeaturesSql),
+        new SchemaMigration("006_dashboard_email_verification", DashboardProjectionEmailVerificationSql)
     };
 
     private const string AccountTermsAcceptanceSql = @"
@@ -58,6 +63,125 @@ CREATE INDEX IF NOT EXISTS idx_managed_provider_credentials_health
     ON managed_provider_credentials(provider_id, is_enabled, cooldown_until_utc, priority);
 ";
 
+    private const string AdminEmailOtpSql = @"
+CREATE TABLE IF NOT EXISTS admin_login_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    admin_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    consumed BOOLEAN NOT NULL DEFAULT FALSE,
+    consumed_at_utc TIMESTAMPTZ NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_login_challenges_admin_time
+    ON admin_login_challenges(admin_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_login_challenges_expiry
+    ON admin_login_challenges(expires_at_utc);
+";
+
+    private const string AdminActionAuditSql = @"
+CREATE TABLE IF NOT EXISTS admin_action_audit (
+    audit_id TEXT PRIMARY KEY,
+    admin_id TEXT NOT NULL,
+    admin_email TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    target_user_id TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    correlation_id TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    succeeded BOOLEAN NOT NULL,
+    status_code INTEGER NULL,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_action_audit_created
+    ON admin_action_audit(created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_action_audit_admin
+    ON admin_action_audit(admin_id, created_at_utc DESC);
+";
+
+    private const string DashboardEmailVerificationSql = @"
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE OR REPLACE FUNCTION refresh_dashboard_account_summary(p_user_id TEXT)
+RETURNS VOID AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM desktop_accounts WHERE user_id = p_user_id) THEN
+        DELETE FROM dashboard_account_summaries WHERE user_id = p_user_id;
+        RETURN;
+    END IF;
+
+    INSERT INTO dashboard_account_summaries (
+        user_id, email, effective_access_tier, plan_label, email_verified, phone_verified,
+        pro_available_credits, premium_available_credits, premium_negative_credits,
+        lease_expires_at_utc, offline_mode_enabled, can_use_desktop_power_features,
+        last_validated_at_utc, active_device_count, last_activity_at_utc, updated_at_utc
+    )
+    SELECT
+        a.user_id,
+        a.email,
+        CASE
+            WHEN a.premium_available_credits > 0 THEN 'premium'
+            WHEN a.pro_available_credits > 0 THEN 'pro_byo'
+            ELSE 'free'
+        END,
+        CASE
+            WHEN a.premium_available_credits > 0 THEN 'Premium'
+            WHEN a.pro_available_credits > 0 THEN 'Pro BYO'
+            ELSE 'Free'
+        END,
+        a.email_verified,
+        a.phone_verified,
+        a.pro_available_credits,
+        a.premium_available_credits,
+        a.premium_negative_credits,
+        a.lease_expires_at_utc,
+        a.offline_mode_enabled,
+        a.can_use_desktop_power_features,
+        a.last_validated_at_utc,
+        COALESCE((
+            SELECT COUNT(*)
+            FROM dashboard_device_inventory d
+            WHERE d.user_id = a.user_id
+        ), 0),
+        (
+            SELECT MAX(h.created_at_utc)
+            FROM dashboard_wallet_history h
+            WHERE h.user_id = a.user_id
+        ),
+        NOW()
+    FROM desktop_accounts a
+    WHERE a.user_id = p_user_id
+    ON CONFLICT (user_id) DO UPDATE SET
+        email = EXCLUDED.email,
+        effective_access_tier = EXCLUDED.effective_access_tier,
+        plan_label = EXCLUDED.plan_label,
+        email_verified = EXCLUDED.email_verified,
+        phone_verified = EXCLUDED.phone_verified,
+        pro_available_credits = EXCLUDED.pro_available_credits,
+        premium_available_credits = EXCLUDED.premium_available_credits,
+        premium_negative_credits = EXCLUDED.premium_negative_credits,
+        lease_expires_at_utc = EXCLUDED.lease_expires_at_utc,
+        offline_mode_enabled = EXCLUDED.offline_mode_enabled,
+        can_use_desktop_power_features = EXCLUDED.can_use_desktop_power_features,
+        last_validated_at_utc = EXCLUDED.last_validated_at_utc,
+        active_device_count = EXCLUDED.active_device_count,
+        last_activity_at_utc = EXCLUDED.last_activity_at_utc,
+        updated_at_utc = EXCLUDED.updated_at_utc;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT refresh_dashboard_account_summary(user_id) FROM desktop_accounts;
+";
+
     private const string RegistrationSettingsSql = @"
 CREATE TABLE IF NOT EXISTS registration_settings (
     settings_id TEXT PRIMARY KEY,
@@ -73,6 +197,11 @@ ON CONFLICT (settings_id) DO NOTHING;
     private const string DashboardPowerFeaturesSql = @"
 ALTER TABLE dashboard_account_summaries
     ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+";
+
+    private const string DashboardProjectionEmailVerificationSql = @"
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
 ";
 
     private const string PowerFeaturesAndManualLocksSql = @"
@@ -1527,5 +1656,37 @@ ALTER TABLE dashboard_interview_question_banks
     private const string DashboardInterviewQuestionBankNamesSql = @"
 ALTER TABLE dashboard_interview_question_banks
     ADD COLUMN IF NOT EXISTS interview_name TEXT NOT NULL DEFAULT '';
+";
+
+    private const string DownloadAndFeedbackAnalyticsSql = @"
+CREATE TABLE IF NOT EXISTS download_events (
+    download_event_id TEXT PRIMARY KEY,
+    token_nonce TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    platform TEXT NOT NULL CHECK (platform IN ('windows', 'macos')),
+    downloaded_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_events_downloaded
+    ON download_events(downloaded_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_download_events_user_downloaded
+    ON download_events(user_id, downloaded_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS feedback_submissions (
+    feedback_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    category TEXT NOT NULL,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    message TEXT NOT NULL,
+    consent_to_publish BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewed', 'published', 'rejected')),
+    admin_notes TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    updated_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_submissions_status_created
+    ON feedback_submissions(status, created_at_utc DESC);
 ";
 }

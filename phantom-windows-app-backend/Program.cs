@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.WebUtilities;
 using Npgsql;
 using Phantom.WindowsApp.Backend.Contracts;
@@ -30,12 +31,28 @@ builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOpt
 });
 
 var backendOptions = BackendOptions.FromConfiguration(builder.Configuration);
+if (builder.Environment.IsProduction())
+{
+    backendOptions.ValidateForProduction();
+}
 builder.Services.AddSingleton(backendOptions);
+if (backendOptions.TrustForwardedHeaders)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = 1;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+}
 builder.Services.AddSingleton<PostgresBackendStore>();
 builder.Services.AddSingleton<DashboardProjectionReplicaStore>();
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AdminAccountRepository>();
 builder.Services.AddSingleton<AdminPasswordResetRepository>();
+builder.Services.AddSingleton<AdminLoginChallengeRepository>();
+builder.Services.AddSingleton<AdminAuditRepository>();
 builder.Services.AddSingleton<UserPasswordResetRepository>();
 builder.Services.AddSingleton<AuthSessionRepository>();
 builder.Services.AddSingleton<MagicLinkRepository>();
@@ -57,6 +74,8 @@ builder.Services.AddSingleton<LockRepository>();
 builder.Services.AddSingleton<UsageLedgerRepository>();
 builder.Services.AddSingleton<PaymentOrderRepository>();
 builder.Services.AddSingleton<SupportTicketRepository>();
+builder.Services.AddSingleton<DownloadEventRepository>();
+builder.Services.AddSingleton<FeedbackSubmissionRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
@@ -86,6 +105,7 @@ builder.Services.AddSingleton<HostedKnowledgeBaseService>();
 builder.Services.AddSingleton<DesktopContextPackService>();
 builder.Services.AddSingleton<PaymentService>();
 builder.Services.AddSingleton<SupportTicketService>();
+builder.Services.AddSingleton<FeedbackService>();
 builder.Services.AddHostedService<ManagedAiCatalogRefreshWorker>();
 builder.Services.AddHostedService<ManagedAiLatencyWorker>();
 builder.Services.AddHostedService<HostedKnowledgeBaseReindexWorker>();
@@ -95,8 +115,10 @@ builder.Services.AddSingleton<LockService>();
 builder.Services.AddSingleton<TelemetryBufferService>();
 builder.Services.AddSingleton<TelemetryIngestService>();
 builder.Services.AddSingleton<AdminService>();
+builder.Services.AddSingleton<DownloadLinkService>();
 builder.Services.AddSingleton<BrowserSessionCookieService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
+builder.Services.AddSingleton<AdminAuditFilter>();
 builder.Services.AddSingleton<InternalApiKeyFilter>();
 builder.Services.AddHostedService<MaintenanceService>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<TelemetryBufferService>());
@@ -216,6 +238,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (backendOptions.TrustForwardedHeaders)
+{
+    app.UseForwardedHeaders();
+}
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
@@ -286,6 +313,16 @@ app.Lifetime.ApplicationStopping.Register(() => lifecycleLogger.LogInformation(
 using (var scope = app.Services.CreateScope())
 {
     scope.ServiceProvider.GetRequiredService<AdminBootstrapService>().EnsureBootstrapAdmin();
+    if (app.Environment.IsProduction())
+    {
+        var deliveryError = scope.ServiceProvider
+            .GetRequiredService<MagicLinkEmailService>()
+            .GetDeliveryConfigurationError();
+        if (!string.IsNullOrWhiteSpace(deliveryError))
+        {
+            throw new InvalidOperationException($"Production email delivery is unavailable: {deliveryError}");
+        }
+    }
 }
 
 if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
@@ -305,6 +342,24 @@ if (args.Contains("--seed-test-users", StringComparer.OrdinalIgnoreCase))
 }
 
 app.UseCors("website");
+app.Use(async (context, next) =>
+{
+    var isUnsafeMethod = !HttpMethods.IsGet(context.Request.Method)
+        && !HttpMethods.IsHead(context.Request.Method)
+        && !HttpMethods.IsOptions(context.Request.Method);
+    var isBrowserApiRequest = isUnsafeMethod
+        && context.Request.Path.StartsWithSegments("/api")
+        && !string.IsNullOrWhiteSpace(context.Request.Headers.Origin);
+    if (isBrowserApiRequest
+        && !string.Equals(context.Request.Headers["X-Phantom-CSRF"].FirstOrDefault(), "1", StringComparison.Ordinal))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await context.Response.WriteAsJsonAsync(new { error = "Browser request verification failed." });
+        return;
+    }
+
+    await next();
+});
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
@@ -693,7 +748,6 @@ app.MapGet("/api/desktop/auth/me", (
         {
             session.UserId,
             session.Email,
-            AccessToken = cookies.ReadUserAccessToken(httpContext.Request) ?? string.Empty,
             session.AuthMethod,
             session.DeviceInstallId,
             session.DeviceFingerprintHash,
@@ -722,14 +776,9 @@ app.MapPost("/api/admin/auth/login", (
 
     try
     {
-        var session = adminAuth.Login(request);
-        if (IsBrowserRequest(httpContext))
-        {
-            cookies.IssueAdminCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
-        }
-
+        var challenge = adminAuth.BeginLogin(request);
         attempts.Record(email, ipAddress, succeeded: true);
-        return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeAdminSession(session) : session);
+        return Results.Ok(challenge);
     }
     catch (BackendValidationException validationException)
     {
@@ -741,6 +790,21 @@ app.MapPost("/api/admin/auth/login", (
         attempts.Record(email, ipAddress, succeeded: false);
         throw;
     }
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/admin/auth/verify-otp", (
+    HttpContext httpContext,
+    AdminAuthOtpVerifyRequestDto request,
+    AdminAuthService adminAuth,
+    BrowserSessionCookieService cookies) =>
+{
+    var session = adminAuth.CompleteLogin(request);
+    if (IsBrowserRequest(httpContext))
+    {
+        cookies.IssueAdminCookies(httpContext.Response, session.AccessToken, session.RefreshToken, session.ExpiresAtUtc);
+    }
+
+    return Results.Ok(IsBrowserRequest(httpContext) ? SanitizeAdminSession(session) : session);
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/admin/auth/refresh", (
@@ -812,7 +876,6 @@ app.MapGet("/api/admin/auth/me", (
             session.Email,
             session.DisplayName,
             session.Role,
-            AccessToken = cookies.ReadAdminAccessToken(httpContext.Request) ?? string.Empty,
             session.AuthMethod,
             session.AuthenticatedAtUtc,
             session.ExpiresAtUtc,
@@ -841,6 +904,54 @@ app.MapPost("/api/admin/auth/reset-password", (
 {
     return Results.Ok(adminAuth.CompletePasswordReset(request));
 }).RequireRateLimiting("auth");
+
+app.MapPost("/api/desktop/downloads/signed-url", (
+    HttpContext httpContext,
+    DownloadLinkRequestDto request,
+    DesktopSessionService desktopSessions,
+    DownloadLinkService downloads,
+    BackendOptions options) =>
+{
+    var session = desktopSessions.RequireSession(ResolveUserAuthorization(httpContext.Request));
+    var publicBaseUrl = string.IsNullOrWhiteSpace(options.PublicWebsiteBaseUrl)
+        ? $"{httpContext.Request.Scheme}://{httpContext.Request.Host}"
+        : $"{options.PublicWebsiteBaseUrl.TrimEnd('/')}/api/windows";
+    return Results.Ok(downloads.CreateSignedLink(session.UserId, session.Email, request.Platform, publicBaseUrl));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/sessions/revoke-device", (
+    HttpContext httpContext,
+    DeviceSessionRevokeRequestDto request,
+    DesktopSessionService desktopSessions,
+    AuthSessionRepository sessions) =>
+{
+    var account = desktopSessions.RequireAccount(ResolveUserAuthorization(httpContext.Request));
+    if (string.IsNullOrWhiteSpace(request.DeviceInstallId) || string.IsNullOrWhiteSpace(request.DeviceFingerprintHash))
+    {
+        throw new BackendValidationException("Device identity is required.");
+    }
+
+    var revokedCount = sessions.RevokeByUserAndDevice(
+        account.UserId,
+        request.DeviceInstallId.Trim(),
+        request.DeviceFingerprintHash.Trim());
+    return Results.Ok(new { revoked = revokedCount > 0, revokedCount });
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/desktop/downloads/file", (
+    string? token,
+    DownloadLinkService downloads) =>
+    Results.Redirect(downloads.ResolveAssetUrl(token ?? string.Empty)))
+    .RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/public/feedback", (
+    FeedbackSubmissionCreateRequestDto request,
+    FeedbackService feedback) => Results.Ok(feedback.Create(request)))
+    .RequireRateLimiting("auth");
+
+app.MapGet("/api/public/reviews", (int? limit, FeedbackService feedback) =>
+    Results.Ok(feedback.ListPublished(limit ?? 6)))
+    .RequireRateLimiting("auth");
 
 app.MapPost("/api/desktop/account/startup-check/session", (
     HttpContext httpContext,
@@ -1324,6 +1435,7 @@ internalGroup.MapGet("/session/admin", (
 
 var adminGroup = app.MapGroup("/api/admin")
     .AddEndpointFilter<AdminApiKeyFilter>()
+    .AddEndpointFilter<AdminAuditFilter>()
     .RequireRateLimiting("admin");
 
 adminGroup.MapGet("/accounts/{userId}", (
@@ -1359,6 +1471,21 @@ adminGroup.MapGet("/overview", (AdminService admin) =>
     return Results.Ok(admin.GetOverview());
 });
 
+adminGroup.MapGet("/feedback", (string? status, int? page, int? pageSize, FeedbackService feedback) =>
+{
+    return Results.Ok(feedback.ListAdmin(status ?? string.Empty, page ?? 1, pageSize ?? 20));
+});
+
+adminGroup.MapPost("/feedback/update", (FeedbackSubmissionUpdateRequestDto request, FeedbackService feedback) =>
+{
+    return Results.Ok(feedback.Update(request));
+});
+
+adminGroup.MapGet("/audit", (int? page, int? pageSize, AdminAuditRepository audit) =>
+{
+    return Results.Ok(audit.ListRecent(page ?? 1, pageSize ?? 25));
+});
+
 adminGroup.MapGet("/registration-settings", (RegistrationService registration) =>
 {
     return Results.Ok(registration.GetSettings());
@@ -1371,9 +1498,9 @@ adminGroup.MapPost("/registration-settings", (
     return Results.Ok(registration.UpdateSettings(request));
 });
 
-adminGroup.MapGet("/payments/orders", (int? page, int? pageSize, AdminService admin) =>
+adminGroup.MapGet("/payments/orders", (int? page, int? pageSize, string? query, string? status, AdminService admin) =>
 {
-    return Results.Ok(admin.GetPaymentOrders(page ?? 1, pageSize ?? 20));
+    return Results.Ok(admin.GetPaymentOrders(page ?? 1, pageSize ?? 20, query ?? string.Empty, status ?? string.Empty));
 });
 
 adminGroup.MapGet("/payments/webhooks", (int? page, int? pageSize, AdminService admin) =>
@@ -1542,13 +1669,13 @@ app.MapGet("/api/admin/integrations/gmail/oauth/callback", async (
 });
 
 static bool IsBrowserRequest(HttpContext httpContext) =>
-    !string.IsNullOrWhiteSpace(httpContext.Request.Headers.Origin);
+    !string.IsNullOrWhiteSpace(httpContext.Request.Headers.Origin)
+    || string.Equals(httpContext.Request.Headers["X-Phantom-CSRF"].FirstOrDefault(), "1", StringComparison.Ordinal);
 
 static object SanitizeUserSession(AuthSessionDto session) => new
 {
     session.UserId,
     session.Email,
-    session.AccessToken,
     session.AuthMethod,
     session.DeviceInstallId,
     session.DeviceFingerprintHash,
@@ -1563,7 +1690,6 @@ static object SanitizeAdminSession(AdminAuthSessionDto session) => new
     session.Email,
     session.DisplayName,
     session.Role,
-    session.AccessToken,
     session.AuthMethod,
     session.AuthenticatedAtUtc,
     session.ExpiresAtUtc,

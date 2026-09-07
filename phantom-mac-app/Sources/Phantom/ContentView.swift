@@ -459,6 +459,21 @@ private struct SettingsView: View {
                         Text("Click-through activates after Save closes Settings. Press ⌘ ⌃ ` to show Phantom and automatically disable it.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
+                        Toggle("Use a fake cursor inside Phantom", isOn: $store.useFakeCursor)
+                            .disabled(store.settingsClickThrough)
+                        if store.useFakeCursor {
+                            HStack {
+                                Text("Decoy cursor size")
+                                Slider(value: $store.fakeCursorScale, in: 0.5...2.0, step: 0.05)
+                                    .disabled(store.settingsClickThrough)
+                                Text("\(Int(store.fakeCursorScale * 100))%")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .frame(width: 48)
+                            }
+                        }
+                        Text("The size control changes only the stationary, capturable decoy; the protected pointer that follows your movement stays at the system size. macOS capture exclusion is not guaranteed—verify the actual sharing preview before every use. Fake cursor is disabled while click-through is active.")
+                            .font(.caption)
+                            .foregroundColor(PhantomColors.muted)
                     }
 
                     SettingsSection(title: "Voice input", systemImage: "mic") {

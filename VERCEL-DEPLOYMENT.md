@@ -21,6 +21,9 @@ Required:
 - `PHANTOM_WINDOWS_BACKEND_DATABASE_URL`
 - `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`
 - `PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY`
+- `PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY`
+- `PHANTOM_WINDOWS_BACKEND_RELEASE_TAG`
 
 Set for this deployment:
 
@@ -28,7 +31,6 @@ Set for this deployment:
 
 Usually needed in production:
 
-- `PHANTOM_WINDOWS_BACKEND_ADMIN_API_KEY`
 - `PHANTOM_BOOTSTRAP_ADMIN_EMAIL`
 - `PHANTOM_BOOTSTRAP_ADMIN_PASSWORD`
 - `PHANTOM_BOOTSTRAP_ADMIN_DISPLAY_NAME`
@@ -40,6 +42,7 @@ Usually needed in production:
 - `PHANTOM_WINDOWS_BACKEND_SMTP_FROM_NAME`
 - `PHANTOM_WINDOWS_BACKEND_SMTP_ENABLE_SSL`
 - `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON`
+- `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN`
 - `PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI=https://phantom-ai-windows-app-backend.vercel.app/api/admin/integrations/gmail/oauth/callback`
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID`
 - `PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_SECRET`
@@ -74,9 +77,7 @@ Set for this deployment:
 - `PHANTOM_WINDOWS_BACKEND_BASE_URL=https://phantom-ai-windows-app-backend.vercel.app`
 - `PHANTOM_PUBLIC_WEBSITE_BASE_URL=https://phantom-interview.vercel.app`
 
-Optional but recommended:
-
-- `PHANTOM_DASHBOARD_ADMIN_API_KEY`
+Admin dashboard requests use password-plus-email-OTP sessions. The dashboard backend validates those sessions with `PHANTOM_WINDOWS_BACKEND_INTERNAL_API_KEY`; do not expose an admin API key to Vite.
 
 ## Project 3: `phantom-website-dashboard`
 

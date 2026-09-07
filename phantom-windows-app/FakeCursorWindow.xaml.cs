@@ -67,13 +67,21 @@ namespace SecureOverlay
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
 
         private System.Windows.Threading.DispatcherTimer? _cursorUpdateTimer;
         private IntPtr _lastCursorHandle = IntPtr.Zero;
+        private BitmapSource? _cursorBitmap;
+        private double _cursorScale = 1.0;
+        private double _hotspotPixelX;
+        private double _hotspotPixelY;
+        private readonly bool _captureProtected;
 
-        public FakeCursorWindow()
+        public FakeCursorWindow(bool captureProtected = false)
         {
             InitializeComponent();
+            _captureProtected = captureProtected;
+            ShowActivated = false;
             
             // Start timer to update cursor image
             _cursorUpdateTimer = new System.Windows.Threading.DispatcherTimer
@@ -83,7 +91,9 @@ namespace SecureOverlay
             _cursorUpdateTimer.Tick += UpdateCursorImage;
             _cursorUpdateTimer.Start();
             
-            Log.WriteLine("✓ Fake cursor window created (VISIBLE to screen share)");
+            Log.WriteLine(captureProtected
+                ? "✓ Protected live cursor window created (HIDDEN from screen share)"
+                : "✓ Fake cursor window created (VISIBLE to screen share)");
             Log.WriteLine("✓ Real-time cursor cloning enabled");
         }
 
@@ -130,11 +140,10 @@ namespace SecureOverlay
                         // Update image
                         Dispatcher.Invoke(() =>
                         {
-                            CursorImage.Source = bitmapSource;
-                            
-                            // Adjust window size to cursor size
-                            this.Width = bitmapSource.PixelWidth;
-                            this.Height = bitmapSource.PixelHeight;
+                            _cursorBitmap = bitmapSource;
+                            _hotspotPixelX = iconInfo.xHotspot;
+                            _hotspotPixelY = iconInfo.yHotspot;
+                            ApplyCursorMetrics();
                         });
                     }
                     finally
@@ -169,8 +178,8 @@ namespace SecureOverlay
             var dpiScale = GetDpiScale();
             
             // Convert physical pixels to device-independent pixels
-            double dipX = screenX / dpiScale.DpiScaleX;
-            double dipY = screenY / dpiScale.DpiScaleY;
+            double dipX = screenX / dpiScale.DpiScaleX - HotspotDipX(dpiScale);
+            double dipY = screenY / dpiScale.DpiScaleY - HotspotDipY(dpiScale);
             
             this.Left = dipX;
             this.Top = dipY;
@@ -182,8 +191,8 @@ namespace SecureOverlay
             {
                 var dpiScale = GetDpiScale();
                 
-                double dipX = screenX / dpiScale.DpiScaleX;
-                double dipY = screenY / dpiScale.DpiScaleY;
+                double dipX = screenX / dpiScale.DpiScaleX - HotspotDipX(dpiScale);
+                double dipY = screenY / dpiScale.DpiScaleY - HotspotDipY(dpiScale);
                 
                 var leftAnimation = new DoubleAnimation
                 {
@@ -231,19 +240,42 @@ namespace SecureOverlay
             return new DpiScale(1.0, 1.0);
         }
 
-        // Legacy method for backward compatibility
         public void SetScale(double scale)
         {
-            // With real cursor cloning, we can apply a transform if needed
-            if (scale != 1.0)
-            {
-                CursorImage.RenderTransform = new ScaleTransform(scale, scale);
-                Log.WriteLine($"Cursor scale applied: {scale:F2}x");
-            }
-            else
-            {
-                CursorImage.RenderTransform = null;
-            }
+            _cursorScale = Math.Max(0.5, Math.Min(2.0, scale));
+            ApplyCursorMetrics();
+            Log.WriteLine($"Cursor scale applied: {_cursorScale:F2}x");
+        }
+
+        public Point GetHotspotScreenPosition()
+        {
+            var dpiScale = GetDpiScale();
+            return new Point(
+                (Left + HotspotDipX(dpiScale)) * dpiScale.DpiScaleX,
+                (Top + HotspotDipY(dpiScale)) * dpiScale.DpiScaleY
+            );
+        }
+
+        public void CancelAnimation()
+        {
+            BeginAnimation(Window.LeftProperty, null);
+            BeginAnimation(Window.TopProperty, null);
+        }
+
+        private double HotspotDipX(DpiScale dpiScale) => _hotspotPixelX * _cursorScale / dpiScale.DpiScaleX;
+        private double HotspotDipY(DpiScale dpiScale) => _hotspotPixelY * _cursorScale / dpiScale.DpiScaleY;
+
+        private void ApplyCursorMetrics()
+        {
+            if (_cursorBitmap == null) return;
+            var dpiScale = GetDpiScale();
+            var width = Math.Max(1, _cursorBitmap.PixelWidth * _cursorScale / dpiScale.DpiScaleX);
+            var height = Math.Max(1, _cursorBitmap.PixelHeight * _cursorScale / dpiScale.DpiScaleY);
+            CursorImage.Source = _cursorBitmap;
+            CursorImage.Width = width;
+            CursorImage.Height = height;
+            Width = width;
+            Height = height;
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -259,7 +291,13 @@ namespace SecureOverlay
                     int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
                     exStyle |= WS_EX_TOOLWINDOW;
                     exStyle |= WS_EX_NOACTIVATE;
+                    exStyle |= WS_EX_TRANSPARENT;
                     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+                    if (_captureProtected)
+                    {
+                        WindowProtection.ApplyCaptureExclusion(hwnd);
+                    }
                     
                     Log.WriteLine("✓ Fake cursor window hidden from Task View");
                 }
@@ -287,8 +325,6 @@ namespace SecureOverlay
             {
                 this.Topmost = false;
                 this.Topmost = true;
-                this.Activate();
-                
                 Log.WriteLine("✓ Fake cursor window forced to top");
             }
         }

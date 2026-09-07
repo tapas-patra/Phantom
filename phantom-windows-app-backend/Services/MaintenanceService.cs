@@ -27,6 +27,7 @@ public sealed class MaintenanceService : BackgroundService
             {
                 using var scope = _serviceProvider.CreateScope();
                 scope.ServiceProvider.GetRequiredService<AuthSessionRepository>().DeleteExpired();
+                scope.ServiceProvider.GetRequiredService<AdminLoginChallengeRepository>().DeleteExpired();
                 scope.ServiceProvider.GetRequiredService<MagicLinkRepository>().DeleteExpired();
                 scope.ServiceProvider.GetRequiredService<LockRepository>().DeleteExpired();
                 scope.ServiceProvider.GetRequiredService<LoginAttemptRepository>()

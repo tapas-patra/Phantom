@@ -62,6 +62,19 @@ If you did not request this reset, ignore this email.
         return SendMail(recipientEmail, "Reset your Phantom admin password", body);
     }
 
+    public (string Status, string Error) SendAdminLoginCode(string recipientEmail, string code, DateTime expiresAtUtc)
+    {
+        var body = $"""
+Your Phantom admin verification code is:
+
+{code}
+
+This code expires at {expiresAtUtc:yyyy-MM-dd HH:mm:ss} UTC.
+If you did not attempt to sign in, reset your admin password immediately.
+""";
+        return SendMail(recipientEmail, "Your Phantom admin verification code", body);
+    }
+
     public (string Status, string Error) SendUserPasswordReset(string recipientEmail, string resetUrl, DateTime expiresAtUtc)
     {
         var body = $"""

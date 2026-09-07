@@ -26,6 +26,7 @@ SELECT
     email,
     effective_access_tier,
     plan_label,
+    email_verified,
     phone_verified,
     pro_available_credits,
     premium_available_credits,
@@ -56,6 +57,7 @@ LIMIT 1;";
             email = reader.GetString(reader.GetOrdinal("email")),
             effectiveAccessTier = reader.GetString(reader.GetOrdinal("effective_access_tier")),
             planLabel = reader.GetString(reader.GetOrdinal("plan_label")),
+            emailVerified = reader.GetBoolean(reader.GetOrdinal("email_verified")),
             phoneVerified = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
             proAvailableCredits = reader.GetDecimal(reader.GetOrdinal("pro_available_credits")),
             premiumAvailableCredits = reader.GetDecimal(reader.GetOrdinal("premium_available_credits")),
@@ -201,7 +203,7 @@ LIMIT @pageSize;";
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
-SELECT phone_verified, pro_available_credits, premium_available_credits
+SELECT email_verified, pro_available_credits, premium_available_credits
 FROM dashboard_account_summaries
 WHERE user_id = @userId
 LIMIT 1;";
@@ -217,7 +219,7 @@ LIMIT 1;";
 
         return new
         {
-            canDownload = reader.GetBoolean(reader.GetOrdinal("phone_verified")),
+            canDownload = reader.GetBoolean(reader.GetOrdinal("email_verified")),
             installerLabel = "Phantom Desktop for Windows and macOS",
             installerVersion = "Latest automated build",
             installerUrl = "/download",

@@ -19,6 +19,8 @@ public sealed class BackendOptions
     public int MaxFailedLoginAttempts { get; init; } = 5;
     public int EmailVerificationTtlHours { get; init; } = 24;
     public int AdminSessionTtlHours { get; init; } = 8;
+    public int AdminOtpTtlMinutes { get; init; } = 10;
+    public int AdminOtpMaxAttempts { get; init; } = 5;
     public int AdminPasswordResetTtlMinutes { get; init; } = 30;
     public int UserPasswordResetTtlMinutes { get; init; } = 30;
     public string AdminApiKey { get; init; } = string.Empty;
@@ -37,8 +39,13 @@ public sealed class BackendOptions
     public bool SmtpEnableSsl { get; init; } = true;
     public string GoogleOAuthClientSecretsPath { get; init; } = string.Empty;
     public string GoogleOAuthClientSecretsJson { get; init; } = string.Empty;
+    public string GoogleOAuthRefreshToken { get; init; } = string.Empty;
     public string GoogleOAuthRedirectUri { get; init; } = string.Empty;
     public string SecretEncryptionKey { get; init; } = string.Empty;
+    public string DownloadSigningKey { get; init; } = string.Empty;
+    public int DownloadLinkTtlMinutes { get; init; } = 3;
+    public string ReleaseRepository { get; init; } = "tapas-patra/phantom-release-repo";
+    public string ReleaseTag { get; init; } = "desktop-latest";
     public string RazorpayKeyId { get; init; } = string.Empty;
     public string RazorpayKeySecret { get; init; } = string.Empty;
     public string RazorpayWebhookSecret { get; init; } = string.Empty;
@@ -64,6 +71,7 @@ public sealed class BackendOptions
     public int KnowledgeBaseQueryEmbeddingCacheTtlMinutes { get; init; } = 30;
     public bool AllowImplicitLocalAdminBootstrap { get; init; }
     public bool AllowSeedTestUsers { get; init; }
+    public bool TrustForwardedHeaders { get; init; }
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
     public bool HasInternalApiKey => !string.IsNullOrWhiteSpace(InternalApiKey);
@@ -73,6 +81,7 @@ public sealed class BackendOptions
     public bool HasGoogleOAuthClientSecrets =>
         !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsPath)
         || !string.IsNullOrWhiteSpace(GoogleOAuthClientSecretsJson);
+    public bool HasGoogleOAuthRefreshToken => !string.IsNullOrWhiteSpace(GoogleOAuthRefreshToken);
     public bool HasSecretEncryptionKey => !string.IsNullOrWhiteSpace(SecretEncryptionKey);
     public bool HasRazorpayCredentials =>
         !string.IsNullOrWhiteSpace(RazorpayKeyId)
@@ -85,6 +94,58 @@ public sealed class BackendOptions
             DashboardProjectionDatabaseUrl.Trim(),
             DatabaseUrl.Trim(),
             StringComparison.OrdinalIgnoreCase);
+
+    public void ValidateForProduction()
+    {
+        var errors = new List<string>();
+        Require(errors, DatabaseUrl, nameof(DatabaseUrl));
+        RequireSecret(errors, InternalApiKey, nameof(InternalApiKey));
+        RequireSecret(errors, SecretEncryptionKey, nameof(SecretEncryptionKey));
+        RequireSecret(errors, DownloadSigningKey, nameof(DownloadSigningKey));
+        Require(errors, ReleaseRepository, nameof(ReleaseRepository));
+        Require(errors, ReleaseTag, nameof(ReleaseTag));
+        Require(errors, RazorpayKeyId, nameof(RazorpayKeyId));
+        // Razorpay issues this opaque credential, so validate presence without
+        // imposing a locally chosen length or changing the provider value.
+        Require(errors, RazorpayKeySecret, nameof(RazorpayKeySecret));
+        RequireSecret(errors, RazorpayWebhookSecret, nameof(RazorpayWebhookSecret));
+
+        if (!Uri.TryCreate(PublicWebsiteBaseUrl, UriKind.Absolute, out var publicWebsite)
+            || !string.Equals(publicWebsite.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add($"{nameof(PublicWebsiteBaseUrl)} must be an absolute HTTPS URL.");
+        }
+
+        if (!IsSmtpConfigured && !(HasGoogleOAuthClientSecrets && HasSecretEncryptionKey))
+        {
+            errors.Add("Configure SMTP or Gmail OAuth for email verification, password reset, and admin OTP delivery.");
+        }
+
+        if (string.Equals(DownloadSigningKey, SecretEncryptionKey, StringComparison.Ordinal))
+        {
+            errors.Add($"{nameof(DownloadSigningKey)} must be independent from {nameof(SecretEncryptionKey)}.");
+        }
+
+        if (ReleaseRepository.Split('/', StringSplitOptions.RemoveEmptyEntries).Length != 2
+            || ReleaseRepository.Any(char.IsWhiteSpace))
+        {
+            errors.Add($"{nameof(ReleaseRepository)} must use the GitHub 'owner/repository' format.");
+        }
+
+        if (DownloadLinkTtlMinutes is < 1 or > 15) errors.Add($"{nameof(DownloadLinkTtlMinutes)} must be between 1 and 15 minutes.");
+        if (AdminOtpTtlMinutes is < 2 or > 15) errors.Add($"{nameof(AdminOtpTtlMinutes)} must be between 2 and 15 minutes.");
+        if (AdminOtpMaxAttempts is < 3 or > 10) errors.Add($"{nameof(AdminOtpMaxAttempts)} must be between 3 and 10.");
+        if (PasswordIterationCount < 120000) errors.Add($"{nameof(PasswordIterationCount)} must be at least 120000.");
+        if (AllowImplicitLocalAdminBootstrap) errors.Add($"{nameof(AllowImplicitLocalAdminBootstrap)} must be false in production.");
+        if (AllowSeedTestUsers) errors.Add($"{nameof(AllowSeedTestUsers)} must be false in production.");
+        if (!TrustForwardedHeaders) errors.Add($"{nameof(TrustForwardedHeaders)} must be true when production runs behind the Render reverse proxy.");
+        if (string.Equals(OtpProviderName, "mock", StringComparison.OrdinalIgnoreCase)) errors.Add($"{nameof(OtpProviderName)} cannot be 'mock' in production.");
+
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException($"Unsafe production configuration:{Environment.NewLine}- {string.Join($"{Environment.NewLine}- ", errors)}");
+        }
+    }
 
     public static BackendOptions FromConfiguration(IConfiguration configuration)
     {
@@ -143,6 +204,14 @@ public sealed class BackendOptions
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_SESSION_TTL_HOURS"),
                 section["AdminSessionTtlHours"],
                 8),
+            AdminOtpTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_OTP_TTL_MINUTES"),
+                section["AdminOtpTtlMinutes"],
+                10),
+            AdminOtpMaxAttempts = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_OTP_MAX_ATTEMPTS"),
+                section["AdminOtpMaxAttempts"],
+                5),
             AdminPasswordResetTtlMinutes = ParseInt(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ADMIN_PASSWORD_RESET_TTL_MINUTES"),
                 section["AdminPasswordResetTtlMinutes"],
@@ -215,6 +284,10 @@ public sealed class BackendOptions
                 "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_CLIENT_SECRETS_JSON",
                 section["GoogleOAuthClientSecretsJson"],
                 string.Empty),
+            GoogleOAuthRefreshToken = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REFRESH_TOKEN",
+                section["GoogleOAuthRefreshToken"],
+                string.Empty),
             GoogleOAuthRedirectUri = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_GOOGLE_OAUTH_REDIRECT_URI",
                 section["GoogleOAuthRedirectUri"],
@@ -223,6 +296,22 @@ public sealed class BackendOptions
                 "PHANTOM_WINDOWS_BACKEND_SECRET_ENCRYPTION_KEY",
                 section["SecretEncryptionKey"],
                 string.Empty),
+            DownloadSigningKey = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_DOWNLOAD_SIGNING_KEY",
+                section["DownloadSigningKey"],
+                string.Empty),
+            DownloadLinkTtlMinutes = ParseInt(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_DOWNLOAD_LINK_TTL_MINUTES"),
+                section["DownloadLinkTtlMinutes"],
+                3),
+            ReleaseRepository = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY",
+                section["ReleaseRepository"],
+                "tapas-patra/phantom-release-repo"),
+            ReleaseTag = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_RELEASE_TAG",
+                section["ReleaseTag"],
+                "desktop-latest"),
             RazorpayKeyId = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_RAZORPAY_KEY_ID",
                 section["RazorpayKeyId"],
@@ -322,6 +411,10 @@ public sealed class BackendOptions
             AllowSeedTestUsers = ParseBool(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_ALLOW_TEST_USER_SEEDING"),
                 section["AllowSeedTestUsers"],
+                false),
+            TrustForwardedHeaders = ParseBool(
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_TRUST_FORWARDED_HEADERS"),
+                section["TrustForwardedHeaders"],
                 false)
         };
     }
@@ -377,5 +470,15 @@ public sealed class BackendOptions
         }
 
         return fallback;
+    }
+
+    private static void Require(ICollection<string> errors, string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value)) errors.Add($"{name} is required.");
+    }
+
+    private static void RequireSecret(ICollection<string> errors, string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 32) errors.Add($"{name} must contain at least 32 characters.");
     }
 }

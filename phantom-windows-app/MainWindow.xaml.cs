@@ -290,13 +290,23 @@ namespace SecureOverlay
                 _settings.UseFakeCursor,
                 _settings.FakeCursorSize
             );
+            _cursorManager.SetClickThroughActive(_settings.ClickThroughEnabled);
             Log.WriteLine("Two-cursor system initialized");
 
             _proc = HookCallback;
             this.Loaded += MainWindow_Loaded;
             this.Closing += (s, e) => Cleanup();
 
-            this.Activated += (s, e) => FocusInput();
+            this.Activated += (s, e) =>
+            {
+                _cursorManager?.SetApplicationFocusActive(true);
+                FocusInput();
+            };
+            this.Deactivated += (s, e) =>
+            {
+                SetChatCursorHidden(false);
+                _cursorManager?.SetApplicationFocusActive(false);
+            };
 
             this.MouseEnter += MainWindow_MouseEnter;
             this.MouseLeave += MainWindow_MouseLeave;
@@ -1324,6 +1334,11 @@ namespace SecureOverlay
             if (_isDraggingWindow)
                 return;
 
+            // WebView2 is a child HWND and can raise a WPF MouseLeave even though
+            // the pointer is still inside the outer Phantom window.
+            if (_cursorManager?.IsPointerInsideParentWindow() == true)
+                return;
+
             ResetEmbeddedCursorState();
             _cursorManager?.DeactivateCustomCursor();
         }
@@ -1387,7 +1402,7 @@ namespace SecureOverlay
 
             Log.WriteLine("Applying screen capture protection...");
             WindowProtection.ApplyProtection(_windowHandle);
-            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            ApplyClickThroughState(_settings.ClickThroughEnabled);
             UpdateClickThroughButtonState();
             
             uint affinity;
@@ -2475,9 +2490,10 @@ namespace SecureOverlay
                 return;
             }
 
-            if (!_settings.UseFakeCursor)
+            if (!_settings.UseFakeCursor || _settings.ClickThroughEnabled || !IsActive)
             {
                 SetChatCursorHidden(false);
+                _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
                 return;
             }
 
@@ -2494,7 +2510,6 @@ namespace SecureOverlay
             {
                 SetChatCursorHidden(false);
                 _cursorManager?.SetEmbeddedSurfaceCursorActive(false);
-                _cursorManager?.DeactivateCustomCursor();
                 return;
             }
 
@@ -3595,6 +3610,7 @@ namespace SecureOverlay
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
+                var oldUseFakeCursor = _settings.UseFakeCursor;
                 _forcedManagedExtensionProviderId = null;
                 
                 // Reload settings
@@ -3604,7 +3620,7 @@ namespace SecureOverlay
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
                 ApplyWindowOpacity(_settings.WindowOpacity, persistSetting: false);
-                WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+                ApplyClickThroughState(_settings.ClickThroughEnabled);
                 UpdateLegacyFallbackButtonState();
                 UpdateClickThroughButtonState();
                 
@@ -3620,14 +3636,22 @@ namespace SecureOverlay
                     ApplySelectedContextPackToConversation(selectedPack, result.ContextResetRequired);
                 }
 
-                _cursorManager?.Dispose();
-                _cursorManager = new CursorManager(
-                    this, 
-                    CustomCursorCanvas, 
-                    _settings.UseFakeCursor,
-                    _settings.FakeCursorSize
-                );
-                Log.WriteLine("✓ Cursor manager reinitialized with new settings");
+                if (oldUseFakeCursor != _settings.UseFakeCursor)
+                {
+                    _cursorManager?.Dispose();
+                    _cursorManager = new CursorManager(
+                        this,
+                        CustomCursorCanvas,
+                        _settings.UseFakeCursor,
+                        _settings.FakeCursorSize
+                    );
+                    _cursorManager.SetClickThroughActive(_settings.ClickThroughEnabled);
+                    Log.WriteLine("✓ Cursor manager reinitialized with new settings");
+                }
+                else
+                {
+                    _cursorManager?.UpdateFakeCursorSize(_settings.FakeCursorSize);
+                }
 
                 var newProvider = _currentAI?.GetProviderName() ?? "None";
                 var newModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
@@ -4008,32 +4032,6 @@ namespace SecureOverlay
             }
         }
 
-        private void ResizeThumb_MouseEnter(object sender, MouseEventArgs e)
-        {
-            if (sender is Thumb thumb && thumb.Tag is string tag)
-            {
-                _cursorManager?.SetResizeCursorHint(tag);
-            }
-        }
-
-        private void ResizeThumb_MouseLeave(object sender, MouseEventArgs e)
-        {
-            _cursorManager?.ClearResizeCursorHint();
-        }
-
-        private void ResizeThumb_DragStarted(object sender, DragStartedEventArgs e)
-        {
-            if (sender is Thumb thumb && thumb.Tag is string tag)
-            {
-                _cursorManager?.SetResizeCursorHint(tag);
-            }
-        }
-
-        private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
-        {
-            _cursorManager?.ClearResizeCursorHint();
-        }
-
         // ═══════════════════════════════════════════════════════════════
         // KEYBOARD HOOKS - GLOBAL HOTKEYS
         // ═══════════════════════════════════════════════════════════════
@@ -4199,9 +4197,22 @@ namespace SecureOverlay
             CloseCurrentDropdownMenu();
             _settings.ClickThroughEnabled = !_settings.ClickThroughEnabled;
             SettingsManager.Save(_settings);
-            WindowProtection.SetClickThrough(_windowHandle, _settings.ClickThroughEnabled);
+            ApplyClickThroughState(_settings.ClickThroughEnabled);
             UpdateClickThroughButtonState();
             Log.WriteLine($"Click-through {(_settings.ClickThroughEnabled ? "enabled" : "disabled")} reason=header_button");
+        }
+
+        private void ApplyClickThroughState(bool enabled)
+        {
+            if (enabled)
+            {
+                _cursorManager?.SetClickThroughActive(true);
+                WindowProtection.SetClickThrough(_windowHandle, true);
+                return;
+            }
+
+            WindowProtection.SetClickThrough(_windowHandle, false);
+            _cursorManager?.SetClickThroughActive(false);
         }
 
         private void UpdateClickThroughButtonState()
@@ -4215,9 +4226,6 @@ namespace SecureOverlay
             ClickThroughButton.BorderBrush = new SolidColorBrush(enabled
                 ? Color.FromArgb(210, 74, 222, 128)
                 : Color.FromArgb(144, 255, 255, 255));
-            ClickThroughButton.ToolTip = enabled
-                ? "Click-through is enabled. Press Ctrl+Alt+` to disable."
-                : "Enable click-through. Press Ctrl+Alt+` to disable.";
             System.Windows.Automation.AutomationProperties.SetName(
                 ClickThroughButton,
                 enabled ? "Click-through enabled. Press Control Alt backtick to disable." : "Enable click-through");
@@ -4228,7 +4236,7 @@ namespace SecureOverlay
             if (!_settings.ClickThroughEnabled) return;
             _settings.ClickThroughEnabled = false;
             SettingsManager.Save(_settings);
-            WindowProtection.SetClickThrough(_windowHandle, false);
+            ApplyClickThroughState(false);
             UpdateClickThroughButtonState();
             Log.WriteLine($"Click-through disabled reason={reason}");
         }

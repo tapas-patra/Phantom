@@ -11,5 +11,5 @@
         IsHitTestVisible="False">
     
     <!-- Dynamic cursor image that matches system cursor -->
-    <Image x:Name="CursorImage" Stretch="None" RenderOptions.BitmapScalingMode="HighQuality"/>
+    <Image x:Name="CursorImage" Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality"/>
 </Window>

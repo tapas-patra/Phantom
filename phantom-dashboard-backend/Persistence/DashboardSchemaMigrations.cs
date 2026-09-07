@@ -7,7 +7,8 @@ public static class DashboardSchemaMigrations
         new SchemaMigration("001_dashboard_projection_schema", DashboardProjectionSchemaSql),
         new SchemaMigration("002_interview_question_banks", InterviewQuestionBanksSql),
         new SchemaMigration("003_interview_question_bank_names", InterviewQuestionBankNamesSql),
-        new SchemaMigration("004_power_features", PowerFeaturesSql)
+        new SchemaMigration("004_power_features", PowerFeaturesSql),
+        new SchemaMigration("005_email_verification", EmailVerificationSql)
     };
 
     private const string DashboardProjectionSchemaSql = @"
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS dashboard_account_summaries (
     email TEXT NOT NULL,
     effective_access_tier TEXT NOT NULL,
     plan_label TEXT NOT NULL,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     phone_verified BOOLEAN NOT NULL,
     pro_available_credits NUMERIC(18,2) NOT NULL,
     premium_available_credits NUMERIC(18,2) NOT NULL,
@@ -113,5 +115,10 @@ ALTER TABLE dashboard_interview_question_banks
     private const string PowerFeaturesSql = @"
 ALTER TABLE dashboard_account_summaries
     ADD COLUMN IF NOT EXISTS can_use_desktop_power_features BOOLEAN NOT NULL DEFAULT FALSE;
+";
+
+    private const string EmailVerificationSql = @"
+ALTER TABLE dashboard_account_summaries
+    ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
 ";
 }

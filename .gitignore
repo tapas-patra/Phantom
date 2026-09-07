@@ -1,6 +1,8 @@
 /.idea/
 phantom-website-dashboard/node_modules/
 phantom-website-dashboard/dist/
+phantom-website-dashboard/playwright-report/
+phantom-website-dashboard/test-results/
 */bin/
 */obj/
 .dotnet

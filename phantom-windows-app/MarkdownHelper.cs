@@ -580,9 +580,7 @@ namespace SecureOverlay
       opacity: 0;
       transform: translate(-50%, -50%);
     }
-    body.hide-cursor #chat-cursor.is-present {
-      opacity: 1;
-    }
+    /* The host draws one capture-protected cursor over both WPF and WebView2. */
   </style>
 </head>
 <body>

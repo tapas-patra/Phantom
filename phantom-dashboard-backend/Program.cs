@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Text.Json;
 using Npgsql;
 using Phantom.Dashboard.Backend.Infrastructure;
@@ -28,7 +29,21 @@ builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOpt
 });
 
 var options = DashboardOptions.FromConfiguration(builder.Configuration);
+if (builder.Environment.IsProduction())
+{
+    options.ValidateForProduction();
+}
 builder.Services.AddSingleton(options);
+if (options.TrustForwardedHeaders)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(forwarded =>
+    {
+        forwarded.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        forwarded.ForwardLimit = 1;
+        forwarded.KnownNetworks.Clear();
+        forwarded.KnownProxies.Clear();
+    });
+}
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<AuthorityBackendClient>();
@@ -111,6 +126,11 @@ builder.Services.AddRateLimiter(rateLimiterOptions =>
 });
 
 var app = builder.Build();
+
+if (options.TrustForwardedHeaders)
+{
+    app.UseForwardedHeaders();
+}
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
@@ -180,6 +200,23 @@ app.Lifetime.ApplicationStopping.Register(() => lifecycleLogger.LogInformation(
     "phantom-dashboard-backend", "lifecycle", "service_stopping"));
 
 app.UseCors("dashboard");
+app.Use(async (context, next) =>
+{
+    var isUnsafeMethod = !HttpMethods.IsGet(context.Request.Method)
+        && !HttpMethods.IsHead(context.Request.Method)
+        && !HttpMethods.IsOptions(context.Request.Method);
+    if (isUnsafeMethod
+        && context.Request.Path.StartsWithSegments("/api")
+        && !string.IsNullOrWhiteSpace(context.Request.Headers.Origin)
+        && !string.Equals(context.Request.Headers["X-Phantom-CSRF"].FirstOrDefault(), "1", StringComparison.Ordinal))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await context.Response.WriteAsJsonAsync(new { error = "Browser request verification failed." });
+        return;
+    }
+
+    await next();
+});
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         installMainMenu()
         window.contentView = NSHostingView(rootView: PhantomRootView(store: store))
+        window.installCursorTracking()
         window.delegate = self
         window.center()
         connectStore()
@@ -66,8 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func connectStore() {
-        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough in
+        store.onWindowPreferencesChanged = { [weak self] opacity, clickThrough, useFakeCursor, fakeCursorScale in
             self?.window.apply(opacity: opacity, clickThrough: clickThrough)
+            self?.window.configureFakeCursor(enabled: useFakeCursor, clickThrough: clickThrough, scale: fakeCursorScale)
         }
         store.onCaptureScreenshot = { [weak self] in
             guard let self else { throw ScreenshotError.captureFailed }
@@ -105,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
         }
         window.apply(opacity: store.opacity, clickThrough: store.clickThrough)
+        window.configureFakeCursor(enabled: store.useFakeCursor, clickThrough: store.clickThrough, scale: store.fakeCursorScale)
     }
 
     private func toggleWindow() {
@@ -186,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 
     func applicationWillTerminate(_ notification: Notification) {
+        window.stopFakeCursor()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
@@ -195,6 +199,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 enum PhantomMain {
     static func main() {
         if CommandLine.arguments.contains("--self-check") {
+            precondition(FakeCursorCoordinator.clampedScale(0.1) == 0.5)
+            precondition(FakeCursorCoordinator.clampedScale(3.0) == 2.0)
+            precondition(FakeCursorCoordinator.transitionDuration(distance: 0) == 0.09)
+            precondition(FakeCursorCoordinator.transitionDuration(distance: 1_000) == 0.32)
+            precondition(ProtectedWindow.resizedFrame(
+                NSRect(x: 100, y: 100, width: 900, height: 600),
+                delta: NSPoint(x: 50, y: 25),
+                edges: [.left, .bottom],
+                minimumSize: NSSize(width: 820, height: 560)
+            ) == NSRect(x: 150, y: 125, width: 850, height: 575))
+            precondition(FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: false, applicationIsActive: true))
+            precondition(!FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: false, applicationIsActive: false))
+            precondition(!FakeCursorCoordinator.canActivate(enabled: true, windowIsVisible: true, windowIgnoresMouse: true, applicationIsActive: true))
             precondition(GlobalHotKey.handles(registeredID: 1, eventID: 1))
             precondition(!GlobalHotKey.handles(registeredID: 1, eventID: 4))
             precondition(MermaidDiagram.renderCandidates("flowchart TD A[Client] --> B[API] C --> D[Worker]").last == "flowchart TD\nA[Client] --> B[API]\nC --> D[Worker]")

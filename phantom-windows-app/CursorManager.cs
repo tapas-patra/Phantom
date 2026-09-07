@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 
 namespace SecureOverlay
@@ -16,16 +15,18 @@ namespace SecureOverlay
         // Custom cursor visual (inside overlay - invisible to screen share)
         private Canvas? _cursorCanvas;
         private Ellipse? _cursorDot;
-        private Border? _cursorBadge;
-        private TextBlock? _cursorGlyph;
         private Window? _parentWindow;
         private bool _customCursorActive = false;
         private bool _embeddedSurfaceCursorActive;
-        private CursorVisualMode _cursorVisualMode = CursorVisualMode.Default;
 
         // Fake cursor window (visible to screen share)
         private FakeCursorWindow? _fakeCursorWindow;
+        private FakeCursorWindow? _protectedCursorWindow;
         private bool _useFakeCursor = true;
+        private bool _clickThroughActive;
+        private bool _applicationFocusActive;
+        private bool _systemCursorHidden;
+        private int _transitionGeneration;
 
         // Debounce timers to prevent flickering at borders
         private System.Windows.Threading.DispatcherTimer? _activateTimer;
@@ -42,6 +43,9 @@ namespace SecureOverlay
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out POINT lpPoint);
 
+        [DllImport("user32.dll")]
+        private static extern int ShowCursor(bool bShow);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT
         {
@@ -49,20 +53,12 @@ namespace SecureOverlay
             public int Y;
         }
 
-        private enum CursorVisualMode
-        {
-            Default,
-            ResizeHorizontal,
-            ResizeVertical,
-            ResizeDiagonalForward,
-            ResizeDiagonalBackward
-        }
-
         public CursorManager(Window parentWindow, Canvas cursorCanvas, bool useFakeCursor, double fakeCursorSize)
         {
             _parentWindow = parentWindow;
             _cursorCanvas = cursorCanvas;
             _useFakeCursor = useFakeCursor;
+            _applicationFocusActive = parentWindow.IsActive;
             
             // Create debounce timers
             _activateTimer = new System.Windows.Threading.DispatcherTimer
@@ -72,7 +68,7 @@ namespace SecureOverlay
             _activateTimer.Tick += (s, e) =>
             {
                 _activateTimer.Stop();
-                if (!_isSuspended)
+                if (CanActivateCursor())
                     ActivateCustomCursorImmediate();
             };
 
@@ -92,12 +88,16 @@ namespace SecureOverlay
             {
                 CreateCustomCursor();
                 _fakeCursorWindow = new FakeCursorWindow();
+                _protectedCursorWindow = new FakeCursorWindow(captureProtected: true);
                 
                 // IMPORTANT: Show window once to initialize, then hide it
                 _fakeCursorWindow.Show();
                 _fakeCursorWindow.Hide();
+                _protectedCursorWindow.Show();
+                _protectedCursorWindow.Hide();
                 
                 _fakeCursorWindow.SetScale(fakeCursorSize);
+                _protectedCursorWindow.SetScale(1.0);
                 Log.WriteLine($"✓ Two-cursor system enabled (fake cursor size: {fakeCursorSize * 100:F0}%)");
             }
             else
@@ -136,42 +136,6 @@ namespace SecureOverlay
                 Canvas.SetZIndex(_cursorDot, 10000);
             }
 
-            _cursorGlyph = new TextBlock
-            {
-                Text = "↔",
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment = TextAlignment.Center
-            };
-
-            _cursorBadge = new Border
-            {
-                Width = 22,
-                Height = 22,
-                Background = new SolidColorBrush(Color.FromArgb(210, 12, 24, 36)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(230, 187, 233, 255)),
-                BorderThickness = new Thickness(1.5),
-                CornerRadius = new CornerRadius(11),
-                Child = _cursorGlyph,
-                Visibility = Visibility.Collapsed,
-                IsHitTestVisible = false,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                {
-                    Color = Color.FromRgb(90, 190, 255),
-                    BlurRadius = 12,
-                    ShadowDepth = 0,
-                    Opacity = 0.95
-                }
-            };
-
-            if (_cursorCanvas != null)
-            {
-                _cursorCanvas.Children.Add(_cursorBadge);
-                Canvas.SetZIndex(_cursorBadge, 10001);
-            }
         }
 
         public void SuspendCursorChanges()
@@ -190,7 +154,7 @@ namespace SecureOverlay
 
         public void ActivateCustomCursor()
         {
-            if (!_useFakeCursor || _isSuspended)
+            if (!CanActivateCursor())
                 return;
 
             _deactivateTimer?.Stop();
@@ -204,11 +168,13 @@ namespace SecureOverlay
 
         private void ActivateCustomCursorImmediate()
         {
-            if (_customCursorActive || _isSuspended)
+            if (_customCursorActive || !CanActivateCursor())
                 return;
 
             try
             {
+                _transitionGeneration++;
+                _fakeCursorWindow?.CancelAnimation();
                 _customCursorActive = true;
                 
                 // Get EXACT cursor position
@@ -236,18 +202,24 @@ namespace SecureOverlay
                     Log.WriteLine($"  Topmost: {_fakeCursorWindow.Topmost}");
                     Log.WriteLine($"  Opacity: {_fakeCursorWindow.Opacity}");
                 }
+
+                if (_protectedCursorWindow != null)
+                {
+                    _protectedCursorWindow.UpdateCursorImageNow();
+                    _protectedCursorWindow.Topmost = true;
+                    _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+                    _protectedCursorWindow.Show();
+                }
                 
                 // Hide system cursor
                 if (_parentWindow != null)
                 {
                     _parentWindow.Cursor = System.Windows.Input.Cursors.None;
                 }
+                HideSystemCursor();
                 
-                // Show custom cursor
-                if (_cursorDot != null)
-                {
-                    _cursorDot.Visibility = Visibility.Visible;
-                }
+                // The moving cursor is a protected window so it also works over WebView2.
+                if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
                 UpdateCursorVisualState();
                 
                 Log.WriteLine($"🖱️ Cursor locked at entry: ({cursorPos.X}, {cursorPos.Y})");
@@ -255,6 +227,7 @@ namespace SecureOverlay
             catch (Exception ex)
             {
                 Log.WriteLine($"✗ Failed to activate custom cursor: {ex.Message}");
+                ResetCursorImmediately();
             }
         }
 
@@ -276,34 +249,37 @@ namespace SecureOverlay
             _deactivateTimer?.Start();
         }
 
-        private void DeactivateCustomCursorImmediate()
+        private void DeactivateCustomCursorImmediate(bool force = false)
         {
-            if (!_customCursorActive || _isSuspended)
+            if (!_customCursorActive || (_isSuspended && !force))
                 return;
 
             try
             {
+                var transitionGeneration = ++_transitionGeneration;
+
                 // Get exit position
                 POINT exitPos;
                 GetCursorPos(out exitPos);
                 Point exitPoint = new Point(exitPos.X, exitPos.Y);
                 
-                // Calculate distance
+                var animationStart = _fakeCursorWindow?.GetHotspotScreenPosition() ?? _lastCursorPosition;
+
+                // Calculate from the stationary decoy, not the moving protected cursor.
                 double distance = Math.Sqrt(
-                    Math.Pow(exitPoint.X - _lastCursorPosition.X, 2) + 
-                    Math.Pow(exitPoint.Y - _lastCursorPosition.Y, 2)
+                    Math.Pow(exitPoint.X - animationStart.X, 2) +
+                    Math.Pow(exitPoint.Y - animationStart.Y, 2)
                 );
                 
-                // NEW: Use constant speed for natural movement
-                // Speed: 600 pixels per second (0.6 pixels per millisecond)
-                const double PIXELS_PER_MS = 0.6;
+                // Keep the handoff visible, but short enough that it cannot be mistaken for lag.
+                const double PIXELS_PER_MS = 1.4;
                 
                 int animationMs = (int)(distance / PIXELS_PER_MS);
                 
                 // Clamp between reasonable limits
-                animationMs = Math.Max(100, Math.Min(800, animationMs));
+                animationMs = Math.Max(90, Math.Min(320, animationMs));
                 
-                Log.WriteLine($"🖱️ Animating cursor: ({_lastCursorPosition.X:F0}, {_lastCursorPosition.Y:F0}) → ({exitPoint.X}, {exitPoint.Y})");
+                Log.WriteLine($"🖱️ Animating cursor: ({animationStart.X:F0}, {animationStart.Y:F0}) → ({exitPoint.X}, {exitPoint.Y})");
                 Log.WriteLine($"   Distance: {distance:F0}px | Duration: {animationMs}ms | Speed: {(distance / animationMs):F1}px/ms");
                 
                 if (_fakeCursorWindow != null)
@@ -311,6 +287,9 @@ namespace SecureOverlay
                     // Animate the fake cursor window position
                     _fakeCursorWindow.AnimateToPosition(exitPoint.X, exitPoint.Y, animationMs, () =>
                     {
+                        if (transitionGeneration != _transitionGeneration || _customCursorActive)
+                            return;
+
                         // After animation completes, hide fake cursor and show real cursor
                         _fakeCursorWindow.Hide();
                         
@@ -319,10 +298,17 @@ namespace SecureOverlay
                         {
                             _parentWindow.Cursor = null;
                         }
+                        RestoreSystemCursor();
                         
                         Log.WriteLine("🖱️ Cursor unlocked at exit");
                     });
                 }
+                else
+                {
+                    RestoreSystemCursor();
+                }
+
+                _protectedCursorWindow?.Hide();
                 
                 // Hide custom cursor immediately
                 if (_cursorDot != null)
@@ -330,11 +316,6 @@ namespace SecureOverlay
                     _cursorDot.Visibility = Visibility.Collapsed;
                 }
 
-                if (_cursorBadge != null)
-                {
-                    _cursorBadge.Visibility = Visibility.Collapsed;
-                }
-                
                 _customCursorActive = false;
             }
             catch (Exception ex)
@@ -346,10 +327,12 @@ namespace SecureOverlay
                 {
                     _fakeCursorWindow.Hide();
                 }
+                _protectedCursorWindow?.Hide();
                 if (_parentWindow != null)
                 {
                     _parentWindow.Cursor = null;
                 }
+                RestoreSystemCursor();
                 _customCursorActive = false;
             }
         }
@@ -368,17 +351,13 @@ namespace SecureOverlay
 
         public void UpdateCustomCursorPosition(Point position)
         {
-            if (_useFakeCursor && _cursorDot != null && _customCursorActive && !_isSuspended)
+            if (CanActivateCursor() && _customCursorActive)
             {
-                // Position custom cursor
-                Canvas.SetLeft(_cursorDot, position.X - 8);
-                Canvas.SetTop(_cursorDot, position.Y - 8);
-                if (_cursorBadge != null)
+                if (_protectedCursorWindow != null && GetCursorPos(out var cursorPos))
                 {
-                    Canvas.SetLeft(_cursorBadge, position.X - (_cursorBadge.Width / 2));
-                    Canvas.SetTop(_cursorBadge, position.Y - (_cursorBadge.Height / 2));
+                    _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
                 }
-                
+
                 // Update last position for smooth exit
                 UpdateLastCursorPosition();
             }
@@ -390,63 +369,18 @@ namespace SecureOverlay
             UpdateCursorVisualState();
         }
 
-        public void SetResizeCursorHint(string resizeTag)
-        {
-            _cursorVisualMode = resizeTag switch
-            {
-                "Left" or "Right" => CursorVisualMode.ResizeHorizontal,
-                "Top" or "Bottom" => CursorVisualMode.ResizeVertical,
-                "TopLeft" or "BottomRight" => CursorVisualMode.ResizeDiagonalBackward,
-                "TopRight" or "BottomLeft" => CursorVisualMode.ResizeDiagonalForward,
-                _ => CursorVisualMode.Default
-            };
-            UpdateCursorVisualState();
-        }
-
-        public void ClearResizeCursorHint()
-        {
-            _cursorVisualMode = CursorVisualMode.Default;
-            UpdateCursorVisualState();
-        }
-
         private void UpdateCursorVisualState()
         {
-            if (_cursorDot == null || _cursorBadge == null || _cursorGlyph == null)
+            if (_cursorDot == null)
             {
                 return;
             }
 
-            if (!_customCursorActive)
-            {
-                _cursorDot.Visibility = Visibility.Collapsed;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (_embeddedSurfaceCursorActive)
-            {
-                _cursorDot.Visibility = Visibility.Collapsed;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (_cursorVisualMode == CursorVisualMode.Default)
-            {
-                _cursorDot.Visibility = Visibility.Visible;
-                _cursorBadge.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            _cursorDot.Visibility = Visibility.Collapsed;
-            _cursorBadge.Visibility = Visibility.Visible;
-            _cursorGlyph.Text = _cursorVisualMode switch
-            {
-                CursorVisualMode.ResizeHorizontal => "↔",
-                CursorVisualMode.ResizeVertical => "↕",
-                CursorVisualMode.ResizeDiagonalForward => "⤢",
-                CursorVisualMode.ResizeDiagonalBackward => "⤡",
-                _ => "↔"
-            };
+            _cursorDot.Visibility = _protectedCursorWindow == null &&
+                                    _customCursorActive &&
+                                    !_embeddedSurfaceCursorActive
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         public void UpdateFakeCursorSize(double scale)
@@ -454,9 +388,95 @@ namespace SecureOverlay
             _fakeCursorWindow?.SetScale(scale);
         }
 
+        public void SetClickThroughActive(bool active)
+        {
+            _clickThroughActive = active;
+            if (active)
+            {
+                _activateTimer?.Stop();
+                _deactivateTimer?.Stop();
+                DeactivateCustomCursorImmediate(force: true);
+                return;
+            }
+
+            TryActivateForCurrentPointer();
+        }
+
+        public void SetApplicationFocusActive(bool active)
+        {
+            _applicationFocusActive = active;
+            if (!active)
+            {
+                ResetCursorImmediately();
+                return;
+            }
+
+            TryActivateForCurrentPointer();
+        }
+
+        private bool CanActivateCursor()
+        {
+            return _useFakeCursor && !_isSuspended && !_clickThroughActive && _applicationFocusActive;
+        }
+
+        private void TryActivateForCurrentPointer()
+        {
+            if (!CanActivateCursor() || !IsPointerInsideParentWindow())
+                return;
+
+            ActivateCustomCursor();
+        }
+
+        public bool IsPointerInsideParentWindow()
+        {
+            if (_parentWindow?.IsVisible != true || !GetCursorPos(out var cursorPos))
+                return false;
+
+            var local = _parentWindow.PointFromScreen(new Point(cursorPos.X, cursorPos.Y));
+            return local.X >= 0 && local.Y >= 0 &&
+                   local.X <= _parentWindow.ActualWidth && local.Y <= _parentWindow.ActualHeight;
+        }
+
+        private void ResetCursorImmediately()
+        {
+            _transitionGeneration++;
+            _activateTimer?.Stop();
+            _deactivateTimer?.Stop();
+            _embeddedSurfaceCursorActive = false;
+            _customCursorActive = false;
+
+            if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
+            if (_fakeCursorWindow != null)
+            {
+                _fakeCursorWindow.CancelAnimation();
+                _fakeCursorWindow.Hide();
+            }
+            if (_protectedCursorWindow != null)
+            {
+                _protectedCursorWindow.CancelAnimation();
+                _protectedCursorWindow.Hide();
+            }
+            if (_parentWindow != null) _parentWindow.Cursor = null;
+            RestoreSystemCursor();
+        }
+
+        private void HideSystemCursor()
+        {
+            if (_systemCursorHidden) return;
+            ShowCursor(false);
+            _systemCursorHidden = true;
+        }
+
+        private void RestoreSystemCursor()
+        {
+            if (!_systemCursorHidden) return;
+            ShowCursor(true);
+            _systemCursorHidden = false;
+        }
+
         public void ShowFakeCursorPreview()
         {
-            if (_fakeCursorWindow != null)
+            if (_fakeCursorWindow != null && CanActivateCursor())
             {
                 POINT cursorPos;
                 GetCursorPos(out cursorPos);
@@ -482,6 +502,8 @@ namespace SecureOverlay
             
             try
             {
+                ResetCursorImmediately();
+
                 // 1. Stop all timers
                 if (_activateTimer != null)
                 {
@@ -515,15 +537,6 @@ namespace SecureOverlay
                     Log.WriteLine("  ✓ Custom cursor removed");
                 }
 
-                if (_cursorBadge != null && _cursorCanvas != null)
-                {
-                    _cursorBadge.Visibility = Visibility.Collapsed;
-                    _cursorCanvas.Children.Remove(_cursorBadge);
-                    _cursorBadge = null;
-                    _cursorGlyph = null;
-                    Log.WriteLine("  ✓ Cursor resize badge removed");
-                }
-                
                 // 4. FORCE CLOSE fake cursor window
                 if (_fakeCursorWindow != null)
                 {
@@ -548,6 +561,19 @@ namespace SecureOverlay
                     finally
                     {
                         _fakeCursorWindow = null;
+                    }
+                }
+
+                if (_protectedCursorWindow != null)
+                {
+                    try
+                    {
+                        _protectedCursorWindow.Hide();
+                        _protectedCursorWindow.Close();
+                    }
+                    finally
+                    {
+                        _protectedCursorWindow = null;
                     }
                 }
                 

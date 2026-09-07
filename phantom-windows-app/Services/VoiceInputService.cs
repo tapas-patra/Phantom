@@ -251,8 +251,10 @@ namespace SecureOverlay.Services
                 if (message.StartsWith("TRANSCRIPT:"))
                 {
                     var text = message.Substring("TRANSCRIPT:".Length);
-                    Log.WriteLine($"✓ Transcript received length_bucket={LengthBucket(text.Length)}");
+                    var route = _fallbackStarted ? "native_fallback" : "native";
+                    Log.WriteLine($"Speech transcription succeeded route={route} transcript_length_bucket={LengthBucket(text.Length)}");
                     SpeechRecognized?.Invoke(this, text);
+                    StatusChanged?.Invoke(this, _fallbackStarted ? "Native fallback recognized" : "Native speech recognized");
                 }
                 else if (message.StartsWith("AUDIO:"))
                 {
@@ -261,6 +263,12 @@ namespace SecureOverlay.Services
                 else if (message.StartsWith("STATUS:"))
                 {
                     var status = message.Substring("STATUS:".Length);
+                    if (_fallbackStarted)
+                    {
+                        status = status.Contains("Listening", StringComparison.OrdinalIgnoreCase)
+                            ? "Listening with native fallback"
+                            : status == "Ready" ? "Native fallback ready" : status;
+                    }
                     Log.WriteLine($"Status: {status}");
                     StatusChanged?.Invoke(this, status);
                 }
@@ -320,12 +328,18 @@ namespace SecureOverlay.Services
                 if (_fallbackStarted) return;
                 var pcm = Convert.FromBase64String(base64);
                 var transcript = await _cloudTranscriber(pcm, _disposeCancellation.Token);
-                if (!string.IsNullOrWhiteSpace(transcript)) SpeechRecognized?.Invoke(this, transcript.Trim());
+                if (!string.IsNullOrWhiteSpace(transcript))
+                {
+                    var text = transcript.Trim();
+                    Log.WriteLine($"Speech transcription succeeded route=cloud transcript_length_bucket={LengthBucket(text.Length)}");
+                    SpeechRecognized?.Invoke(this, text);
+                    StatusChanged?.Invoke(this, "Cloud speech recognized");
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                Log.WriteLine($"Cloud speech failed: {ex.GetType().Name}");
+                Log.WriteLine($"Speech transcription failed route=cloud error_code={ex.GetType().Name} fallback={_fallbackToNative}");
                 StatusChanged?.Invoke(this, "Cloud speech unavailable");
                 if (_fallbackToNative) await FallbackToNativeAsync();
             }
@@ -337,6 +351,7 @@ namespace SecureOverlay.Services
             if (_fallbackStarted || _webView?.CoreWebView2 == null) return;
             _fallbackStarted = true;
             _useCloud = false;
+            Log.WriteLine("Speech recognition route changed route=native_fallback reason=cloud_unavailable");
             StatusChanged?.Invoke(this, "Using native speech fallback");
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
             {

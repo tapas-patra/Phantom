@@ -38,6 +38,7 @@ final class SpeechInputService {
 
     private func startNative() {
         guard let recognizer, recognizer.isAvailable else { onStateChange?("Speech recognition is unavailable"); return }
+        Diagnostics.log("speech_capture_started route=\(forceNative ? "native_fallback" : "native")")
         stopEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
@@ -49,6 +50,9 @@ final class SpeechInputService {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let transcript { self.onTranscript?(transcript, result?.isFinal == true) }
+                if result?.isFinal == true, let transcript {
+                    Diagnostics.log("speech_transcription_succeeded route=\(self.forceNative ? "native_fallback" : "native") transcript_length_bucket=\(Self.lengthBucket(transcript.count))")
+                }
                 if let error { self.onStateChange?(error.localizedDescription) }
                 if finished { self.finishNative() }
             }
@@ -58,6 +62,7 @@ final class SpeechInputService {
 
     private func startCloud() {
         stopEngine()
+        Diagnostics.log("speech_capture_started route=cloud")
         let format = audioEngine.inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { onStateChange?("No microphone input is available"); return }
         let queue = cloudAudio
@@ -103,14 +108,23 @@ final class SpeechInputService {
                 do {
                     if !item.data.isEmpty, let transcriber = self.cloudTranscriber {
                         let text = try await transcriber(item.data)
-                        if !text.isEmpty { self.cloudTranscript += (self.cloudTranscript.isEmpty ? "" : " ") + text }
+                        if !text.isEmpty {
+                            self.cloudTranscript += (self.cloudTranscript.isEmpty ? "" : " ") + text
+                            self.onStateChange?(item.final ? "Cloud speech recognized" : "Cloud speech active")
+                        }
                     }
                     if !self.cloudTranscript.isEmpty { self.onTranscript?(self.cloudTranscript, item.final) }
-                    if item.final { self.onStateChange?("Ready") }
+                    if item.final {
+                        let outcome = self.cloudTranscript.isEmpty ? "empty" : "success"
+                        Diagnostics.log("speech_transcription_completed route=cloud outcome=\(outcome) transcript_length_bucket=\(Self.lengthBucket(self.cloudTranscript.count))")
+                        self.onStateChange?(self.cloudTranscript.isEmpty ? "Cloud speech completed — no speech detected" : "Cloud speech recognized")
+                    }
                 } catch {
+                    Diagnostics.log("speech_transcription_failed route=cloud error_code=\(String(describing: type(of: error))) fallback=\(self.fallbackToNative)")
                     self.cloudAudio.reset(); self.onStateChange?("Cloud speech unavailable")
                     if self.fallbackToNative {
                         self.forceNative = true
+                        Diagnostics.log("speech_route_changed route=native_fallback reason=cloud_unavailable")
                         if self.shouldListen { self.startNative() } else { self.onStateChange?("The next recording will use native speech fallback") }
                     }
                     break
@@ -121,7 +135,8 @@ final class SpeechInputService {
     }
 
     private func finishNative() {
-        stopEngine(); recognitionRequest = nil; recognitionTask = nil; isListening = false; shouldListen = false; onStateChange?("Ready")
+        stopEngine(); recognitionRequest = nil; recognitionTask = nil; isListening = false; shouldListen = false
+        onStateChange?(forceNative ? "Native fallback ready" : "Ready")
     }
 
     private func stopEngine() {
@@ -169,6 +184,10 @@ final class SpeechInputService {
     }
     private func label(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
         switch status { case .authorized: return "Allowed"; case .denied: return "Denied"; case .restricted: return "Restricted"; case .notDetermined: return "Not requested"; @unknown default: return "Unknown" }
+    }
+
+    private static func lengthBucket(_ length: Int) -> String {
+        switch length { case ...0: return "empty"; case 1...40: return "1-40"; case 41...160: return "41-160"; case 161...640: return "161-640"; default: return "641+" }
     }
 }
 

@@ -97,6 +97,72 @@ public sealed class ManagedAiCatalogService
         };
     }
 
+    public ManagedAiCatalogDto GetByoCatalog(DesktopAccountRecord account)
+    {
+        RequireByoAccess(account);
+        return new ManagedAiCatalogDto
+        {
+            Providers = ManagedAiCatalog.GetAllProviders()
+                .Select(providerId => new ManagedAiProviderOptionDto
+                {
+                    ProviderId = providerId,
+                    Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                    Models = Array.Empty<ManagedAiModelOptionDto>()
+                })
+                .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            RefreshedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    public async Task<ManagedAiProviderOptionDto> RefreshByoProviderAsync(
+        DesktopAccountRecord account,
+        ByoModelCatalogRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        RequireByoAccess(account);
+        var providerId = request.ProviderId?.Trim() ?? string.Empty;
+        if (!ManagedAiCatalog.IsAllowedProvider(providerId))
+        {
+            throw new BackendValidationException("Unsupported BYO provider.");
+        }
+
+        var apiKey = request.ApiKey?.Trim() ?? string.Empty;
+        if (apiKey.Length is 0 or > 8192)
+        {
+            throw new BackendValidationException("A valid BYO API key is required.");
+        }
+
+        try
+        {
+            var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+            var refreshedAtUtc = DateTime.UtcNow;
+            _logger.LogInformation(
+                "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
+                providerId,
+                models.Count);
+            return new ManagedAiProviderOptionDto
+            {
+                ProviderId = providerId,
+                Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                Models = models,
+                RefreshedAtUtc = refreshedAtUtc
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "BYO AI catalog refresh failed for provider {ProviderId}; error_type={ErrorType}",
+                providerId,
+                ex.GetType().Name);
+            throw new BackendValidationException("Unable to fetch models from the provider. Verify the API key and try again.");
+        }
+    }
+
     public IReadOnlyList<ManagedAiProviderOptionDto> ListCatalogProviders()
     {
         return _catalogRepository.ListAll()
@@ -485,9 +551,9 @@ public sealed class ManagedAiCatalogService
 
     private static async Task<IReadOnlyList<ManagedAiModelOptionDto>> FetchGeminiModelsAsync(string apiKey, CancellationToken cancellationToken)
     {
-        using var response = await HttpClient.GetAsync(
-            $"https://generativelanguage.googleapis.com/v1beta/models?key={Uri.EscapeDataString(apiKey)}",
-            cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://generativelanguage.googleapis.com/v1beta/models");
+        request.Headers.Add("x-goog-api-key", apiKey);
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -610,5 +676,14 @@ public sealed class ManagedAiCatalogService
         var message = ex.Message?.Trim() ?? ex.GetType().Name;
         var newlineIndex = message.IndexOfAny(['\r', '\n']);
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
+    }
+
+    private static void RequireByoAccess(DesktopAccountRecord account)
+    {
+        if (account.ProAvailableCredits <= 0m
+            && !string.Equals(account.AccessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BackendValidationException("BYO model catalog access requires a Pro BYO entitlement.");
+        }
     }
 }

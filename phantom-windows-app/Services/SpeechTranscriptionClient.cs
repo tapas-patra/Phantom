@@ -30,7 +30,11 @@ namespace SecureOverlay.Services
 
         public async Task<string> TranscribePcm16Async(byte[] pcm16, CancellationToken cancellationToken)
         {
-            if (!ContainsSpeech(pcm16)) return string.Empty;
+            if (!ContainsSpeech(pcm16))
+            {
+                Log.WriteLine("Cloud speech skipped reason=no_speech_detected");
+                return string.Empty;
+            }
             var wav = BuildWav(pcm16, 16_000, 1);
             if (_managed) return await TranscribeManagedAsync(wav, cancellationToken);
 
@@ -46,12 +50,14 @@ namespace SecureOverlay.Services
                     var text = await PostTranscriptionAsync(GetProviderUrl(_settings.SpeechProviderId), selected.Value.Key, wav, _settings.SpeechModelId, _settings.SpeechLanguage, cancellationToken);
                     _settings.SpeechRotationState.KeyCooldownUntilUtc.Remove(CooldownName(selected.Value.Index));
                     SettingsManager.Save(_settings);
+                    Log.WriteLine($"BYO speech provider completed provider={_settings.SpeechProviderId} model={_settings.SpeechModelId} key_slot={selected.Value.Index + 1} attempt={attempt + 1}");
                     return text;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     lastError = ex;
                     var failure = ProviderResiliencePolicy.Classify(ex.Message);
+                    Log.WriteLine($"BYO speech provider failed provider={_settings.SpeechProviderId} model={_settings.SpeechModelId} attempt={attempt + 1} error_code={failure.ErrorCode}");
                     if (failure.CanRotateCredential)
                     {
                         _settings.SpeechRotationState.KeyCooldownUntilUtc[CooldownName(selected.Value.Index)] = DateTime.UtcNow.Add(failure.Cooldown);
@@ -71,7 +77,9 @@ namespace SecureOverlay.Services
             using var response = await HttpClient.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode) throw new HttpRequestException($"Managed speech failed ({(int)response.StatusCode}).");
-            return JsonConvert.DeserializeObject<SpeechTranscriptionResponseDto>(body)?.Text?.Trim() ?? string.Empty;
+            var result = JsonConvert.DeserializeObject<SpeechTranscriptionResponseDto>(body);
+            Log.WriteLine($"Managed speech provider completed provider={result?.ProviderId ?? "unknown"} model={result?.ModelId ?? "unknown"}");
+            return result?.Text?.Trim() ?? string.Empty;
         }
 
         private static async Task<string> PostTranscriptionAsync(string url, string apiKey, byte[] wav, string model, string language, CancellationToken cancellationToken)

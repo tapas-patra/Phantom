@@ -139,6 +139,7 @@ namespace SecureOverlay
         private string? _forcedManagedExtensionProviderId;
         private DateTime? _lastInterviewActivityUtc;
         private int _interviewLockHeartbeatCount;
+        private bool _debugPanelUserHidden;
         private Task _managedCatalogRefreshTask = Task.CompletedTask;
 
         public MainWindow() : this(new AppLaunchContext())
@@ -224,11 +225,7 @@ namespace SecureOverlay
             UpdateLegacyFallbackButtonState();
             UpdateDebugPanelAccess();
             _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
-            _ = Task.Run(() =>
-            {
-                ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
-                SettingsManager.Save(_settings);
-            });
+            _ = RefreshByoCatalogCacheAsync();
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
@@ -498,13 +495,9 @@ namespace SecureOverlay
 
         private void UpdateDebugPanelAccess()
         {
-            if (_accountSnapshot?.CanUseDesktopPowerFeatures == true)
-            {
-                return;
-            }
-
-            DebugPanel.Visibility = Visibility.Collapsed;
-            _debugLogger.SetUiCollectionEnabled(false);
+            var visible = _accountSnapshot?.CanUseDesktopPowerFeatures == true && !_debugPanelUserHidden;
+            DebugPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            _debugLogger.SetUiCollectionEnabled(visible);
         }
 
         private void ApplyAccountTierChrome()
@@ -512,10 +505,7 @@ namespace SecureOverlay
             var selectorsVisible = ShouldShowByoSelectors() ? Visibility.Visible : Visibility.Collapsed;
             ProviderSelectorBorder.Visibility = selectorsVisible;
             ModelSelectorBorder.Visibility = selectorsVisible;
-            if (!ShouldShowByoSelectors())
-            {
-                DebugPanel.Visibility = Visibility.Collapsed;
-            }
+            UpdateDebugPanelAccess();
 
             if (!ShouldShowByoSelectors())
             {
@@ -1009,6 +999,26 @@ namespace SecureOverlay
             }
         }
 
+        private async Task RefreshByoCatalogCacheAsync(string? forceProvider = null)
+        {
+            var session = _authSessionRepository.Load();
+            if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                return;
+            }
+
+            await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
+                _settings,
+                _hostedAccountClient,
+                session.AccessToken,
+                forceProvider);
+            SettingsManager.Save(_settings);
+            if (_currentAI != null && IsByoLaneActiveNow() && GetConfiguredModelsForProvider(_settings.SelectedAI).Length > 0)
+            {
+                InitializeAI();
+            }
+        }
+
         private ManagedAiProviderOptionDto? GetManagedProviderCatalog(string provider)
         {
             return ProviderModelCatalogCache.GetProvider(_settings, provider);
@@ -1016,7 +1026,7 @@ namespace SecureOverlay
 
         private string[] GetConfiguredModelsForProvider(string provider)
         {
-            return ProviderModelCatalogCache.GetModelIds(_settings, provider);
+            return ProviderModelCatalogCache.GetModelIds(_settings, provider, byo: true);
         }
 
         private ModelConfig GetModelConfigForCurrentSelection(string provider, string modelId)
@@ -1027,7 +1037,8 @@ namespace SecureOverlay
                 return registryConfig;
             }
 
-            var managedModel = ProviderModelCatalogCache.GetModel(_settings, provider, modelId);
+            var managedModel = ProviderModelCatalogCache.GetModel(_settings, provider, modelId)
+                ?? ProviderModelCatalogCache.GetModel(_settings, provider, modelId, byo: true);
             return new ModelConfig
             {
                 Name = managedModel?.DisplayName ?? modelId,
@@ -1046,7 +1057,8 @@ namespace SecureOverlay
                 return registryName;
             }
 
-            return ProviderModelCatalogCache.GetModel(_settings, provider, modelId)?.DisplayName
+            return (ProviderModelCatalogCache.GetModel(_settings, provider, modelId)
+                    ?? ProviderModelCatalogCache.GetModel(_settings, provider, modelId, byo: true))?.DisplayName
                 ?? modelId;
         }
 
@@ -1298,7 +1310,12 @@ namespace SecureOverlay
         {
             if (HasByoEntitlement())
             {
-                return AIModelRegistry.GetAllProviders();
+                var byoProviders = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                return byoProviders.Length > 0 ? byoProviders : new[] { _settings.SelectedAI };
             }
 
             var providers = _settings.PremiumConfiguredProviders?
@@ -3247,7 +3264,9 @@ namespace SecureOverlay
                 {
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 100, 100));
                 }
-                else if (status == "Ready")
+                else if (status == "Ready"
+                    || status.Contains("recognized", StringComparison.OrdinalIgnoreCase)
+                    || status.EndsWith("ready", StringComparison.OrdinalIgnoreCase))
                 {
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 144, 238, 144));
                 }
@@ -3421,12 +3440,14 @@ namespace SecureOverlay
             
             if (DebugPanel.Visibility == Visibility.Visible)
             {
+                _debugPanelUserHidden = true;
                 DebugPanel.Visibility = Visibility.Collapsed;
                 _debugLogger.SetUiCollectionEnabled(false);
                 Log.WriteLine("✓ Debug panel hidden");
             }
             else
             {
+                _debugPanelUserHidden = false;
                 DebugPanel.Visibility = Visibility.Visible;
                 _debugLogger.SetUiCollectionEnabled(true);
                 Log.WriteLine("✓ Debug panel shown");
@@ -3646,6 +3667,7 @@ namespace SecureOverlay
                 // Reload settings
                 _settings = SettingsManager.Load();
                 _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
+                _ = RefreshByoCatalogCacheAsync(_settings.SelectedAI);
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
@@ -4814,7 +4836,11 @@ namespace SecureOverlay
             
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
-            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel);
+            var model = ProviderModelCatalogCache.GetModel(
+                _settings,
+                provider,
+                currentModel,
+                byo: _currentAI is not HostedManagedAiService);
             bool supportsVision = model?.SupportsVision ?? AIModelRegistry.SupportsVision(currentModel);
             
             Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");

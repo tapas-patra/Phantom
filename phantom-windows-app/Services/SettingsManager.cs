@@ -35,19 +35,19 @@ namespace SecureOverlay.Services
         public string NvidiaApiKey { get; set; } = "";
         
         // Models (lists for model switching)
-        public List<string> ChatGPTModels { get; set; } = new List<string> { "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo" };
-        public List<string> ClaudeModels { get; set; } = new List<string> { "claude-3-sonnet-20240229", "claude-3-haiku-20240307" };
-        public List<string> MistralModels { get; set; } = new List<string> { "mistral-large-latest", "mistral-medium-latest" };
-        public List<string> GeminiModels { get; set; } = new List<string> { "gemini-2.5-flash", "gemini-2.0-flash" };
-        public List<string> GroqModels { get; set; } = new List<string> { "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "meta-llama/llama-4-scout-17b-16e-instruct" };
+        public List<string> ChatGPTModels { get; set; } = new List<string>();
+        public List<string> ClaudeModels { get; set; } = new List<string>();
+        public List<string> MistralModels { get; set; } = new List<string>();
+        public List<string> GeminiModels { get; set; } = new List<string>();
+        public List<string> GroqModels { get; set; } = new List<string>();
         public List<string> NvidiaModels { get; set; } = new List<string>();
         
         // Legacy single models (for backward compatibility)
-        public string ChatGPTModel { get; set; } = "gpt-4";
-        public string ClaudeModel { get; set; } = "claude-3-sonnet-20240229";
-        public string MistralModel { get; set; } = "mistral-large-latest";
-        public string GeminiModel { get; set; } = "gemini-2.5-flash";
-        public string GroqModel { get; set; } = "llama-3.3-70b-versatile";
+        public string ChatGPTModel { get; set; } = "";
+        public string ClaudeModel { get; set; } = "";
+        public string MistralModel { get; set; } = "";
+        public string GeminiModel { get; set; } = "";
+        public string GroqModel { get; set; } = "";
         public string NvidiaModel { get; set; } = "";
         
         // Rotation settings
@@ -86,6 +86,7 @@ namespace SecureOverlay.Services
         public string CopilotMode { get; set; } = "Interview";
         public string InterviewDeliveryStyle { get; set; } = "Standard";
         public ManagedAiCatalogDto ManagedAiCatalogCache { get; set; } = new ManagedAiCatalogDto();
+        public ManagedAiCatalogDto ByoAiCatalogCache { get; set; } = new ManagedAiCatalogDto();
         public List<string> PremiumConfiguredProviders { get; set; } = new List<string>();
         public string SelectedHostedContextPackId { get; set; } = string.Empty;
         
@@ -449,79 +450,6 @@ namespace SecureOverlay.Services
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
-        /// <summary>
-        /// Sync model lists in settings with AIModelRegistry
-        /// Ensures dropdown and rotation manager use the same models
-        /// </summary>
-        public static void SyncModelListsWithRegistry(AppSettings settings)
-        {
-            Log.WriteLine("═══════════════════════════════════════════════════════");
-            Log.WriteLine("SYNCING MODEL LISTS WITH REGISTRY");
-            
-            bool changed = false;
-            
-            // Sync ChatGPT models
-            var chatGPTModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.ChatGPT).ToList();
-            if (settings.ChatGPTModels.Count == 0)
-            {
-                settings.ChatGPTModels = chatGPTModels;
-                Log.WriteLine($"✓ Updated ChatGPT models: {chatGPTModels.Count} models");
-                changed = true;
-            }
-            
-            // Sync Claude models
-            var claudeModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Claude).ToList();
-            if (settings.ClaudeModels.Count == 0)
-            {
-                settings.ClaudeModels = claudeModels;
-                Log.WriteLine($"✓ Updated Claude models: {claudeModels.Count} models");
-                changed = true;
-            }
-            
-            // Sync Mistral models
-            var mistralModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Mistral).ToList();
-            if (settings.MistralModels.Count == 0)
-            {
-                settings.MistralModels = mistralModels;
-                Log.WriteLine($"✓ Updated Mistral models: {mistralModels.Count} models");
-                changed = true;
-            }
-            
-            // Sync Gemini models
-            var geminiModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Gemini).ToList();
-            if (settings.GeminiModels.Count == 0)
-            {
-                settings.GeminiModels = geminiModels;
-                Log.WriteLine($"✓ Updated Gemini models: {geminiModels.Count} models");
-                changed = true;
-            }
-            
-            // Sync Groq models
-            var groqModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Groq).ToList();
-            if (settings.GroqModels.Count == 0)
-            {
-                settings.GroqModels = groqModels;
-                Log.WriteLine($"✓ Updated Groq models: {groqModels.Count} models");
-                changed = true;
-            }
-
-            var nvidiaModels = AIModelRegistry.GetModelsForProvider(AIModelRegistry.Providers.Nvidia).ToList();
-            if (settings.NvidiaModels.Count == 0 && nvidiaModels.Count > 0)
-            {
-                settings.NvidiaModels = nvidiaModels;
-                Log.WriteLine($"✓ Updated NVIDIA models: {nvidiaModels.Count} models");
-                changed = true;
-            }
-            
-            if (!changed)
-            {
-                Log.WriteLine("✓ All model lists already in sync");
-            }
-            
-            Log.WriteLine("═══════════════════════════════════════════════════════");
-        }
-
-
 
         // ═══════════════════════════════════════════════════════════════
         // GET FILE PATHS (for debugging)
@@ -535,8 +463,6 @@ namespace SecureOverlay.Services
         {
             MigrateLegacyKeys(settings);
             CleanupDuplicateModels(settings);
-            SyncModelListsWithRegistry(settings);
-            ProviderModelCatalogCache.BackfillFromLegacySettings(settings);
             ApplyDerivedSettings(settings);
 
             if (persistChanges)
@@ -550,6 +476,7 @@ namespace SecureOverlay.Services
             settings.SpeechApiKeys ??= new Dictionary<string, List<string>>();
             settings.SpeechRotationState ??= new APIRotationState();
             settings.SpeechCatalogCache ??= new ManagedAiCatalogDto();
+            settings.ByoAiCatalogCache ??= new ManagedAiCatalogDto();
             settings.SpeechRecognitionMode = string.Equals(settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase) ? "Cloud" : "Native";
             settings.SpeechLanguage = string.IsNullOrWhiteSpace(settings.SpeechLanguage) ? "en" : settings.SpeechLanguage.Trim();
             settings.CopilotMode = string.Equals(settings.CopilotMode, "Briefing", StringComparison.OrdinalIgnoreCase)
@@ -563,7 +490,7 @@ namespace SecureOverlay.Services
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings);
+            ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings, byo: true);
         }
 
         private static AppSettings? LoadLegacySettingsReadOnly()

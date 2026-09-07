@@ -228,6 +228,7 @@ enum PhantomMain {
             precondition(BYOClient.delta(from: "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", provider: "ChatGPT") == "hi")
             precondition(BYOClient.delta(from: "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}", provider: "Claude") == "hi")
             precondition(BYOClient.delta(from: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}]}", provider: "Gemini") == "hi")
+            precondition(BYOCatalog.providers.allSatisfy(\.models.isEmpty))
             precondition(!AccountAccess.hasBYO(tier: "free", credits: 10))
             precondition(AccountAccess.usesBYO(tier: "pro_byo", proCredits: 1, premiumCredits: 0, preferBYO: false))
             precondition(!AccountAccess.usesBYO(tier: "premium", proCredits: 1, premiumCredits: 1, preferBYO: false))

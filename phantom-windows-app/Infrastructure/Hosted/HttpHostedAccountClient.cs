@@ -39,6 +39,23 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJsonAsync<ManagedAiCatalogDto>("/api/desktop/ai/catalog", accessToken, cancellationToken);
         }
 
+        public Task<ManagedAiCatalogDto> GetByoCatalogAsync(string accessToken, CancellationToken cancellationToken = default)
+        {
+            return GetJsonAsync<ManagedAiCatalogDto>("/api/desktop/ai/byo/catalog", accessToken, cancellationToken);
+        }
+
+        public Task<ManagedAiProviderOptionDto> RefreshByoProviderCatalogAsync(
+            string accessToken,
+            ByoModelCatalogRequestDto request,
+            CancellationToken cancellationToken = default)
+        {
+            return PostJsonAsync<ByoModelCatalogRequestDto, ManagedAiProviderOptionDto>(
+                "/api/desktop/ai/byo/catalog/refresh",
+                request,
+                accessToken,
+                cancellationToken);
+        }
+
         public Task<ManagedAiCatalogDto> GetSpeechCatalogAsync(string accessToken, CancellationToken cancellationToken = default)
         {
             return GetJsonAsync<ManagedAiCatalogDto>("/api/desktop/speech/catalog", accessToken, cancellationToken);

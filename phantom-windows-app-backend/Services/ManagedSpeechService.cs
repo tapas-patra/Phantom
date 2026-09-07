@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text;
 using Phantom.WindowsApp.Backend.Contracts;
@@ -94,6 +95,10 @@ public sealed class ManagedSpeechService
             throw new BackendValidationException("Language must be an ISO language code.");
 
         var selection = _catalog.RequireResolvedSelection();
+        var stopwatch = Stopwatch.StartNew();
+        _logger.LogInformation(
+            "managed_speech_started service={Service} component={Component} provider={Provider} model={Model} audio_bytes={AudioBytes} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_speech", selection.ProviderId, selection.ModelId, audio.Length, "started");
         var now = DateTime.UtcNow;
         var candidates = _credentials.ListByProvider(selection.ProviderId, ManagedSpeechCatalogService.Workload)
             .Where(item => item.IsEnabled && (!item.CooldownUntilUtc.HasValue || item.CooldownUntilUtc <= now))
@@ -102,7 +107,12 @@ public sealed class ManagedSpeechService
             .Take(ProviderResiliencePolicy.ManagedBackendMaxAttempts)
             .ToArray();
         if (candidates.Length == 0)
+        {
+            _logger.LogWarning(
+                "managed_speech_failed service={Service} component={Component} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_speech", selection.ProviderId, selection.ModelId, stopwatch.ElapsedMilliseconds, "speech_credentials_unavailable", "error");
             throw new ManagedAiProviderException("speech_credentials_unavailable", true);
+        }
 
         Exception? lastError = null;
         foreach (var credential in candidates)
@@ -118,6 +128,9 @@ public sealed class ManagedSpeechService
                     language,
                     cancellationToken);
                 _credentials.RecordSuccess(credential.CredentialId);
+                _logger.LogInformation(
+                    "managed_speech_completed service={Service} component={Component} provider={Provider} model={Model} audio_bytes={AudioBytes} transcript_length_bucket={TranscriptLengthBucket} elapsed_ms={ElapsedMs} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_speech", selection.ProviderId, selection.ModelId, audio.Length, LengthBucket(text.Length), stopwatch.ElapsedMilliseconds, "success");
                 return new SpeechTranscriptionResponseDto { Text = text, ProviderId = selection.ProviderId, ModelId = selection.ModelId };
             }
             catch (OperationCanceledException) { throw; }
@@ -127,11 +140,17 @@ public sealed class ManagedSpeechService
                 var failure = ProviderResiliencePolicy.Classify(ex);
                 if (failure.CanRotateCredential && failure.Cooldown > TimeSpan.Zero)
                     _credentials.RecordFailure(credential.CredentialId, failure.ErrorCode, DateTime.UtcNow.Add(failure.Cooldown));
-                _logger.LogWarning("Managed speech attempt failed provider={Provider} model={Model} error={Error}", selection.ProviderId, selection.ModelId, failure.ErrorCode);
+                _logger.LogWarning(
+                    "managed_speech_attempt_failed service={Service} component={Component} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} retryable={Retryable} outcome={Outcome}",
+                    "phantom-windows-app-backend", "managed_speech", selection.ProviderId, selection.ModelId, stopwatch.ElapsedMilliseconds, failure.ErrorCode, failure.CanRotateCredential, "error");
                 if (!failure.CanRotateCredential) break;
             }
         }
 
+        var finalFailure = ProviderResiliencePolicy.Classify(lastError ?? new InvalidOperationException("Speech provider failed."));
+        _logger.LogWarning(
+            "managed_speech_failed service={Service} component={Component} provider={Provider} model={Model} elapsed_ms={ElapsedMs} error_code={ErrorCode} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_speech", selection.ProviderId, selection.ModelId, stopwatch.ElapsedMilliseconds, finalFailure.ErrorCode, "error");
         throw ManagedAiProviderException.FromFailure(lastError);
     }
 
@@ -170,5 +189,14 @@ public sealed class ManagedSpeechService
         CooldownUntilUtc = record.CooldownUntilUtc,
         LastFailureCode = record.LastFailureCode,
         UpdatedAtUtc = record.UpdatedAtUtc
+    };
+
+    private static string LengthBucket(int length) => length switch
+    {
+        <= 0 => "empty",
+        <= 40 => "1-40",
+        <= 160 => "41-160",
+        <= 640 => "161-640",
+        _ => "641+"
     };
 }

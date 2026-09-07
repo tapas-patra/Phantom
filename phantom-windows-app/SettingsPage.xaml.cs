@@ -68,6 +68,7 @@ namespace SecureOverlay
             ProtectAllComboBoxes();
             
             _isInitializing = false;
+            _ = RefreshByoCatalogAsync();
             _ = RefreshSpeechCatalogAsync();
         }
 
@@ -926,7 +927,8 @@ namespace SecureOverlay
                     ? _settings.PremiumConfiguredProviders
                     : (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                         .Select(item => item.ProviderId))
-                : AIModelRegistry.GetAllProviders();
+                : (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId);
 
             foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -967,12 +969,12 @@ namespace SecureOverlay
 
         private void PopulateByoModelChoices()
         {
-            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT));
-            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude));
-            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral));
-            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini));
-            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq));
-            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia));
+            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT, byo: true));
+            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude, byo: true));
+            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral, byo: true));
+            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini, byo: true));
+            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq, byo: true));
+            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia, byo: true));
         }
 
         private void LoadSpeechSettings()
@@ -1016,6 +1018,25 @@ namespace SecureOverlay
             var keys = provider != null && _settings.SpeechApiKeys.TryGetValue(provider, out var configured) ? configured : new List<string>();
             SpeechApiKeyOneBox.Password = keys.ElementAtOrDefault(0) ?? string.Empty;
             SpeechApiKeyTwoBox.Password = keys.ElementAtOrDefault(1) ?? string.Empty;
+        }
+
+        private async Task RefreshByoCatalogAsync(string? forceProvider = null)
+        {
+            var session = _authSessionRepository.Load();
+            if (session?.IsAuthenticated != true || string.IsNullOrWhiteSpace(session.AccessToken) || !HasByoEntitlement())
+            {
+                return;
+            }
+
+            await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
+                _settings,
+                _hostedAccountClient,
+                session.AccessToken,
+                forceProvider);
+            SettingsManager.Save(_settings);
+            PopulateProviderChoices();
+            AIProviderComboBox.SelectedItem = _settings.SelectedAI;
+            PopulateByoModelChoices();
         }
 
         private async Task RefreshSpeechCatalogAsync()
@@ -1467,11 +1488,6 @@ namespace SecureOverlay
                 }
                 
                 SettingsManager.Save(_settings);
-                _ = Task.Run(() =>
-                {
-                    ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
-                    SettingsManager.Save(_settings);
-                });
 
                 var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
                 if (!IsPremiumAccount() || !selectedHostedPack)

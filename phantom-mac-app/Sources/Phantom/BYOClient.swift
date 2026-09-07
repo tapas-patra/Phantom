@@ -1,53 +1,6 @@
 import Foundation
 
 struct BYOClient {
-    func models(provider: String, apiKey: String) async throws -> [ManagedModel] {
-        let endpoint: URL
-        switch provider {
-        case "ChatGPT": endpoint = URL(string: "https://api.openai.com/v1/models")!
-        case "Claude": endpoint = URL(string: "https://api.anthropic.com/v1/models")!
-        case "Gemini": endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?key=\(apiKey)")!
-        case "Mistral": endpoint = URL(string: "https://api.mistral.ai/v1/models")!
-        case "Groq": endpoint = URL(string: "https://api.groq.com/openai/v1/models")!
-        case "NVIDIA": endpoint = URL(string: "https://integrate.api.nvidia.com/v1/models")!
-        default: throw BYOError.unsupportedProvider
-        }
-        var request = URLRequest(url: endpoint)
-        request.timeoutInterval = 20
-        if provider == "Claude" {
-            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        } else if provider != "Gemini" {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            throw BYOError.server(status: status, message: String(data: data, encoding: .utf8) ?? "Model catalog request failed.")
-        }
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let rows = (provider == "Gemini" ? object?["models"] : object?["data"]) as? [[String: Any]] ?? []
-        return rows.compactMap { row in
-            var id = row["id"] as? String ?? row["name"] as? String ?? ""
-            id = id.replacingOccurrences(of: "models/", with: "")
-            let methods = row["supportedGenerationMethods"] as? [String] ?? []
-            guard Self.isChatModel(id), provider != "Gemini" || methods.isEmpty || methods.contains("generateContent") else { return nil }
-            let display = row["display_name"] as? String ?? row["displayName"] as? String ?? id
-            return ManagedModel(modelId: id, displayName: display, supportsVision: Self.supportsVision(id))
-        }.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-    }
-
-    private static func isChatModel(_ id: String) -> Bool {
-        let value = id.lowercased()
-        guard !value.isEmpty else { return false }
-        return !["embedding", "moderation", "whisper", "tts", "image", "dall-e", "rerank", "guard", "audio", "realtime"].contains(where: value.contains)
-    }
-
-    private static func supportsVision(_ id: String) -> Bool {
-        let value = id.lowercased()
-        return ["vision", "gpt-4o", "gpt-4.1", "gemini", "claude-3", "claude-sonnet-4", "pixtral", "llama-4-scout", "vl"].contains(where: value.contains)
-    }
-
     func chatStream(
         provider: String,
         model: String,

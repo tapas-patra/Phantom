@@ -1028,6 +1028,26 @@ app.MapGet("/api/desktop/ai/catalog", (
     return Results.Ok(managedAi.GetCatalogForAccount(account));
 }).RequireRateLimiting("desktop-api");
 
+app.MapGet("/api/desktop/ai/byo/catalog", (
+    HttpContext httpContext,
+    ManagedAiService managedAi,
+    ManagedAiCatalogService catalog) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(catalog.GetByoCatalog(account));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/desktop/ai/byo/catalog/refresh", async (
+    HttpContext httpContext,
+    ByoModelCatalogRequestDto request,
+    ManagedAiService managedAi,
+    ManagedAiCatalogService catalog,
+    CancellationToken cancellationToken) =>
+{
+    var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
+    return Results.Ok(await catalog.RefreshByoProviderAsync(account, request, cancellationToken));
+}).RequireRateLimiting("desktop-api");
+
 app.MapPost("/api/desktop/ai/chat", async (
     HttpContext httpContext,
     DesktopAiChatRequestDto request,

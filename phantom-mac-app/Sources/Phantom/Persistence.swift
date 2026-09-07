@@ -146,6 +146,17 @@ enum SpeechCatalogStore {
 }
 
 enum BYOCatalogStore {
+    private static let catalogKey = "byo.catalog"
+
+    static func load() -> ManagedCatalog? {
+        guard let data = UserDefaults.standard.data(forKey: catalogKey) else { return nil }
+        return try? JSONDecoder().decode(ManagedCatalog.self, from: data)
+    }
+
+    static func save(_ catalog: ManagedCatalog) {
+        if let data = try? JSONEncoder().encode(catalog) { UserDefaults.standard.set(data, forKey: catalogKey) }
+    }
+
     static func models(provider: String) -> [ManagedModel]? {
         guard let data = UserDefaults.standard.data(forKey: "catalog.\(provider.lowercased()).models") else { return nil }
         return try? JSONDecoder().decode([ManagedModel].self, from: data)

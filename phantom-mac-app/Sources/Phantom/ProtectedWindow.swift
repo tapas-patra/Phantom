@@ -34,6 +34,12 @@ final class ProtectedWindow: NSPanel {
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
         fakeCursor.attach(to: self)
+
+        // Cursor rectangles only control pointer appearance; native edge hit-testing
+        // remains active, so the window is still resizable with a stable arrow.
+        NSCursor.arrow.set()
+        discardCursorRects()
+        disableCursorRects()
     }
 
     func apply(opacity: Double, clickThrough: Bool) {

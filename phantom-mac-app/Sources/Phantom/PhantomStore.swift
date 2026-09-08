@@ -187,7 +187,9 @@ final class PhantomStore: ObservableObject {
     private let speechInput = SpeechInputService()
     private lazy var speechClient = SpeechTranscriptionClient(backend: backend, rotation: rotation)
     private var managedProviders: [ManagedProvider] = []
-    private var byoProviders: [ManagedProvider] = BYOCatalogStore.load()?.providers ?? []
+    private var byoProviders: [ManagedProvider] = BYOCatalog.providers.map { provider in
+        ManagedProvider(providerId: provider.providerId, label: provider.label, models: BYOCatalogStore.models(provider: provider.providerId) ?? provider.models)
+    }
     private var chatTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var sessionCleanupTask: Task<Void, Never>?
@@ -1822,39 +1824,19 @@ final class PhantomStore: ObservableObject {
     }
 
     private func refreshBYOCatalogs(forceProvider: String? = nil) {
-        guard let session, hasBYOEntitlement else { return }
         Task {
-            do {
-                let catalog = try await backend.byoCatalog(accessToken: session.accessToken)
-                byoProviders = catalog.providers.map { provider in
-                    ManagedProvider(
-                        providerId: provider.providerId,
-                        label: provider.label,
-                        models: BYOCatalogStore.models(provider: provider.providerId) ?? [])
-                }
-                BYOCatalogStore.save(ManagedCatalog(providers: byoProviders))
-                if useBYOProvider { providers = byoProviders; selectAvailableModel() }
-            } catch {
-                Diagnostics.log("byo_provider_catalog_refresh_failed error_code=catalog_unavailable")
-            }
-
             for provider in byoProviders {
                 guard forceProvider == provider.providerId || BYOCatalogStore.isStale(provider: provider.providerId),
                       let key = rotation.keys(for: provider.providerId).first else { continue }
                 do {
-                    let refreshed = try await backend.refreshBYOProvider(
-                        accessToken: session.accessToken,
-                        providerId: provider.providerId,
-                        apiKey: key)
-                    let models = refreshed.models
+                    let models = try await byoClient.models(provider: provider.providerId, apiKey: key)
                     guard !models.isEmpty,
                           let index = byoProviders.firstIndex(where: { $0.providerId == provider.providerId }) else { continue }
                     BYOCatalogStore.save(provider: provider.providerId, models: models)
-                    byoProviders[index] = refreshed
-                    BYOCatalogStore.save(ManagedCatalog(providers: byoProviders))
+                    byoProviders[index] = ManagedProvider(providerId: provider.providerId, label: provider.label, models: models)
                     if useBYOProvider { providers = byoProviders; selectAvailableModel() }
                 } catch {
-                    await runtime.track(category: "ai", event: "byo_catalog_refresh_failed", attributes: ["provider": provider.providerId, "error": String(error.localizedDescription.prefix(300))], accessToken: session.accessToken)
+                    await runtime.track(category: "ai", event: "byo_catalog_refresh_failed", attributes: ["provider": provider.providerId, "error": String(error.localizedDescription.prefix(300))], accessToken: session?.accessToken)
                 }
             }
         }

@@ -465,24 +465,6 @@ struct BackendClient {
         return try await send(request)
     }
 
-    func byoCatalog(accessToken: String) async throws -> ManagedCatalog {
-        var request = URLRequest(url: url("/api/desktop/ai/byo/catalog"))
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        return try await send(request)
-    }
-
-    func refreshBYOProvider(accessToken: String, providerId: String, apiKey: String) async throws -> ManagedProvider {
-        struct Body: Encodable {
-            let providerId: String
-            let apiKey: String
-        }
-        return try await post(
-            "/api/desktop/ai/byo/catalog/refresh",
-            body: Body(providerId: providerId, apiKey: apiKey),
-            bearer: accessToken
-        )
-    }
-
     func speechCatalog(accessToken: String) async throws -> ManagedCatalog {
         var request = URLRequest(url: url("/api/desktop/speech/catalog"))
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")

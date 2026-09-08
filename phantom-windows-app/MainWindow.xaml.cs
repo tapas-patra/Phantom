@@ -3643,7 +3643,7 @@ namespace SecureOverlay
             RefreshAccountSnapshot();
             Activate();
 
-            _settingsPage = new SettingsPage(_accountSnapshot);
+            _settingsPage = new SettingsPage(_accountSnapshot, _settings);
             _settingsPage.SettingsClosed += OnSettingsClosed;
             SettingsPageHost.Content = _settingsPage;
 

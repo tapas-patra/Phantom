@@ -51,9 +51,8 @@ namespace SecureOverlay.Services
                 Log.WriteLine($"BYO provider catalog refresh skipped: {ex.GetType().Name}");
             }
 
-            var providers = settings.ByoAiCatalogCache?.Providers?.ToArray()
-                ?? Array.Empty<ManagedAiProviderOptionDto>();
-            foreach (var provider in providers)
+            foreach (var provider in settings.ByoAiCatalogCache?.Providers?.ToArray()
+                ?? Array.Empty<ManagedAiProviderOptionDto>())
             {
                 var keys = GetKeysForProvider(settings, provider.ProviderId);
                 if (keys.Count == 0)

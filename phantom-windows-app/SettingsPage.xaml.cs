@@ -51,11 +51,11 @@ namespace SecureOverlay
 
         public event EventHandler<SettingsCloseResult>? SettingsClosed;
 
-        public SettingsPage(AccountCacheSnapshot? accountSnapshot = null)
+        public SettingsPage(AccountCacheSnapshot? accountSnapshot = null, AppSettings? settings = null)
         {
             InitializeComponent();
 
-            _settings = SettingsManager.Load();
+            _settings = settings ?? SettingsManager.Load();
             _accountSnapshot = accountSnapshot;
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
@@ -1333,12 +1333,21 @@ namespace SecureOverlay
             }
         }
 
-        private void SaveButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 var previousAppliedPack = _contextPackService.GetSelectedPack();
                 var previousLocalDraftApplied = _contextPackService.IsLocalDraftApplied();
+                var previousKeys = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ChatGPT"] = _settings.ChatGPTApiKeys.ToArray(),
+                    ["Claude"] = _settings.ClaudeApiKeys.ToArray(),
+                    ["Mistral"] = _settings.MistralApiKeys.ToArray(),
+                    ["Gemini"] = _settings.GeminiApiKeys.ToArray(),
+                    ["Groq"] = _settings.GroqApiKeys.ToArray(),
+                    ["NVIDIA"] = _settings.NvidiaApiKeys.ToArray()
+                };
                 _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
                 
                 if (IsPremiumOnlyAccount())
@@ -1352,12 +1361,18 @@ namespace SecureOverlay
                 }
                 else
                 {
-                    _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.GroqApiKeys = _groqKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.GroqApiKeys = _groqKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                }
+
+                var rotation = new APIRotationManager(_settings);
+                foreach (var provider in previousKeys.Keys)
+                {
+                    rotation.ResetFailuresIfKeysChanged(provider, previousKeys[provider]);
                 }
 
                 ValidateByoProviderLimits();
@@ -1382,11 +1397,11 @@ namespace SecureOverlay
                 _settings.NvidiaApiKey = _settings.NvidiaApiKeys.FirstOrDefault() ?? "";
                 
                 // Save models
-                _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? "gpt-4";
-                _settings.ClaudeModel = ClaudeModelBox.SelectedItem as string ?? "claude-3-sonnet-20240229";
-                _settings.MistralModel = MistralModelBox.SelectedItem as string ?? "mistral-large-latest";
-                _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? "gemini-2.5-flash";
-                _settings.GroqModel = GroqModelBox.SelectedItem as string ?? "llama-3.3-70b-versatile";
+                _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? _settings.ChatGPTModel;
+                _settings.ClaudeModel = ClaudeModelBox.SelectedItem as string ?? _settings.ClaudeModel;
+                _settings.MistralModel = MistralModelBox.SelectedItem as string ?? _settings.MistralModel;
+                _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? _settings.GeminiModel;
+                _settings.GroqModel = GroqModelBox.SelectedItem as string ?? _settings.GroqModel;
                 _settings.NvidiaModel = NvidiaModelBox.SelectedItem as string ?? _settings.NvidiaModel;
 
                 if (IsPremiumOnlyAccount())
@@ -1488,6 +1503,7 @@ namespace SecureOverlay
                 }
                 
                 SettingsManager.Save(_settings);
+                await RefreshByoCatalogAsync(_settings.SelectedAI);
 
                 var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
                 if (!IsPremiumAccount() || !selectedHostedPack)

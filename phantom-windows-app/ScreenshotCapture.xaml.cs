@@ -24,14 +24,17 @@ namespace SecureOverlay
 
         private System.Windows.Point _startPoint;
         private bool _isSelecting;
+        private readonly bool _useFakeCursor;
+        private CursorManager? _cursorManager;
         public BitmapImage? CapturedImage { get; private set; }
         public bool ImageCaptured { get; private set; }
 
         private double _dpiScaleX = 1.0;
         private double _dpiScaleY = 1.0;
 
-        public ScreenshotCapture()
+        public ScreenshotCapture(bool useFakeCursor = true)
         {
+            _useFakeCursor = useFakeCursor;
             InitializeComponent();
 
             // Never surface this picker in the taskbar / Alt+Tab.
@@ -41,12 +44,30 @@ namespace SecureOverlay
             MouseLeftButtonDown += ScreenshotCapture_MouseLeftButtonDown;
             MouseMove += ScreenshotCapture_MouseMove;
             MouseLeftButtonUp += ScreenshotCapture_MouseLeftButtonUp;
+            MouseEnter += ScreenshotCapture_MouseEnter;
             Loaded += ScreenshotCapture_Loaded;
-            Activated += (_, _) => EnsureKeyboardFocus();
+            Closing += ScreenshotCapture_Closing;
+            Activated += (_, _) =>
+            {
+                EnsureKeyboardFocus();
+                KeepFakeCursorAlive();
+            };
 
             Focusable = true;
-            Cursor = Cursors.Cross;
-            ForceCursor = true;
+
+            if (_useFakeCursor)
+            {
+                // Real cursor must stay hidden; live cursor is the protected Topmost window.
+                Cursor = Cursors.None;
+                ForceCursor = true;
+                _cursorManager = new CursorManager(this, CustomCursorCanvas, useFakeCursor: true, fakeCursorSize: 1.0);
+                _cursorManager.SetApplicationFocusActive(true);
+            }
+            else
+            {
+                Cursor = Cursors.Cross;
+                ForceCursor = true;
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -82,13 +103,56 @@ namespace SecureOverlay
                 _dpiScaleY = source.CompositionTarget.TransformToDevice.M22;
             }
 
+            CustomCursorCanvas.Width = ActualWidth;
+            CustomCursorCanvas.Height = ActualHeight;
+            Panel.SetZIndex(CustomCursorCanvas, 9999);
+
             EnsureKeyboardFocus();
-            Log.WriteLine("✓ Screenshot picker ready (system crosshair cursor)");
+
+            if (_cursorManager != null)
+            {
+                // Capture a crosshair glyph into the live cursor before the system cursor is hidden.
+                Cursor = Cursors.Cross;
+                ForceCursor = true;
+                KeepFakeCursorAlive();
+                Cursor = Cursors.None;
+                ForceCursor = true;
+            }
+
+            Log.WriteLine(_useFakeCursor
+                ? "✓ Screenshot picker ready (fake cursor active, system cursor hidden)"
+                : "✓ Screenshot picker ready (system crosshair)");
+        }
+
+        private void ScreenshotCapture_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            _cursorManager?.Dispose();
+            _cursorManager = null;
+        }
+
+        private void ScreenshotCapture_MouseEnter(object sender, MouseEventArgs e)
+        {
+            KeepFakeCursorAlive();
+        }
+
+        private void KeepFakeCursorAlive()
+        {
+            if (_cursorManager == null)
+            {
+                return;
+            }
+
+            // Never tear the live cursor down while the picker is open — keep it above this Topmost overlay.
+            _cursorManager.SetApplicationFocusActive(true);
+            _cursorManager.EnsureLiveCursorAbove();
+            Cursor = Cursors.None;
+            ForceCursor = true;
         }
 
         private void ScreenshotCapture_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             EnsureKeyboardFocus();
+            KeepFakeCursorAlive();
             CaptureMouse();
             _startPoint = e.GetPosition(SelectionCanvas);
             _isSelecting = true;
@@ -102,12 +166,18 @@ namespace SecureOverlay
 
         private void ScreenshotCapture_MouseMove(object sender, MouseEventArgs e)
         {
+            var currentPoint = e.GetPosition(SelectionCanvas);
+            if (_cursorManager != null)
+            {
+                _cursorManager.UpdateCustomCursorPosition(currentPoint);
+                _cursorManager.EnsureLiveCursorAbove();
+            }
+
             if (!_isSelecting)
             {
                 return;
             }
 
-            var currentPoint = e.GetPosition(SelectionCanvas);
             var x = Math.Min(_startPoint.X, currentPoint.X);
             var y = Math.Min(_startPoint.Y, currentPoint.Y);
             var width = Math.Abs(currentPoint.X - _startPoint.X);
@@ -140,6 +210,7 @@ namespace SecureOverlay
             if (selectionWidth < 10 || selectionHeight < 10)
             {
                 SelectionRectangle.Visibility = Visibility.Collapsed;
+                KeepFakeCursorAlive();
                 return;
             }
 
@@ -148,6 +219,9 @@ namespace SecureOverlay
             var width = (int)Math.Round(selectionWidth * _dpiScaleX);
             var height = (int)Math.Round(selectionHeight * _dpiScaleY);
 
+            // Hide picker chrome for the bitmap grab; dispose live cursor first so it is not captured.
+            _cursorManager?.Dispose();
+            _cursorManager = null;
             Opacity = 0;
             System.Threading.Thread.Sleep(120);
             CaptureRegion(x, y, width, height);
@@ -165,6 +239,8 @@ namespace SecureOverlay
 
             if (e.Key == Key.Enter || e.Key == Key.Return)
             {
+                _cursorManager?.Dispose();
+                _cursorManager = null;
                 Opacity = 0;
                 System.Threading.Thread.Sleep(120);
                 CaptureFullScreen();
@@ -232,9 +308,9 @@ namespace SecureOverlay
             return bitmapImage;
         }
 
-        public static BitmapImage? CaptureScreenshot()
+        public static BitmapImage? CaptureScreenshot(bool useFakeCursor = true)
         {
-            var captureWindow = new ScreenshotCapture();
+            var captureWindow = new ScreenshotCapture(useFakeCursor);
             var result = captureWindow.ShowDialog();
             return result == true && captureWindow.ImageCaptured
                 ? captureWindow.CapturedImage

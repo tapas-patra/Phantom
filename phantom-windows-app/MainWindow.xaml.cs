@@ -4716,14 +4716,19 @@ namespace SecureOverlay
                 }
 
                 ResetEmbeddedCursorState();
+                // Hide the main-window live cursor only while Phantom is hidden for capture.
+                // The screenshot picker owns its own fake-cursor session and keeps the real cursor hidden.
                 _cursorManager?.DeactivateCustomCursor();
                 this.Hide();
                 System.Threading.Thread.Sleep(200);
 
-                var screenshot = ScreenshotCapture.CaptureScreenshot();
+                var screenshot = ScreenshotCapture.CaptureScreenshot(_settings.UseFakeCursor);
                 this.Show();
                 this.Activate();
-                _cursorManager?.EnsureLiveCursorAbove();
+                if (_settings.UseFakeCursor)
+                {
+                    _cursorManager?.EnsureLiveCursorAbove();
+                }
 
                 if (screenshot != null)
                 {

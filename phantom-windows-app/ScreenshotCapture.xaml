@@ -10,7 +10,7 @@
         WindowState="Maximized"
         ShowInTaskbar="False"
         ShowActivated="True"
-        Cursor="Cross"
+        Cursor="None"
         ForceCursor="True"
         PreviewKeyDown="Window_KeyDown"
         KeyDown="Window_KeyDown">
@@ -45,5 +45,10 @@
                       Visibility="Collapsed"
                       IsHitTestVisible="False"/>
         </Canvas>
+
+        <!-- Hit-test invisible host for CursorManager visuals (live cursor is a separate Topmost window). -->
+        <Canvas x:Name="CustomCursorCanvas"
+                IsHitTestVisible="False"
+                Background="Transparent"/>
     </Grid>
 </Window>

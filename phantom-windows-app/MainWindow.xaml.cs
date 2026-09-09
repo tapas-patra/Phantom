@@ -4538,251 +4538,147 @@ namespace SecureOverlay
         private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Screenshot button clicked");
-
-            if (_attachedScreenshots.Count > 0)
-            {
-                ShowScreenshotOptions();
-            }
-            else
-            {
-                CaptureScreenshot();
-            }
+            CaptureScreenshot();
         }
 
-        private void ShowScreenshotOptions()
+        private void ClearAttachedScreenshotsButton_Click(object sender, RoutedEventArgs e)
         {
-            var menuWindow = new Window
-            {
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = System.Windows.Media.Brushes.Transparent,
-                ShowInTaskbar = false,
-                Topmost = true,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.Arrow
-            };
+            ClearAttachedScreenshot();
+        }
 
-            menuWindow.Loaded += (s, e) =>
+        private void RefreshAttachedScreenshotsStrip()
+        {
+            if (AttachedScreenshotsBorder == null || AttachedScreenshotsPanel == null)
             {
-                var hwnd = new WindowInteropHelper(menuWindow).Handle;
-                WindowProtection.ApplyProtection(hwnd);
-            };
-
-            var menuBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(240, 30, 30, 30)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(200, 0, 170, 255)),
-                BorderThickness = new Thickness(2),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(5)
-            };
-
-            var menuStack = new StackPanel();
-            EventHandler? deactivateHandler = null;
-
-            void CloseMenu()
-            {
-                if (deactivateHandler != null)
-                    menuWindow.Deactivated -= deactivateHandler;
-                menuWindow.Close();
+                return;
             }
 
-            var addButton = new Button
+            AttachedScreenshotsPanel.Children.Clear();
+            if (_attachedScreenshots.Count == 0)
             {
-                Content = _attachedScreenshots.Count >= MaxAttachedScreenshots
-                    ? "📸 Limit reached (3/3)"
-                    : $"📸 Add Screenshot ({_attachedScreenshots.Count}/{MaxAttachedScreenshots})",
-                Foreground = Brushes.White,
-                Background = System.Windows.Media.Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                FontSize = 13,
-                Padding = new Thickness(15, 8, 15, 8),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                IsEnabled = _attachedScreenshots.Count < MaxAttachedScreenshots,
-                Cursor = Cursors.Arrow
-            };
-            addButton.Click += (s, e) =>
+                AttachedScreenshotsBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            AttachedScreenshotsBorder.Visibility = Visibility.Visible;
+            if (AttachedScreenshotsCountText != null)
             {
-                CloseMenu();
-                CaptureScreenshot();
-            };
-            menuStack.Children.Add(addButton);
+                AttachedScreenshotsCountText.Text = $"{_attachedScreenshots.Count}/{MaxAttachedScreenshots}";
+            }
 
             for (var index = 0; index < _attachedScreenshots.Count; index++)
             {
                 var captureIndex = index;
-                var previewButton = new Button
+                var thumb = new Border
                 {
-                    Content = $"👁️ Preview #{captureIndex + 1}",
+                    Width = 56,
+                    Height = 38,
+                    CornerRadius = new CornerRadius(6),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(160, 0, 170, 255)),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand,
+                    ClipToBounds = true
+                };
+
+                thumb.Child = new System.Windows.Controls.Image
+                {
+                    Source = _attachedScreenshots[index].Image,
+                    Stretch = Stretch.UniformToFill
+                };
+                thumb.MouseLeftButtonDown += (_, _) => PreviewScreenshot(captureIndex);
+
+                var remove = new Button
+                {
+                    Content = "×",
+                    Width = 18,
+                    Height = 18,
+                    FontSize = 11,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(0, -6, -6, 0),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Background = new SolidColorBrush(Color.FromArgb(220, 40, 40, 40)),
                     Foreground = Brushes.White,
-                    Background = System.Windows.Media.Brushes.Transparent,
                     BorderThickness = new Thickness(0),
-                    FontSize = 13,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Cursor = Cursors.Arrow
+                    Cursor = Cursors.Hand,
+                    ToolTip = $"Remove screenshot {captureIndex + 1}"
                 };
-                previewButton.Click += (s, e) =>
-                {
-                    CloseMenu();
-                    PreviewScreenshot(captureIndex);
-                };
-                menuStack.Children.Add(previewButton);
+                remove.Click += (_, _) => RemoveAttachedScreenshotAt(captureIndex);
 
-                var removeOneButton = new Button
-                {
-                    Content = $"🗑️ Remove #{captureIndex + 1}",
-                    Foreground = new SolidColorBrush(Color.FromRgb(255, 100, 100)),
-                    Background = System.Windows.Media.Brushes.Transparent,
-                    BorderThickness = new Thickness(0),
-                    FontSize = 13,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Cursor = Cursors.Arrow
-                };
-                removeOneButton.Click += (s, e) =>
-                {
-                    CloseMenu();
-                    RemoveAttachedScreenshotAt(captureIndex);
-                };
-                menuStack.Children.Add(removeOneButton);
+                var cell = new Grid { Width = 56, Height = 38, Margin = new Thickness(0, 0, 8, 0) };
+                cell.Children.Add(thumb);
+                cell.Children.Add(remove);
+                AttachedScreenshotsPanel.Children.Add(cell);
             }
-
-            menuStack.Children.Add(new System.Windows.Shapes.Rectangle
-            {
-                Height = 1,
-                Fill = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
-                Margin = new Thickness(5)
-            });
-
-            var clearAllButton = new Button
-            {
-                Content = "🗑️ Clear All Screenshots",
-                Foreground = new SolidColorBrush(Color.FromRgb(255, 100, 100)),
-                Background = System.Windows.Media.Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                FontSize = 13,
-                Padding = new Thickness(15, 8, 15, 8),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Cursor = Cursors.Arrow
-            };
-            clearAllButton.Click += (s, e) =>
-            {
-                CloseMenu();
-                ClearAttachedScreenshot();
-            };
-            menuStack.Children.Add(clearAllButton);
-
-            menuBorder.Child = new ScrollViewer
-            {
-                Content = menuStack,
-                MaxHeight = 360,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-            };
-            menuWindow.Content = menuBorder;
-
-            var buttonPosition = ScreenshotButton.PointToScreen(new Point(0, 0));
-            menuWindow.Left = buttonPosition.X;
-            menuWindow.Top = buttonPosition.Y - 12;
-            deactivateHandler = (s, e) =>
-            {
-                try { menuWindow.Close(); } catch { }
-            };
-            menuWindow.Deactivated += deactivateHandler;
-            menuWindow.Show();
-            menuWindow.Activate();
         }
 
         private void PreviewScreenshot(int index = 0)
         {
             if (_attachedScreenshots.Count == 0 || index < 0 || index >= _attachedScreenshots.Count)
             {
-                Log.WriteLine("No screenshot to preview");
                 return;
             }
 
             var previewWindow = new Window
             {
-                Title = $"Screenshot Preview #{index + 1}",
-                Width = 800,
-                Height = 600,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
+                Title = "",
                 WindowStyle = WindowStyle.None,
                 AllowsTransparency = true,
-                ResizeMode = ResizeMode.CanResize,
+                Background = System.Windows.Media.Brushes.Transparent,
                 ShowInTaskbar = false,
                 Topmost = true,
-                BorderBrush = new SolidColorBrush(Color.FromArgb(200, 0, 170, 255)),
-                BorderThickness = new Thickness(2)
+                Width = 720,
+                Height = 520,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                ResizeMode = ResizeMode.NoResize
             };
 
-            previewWindow.SourceInitialized += (s, e) =>
+            previewWindow.Loaded += (_, _) =>
             {
                 var hwnd = new WindowInteropHelper(previewWindow).Handle;
-                if (hwnd != IntPtr.Zero)
-                {
-                    WindowProtection.ApplyProtection(hwnd);
-                }
+                WindowProtection.ApplyProtection(hwnd);
             };
 
-            var mainGrid = new Grid();
-            mainGrid.Children.Add(new Image
+            var image = new System.Windows.Controls.Image
             {
                 Source = _attachedScreenshots[index].Image,
                 Stretch = Stretch.Uniform,
-                Margin = new Thickness(10)
-            });
+                Margin = new Thickness(16)
+            };
 
-            var topBar = new Border
+            var close = new Button
             {
-                Background = new SolidColorBrush(Color.FromArgb(200, 30, 30, 30)),
-                Height = 40,
-                VerticalAlignment = VerticalAlignment.Top
-            };
-            var topBarGrid = new Grid();
-            topBar.Child = topBarGrid;
-            topBarGrid.Children.Add(new TextBlock
-            {
-                Text = $"📸 Screenshot Preview ({index + 1}/{_attachedScreenshots.Count})",
-                Foreground = Brushes.White,
-                FontSize = 14,
-                FontWeight = FontWeights.Bold,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(15, 0, 0, 0)
-            });
-            var closeButton = new Button
-            {
-                Content = "✕",
-                Width = 40,
-                Height = 40,
+                Content = "Close",
+                Margin = new Thickness(0, 0, 12, 12),
+                Padding = new Thickness(14, 6, 14, 6),
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Background = new SolidColorBrush(Color.FromArgb(0, 255, 68, 68)),
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+            close.Click += (_, _) => previewWindow.Close();
+
+            var panel = new DockPanel { LastChildFill = true };
+            var title = new TextBlock
+            {
+                Text = $"Screenshot {index + 1}/{_attachedScreenshots.Count}",
                 Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
-                FontSize = 20,
-                FontWeight = FontWeights.Bold,
-                Cursor = Cursors.Arrow
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(16, 14, 16, 8)
             };
-            closeButton.Click += (s, e) => previewWindow.Close();
-            topBarGrid.Children.Add(closeButton);
-            mainGrid.Children.Add(topBar);
-            topBar.MouseLeftButtonDown += (s, e) =>
+            DockPanel.SetDock(title, Dock.Top);
+            DockPanel.SetDock(close, Dock.Bottom);
+            panel.Children.Add(title);
+            panel.Children.Add(close);
+            panel.Children.Add(image);
+
+            previewWindow.Content = new Border
             {
-                if (e.LeftButton == MouseButtonState.Pressed)
-                {
-                    try { previewWindow.DragMove(); } catch { }
-                }
+                Background = new SolidColorBrush(Color.FromArgb(245, 20, 20, 20)),
+                CornerRadius = new CornerRadius(12),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(180, 0, 170, 255)),
+                BorderThickness = new Thickness(1.5),
+                Child = panel
             };
-            previewWindow.KeyDown += (s, e) =>
-            {
-                if (e.Key == Key.Escape || e.Key == Key.Enter)
-                {
-                    previewWindow.Close();
-                }
-            };
-            previewWindow.Content = mainGrid;
             previewWindow.ShowDialog();
         }
 
@@ -4807,6 +4703,8 @@ namespace SecureOverlay
 
                 var screenshot = ScreenshotCapture.CaptureScreenshot();
                 this.Show();
+                this.Activate();
+                _cursorManager?.EnsureLiveCursorAbove();
 
                 if (screenshot != null)
                 {
@@ -4885,6 +4783,10 @@ namespace SecureOverlay
                 ? "📸"
                 : $"📸 {_attachedScreenshots.Count}/{MaxAttachedScreenshots}";
             ScreenshotButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 255));
+            ScreenshotButton.IsEnabled = _attachedScreenshots.Count < MaxAttachedScreenshots
+                && CurrentModelSupportsVision();
+            ScreenshotButton.Opacity = ScreenshotButton.IsEnabled ? 1.0 : 0.5;
+            RefreshAttachedScreenshotsStrip();
         }
 
         // ═══════════════════════════════════════════════════════════════

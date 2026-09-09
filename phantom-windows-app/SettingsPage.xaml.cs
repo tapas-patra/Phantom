@@ -1339,6 +1339,13 @@ namespace SecureOverlay
                 return;
             }
 
+            // While any ComboBox dropdown is open, never scroll the settings page behind it.
+            if (HasOpenComboBoxDropDown(this))
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (e.OriginalSource is DependencyObject source
                 && FindAncestor<TextBoxBase>(source) != null)
             {
@@ -1350,6 +1357,26 @@ namespace SecureOverlay
             var nextOffset = Math.Max(0d, Math.Min(scrollViewer.ScrollableHeight, scrollViewer.VerticalOffset + delta));
             scrollViewer.ScrollToVerticalOffset(nextOffset);
             e.Handled = true;
+        }
+
+        private static bool HasOpenComboBoxDropDown(DependencyObject root)
+        {
+            if (root is ComboBox combo && combo.IsDropDownOpen)
+            {
+                return true;
+            }
+
+            var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (var i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (HasOpenComboBoxDropDown(child))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
@@ -1592,7 +1619,8 @@ namespace SecureOverlay
                     ["Groq"] = _settings.GroqApiKeys.ToArray(),
                     ["NVIDIA"] = _settings.NvidiaApiKeys.ToArray()
                 };
-                _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
+                _settings.SelectedAI = AIProviderComboBox.SelectedItem as string
+                    ?? (string.IsNullOrWhiteSpace(_settings.SelectedAI) ? "ChatGPT" : _settings.SelectedAI);
                 
                 if (IsPremiumOnlyAccount())
                 {

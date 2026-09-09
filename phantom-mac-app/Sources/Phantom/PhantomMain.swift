@@ -262,6 +262,15 @@ enum PhantomMain {
             let legacyModelJSON = #"{"modelId":"gpt-4o","displayName":"GPT-4o","supportsVision":true}"#.data(using: .utf8)!
             let legacyModel = try! JSONDecoder().decode(ManagedModel.self, from: legacyModelJSON)
             precondition(legacyModel.eligibleForChat)
+            let minDateJSON = #""0001-01-01T00:00:00""#.data(using: .utf8)!
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .custom { decoder in
+                let container = try decoder.singleValueContainer()
+                let text = try container.decode(String.self)
+                if text.hasPrefix("0001-01-01") { return Date.distantPast }
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: text)
+            }
+            precondition((try? decoder.decode(Date.self, from: minDateJSON)) != nil)
             precondition(PhantomStore.maxResumeWords == 1_200)
             precondition(PhantomStore.maxJobDescriptionWords == 450)
             precondition(PhantomStore.maxAttachedScreenshots == 3)

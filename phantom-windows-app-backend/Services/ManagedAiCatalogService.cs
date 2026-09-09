@@ -167,7 +167,8 @@ public sealed class ManagedAiCatalogService
                     ProviderId = providerId,
                     Label = ManagedAiCatalog.GetProviderLabel(providerId),
                     Models = Array.Empty<ManagedAiModelOptionDto>(),
-                    RefreshedAtUtc = DateTime.MinValue
+                    // Never emit DateTime.MinValue — macOS ISO-8601 decoding rejects 0001-01-01.
+                    RefreshedAtUtc = DateTime.UtcNow
                 };
             })
             .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
@@ -178,7 +179,7 @@ public sealed class ManagedAiCatalogService
             Providers = providers,
             RefreshedAtUtc = providers.Length == 0
                 ? DateTime.UtcNow
-                : providers.Max(item => item.RefreshedAtUtc == DateTime.MinValue ? DateTime.UtcNow : item.RefreshedAtUtc)
+                : providers.Max(item => item.RefreshedAtUtc)
         };
     }
 
@@ -538,8 +539,14 @@ public sealed class ManagedAiCatalogService
             ProviderId = record.ProviderId,
             Label = record.Label,
             Models = DeserializeModels(record.ModelsJson),
-            RefreshedAtUtc = record.RefreshedAtUtc
+            RefreshedAtUtc = NormalizeCatalogTimestamp(record.RefreshedAtUtc)
         };
+    }
+
+    private static DateTime NormalizeCatalogTimestamp(DateTime value)
+    {
+        // Swift clients reject DateTime.MinValue / year-0001 ISO strings.
+        return value.Year < 2 ? DateTime.UtcNow : DateTime.SpecifyKind(value, DateTimeKind.Utc);
     }
 
     private static ManagedAiProviderOptionDto MapProviderChatEligible(ManagedProviderCatalogRecord record)

@@ -425,13 +425,10 @@ struct BackendClient {
         value.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let text = try container.decode(String.self)
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let regular = ISO8601DateFormatter()
-            guard let date = fractional.date(from: text) ?? regular.date(from: text) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 date: \(text)")
+            if let date = Self.parseBackendDate(text) {
+                return date
             }
-            return date
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 date: \(text)")
         }
         return value
     }()
@@ -440,6 +437,37 @@ struct BackendClient {
         value.dateEncodingStrategy = .iso8601
         return value
     }()
+
+    private static func parseBackendDate(_ text: String) -> Date? {
+        // .NET DateTime.MinValue / unspecified timestamps break strict ISO8601 parsers.
+        if text.hasPrefix("0001-01-01") {
+            return Date.distantPast
+        }
+
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let regular = ISO8601DateFormatter()
+        regular.formatOptions = [.withInternetDateTime]
+        if let date = fractional.date(from: text) ?? regular.date(from: text) {
+            return date
+        }
+
+        // Unspecified local-style timestamps from System.Text.Json (no Z / offset).
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(secondsFromGMT: 0)
+        for format in [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSSS",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ss"
+        ] {
+            fallback.dateFormat = format
+            if let date = fallback.date(from: text) {
+                return date
+            }
+        }
+        return nil
+    }
 
     func login(email: String, password: String, device: DeviceIdentity) async throws -> AuthSession {
         struct Body: Encodable {

@@ -867,15 +867,18 @@ final class PhantomStore: ObservableObject {
                 refreshedAtUtc: provider.refreshedAtUtc
             )
         }
+        // Always publish so Settings / chat pickers refresh even if lane flags race.
+        objectWillChange.send()
         if useBYOProvider {
             self.providers = byoProviders
-            ensureValidChatSelection(preferConfiguredKeys: false)
         }
+        ensureValidChatSelection(preferConfiguredKeys: false)
     }
 
     private func refreshBYOCatalogs(forceProvider: String? = nil, forceAll: Bool = false) {
         guard hasBYOEntitlement, let session else {
-            // No entitlement/session: keep previous cache; do not apply hardcoded BYOCatalog.
+            byoKeyStatus = "Sign in with a Pro BYO account to refresh models."
+            status = byoKeyStatus
             return
         }
 
@@ -889,6 +892,11 @@ final class PhantomStore: ObservableObject {
             guard shouldFetch else {
                 if let cached { applyBYOCatalog(cached) }
                 return
+            }
+
+            if explicit {
+                byoKeyStatus = "Refreshing BYO models…"
+                status = byoKeyStatus
             }
 
             do {
@@ -919,6 +927,7 @@ final class PhantomStore: ObservableObject {
                 } else if explicit {
                     byoKeyStatus = "BYO chat and speech catalogs refreshed."
                 }
+                if explicit { status = byoKeyStatus }
             } catch {
                 // Keep previous cache; never apply hardcoded BYOCatalog on failure.
                 await runtime.track(
@@ -928,6 +937,8 @@ final class PhantomStore: ObservableObject {
                     accessToken: session.accessToken
                 )
                 byoKeyStatus = "BYO model refresh failed. Tap Refresh models to retry."
+                status = byoKeyStatus
+                Diagnostics.log("byo_catalog_refresh_failed code=\(String(describing: type(of: error))) detail=\(String(error.localizedDescription.prefix(200)))")
             }
         }
     }

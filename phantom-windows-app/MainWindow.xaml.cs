@@ -1656,33 +1656,30 @@ namespace SecureOverlay
             Log.WriteLine($"  {_settings.SelectedAI} keys: {keyCount} total, {availableKeys} available");
 
             var allowedProviders = GetAvailableProvidersForCurrentTier();
-            if (!allowedProviders.Contains(_settings.SelectedAI))
+            if (allowedProviders.Length > 0
+                && !allowedProviders.Contains(_settings.SelectedAI, StringComparer.OrdinalIgnoreCase))
             {
-                _settings.SelectedAI = allowedProviders.FirstOrDefault()
-                    ?? _settings.ManagedAiCatalogCache?.Providers?.FirstOrDefault()?.ProviderId
-                    ?? AIModelRegistry.Providers.ChatGPT;
-            }
-            
-            // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
-            var currentModel = rotationManager.GetCurrentModel(_settings.SelectedAI);
-            var allowedModels = GetAvailableModelsForSelectedProvider();
-            if (!allowedModels.Contains(currentModel))
-            {
-                currentModel = allowedModels.FirstOrDefault() ?? currentModel;
-                if (!string.IsNullOrWhiteSpace(currentModel))
-                {
-                    AIModelRegistry.SetModelForProvider(_settings, _settings.SelectedAI, currentModel);
-                    SettingsManager.Save(_settings);
-                }
-            }
-            
-            var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI);
-            var runtimeProvider = useByoRuntime ? GetFallbackConfiguredByoProvider() : GetManagedRuntimeProviderId();
-            if (useByoRuntime && !string.Equals(runtimeProvider, _settings.SelectedAI, StringComparison.OrdinalIgnoreCase))
-            {
-                _settings.SelectedAI = runtimeProvider;
+                _settings.SelectedAI = allowedProviders[0];
                 SettingsManager.Save(_settings);
             }
+
+            var selectedProvider = _settings.SelectedAI;
+            
+            // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
+            var currentModel = rotationManager.GetCurrentModel(selectedProvider);
+            var allowedModels = GetConfiguredModelsForProvider(selectedProvider);
+            if (allowedModels.Length > 0
+                && !allowedModels.Contains(currentModel, StringComparer.OrdinalIgnoreCase))
+            {
+                currentModel = allowedModels[0];
+                AIModelRegistry.SetModelForProvider(_settings, selectedProvider, currentModel);
+                SettingsManager.Save(_settings);
+            }
+            
+            var useByoRuntime = ShouldUseByoRuntimeForCurrentSelection(selectedProvider);
+            // Keep the user's SelectedAI. Do not rewrite it to another keyed provider
+            // (that made title-bar / settings provider changes snap back to e.g. Mistral).
+            var runtimeProvider = useByoRuntime ? selectedProvider : GetManagedRuntimeProviderId();
 
             currentModel = useByoRuntime
                 ? (rotationManager.GetCurrentModel(runtimeProvider) ?? currentModel)
@@ -1693,7 +1690,7 @@ namespace SecureOverlay
             
             // Create AI service with rotation
             IAIService newAI = useByoRuntime
-                ? AIServiceFactory.CreateServiceWithRotation(_settings.SelectedAI, rotationManager)
+                ? AIServiceFactory.CreateServiceWithRotation(runtimeProvider, rotationManager)
                 : new HostedManagedAiService(
                     _authSessionRepository,
                     _hostedRuntimeOptions,

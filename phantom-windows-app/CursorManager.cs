@@ -40,6 +40,8 @@ namespace SecureOverlay
         private Point _lastCursorPosition;
         private int _zOrderRefreshCounter;
         private const int ZOrderRefreshEveryNMoves = 4;
+        private Point? _activateFromScreen;
+        private bool _isEntryAnimating;
 
         // Windows API for getting exact cursor position
         [DllImport("user32.dll")]
@@ -168,6 +170,31 @@ namespace SecureOverlay
             _activateTimer?.Start();
         }
 
+        public static bool TryGetCursorScreenPosition(out Point screenPoint)
+        {
+            if (GetCursorPos(out var cursorPos))
+            {
+                screenPoint = new Point(cursorPos.X, cursorPos.Y);
+                return true;
+            }
+
+            screenPoint = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Same activation as normal, but slides from <paramref name="fromScreen"/> to the
+        /// current pointer using the existing AnimateToPosition handoff (screenshot entry).
+        /// </summary>
+        public void ActivateCustomCursorFrom(Point fromScreen)
+        {
+            _applicationFocusActive = true;
+            _deactivateTimer?.Stop();
+            _activateTimer?.Stop();
+            _activateFromScreen = fromScreen;
+            ActivateCustomCursorImmediate();
+        }
+
         private void ActivateCustomCursorImmediate()
         {
             if (_customCursorActive || !CanActivateCursor())
@@ -177,14 +204,35 @@ namespace SecureOverlay
             {
                 _transitionGeneration++;
                 _fakeCursorWindow?.CancelAnimation();
+                _protectedCursorWindow?.CancelAnimation();
                 _customCursorActive = true;
+
+                var fromScreen = _activateFromScreen;
+                _activateFromScreen = null;
                 
-                // Get EXACT cursor position
+                // Get EXACT cursor position (destination)
                 POINT cursorPos;
                 GetCursorPos(out cursorPos);
                 
                 // Store entry position
                 _lastCursorPosition = new Point(cursorPos.X, cursorPos.Y);
+
+                var toX = cursorPos.X;
+                var toY = cursorPos.Y;
+                var fromX = fromScreen?.X ?? toX;
+                var fromY = fromScreen?.Y ?? toY;
+                var slideIn = fromScreen.HasValue &&
+                              (Math.Abs(fromX - toX) >= 2 || Math.Abs(fromY - toY) >= 2);
+
+                int animationMs = 0;
+                if (slideIn)
+                {
+                    var distance = Math.Sqrt(Math.Pow(toX - fromX, 2) + Math.Pow(toY - fromY, 2));
+                    const double pixelsPerMs = 1.4;
+                    animationMs = Math.Max(90, Math.Min(320, (int)(distance / pixelsPerMs)));
+                    _isEntryAnimating = true;
+                    Log.WriteLine($"🖱️ Animating cursor in: ({fromX:F0}, {fromY:F0}) → ({toX}, {toY}) | {animationMs}ms");
+                }
                 
                 // Show fake cursor at entry position
                 if (_fakeCursorWindow != null)
@@ -193,9 +241,14 @@ namespace SecureOverlay
                     _fakeCursorWindow.UpdateCursorImageNow();
                     
                     _fakeCursorWindow.Topmost = true;
-                    _fakeCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+                    _fakeCursorWindow.PositionAt(slideIn ? fromX : toX, slideIn ? fromY : toY);
                     _fakeCursorWindow.Show();
                     _fakeCursorWindow.EnsureTopmost();
+
+                    if (slideIn)
+                    {
+                        _fakeCursorWindow.AnimateToPosition(toX, toY, animationMs, () => { });
+                    }
                     
                     // ✅ DIAGNOSTIC: Log window state
                     Log.WriteLine($"✓ Fake cursor window shown:");
@@ -210,10 +263,26 @@ namespace SecureOverlay
                 {
                     _protectedCursorWindow.UpdateCursorImageNow();
                     _protectedCursorWindow.Topmost = true;
-                    _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+                    _protectedCursorWindow.PositionAt(slideIn ? fromX : toX, slideIn ? fromY : toY);
                     _protectedCursorWindow.Show();
                     // Live cursor must stay above the Topmost main overlay.
                     _protectedCursorWindow.EnsureTopmost();
+
+                    if (slideIn)
+                    {
+                        var transitionGeneration = _transitionGeneration;
+                        _protectedCursorWindow.AnimateToPosition(toX, toY, animationMs, () =>
+                        {
+                            if (transitionGeneration == _transitionGeneration)
+                            {
+                                _isEntryAnimating = false;
+                            }
+                        });
+                    }
+                }
+                else if (slideIn)
+                {
+                    _isEntryAnimating = false;
                 }
                 
                 // Hide system cursor
@@ -358,6 +427,12 @@ namespace SecureOverlay
         {
             if (CanActivateCursor() && _customCursorActive)
             {
+                if (_isEntryAnimating)
+                {
+                    _protectedCursorWindow?.EnsureTopmost();
+                    return;
+                }
+
                 if (_protectedCursorWindow != null && GetCursorPos(out var cursorPos))
                 {
                     _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
@@ -391,6 +466,12 @@ namespace SecureOverlay
 
             if (_protectedCursorWindow == null)
                 return;
+
+            if (_isEntryAnimating)
+            {
+                _protectedCursorWindow.EnsureTopmost();
+                return;
+            }
 
             if (GetCursorPos(out var cursorPos))
             {
@@ -500,6 +581,8 @@ namespace SecureOverlay
             _deactivateTimer?.Stop();
             _embeddedSurfaceCursorActive = false;
             _customCursorActive = false;
+            _activateFromScreen = null;
+            _isEntryAnimating = false;
 
             if (_cursorDot != null) _cursorDot.Visibility = Visibility.Collapsed;
             if (_fakeCursorWindow != null)

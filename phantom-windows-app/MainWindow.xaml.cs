@@ -4716,13 +4716,22 @@ namespace SecureOverlay
                 }
 
                 ResetEmbeddedCursorState();
+                // Remember where the cursor was on the main window so the screenshot
+                // fake cursor can AnimateToPosition from there (same handoff as exit).
+                System.Windows.Point? entryFrom = null;
+                if (_settings.UseFakeCursor &&
+                    CursorManager.TryGetCursorScreenPosition(out var cursorScreen))
+                {
+                    entryFrom = cursorScreen;
+                }
+
                 // Hide the main-window live cursor only while Phantom is hidden for capture.
                 // The screenshot picker owns its own fake-cursor session and keeps the real cursor hidden.
                 _cursorManager?.DeactivateCustomCursor();
                 this.Hide();
                 System.Threading.Thread.Sleep(200);
 
-                var screenshot = ScreenshotCapture.CaptureScreenshot(_settings.UseFakeCursor);
+                var screenshot = ScreenshotCapture.CaptureScreenshot(_settings.UseFakeCursor, entryFrom);
                 this.Show();
                 this.Activate();
                 if (_settings.UseFakeCursor)

@@ -25,16 +25,19 @@ namespace SecureOverlay
         private System.Windows.Point _startPoint;
         private bool _isSelecting;
         private readonly bool _useFakeCursor;
+        private readonly System.Windows.Point? _entryFromScreen;
         private CursorManager? _cursorManager;
+        private bool _cursorReady;
         public BitmapImage? CapturedImage { get; private set; }
         public bool ImageCaptured { get; private set; }
 
         private double _dpiScaleX = 1.0;
         private double _dpiScaleY = 1.0;
 
-        public ScreenshotCapture(bool useFakeCursor = true)
+        public ScreenshotCapture(bool useFakeCursor = true, System.Windows.Point? entryFromScreen = null)
         {
             _useFakeCursor = useFakeCursor;
+            _entryFromScreen = entryFromScreen;
             InitializeComponent();
 
             // Never surface this picker in the taskbar / Alt+Tab.
@@ -58,10 +61,10 @@ namespace SecureOverlay
             if (_useFakeCursor)
             {
                 // Real cursor must stay hidden; live cursor is the protected Topmost window.
+                // Activation happens on Loaded (after Cross glyph) so entry slide can run.
                 Cursor = Cursors.None;
                 ForceCursor = true;
                 _cursorManager = new CursorManager(this, CustomCursorCanvas, useFakeCursor: true, fakeCursorSize: 1.0);
-                _cursorManager.SetApplicationFocusActive(true);
             }
             else
             {
@@ -114,7 +117,17 @@ namespace SecureOverlay
                 // Capture a crosshair glyph into the live cursor before the system cursor is hidden.
                 Cursor = Cursors.Cross;
                 ForceCursor = true;
-                KeepFakeCursorAlive();
+                if (_entryFromScreen is { } from)
+                {
+                    // x,y (main-window click) → z,a (current pointer): same AnimateToPosition as exit.
+                    _cursorManager.ActivateCustomCursorFrom(from);
+                }
+                else
+                {
+                    _cursorManager.SetApplicationFocusActive(true);
+                }
+
+                _cursorReady = true;
                 Cursor = Cursors.None;
                 ForceCursor = true;
             }
@@ -137,7 +150,7 @@ namespace SecureOverlay
 
         private void KeepFakeCursorAlive()
         {
-            if (_cursorManager == null)
+            if (_cursorManager == null || !_cursorReady)
             {
                 return;
             }
@@ -308,9 +321,9 @@ namespace SecureOverlay
             return bitmapImage;
         }
 
-        public static BitmapImage? CaptureScreenshot(bool useFakeCursor = true)
+        public static BitmapImage? CaptureScreenshot(bool useFakeCursor = true, System.Windows.Point? entryFromScreen = null)
         {
-            var captureWindow = new ScreenshotCapture(useFakeCursor);
+            var captureWindow = new ScreenshotCapture(useFakeCursor, entryFromScreen);
             var result = captureWindow.ShowDialog();
             return result == true && captureWindow.ImageCaptured
                 ? captureWindow.CapturedImage

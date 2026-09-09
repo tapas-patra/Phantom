@@ -162,13 +162,27 @@ struct KnowledgeProject: Codable {
 
 struct ManagedCatalog: Codable {
     let providers: [ManagedProvider]
+    let refreshedAtUtc: Date?
+
+    init(providers: [ManagedProvider], refreshedAtUtc: Date? = nil) {
+        self.providers = providers
+        self.refreshedAtUtc = refreshedAtUtc
+    }
 }
 
 struct ManagedProvider: Codable, Identifiable, Hashable {
     let providerId: String
     let label: String
     let models: [ManagedModel]
+    let refreshedAtUtc: Date?
     var id: String { providerId }
+
+    init(providerId: String, label: String, models: [ManagedModel], refreshedAtUtc: Date? = nil) {
+        self.providerId = providerId
+        self.label = label
+        self.models = models
+        self.refreshedAtUtc = refreshedAtUtc
+    }
 }
 
 struct ManagedModel: Codable, Identifiable, Hashable {
@@ -463,6 +477,24 @@ struct BackendClient {
         var request = URLRequest(url: url("/api/desktop/ai/catalog"))
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         return try await send(request)
+    }
+
+    func byoCatalog(accessToken: String) async throws -> ManagedCatalog {
+        var request = URLRequest(url: url("/api/desktop/ai/byo/catalog"))
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func refreshByoCatalog(accessToken: String, providerId: String = "") async throws -> ManagedCatalog {
+        struct Body: Encodable {
+            let providerId: String
+            let apiKey: String
+        }
+        return try await post(
+            "/api/desktop/ai/byo/catalog/refresh",
+            body: Body(providerId: providerId, apiKey: ""),
+            bearer: accessToken
+        )
     }
 
     func speechCatalog(accessToken: String) async throws -> ManagedCatalog {

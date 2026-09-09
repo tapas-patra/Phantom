@@ -146,14 +146,67 @@ enum SpeechCatalogStore {
 }
 
 enum BYOCatalogStore {
+    private static let catalogKey = "catalog.byo.full"
+    private static let refreshedKey = "catalog.byo.refreshedAt"
+
+    static func load() -> ManagedCatalog? {
+        if let data = UserDefaults.standard.data(forKey: catalogKey),
+           let catalog = try? JSONDecoder().decode(ManagedCatalog.self, from: data),
+           !catalog.providers.isEmpty {
+            return catalog
+        }
+
+        let providers = BYOCatalog.providers.compactMap { provider -> ManagedProvider? in
+            guard let models = legacyModels(provider: provider.providerId), !models.isEmpty else { return nil }
+            return ManagedProvider(
+                providerId: provider.providerId,
+                label: provider.label,
+                models: models,
+                refreshedAtUtc: UserDefaults.standard.object(forKey: "catalog.\(provider.providerId.lowercased()).refreshedAt") as? Date
+            )
+        }
+        return providers.isEmpty ? nil : ManagedCatalog(providers: providers)
+    }
+
     static func models(provider: String) -> [ManagedModel]? {
+        if let catalog = load(),
+           let match = catalog.providers.first(where: { $0.providerId.caseInsensitiveCompare(provider) == .orderedSame }),
+           !match.models.isEmpty {
+            return match.models
+        }
+        return legacyModels(provider: provider)
+    }
+
+    private static func legacyModels(provider: String) -> [ManagedModel]? {
         guard let data = UserDefaults.standard.data(forKey: "catalog.\(provider.lowercased()).models") else { return nil }
         return try? JSONDecoder().decode([ManagedModel].self, from: data)
     }
 
+    static func isStale(now: Date = Date()) -> Bool {
+        guard let refreshed = UserDefaults.standard.object(forKey: refreshedKey) as? Date else { return true }
+        if load()?.providers.contains(where: { $0.models.isEmpty }) == true { return true }
+        return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
+    }
+
     static func isStale(provider: String, now: Date = Date()) -> Bool {
+        if let catalog = load(),
+           let match = catalog.providers.first(where: { $0.providerId.caseInsensitiveCompare(provider) == .orderedSame }) {
+            if match.models.isEmpty { return true }
+            if let refreshed = match.refreshedAtUtc {
+                return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
+            }
+        }
         guard let refreshed = UserDefaults.standard.object(forKey: "catalog.\(provider.lowercased()).refreshedAt") as? Date else { return true }
         return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
+    }
+
+    static func save(_ catalog: ManagedCatalog, now: Date = Date()) {
+        guard !catalog.providers.isEmpty, let data = try? JSONEncoder().encode(catalog) else { return }
+        UserDefaults.standard.set(data, forKey: catalogKey)
+        UserDefaults.standard.set(catalog.refreshedAtUtc ?? now, forKey: refreshedKey)
+        for provider in catalog.providers where !provider.models.isEmpty {
+            save(provider: provider.providerId, models: provider.models, now: provider.refreshedAtUtc ?? now)
+        }
     }
 
     static func save(provider: String, models: [ManagedModel], now: Date = Date()) {

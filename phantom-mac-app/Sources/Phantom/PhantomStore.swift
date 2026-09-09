@@ -187,9 +187,18 @@ final class PhantomStore: ObservableObject {
     private let speechInput = SpeechInputService()
     private lazy var speechClient = SpeechTranscriptionClient(backend: backend, rotation: rotation)
     private var managedProviders: [ManagedProvider] = []
-    private var byoProviders: [ManagedProvider] = BYOCatalog.providers.map { provider in
-        ManagedProvider(providerId: provider.providerId, label: provider.label, models: BYOCatalogStore.models(provider: provider.providerId) ?? provider.models)
-    }
+    private var byoProviders: [ManagedProvider] = {
+        if let cached = BYOCatalogStore.load(), !cached.providers.isEmpty {
+            return cached.providers
+        }
+        return BYOCatalog.providers.map { provider in
+            ManagedProvider(
+                providerId: provider.providerId,
+                label: provider.label,
+                models: BYOCatalogStore.models(provider: provider.providerId) ?? provider.models
+            )
+        }
+    }()
     private var chatTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var sessionCleanupTask: Task<Void, Never>?
@@ -293,6 +302,17 @@ final class PhantomStore: ObservableObject {
 
     var selectedProvider: ManagedProvider? {
         providers.first(where: { $0.providerId == selectedProviderId })
+            ?? byoProviders.first(where: { $0.providerId == selectedProviderId })
+    }
+
+    var byoProviderChoices: [ManagedProvider] {
+        byoProviders.isEmpty ? BYOCatalog.providers : byoProviders
+    }
+
+    var byoModelChoices: [ManagedModel] {
+        byoProviderChoices.first(where: { $0.providerId == selectedProviderId })?.models
+            ?? BYOCatalog.providers.first(where: { $0.providerId == selectedProviderId })?.models
+            ?? []
     }
 
     var selectedSpeechProvider: ManagedProvider? { speechProviders.first(where: { $0.providerId == selectedSpeechProviderId }) }
@@ -739,7 +759,7 @@ final class PhantomStore: ObservableObject {
             byoSecondAPIKey = second
             byoKeyStatus = "\(selectedProviderId): \(second.isEmpty ? 1 : 2) key(s) saved in Keychain."
             syncRuntimeLane()
-            refreshBYOCatalogs(forceProvider: selectedProviderId)
+            refreshBYOCatalogs(forceAll: true)
         } catch {
             byoKeyStatus = error.localizedDescription
         }
@@ -804,6 +824,68 @@ final class PhantomStore: ObservableObject {
         send()
     }
 
+    func refreshBYOModels() {
+        refreshBYOCatalogs(forceAll: true)
+    }
+
+    private func applyBYOCatalog(_ catalog: ManagedCatalog) {
+        let providers = catalog.providers.isEmpty ? BYOCatalog.providers : catalog.providers
+        byoProviders = providers.map { provider in
+            let fallback = BYOCatalog.providers.first(where: { $0.providerId == provider.providerId })?.models ?? []
+            return ManagedProvider(
+                providerId: provider.providerId,
+                label: provider.label.isEmpty ? provider.providerId : provider.label,
+                models: provider.models.isEmpty ? fallback : provider.models,
+                refreshedAtUtc: provider.refreshedAtUtc
+            )
+        }
+        if useBYOProvider {
+            self.providers = byoProviders
+            selectAvailableModel()
+        }
+    }
+
+    private func refreshBYOCatalogs(forceProvider: String? = nil, forceAll: Bool = false) {
+        guard hasBYOEntitlement, let session else {
+            applyBYOCatalog(ManagedCatalog(providers: BYOCatalog.providers))
+            return
+        }
+
+        Task {
+            do {
+                let needsForce = forceAll || forceProvider != nil || BYOCatalogStore.isStale()
+                    || byoProviders.contains(where: { $0.models.isEmpty })
+                let catalog: ManagedCatalog
+                if needsForce {
+                    catalog = try await backend.refreshByoCatalog(
+                        accessToken: session.accessToken,
+                        providerId: forceAll ? "" : (forceProvider ?? "")
+                    )
+                } else {
+                    catalog = try await backend.byoCatalog(accessToken: session.accessToken)
+                }
+                BYOCatalogStore.save(catalog)
+                applyBYOCatalog(catalog)
+                if catalog.providers.allSatisfy({ $0.models.isEmpty }) {
+                    byoKeyStatus = "BYO providers loaded, but models are still empty. Tap Refresh models."
+                } else if forceAll || forceProvider != nil {
+                    byoKeyStatus = "BYO models refreshed from Phantom."
+                }
+            } catch {
+                if byoProviders.isEmpty {
+                    applyBYOCatalog(ManagedCatalog(providers: BYOCatalog.providers))
+                }
+                await runtime.track(
+                    category: "ai",
+                    event: "byo_catalog_refresh_failed",
+                    attributes: ["provider": forceProvider ?? "all", "error": String(error.localizedDescription.prefix(300))],
+                    accessToken: session.accessToken
+                )
+                byoKeyStatus = "BYO model refresh failed. Tap Refresh models to retry."
+            }
+        }
+    }
+
     func captureScreenshot() {
         guard selectedModelSupportsVision else {
             status = "Choose a vision-capable model before attaching a screenshot."
@@ -843,7 +925,14 @@ final class PhantomStore: ObservableObject {
             let wasCloud = speechInput.isCloudMode
             speechInput.stop()
             isListening = false
-            if autoSendAfterVoiceStop && !wasCloud { scheduleVoiceDispatch() }
+            if autoSendAfterVoiceStop {
+                if wasCloud {
+                    // Cloud transcription finishes asynchronously; final transcript schedules send.
+                    voiceStatus = "Finishing cloud transcription…"
+                } else {
+                    scheduleVoiceDispatch()
+                }
+            }
         } else {
             configureSpeechRuntime()
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1820,25 +1909,6 @@ final class PhantomStore: ObservableObject {
         if providers != available {
             providers = available
             selectAvailableModel()
-        }
-    }
-
-    private func refreshBYOCatalogs(forceProvider: String? = nil) {
-        Task {
-            for provider in byoProviders {
-                guard forceProvider == provider.providerId || BYOCatalogStore.isStale(provider: provider.providerId),
-                      let key = rotation.keys(for: provider.providerId).first else { continue }
-                do {
-                    let models = try await byoClient.models(provider: provider.providerId, apiKey: key)
-                    guard !models.isEmpty,
-                          let index = byoProviders.firstIndex(where: { $0.providerId == provider.providerId }) else { continue }
-                    BYOCatalogStore.save(provider: provider.providerId, models: models)
-                    byoProviders[index] = ManagedProvider(providerId: provider.providerId, label: provider.label, models: models)
-                    if useBYOProvider { providers = byoProviders; selectAvailableModel() }
-                } catch {
-                    await runtime.track(category: "ai", event: "byo_catalog_refresh_failed", attributes: ["provider": provider.providerId, "error": String(error.localizedDescription.prefix(300))], accessToken: session?.accessToken)
-                }
-            }
         }
     }
 

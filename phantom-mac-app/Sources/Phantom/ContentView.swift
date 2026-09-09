@@ -523,7 +523,20 @@ private struct SettingsView: View {
 
                     SettingsSection(title: "Managed AI", systemImage: "cpu") {
                         ReadOnlyRow(label: "Runtime", value: store.useBYOProvider ? "Pro BYO" : "Phantom managed")
-                        if store.useBYOProvider, !store.isPremiumAccount {
+                        if store.hasBYOEntitlement {
+                            InWindowPicker(
+                                "Provider",
+                                selection: $store.selectedProviderId,
+                                options: store.byoProviderChoices.map { ($0.label, $0.providerId) }
+                            )
+                            InWindowPicker(
+                                "Model",
+                                selection: $store.selectedModelId,
+                                options: store.byoModelChoices.map { ($0.displayName, $0.modelId) }
+                            )
+                            Button("Refresh models", action: store.refreshBYOModels)
+                                .buttonStyle(.bordered)
+                        } else if store.useBYOProvider {
                             InWindowPicker(
                                 "Provider",
                                 selection: $store.selectedProviderId,

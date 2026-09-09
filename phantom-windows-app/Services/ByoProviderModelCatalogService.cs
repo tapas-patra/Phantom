@@ -18,103 +18,113 @@ namespace SecureOverlay.Services
             IHostedAccountClient hostedClient,
             string accessToken,
             string? forceProvider = null,
+            bool forceAll = false,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var catalog = await hostedClient.GetByoCatalogAsync(accessToken, cancellationToken);
-                var cachedProviders = settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>();
-                settings.ByoAiCatalogCache = new ManagedAiCatalogDto
-                {
-                    RefreshedAtUtc = catalog.RefreshedAtUtc,
-                    Providers = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
-                        .Select(provider =>
+                var needsForceRefresh = forceAll
+                    || !string.IsNullOrWhiteSpace(forceProvider)
+                    || IsCatalogStale(settings);
+
+                var catalog = needsForceRefresh
+                    ? await hostedClient.RefreshByoCatalogAsync(
+                        accessToken,
+                        new ByoModelCatalogRequestDto
                         {
-                            var cached = cachedProviders.FirstOrDefault(item => string.Equals(
-                                item.ProviderId,
-                                provider.ProviderId,
-                                StringComparison.OrdinalIgnoreCase));
-                            return new ManagedAiProviderOptionDto
-                            {
-                                ProviderId = provider.ProviderId,
-                                Label = provider.Label,
-                                Models = cached?.Models ?? new List<ManagedAiModelOptionDto>(),
-                                RefreshedAtUtc = cached?.RefreshedAtUtc ?? DateTime.MinValue
-                            };
-                        })
-                        .ToList()
-                };
-                ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings, byo: true);
+                            ProviderId = forceAll ? string.Empty : (forceProvider ?? string.Empty)
+                        },
+                        cancellationToken)
+                    : await hostedClient.GetByoCatalogAsync(accessToken, cancellationToken);
+
+                ApplyCatalog(settings, catalog);
+                SettingsManager.Save(settings);
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"BYO provider catalog refresh skipped: {ex.GetType().Name}");
-            }
-
-            foreach (var provider in settings.ByoAiCatalogCache?.Providers?.ToArray()
-                ?? Array.Empty<ManagedAiProviderOptionDto>())
-            {
-                var keys = GetKeysForProvider(settings, provider.ProviderId);
-                if (keys.Count == 0)
+                if ((settings.ByoAiCatalogCache?.Providers?.Count ?? 0) == 0)
                 {
-                    continue;
-                }
-
-                var forced = string.Equals(forceProvider, provider.ProviderId, StringComparison.OrdinalIgnoreCase);
-                var stale = provider.Models.Count == 0 || provider.RefreshedAtUtc <= DateTime.UtcNow - RefreshInterval;
-                if (!forced && !stale)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    var refreshed = await hostedClient.RefreshByoProviderCatalogAsync(
-                        accessToken,
-                        new ByoModelCatalogRequestDto { ProviderId = provider.ProviderId, ApiKey = keys[0] },
-                        cancellationToken);
-                    if (refreshed.Models.Count == 0)
+                    ApplyCatalog(settings, new ManagedAiCatalogDto
                     {
-                        Log.WriteLine($"BYO model refresh returned no chat models for {provider.ProviderId}");
-                        continue;
-                    }
-
-                    ProviderModelCatalogCache.UpsertProvider(
-                        settings,
-                        refreshed.ProviderId,
-                        refreshed.Label,
-                        refreshed.Models,
-                        refreshed.RefreshedAtUtc,
-                        byo: true);
-                    settings.ProviderModelCatalogRefreshedAtUtc[provider.ProviderId] = refreshed.RefreshedAtUtc;
-
-                    var currentModel = AIModelRegistry.GetCurrentModelForProvider(settings, provider.ProviderId);
-                    if (!refreshed.Models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        AIModelRegistry.SetModelForProvider(settings, provider.ProviderId, refreshed.Models[0].ModelId);
-                    }
-
-                    Log.WriteLine($"BYO catalog refreshed through backend: provider={provider.ProviderId}, models={refreshed.Models.Count}");
-                }
-                catch (Exception ex)
-                {
-                    Log.WriteLine($"BYO model refresh failed for {provider.ProviderId}: {ex.GetType().Name}");
+                        RefreshedAtUtc = DateTime.UtcNow,
+                        Providers = AIModelRegistry.GetAllProviders()
+                            .Select(providerId => new ManagedAiProviderOptionDto
+                            {
+                                ProviderId = providerId,
+                                Label = providerId,
+                                Models = new List<ManagedAiModelOptionDto>()
+                            })
+                            .ToList()
+                    });
                 }
             }
         }
 
-        private static List<string> GetKeysForProvider(AppSettings settings, string provider)
+        private static bool IsCatalogStale(AppSettings settings)
         {
-            return provider switch
+            var providers = settings.ByoAiCatalogCache?.Providers;
+            if (providers == null || providers.Count == 0)
             {
-                "ChatGPT" => settings.ChatGPTApiKeys,
-                "Claude" => settings.ClaudeApiKeys,
-                "Mistral" => settings.MistralApiKeys,
-                "Gemini" => settings.GeminiApiKeys,
-                "Groq" => settings.GroqApiKeys,
-                "NVIDIA" => settings.NvidiaApiKeys,
-                _ => new List<string>()
+                return true;
+            }
+
+            if (providers.Any(item => item.Models == null || item.Models.Count == 0))
+            {
+                return true;
+            }
+
+            var refreshedAt = settings.ByoAiCatalogCache?.RefreshedAtUtc ?? DateTime.MinValue;
+            return refreshedAt <= DateTime.UtcNow - RefreshInterval;
+        }
+
+        private static void ApplyCatalog(AppSettings settings, ManagedAiCatalogDto catalog)
+        {
+            var providers = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProviderId))
+                .Select(item => new ManagedAiProviderOptionDto
+                {
+                    ProviderId = item.ProviderId,
+                    Label = string.IsNullOrWhiteSpace(item.Label) ? item.ProviderId : item.Label,
+                    Models = item.Models ?? new List<ManagedAiModelOptionDto>(),
+                    RefreshedAtUtc = item.RefreshedAtUtc
+                })
+                .ToList();
+
+            if (providers.Count == 0)
+            {
+                providers = AIModelRegistry.GetAllProviders()
+                    .Select(providerId => new ManagedAiProviderOptionDto
+                    {
+                        ProviderId = providerId,
+                        Label = providerId,
+                        Models = new List<ManagedAiModelOptionDto>()
+                    })
+                    .ToList();
+            }
+
+            settings.ByoAiCatalogCache = new ManagedAiCatalogDto
+            {
+                RefreshedAtUtc = catalog.RefreshedAtUtc == default ? DateTime.UtcNow : catalog.RefreshedAtUtc,
+                Providers = providers
             };
+
+            ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings, byo: true);
+
+            foreach (var provider in providers)
+            {
+                if (provider.Models.Count == 0)
+                {
+                    continue;
+                }
+
+                settings.ProviderModelCatalogRefreshedAtUtc[provider.ProviderId] = provider.RefreshedAtUtc;
+                var currentModel = AIModelRegistry.GetCurrentModelForProvider(settings, provider.ProviderId);
+                if (!provider.Models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
+                {
+                    AIModelRegistry.SetModelForProvider(settings, provider.ProviderId, provider.Models[0].ModelId);
+                }
+            }
         }
     }
 }

@@ -113,8 +113,19 @@
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <StackPanel x:Name="ProviderSelectionSection">
-                            <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
-                                      Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" VerticalAlignment="Center"
+                                          Effect="{StaticResource Shadow}"/>
+                                <Button x:Name="RefreshByoCatalogButton"
+                                       Content="Refresh models"
+                                       Width="120" Height="28"
+                                       HorizontalAlignment="Right"
+                                       Click="RefreshByoCatalogButton_Click"
+                                       Background="#5000AAFF" BorderBrush="#9000AAFF" BorderThickness="1"
+                                       Foreground="White" FontSize="11"
+                                       Style="{StaticResource ButtonStyle}"/>
+                            </Grid>
                             <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
                                      FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
                                      Foreground="Black"/>
@@ -857,6 +868,50 @@
                                     <Run Text="⚠️ Turn OFF for normal use!"/>
                                 </TextBlock>
                             </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="🐛 Debug Logs" FontSize="14" FontWeight="Bold"
+                                Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15"
+                                BorderBrush="#70FF00FF" BorderThickness="1.5">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="220"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                                    <Button Content="📋 Copy" Width="70" Height="25" Click="CopyLogsButton_Click"
+                                        Background="#50FFFFFF" BorderBrush="#90FFFFFF" BorderThickness="1"
+                                        Foreground="White" FontSize="11" Margin="0,0,5,0"
+                                        Style="{StaticResource ButtonStyle}"/>
+                                    <Button Content="🗑️ Clear" Width="70" Height="25" Click="ClearLogsButton_Click"
+                                        Background="#50FF0000" BorderBrush="#90FF0000" BorderThickness="1"
+                                        Foreground="White" FontSize="11"
+                                        Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+
+                                <Border Grid.Row="1" Background="#30000000" BorderBrush="#50FFFFFF"
+                                        BorderThickness="1" CornerRadius="4" Padding="8">
+                                    <ScrollViewer x:Name="DebugScrollViewer" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="DebugLogsList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                                              Foreground="#00FF00" FontFamily="Consolas"
+                                                              FontSize="11" Margin="0,1"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+
+                                <CheckBox Grid.Row="2" x:Name="AutoScrollCheckBox"
+                                         Content="Auto-scroll to latest"
+                                         Foreground="White" FontSize="11" Margin="0,8,0,0"
+                                         IsChecked="True"/>
+                            </Grid>
                         </Border>
                         </StackPanel>
                     </StackPanel>

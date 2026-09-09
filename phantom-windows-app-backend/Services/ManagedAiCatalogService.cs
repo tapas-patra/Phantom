@@ -100,56 +100,39 @@ public sealed class ManagedAiCatalogService
     public ManagedAiCatalogDto GetByoCatalog(DesktopAccountRecord account)
     {
         RequireByoAccess(account);
-        return new ManagedAiCatalogDto
-        {
-            Providers = ManagedAiCatalog.GetAllProviders()
-                .Select(providerId => new ManagedAiProviderOptionDto
-                {
-                    ProviderId = providerId,
-                    Label = ManagedAiCatalog.GetProviderLabel(providerId),
-                    Models = Array.Empty<ManagedAiModelOptionDto>()
-                })
-                .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
-                .ToArray(),
-            RefreshedAtUtc = DateTime.UtcNow
-        };
+        return BuildByoCatalogDto();
     }
 
-    public async Task<ManagedAiProviderOptionDto> RefreshByoProviderAsync(
+    public async Task<ManagedAiCatalogDto> RefreshByoCatalogAsync(
         DesktopAccountRecord account,
         ByoModelCatalogRequestDto request,
         CancellationToken cancellationToken)
     {
         RequireByoAccess(account);
         var providerId = request.ProviderId?.Trim() ?? string.Empty;
-        if (!ManagedAiCatalog.IsAllowedProvider(providerId))
+        if (!string.IsNullOrWhiteSpace(providerId) && !ManagedAiCatalog.IsAllowedProvider(providerId))
         {
             throw new BackendValidationException("Unsupported BYO provider.");
         }
 
-        var apiKey = request.ApiKey?.Trim() ?? string.Empty;
-        if (apiKey.Length is 0 or > 8192)
-        {
-            throw new BackendValidationException("A valid BYO API key is required.");
-        }
-
         try
         {
-            var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
-            var refreshedAtUtc = DateTime.UtcNow;
-            _logger.LogInformation(
-                "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
-                providerId,
-                models.Count);
-            return new ManagedAiProviderOptionDto
+            if (string.IsNullOrWhiteSpace(providerId))
             {
-                ProviderId = providerId,
-                Label = ManagedAiCatalog.GetProviderLabel(providerId),
-                Models = models,
-                RefreshedAtUtc = refreshedAtUtc
-            };
+                await RefreshCatalogAsync(force: true, cancellationToken);
+            }
+            else
+            {
+                await RefreshSingleProviderCatalogAsync(providerId, cancellationToken);
+            }
+
+            return BuildByoCatalogDto();
         }
         catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (BackendValidationException)
         {
             throw;
         }
@@ -157,10 +140,69 @@ public sealed class ManagedAiCatalogService
         {
             _logger.LogWarning(
                 "BYO AI catalog refresh failed for provider {ProviderId}; error_type={ErrorType}",
-                providerId,
+                string.IsNullOrWhiteSpace(providerId) ? "all" : providerId,
                 ex.GetType().Name);
-            throw new BackendValidationException("Unable to fetch models from the provider. Verify the API key and try again.");
+            throw new BackendValidationException("Unable to refresh BYO model catalogs. Please retry.");
         }
+    }
+
+    private ManagedAiCatalogDto BuildByoCatalogDto()
+    {
+        var catalogByProvider = _catalogRepository.ListAll()
+            .ToDictionary(item => item.ProviderId, StringComparer.OrdinalIgnoreCase);
+
+        var providers = ManagedAiCatalog.GetAllProviders()
+            .Select(providerId =>
+            {
+                if (catalogByProvider.TryGetValue(providerId, out var record))
+                {
+                    return MapProvider(record);
+                }
+
+                return new ManagedAiProviderOptionDto
+                {
+                    ProviderId = providerId,
+                    Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                    Models = Array.Empty<ManagedAiModelOptionDto>(),
+                    RefreshedAtUtc = DateTime.MinValue
+                };
+            })
+            .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new ManagedAiCatalogDto
+        {
+            Providers = providers,
+            RefreshedAtUtc = providers.Length == 0
+                ? DateTime.UtcNow
+                : providers.Max(item => item.RefreshedAtUtc == DateTime.MinValue ? DateTime.UtcNow : item.RefreshedAtUtc)
+        };
+    }
+
+    private async Task RefreshSingleProviderCatalogAsync(string providerId, CancellationToken cancellationToken)
+    {
+        var credential = _credentials.ListByProvider(providerId)
+            .Where(item => item.IsEnabled)
+            .OrderBy(item => item.Priority)
+            .ThenByDescending(item => item.UpdatedAtUtc)
+            .FirstOrDefault()
+            ?? throw new BackendValidationException($"No managed credential is configured for {ManagedAiCatalog.GetProviderLabel(providerId)}.");
+
+        var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
+        var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+        var refreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(new ManagedProviderCatalogRecord
+        {
+            ProviderId = providerId,
+            Label = ManagedAiCatalog.GetProviderLabel(providerId),
+            ModelsJson = JsonSerializer.Serialize(models),
+            RefreshedAtUtc = refreshedAtUtc
+        });
+
+        _logger.LogInformation(
+            "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
+            providerId,
+            models.Count);
     }
 
     public IReadOnlyList<ManagedAiProviderOptionDto> ListCatalogProviders()
@@ -680,10 +722,19 @@ public sealed class ManagedAiCatalogService
 
     private static void RequireByoAccess(DesktopAccountRecord account)
     {
-        if (account.ProAvailableCredits <= 0m
-            && !string.Equals(account.AccessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase))
+        if (account.ProAvailableCredits > 0m)
         {
-            throw new BackendValidationException("BYO model catalog access requires a Pro BYO entitlement.");
+            return;
         }
+
+        var effectiveTier = AccessModeResolver.GetEffectiveAccessTier(account);
+        if (string.Equals(effectiveTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(account.AccessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase)
+            || account.CanUseDesktopPowerFeatures)
+        {
+            return;
+        }
+
+        throw new BackendValidationException("BYO model catalog access requires a Pro BYO entitlement.");
     }
 }

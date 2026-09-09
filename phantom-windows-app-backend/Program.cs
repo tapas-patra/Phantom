@@ -1045,7 +1045,7 @@ app.MapPost("/api/desktop/ai/byo/catalog/refresh", async (
     CancellationToken cancellationToken) =>
 {
     var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
-    return Results.Ok(await catalog.RefreshByoProviderAsync(account, request, cancellationToken));
+    return Results.Ok(await catalog.RefreshByoCatalogAsync(account, request, cancellationToken));
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/desktop/ai/chat", async (

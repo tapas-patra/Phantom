@@ -39,6 +39,7 @@ namespace SecureOverlay
         private bool _isUpdatingContextPackSelection;
         private bool _lastAppliedSelectionWasLocalDraft = true;
         private bool _localDraftCacheInvalidated;
+        private bool _debugLogsBound;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
@@ -66,10 +67,70 @@ namespace SecureOverlay
             LoadSettings();
             ApplyAccountTierRestrictions();
             ProtectAllComboBoxes();
+            BindDebugLogsPanel();
             
             _isInitializing = false;
             _ = RefreshByoCatalogAsync();
             _ = RefreshSpeechCatalogAsync();
+        }
+
+        private void BindDebugLogsPanel()
+        {
+            var debugLogger = DebugLogger.Instance;
+            DebugLogsList.ItemsSource = debugLogger.LogMessages;
+            debugLogger.SetUiCollectionEnabled(HasByoEntitlement());
+            if (_debugLogsBound)
+            {
+                return;
+            }
+
+            _debugLogsBound = true;
+            debugLogger.LogMessages.CollectionChanged += (_, _) =>
+            {
+                if (AutoScrollCheckBox.IsChecked == true)
+                {
+                    Dispatcher.BeginInvoke(new Action(() => DebugScrollViewer.ScrollToEnd()),
+                        System.Windows.Threading.DispatcherPriority.Background);
+                }
+            };
+        }
+
+        private void CopyLogsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var allLogs = DebugLogger.Instance.GetAllLogs();
+                if (!string.IsNullOrEmpty(allLogs))
+                {
+                    Clipboard.SetText(allLogs);
+                    Log.WriteLine($"✓ Copied {allLogs.Length} characters to clipboard from settings");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"✗ Failed to copy logs: {ex.Message}");
+            }
+        }
+
+        private void ClearLogsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (InvisibleMessageBox.ShowYesNo("Clear all debug logs?", "Confirm Clear"))
+            {
+                DebugLogger.Instance.Clear();
+            }
+        }
+
+        private async void RefreshByoCatalogButton_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshByoCatalogButton.IsEnabled = false;
+            try
+            {
+                await RefreshByoCatalogAsync(forceAll: true);
+            }
+            finally
+            {
+                RefreshByoCatalogButton.IsEnabled = true;
+            }
         }
 
         private void ProtectAllComboBoxes()
@@ -922,13 +983,23 @@ namespace SecureOverlay
         {
             AIProviderComboBox.Items.Clear();
 
-            IEnumerable<string> providers = IsPremiumOnlyAccount()
-                ? (_settings.PremiumConfiguredProviders?.Count > 0
+            IEnumerable<string> providers;
+            if (IsPremiumOnlyAccount())
+            {
+                providers = _settings.PremiumConfiguredProviders?.Count > 0
                     ? _settings.PremiumConfiguredProviders
                     : (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
-                        .Select(item => item.ProviderId))
-                : (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                        .Select(item => item.ProviderId);
+            }
+            else
+            {
+                providers = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                     .Select(item => item.ProviderId);
+                if (!providers.Any())
+                {
+                    providers = AIModelRegistry.GetAllProviders();
+                }
+            }
 
             foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -1020,11 +1091,14 @@ namespace SecureOverlay
             SpeechApiKeyTwoBox.Password = keys.ElementAtOrDefault(1) ?? string.Empty;
         }
 
-        private async Task RefreshByoCatalogAsync(string? forceProvider = null)
+        private async Task RefreshByoCatalogAsync(string? forceProvider = null, bool forceAll = false)
         {
             var session = _authSessionRepository.Load();
             if (session?.IsAuthenticated != true || string.IsNullOrWhiteSpace(session.AccessToken) || !HasByoEntitlement())
             {
+                PopulateProviderChoices();
+                AIProviderComboBox.SelectedItem = _settings.SelectedAI;
+                PopulateByoModelChoices();
                 return;
             }
 
@@ -1032,7 +1106,8 @@ namespace SecureOverlay
                 _settings,
                 _hostedAccountClient,
                 session.AccessToken,
-                forceProvider);
+                forceProvider,
+                forceAll);
             SettingsManager.Save(_settings);
             PopulateProviderChoices();
             AIProviderComboBox.SelectedItem = _settings.SelectedAI;

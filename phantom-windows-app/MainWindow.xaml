@@ -226,7 +226,6 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0">
@@ -351,7 +350,7 @@
                     </Button>
 
                     <Border Grid.Row="1" Grid.Column="2" Background="#50FFD700" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
-                            Cursor="Hand" MouseLeftButtonDown="ProviderSelector_Click"
+                            Cursor="Arrow" ForceCursor="True" MouseLeftButtonDown="ProviderSelector_Click"
                             x:Name="ProviderSelectorBorder" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock x:Name="AIProviderText" Text="ChatGPT" FontSize="11" 
@@ -362,7 +361,7 @@
                     </Border>
 
                     <Border Grid.Row="1" Grid.Column="3" Background="#5000AAFF" CornerRadius="6" Padding="8,4" Margin="10,0,0,0"
-                            Cursor="Hand" MouseLeftButtonDown="ModelSelector_Click"
+                            Cursor="Arrow" ForceCursor="True" MouseLeftButtonDown="ModelSelector_Click"
                             x:Name="ModelSelectorBorder" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="92" TextTrimming="CharacterEllipsis"
@@ -451,68 +450,6 @@
                     </Grid>
                 </Border>
 
-                <!-- ═══════════════════════════════════════════════════════════════ -->
-                <!-- DEBUG PANEL (Grid.Row="4") - COLLAPSIBLE -->
-                <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Border Grid.Row="4" x:Name="DebugPanel" 
-                        Background="#50000000" BorderBrush="#70FF00FF" BorderThickness="2"
-                        CornerRadius="8" Padding="10" Margin="0,12,0,0"
-                        Visibility="Collapsed">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="200"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <!-- Debug Header -->
-                        <Grid Grid.Row="0" Margin="0,0,0,10">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="🐛" FontSize="16" Margin="0,0,8,0"/>
-                                <TextBlock Text="Debug Logs (Also Invisible!)" FontSize="14" FontWeight="Bold"
-                                        Foreground="#FF00FF" Effect="{StaticResource Shadow}"/>
-                            </StackPanel>
-                            
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="🔍 View Context" Width="100" Height="25" Click="ViewContextButton_Click"
-                                    Background="#5000FFFF" BorderBrush="#9000FFFF" BorderThickness="1"
-                                    Foreground="White" FontSize="11" Margin="0,0,5,0"
-                                    Style="{StaticResource ButtonStyle}"/>
-                                
-                                <Button Content="📋 Copy" Width="70" Height="25" Click="CopyLogsButton_Click"
-                                    Background="#50FFFFFF" BorderBrush="#90FFFFFF" BorderThickness="1"
-                                    Foreground="White" FontSize="11" Margin="0,0,5,0"
-                                    Style="{StaticResource ButtonStyle}"/>
-                                <Button Content="🗑️ Clear" Width="70" Height="25" Click="ClearLogsButton_Click"
-                                    Background="#50FF0000" BorderBrush="#90FF0000" BorderThickness="1"
-                                    Foreground="White" FontSize="11"
-                                    Style="{StaticResource ButtonStyle}"/>
-                            </StackPanel>
-                        </Grid>
-
-                        <!-- Debug Log Viewer -->
-                        <Border Grid.Row="1" Background="#30000000" BorderBrush="#50FFFFFF" 
-                                BorderThickness="1" CornerRadius="4" Padding="8">
-                            <ScrollViewer x:Name="DebugScrollViewer" VerticalScrollBarVisibility="Auto">
-                                <ItemsControl x:Name="DebugLogsList">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding}" TextWrapping="Wrap" 
-                                                      Foreground="#00FF00" FontFamily="Consolas" 
-                                                      FontSize="11" Margin="0,1"/>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </Border>
-
-                        <!-- Auto-scroll toggle -->
-                        <CheckBox Grid.Row="2" x:Name="AutoScrollCheckBox" 
-                                 Content="Auto-scroll to latest" 
-                                 Foreground="White" FontSize="11" Margin="0,8,0,0"
-                                 IsChecked="True"/>
-                    </Grid>
-                </Border>
                 </Grid>
             </Grid>
         </Grid>

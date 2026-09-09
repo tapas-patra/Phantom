@@ -44,12 +44,12 @@ namespace SecureOverlay.Infrastructure.Hosted
             return GetJsonAsync<ManagedAiCatalogDto>("/api/desktop/ai/byo/catalog", accessToken, cancellationToken);
         }
 
-        public Task<ManagedAiProviderOptionDto> RefreshByoProviderCatalogAsync(
+        public Task<ManagedAiCatalogDto> RefreshByoCatalogAsync(
             string accessToken,
             ByoModelCatalogRequestDto request,
             CancellationToken cancellationToken = default)
         {
-            return PostJsonAsync<ByoModelCatalogRequestDto, ManagedAiProviderOptionDto>(
+            return PostJsonAsync<ByoModelCatalogRequestDto, ManagedAiCatalogDto>(
                 "/api/desktop/ai/byo/catalog/refresh",
                 request,
                 accessToken,

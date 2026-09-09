@@ -139,7 +139,7 @@ namespace SecureOverlay
         private string? _forcedManagedExtensionProviderId;
         private DateTime? _lastInterviewActivityUtc;
         private int _interviewLockHeartbeatCount;
-        private bool _debugPanelUserHidden;
+        private string? _lastRetryableQuestion;
         private Task _managedCatalogRefreshTask = Task.CompletedTask;
 
         public MainWindow() : this(new AppLaunchContext())
@@ -158,19 +158,7 @@ namespace SecureOverlay
 
             _debugLogger = DebugLogger.Instance;
             Log.WriteLine($"Debug logger instance obtained ({_debugLogger.LogMessages.Count} messages already captured)");
-            DebugLogsList.ItemsSource = _debugLogger.LogMessages;
-            Log.WriteLine("Debug logs bound to UI");
-            
-            _debugLogger.LogMessages.CollectionChanged += (s, e) =>
-            {
-                if (AutoScrollCheckBox.IsChecked == true)
-                {
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        DebugScrollViewer.ScrollToEnd();
-                    }), System.Windows.Threading.DispatcherPriority.Background);
-                }
-            };
+            _debugLogger.SetUiCollectionEnabled(false);
 
             Log.WriteLine("Loading settings...");
             _settings = SettingsManager.Load();
@@ -223,7 +211,6 @@ namespace SecureOverlay
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
-            UpdateDebugPanelAccess();
             _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
             _ = RefreshByoCatalogCacheAsync();
 
@@ -490,14 +477,6 @@ namespace SecureOverlay
         {
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
-            UpdateDebugPanelAccess();
-        }
-
-        private void UpdateDebugPanelAccess()
-        {
-            var visible = _accountSnapshot?.CanUseDesktopPowerFeatures == true && !_debugPanelUserHidden;
-            DebugPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            _debugLogger.SetUiCollectionEnabled(visible);
         }
 
         private void ApplyAccountTierChrome()
@@ -505,7 +484,6 @@ namespace SecureOverlay
             var selectorsVisible = ShouldShowByoSelectors() ? Visibility.Visible : Visibility.Collapsed;
             ProviderSelectorBorder.Visibility = selectorsVisible;
             ModelSelectorBorder.Visibility = selectorsVisible;
-            UpdateDebugPanelAccess();
 
             if (!ShouldShowByoSelectors())
             {
@@ -999,7 +977,7 @@ namespace SecureOverlay
             }
         }
 
-        private async Task RefreshByoCatalogCacheAsync(string? forceProvider = null)
+        private async Task RefreshByoCatalogCacheAsync(string? forceProvider = null, bool forceAll = false)
         {
             var session = _authSessionRepository.Load();
             if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
@@ -1011,12 +989,16 @@ namespace SecureOverlay
                 _settings,
                 _hostedAccountClient,
                 session.AccessToken,
-                forceProvider);
+                forceProvider,
+                forceAll);
             SettingsManager.Save(_settings);
             if (_currentAI != null && IsByoLaneActiveNow() && GetConfiguredModelsForProvider(_settings.SelectedAI).Length > 0)
             {
                 InitializeAI();
             }
+
+            ApplyAccountTierChrome();
+            UpdateProviderAndModelDisplay();
         }
 
         private ManagedAiProviderOptionDto? GetManagedProviderCatalog(string provider)
@@ -1315,7 +1297,12 @@ namespace SecureOverlay
                     .Where(item => !string.IsNullOrWhiteSpace(item))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                return byoProviders.Length > 0 ? byoProviders : new[] { _settings.SelectedAI };
+                if (byoProviders.Length > 0)
+                {
+                    return byoProviders;
+                }
+
+                return AIModelRegistry.GetAllProviders();
             }
 
             var providers = _settings.PremiumConfiguredProviders?
@@ -2107,6 +2094,7 @@ namespace SecureOverlay
             RegenerateButton.IsEnabled = false;
 
             Log.WriteLine($"Sending message length_bucket={LengthBucket(message.Length)}");
+            _lastRetryableQuestion = message;
             AddToChat($"**You:** {message}", false);
             InputTextBox.Text = "";
 
@@ -2265,15 +2253,18 @@ namespace SecureOverlay
                     if (isDesktopAuthFailure)
                     {
                         AddToChat("⚠️ **Desktop session expired**\n\nPlease sign in again to continue.", false);
+                        RegenerateButton.IsEnabled = false;
                     }
                     else
                     {
                         PauseInterviewSessionForError("runtime_error_response");
                         AddToChat("⏸️ **Interview paused**\n\nPhantom paused the active interview after this error. The session timer and billing stay frozen until a later response succeeds.", false);
+                        RegenerateButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastRetryableQuestion);
                     }
                     
                     StatusText.Text = "✗ Error occurred";
                     StatusIndicator.Fill = Brushes.Red;
+                    RestoreChatInputForRetry();
                 }
                 else
                 {
@@ -2295,6 +2286,7 @@ namespace SecureOverlay
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
                     ShowClarificationOptions(_conversationManager.PendingClarificationOptions);
+                    _lastRetryableQuestion = null;
                     RegenerateButton.IsEnabled = true;
                     
                     var selectedPack = _contextPackService.GetSelectedPack();
@@ -2376,6 +2368,8 @@ namespace SecureOverlay
                 
                 StatusText.Text = "✗ Exception occurred";
                 StatusIndicator.Fill = Brushes.Red;
+                RegenerateButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastRetryableQuestion);
+                RestoreChatInputForRetry();
 
                 if (_attachedScreenshot != null)
                 {
@@ -2403,7 +2397,32 @@ namespace SecureOverlay
                     _activeRequestTrace = null;
                 }
                 
+                RestoreChatInputForRetry();
                 FocusInput();
+            }
+        }
+
+        private void RestoreChatInputForRetry()
+        {
+            if (IsInterviewStartBlocked() && !CanContinueRestrictedInterview())
+            {
+                return;
+            }
+
+            InputTextBox.IsEnabled = true;
+            InputTextBox.IsReadOnly = false;
+            if (string.IsNullOrWhiteSpace(InputTextBox.Text)
+                || InputTextBox.Text == "Interview start is blocked for this account state.")
+            {
+                InputTextBox.Text = "Ask me anything...";
+                InputTextBox.Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255));
+            }
+
+            SendButton.IsEnabled = true;
+            VoiceButton.IsEnabled = _voiceService?.IsInitialized() == true;
+            if (CurrentModelSupportsVision())
+            {
+                ScreenshotButton.IsEnabled = true;
             }
         }
 
@@ -2708,6 +2727,10 @@ namespace SecureOverlay
             finally
             {
                 _chatRenderLock.Release();
+                if (!_isProcessingRequest)
+                {
+                    FocusInput();
+                }
             }
         }
 
@@ -2808,7 +2831,13 @@ namespace SecureOverlay
                 return;
             }
 
+            RestoreChatInputForRetry();
             var question = _conversationManager.RemoveLastExchangeForRegeneration();
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                question = _lastRetryableQuestion;
+            }
+
             if (string.IsNullOrWhiteSpace(question))
             {
                 RegenerateButton.IsEnabled = false;
@@ -2824,8 +2853,19 @@ namespace SecureOverlay
                 _chatMessages.RemoveAt(_chatMessages.Count - 1);
             }
 
+            // Drop trailing error/status system notes that followed a failed turn.
+            while (_chatMessages.Count > 0
+                && !_chatMessages[^1].IsUser
+                && (_chatMessages[^1].Markdown.Contains("❌ **Error:**", StringComparison.Ordinal)
+                    || _chatMessages[^1].Markdown.Contains("⏸️ **Interview paused**", StringComparison.Ordinal)
+                    || _chatMessages[^1].Markdown.Contains("❌ **Exception:**", StringComparison.Ordinal)))
+            {
+                _chatMessages.RemoveAt(_chatMessages.Count - 1);
+            }
+
             await RefreshChatSurfaceAsync();
             InputTextBox.Text = question;
+            InputTextBox.Foreground = Brushes.White;
             await SendMessage(captureQuestion: false);
         }
 
@@ -3228,14 +3268,10 @@ namespace SecureOverlay
                 
                 FocusInput();
                 
-                if (_autoSendAfterVoice && _voiceCompletionTimer != null)
+                if (_autoSendAfterVoice)
                 {
-                    Log.WriteLine("  Auto-send active - RESTARTING completion timer for new words");
-                    
-                    _voiceCompletionTimer.Stop();
-                    _voiceCompletionTimer.Start();
-                    
-                    Log.WriteLine("  Timer restarted - waiting 350 ms for more speech");
+                    Log.WriteLine("  Auto-send active - starting/restarting completion timer");
+                    StartVoiceCompletionTimer();
                 }
                 else
                 {
@@ -3422,82 +3458,57 @@ namespace SecureOverlay
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // DEBUG PANEL
+        // DEBUG / CONTEXT
         // ═══════════════════════════════════════════════════════════════
 
-        private void DebugButton_Click(object sender, RoutedEventArgs e)
+        private void ViewContextButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_accountSnapshot?.CanUseDesktopPowerFeatures != true)
+            Log.WriteLine("View context button clicked");
+
+            if (_conversationManager == null)
             {
-                Log.WriteLine("Debug panel access denied: desktop power features are disabled.");
-                DebugPanel.Visibility = Visibility.Collapsed;
-                _debugLogger.SetUiCollectionEnabled(false);
+                InvisibleMessageBox.Show("No conversation active yet.", "Context Viewer");
                 return;
             }
 
-            Log.WriteLine("─────────────────────────────────────────────────────");
-            Log.WriteLine("Debug button clicked");
-            
-            if (DebugPanel.Visibility == Visibility.Visible)
-            {
-                _debugPanelUserHidden = true;
-                DebugPanel.Visibility = Visibility.Collapsed;
-                _debugLogger.SetUiCollectionEnabled(false);
-                Log.WriteLine("✓ Debug panel hidden");
-            }
-            else
-            {
-                _debugPanelUserHidden = false;
-                DebugPanel.Visibility = Visibility.Visible;
-                _debugLogger.SetUiCollectionEnabled(true);
-                Log.WriteLine("✓ Debug panel shown");
-                
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    DebugScrollViewer.ScrollToEnd();
-                }), System.Windows.Threading.DispatcherPriority.Background);
-            }
-            
-            Log.WriteLine("─────────────────────────────────────────────────────");
-        }
-
-        private void CopyLogsButton_Click(object sender, RoutedEventArgs e)
-        {
-            Log.WriteLine("Copy logs button clicked");
-            
             try
             {
-                var allLogs = _debugLogger.GetAllLogs();
-                
-                if (!string.IsNullOrEmpty(allLogs))
+                var context = _conversationManager.GetOptimizedContextForDebug();
+
+                var contextDisplay = new System.Text.StringBuilder();
+                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
+                contextDisplay.AppendLine("ACTUAL CONTEXT SENT TO AI");
+                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
+                contextDisplay.AppendLine();
+
+                int messageNum = 1;
+                foreach (var msg in context)
                 {
-                    Clipboard.SetText(allLogs);
-                    StatusText.Text = "✓ Logs copied to clipboard!";
-                    StatusIndicator.Fill = Brushes.LightGreen;
-                    
-                    Log.WriteLine($"✓ Copied {allLogs.Length} characters to clipboard");
-                    
-                    var timer = new System.Windows.Threading.DispatcherTimer 
-                    { 
-                        Interval = TimeSpan.FromSeconds(3) 
-                    };
-                    timer.Tick += (s, args) =>
-                    {
-                        StatusText.Text = "✓ Protected | Two-cursor system active";
-                        timer.Stop();
-                    };
-                    timer.Start();
+                    contextDisplay.AppendLine($"[{messageNum}] Role: {msg.Role.ToUpper()}");
+                    contextDisplay.AppendLine($"Tokens: ~{msg.EstimatedTokens}");
+                    contextDisplay.AppendLine($"Content:");
+                    contextDisplay.AppendLine(msg.Content);
+                    contextDisplay.AppendLine();
+                    contextDisplay.AppendLine("─────────────────────────────────────────────────────");
+                    contextDisplay.AppendLine();
+                    messageNum++;
                 }
-                else
-                {
-                    StatusText.Text = "No logs to copy";
-                    Log.WriteLine("No logs available");
-                }
+
+                var totalTokens = context.Sum(m => m.EstimatedTokens);
+                contextDisplay.AppendLine($"Total Context Tokens: ~{totalTokens}");
+                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
+
+                Clipboard.SetText(contextDisplay.ToString());
+
+                InvisibleMessageBox.Show(
+                    $"Context copied to clipboard!\n\n" +
+                    $"Messages: {context.Count}\n" +
+                    $"Total tokens: ~{totalTokens}",
+                    "Context Viewer");
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"✗ Failed to copy logs: {ex.Message}");
-                StatusText.Text = "✗ Failed to copy logs";
+                InvisibleMessageBox.Show($"Error viewing context: {ex.Message}", "Error");
             }
         }
 
@@ -3547,83 +3558,6 @@ namespace SecureOverlay
             fields["execution_lane"] = trace.ExecutionLane;
             fields["usage_source"] = trace.UsageSource;
             _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
-        }
-
-        private void ClearLogsButton_Click(object sender, RoutedEventArgs e)
-        {
-            Log.WriteLine("Clear logs button clicked");
-
-            var result = InvisibleMessageBox.ShowYesNo(
-                "Clear all debug logs?",
-                "Confirm Clear"
-            );
-
-            if (result)
-            {
-                _debugLogger.Clear();
-                Log.WriteLine("✓ Debug logs cleared by user");
-                StatusText.Text = "✓ Logs cleared";
-            }
-            else
-            {
-                Log.WriteLine("Clear logs cancelled by user");
-            }
-        }
-
-        private void ViewContextButton_Click(object sender, RoutedEventArgs e)
-        {
-            Log.WriteLine("View context button clicked");
-            
-            if (_conversationManager == null)
-            {
-                InvisibleMessageBox.Show("No conversation active yet.", "Context Viewer");
-                return;
-            }
-
-            try
-            {
-                var context = _conversationManager.GetOptimizedContextForDebug();
-                
-                var contextDisplay = new System.Text.StringBuilder();
-                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
-                contextDisplay.AppendLine("ACTUAL CONTEXT SENT TO AI");
-                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
-                contextDisplay.AppendLine();
-                
-                int messageNum = 1;
-                foreach (var msg in context)
-                {
-                    contextDisplay.AppendLine($"[{messageNum}] Role: {msg.Role.ToUpper()}");
-                    contextDisplay.AppendLine($"Tokens: ~{msg.EstimatedTokens}");
-                    contextDisplay.AppendLine($"Content:");
-                    contextDisplay.AppendLine(msg.Content);
-                    contextDisplay.AppendLine();
-                    contextDisplay.AppendLine("─────────────────────────────────────────────────────");
-                    contextDisplay.AppendLine();
-                    messageNum++;
-                }
-                
-                var totalTokens = context.Sum(m => m.EstimatedTokens);
-                contextDisplay.AppendLine($"Total Context Tokens: ~{totalTokens}");
-                contextDisplay.AppendLine("═══════════════════════════════════════════════════════");
-                
-                Clipboard.SetText(contextDisplay.ToString());
-                
-                InvisibleMessageBox.Show(
-                    $"Context copied to clipboard!\n\n" +
-                    $"Messages: {context.Count}\n" +
-                    $"Tokens: ~{totalTokens}\n\n" +
-                    $"Check your clipboard to see the full context.",
-                    "Context Viewer"
-                );
-                
-                Log.WriteLine($"✓ Context exported: {context.Count} messages, ~{totalTokens} tokens");
-            }
-            catch (Exception ex)
-            {
-                Log.WriteLine($"✗ Context view error: {ex.GetType().Name}");
-                InvisibleMessageBox.Show($"Error viewing context: {ex.Message}", "Error");
-            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -3775,6 +3709,7 @@ namespace SecureOverlay
             // Switch back to chat page
             SettingsPageContainer.Visibility = Visibility.Collapsed;
             ChatPageContainer.Visibility = Visibility.Visible;
+            _debugLogger.SetUiCollectionEnabled(false);
 
             this.Activate();
             FocusInput();
@@ -4174,14 +4109,14 @@ namespace SecureOverlay
                     }
                 }
 
-                // Ctrl + Alt + D - Toggle Debug Panel
+                // Ctrl + Alt + D - Open Settings (debug logs live there)
                 if (vkCode == (int)Key.D)
                 {
                     if (NativeMethods.IsKeyPressed(NativeMethods.VK_CONTROL) && 
                         NativeMethods.IsKeyPressed(NativeMethods.VK_MENU))
                     {
                         Log.WriteLine("Hotkey: Ctrl+Alt+D pressed");
-                        Dispatcher.Invoke(() => DebugButton_Click(this, new RoutedEventArgs()));
+                        Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs()));
                         return (IntPtr)1;
                     }
                 }

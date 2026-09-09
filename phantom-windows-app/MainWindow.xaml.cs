@@ -504,17 +504,31 @@ namespace SecureOverlay
             {
                 APIKeyIndicator.Visibility = Visibility.Collapsed;
             }
+
+            // Keep the screenshot affordance in sync when the lane / selection chrome changes.
+            UpdateScreenshotButtonVisibility();
         }
 
         private bool ShouldShowByoSelectors()
         {
-            if (!HasByoEntitlement() || !HasAnyConfiguredByoProvider())
+            if (IsFreeTrialAccount() || !HasByoEntitlement())
             {
                 return false;
             }
 
-            // PreferByoCreditsFirst alone is not enough while premium is still the active lane.
-            return IsByoLaneActiveNow();
+            // Match Mac AccountAccess.usesBYO: show BYO provider/model pickers whenever the
+            // BYO credit lane is active. Do not require keys just to show the dropdowns.
+            if (PreferByoCreditsFirst())
+            {
+                return true;
+            }
+
+            if (HasPremiumManagedEntitlement() && PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private void UpdateCreditIndicator()
@@ -1368,6 +1382,11 @@ namespace SecureOverlay
 
         private string GetCurrentDisplayProvider()
         {
+            if (ShouldShowByoSelectors())
+            {
+                return string.IsNullOrWhiteSpace(_settings.SelectedAI) ? "AI" : _settings.SelectedAI;
+            }
+
             return _currentAI is HostedManagedAiService
                 ? "AI"
                 : (_currentAI?.GetProviderName() ?? "AI");
@@ -4801,6 +4820,20 @@ namespace SecureOverlay
                 return false;
             }
 
+            // When BYO pickers are visible, vision follows the BYO selection the user sees —
+            // not a managed runtime model that may still be active until keys are present.
+            if (ShouldShowByoSelectors())
+            {
+                var byoProvider = _settings.SelectedAI;
+                var byoModelId = AIModelRegistry.GetCurrentModelForProvider(_settings, byoProvider);
+                var byoModel = ProviderModelCatalogCache.GetModel(_settings, byoProvider, byoModelId, byo: true);
+                if (byoModel != null)
+                {
+                    Log.WriteLine($"Checking vision support for BYO selection: {byoProvider} - {byoModelId} => {byoModel.SupportsVision}");
+                    return byoModel.SupportsVision;
+                }
+            }
+
             var provider = GetCurrentRuntimeProviderId();
             var currentModel = GetCurrentRuntimeModelId();
             if (string.IsNullOrWhiteSpace(currentModel) && _rotationManager != null)
@@ -5350,7 +5383,7 @@ namespace SecureOverlay
             // ✅ Update UI
             UpdateProviderAndModelDisplay();
             UpdateAPIKeyIndicator();
-            UpdateScreenshotButtonVisibility();
+            ApplyAccountTierChrome();
             
             // Update settings page if open
             if (SettingsPageContainer.Visibility == Visibility.Visible && _settingsPage != null)
@@ -5397,7 +5430,7 @@ namespace SecureOverlay
             
             // ✅ Update UI - This will refresh the display
             UpdateProviderAndModelDisplay();
-            UpdateScreenshotButtonVisibility();
+            ApplyAccountTierChrome();
             
             // Update settings page if open
             if (SettingsPageContainer.Visibility == Visibility.Visible && _settingsPage != null)
@@ -5452,10 +5485,20 @@ namespace SecureOverlay
             Log.WriteLine($"  Provider display: {providerName}");
             
             // Update model display
-            var runtimeProvider = GetCurrentRuntimeProviderId();
-            var currentModel = _currentAI is HostedManagedAiService
-                ? GetManagedRuntimeModelId(runtimeProvider)
-                : (_rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "");
+            string currentModel;
+            string runtimeProvider;
+            if (ShouldShowByoSelectors())
+            {
+                runtimeProvider = _settings.SelectedAI;
+                currentModel = AIModelRegistry.GetCurrentModelForProvider(_settings, runtimeProvider);
+            }
+            else
+            {
+                runtimeProvider = GetCurrentRuntimeProviderId();
+                currentModel = _currentAI is HostedManagedAiService
+                    ? GetManagedRuntimeModelId(runtimeProvider)
+                    : (_rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "");
+            }
             Log.WriteLine($"  Current model ID: {currentModel}");
             
             // ✅ USE REGISTRY - Get display name

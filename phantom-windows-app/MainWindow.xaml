@@ -286,14 +286,14 @@
 
                 <!-- INPUT AREA (Grid.Row="2") -->
                 <!-- ═══════════════════════════════════════════════════════════════ -->
-                <Grid Grid.Row="2" Margin="0,0,0,12">
+                <Grid Grid.Row="2" Margin="0,0,0,12" ClipToBounds="False">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>      <!-- Input box -->
+                        <ColumnDefinition Width="*" MinWidth="160"/> <!-- Input box -->
                         <ColumnDefinition Width="Auto"/>   <!-- Screenshot button -->
                         <ColumnDefinition Width="Auto"/>   <!-- Provider button -->
                         <ColumnDefinition Width="Auto"/>   <!-- Model button -->

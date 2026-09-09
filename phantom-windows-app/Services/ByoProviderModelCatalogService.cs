@@ -13,7 +13,7 @@ namespace SecureOverlay.Services
     {
         private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(12);
 
-        public static async Task RefreshStaleCatalogsAsync(
+        public static async Task<bool> RefreshStaleCatalogsAsync(
             AppSettings settings,
             IHostedAccountClient hostedClient,
             string accessToken,
@@ -39,37 +39,21 @@ namespace SecureOverlay.Services
 
                 ApplyCatalog(settings, catalog);
                 SettingsManager.Save(settings);
+                return true;
             }
             catch (Exception ex)
             {
                 Log.WriteLine($"BYO provider catalog refresh skipped: {ex.GetType().Name}");
-                if ((settings.ByoAiCatalogCache?.Providers?.Count ?? 0) == 0)
-                {
-                    ApplyCatalog(settings, new ManagedAiCatalogDto
-                    {
-                        RefreshedAtUtc = DateTime.UtcNow,
-                        Providers = AIModelRegistry.GetAllProviders()
-                            .Select(providerId => new ManagedAiProviderOptionDto
-                            {
-                                ProviderId = providerId,
-                                Label = providerId,
-                                Models = new List<ManagedAiModelOptionDto>()
-                            })
-                            .ToList()
-                    });
-                }
+                // Keep previous cache; never seed hardcoded registry models on failure.
+                return false;
             }
         }
 
         private static bool IsCatalogStale(AppSettings settings)
         {
             var providers = settings.ByoAiCatalogCache?.Providers;
+            // Missing cache entirely is stale. Empty models after a successful fetch are valid.
             if (providers == null || providers.Count == 0)
-            {
-                return true;
-            }
-
-            if (providers.Any(item => item.Models == null || item.Models.Count == 0))
             {
                 return true;
             }
@@ -80,6 +64,7 @@ namespace SecureOverlay.Services
 
         private static void ApplyCatalog(AppSettings settings, ManagedAiCatalogDto catalog)
         {
+            // Trust backend providers/models as-is (empty lists allowed). No registry model seeding.
             var providers = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
                 .Where(item => !string.IsNullOrWhiteSpace(item.ProviderId))
                 .Select(item => new ManagedAiProviderOptionDto
@@ -91,18 +76,6 @@ namespace SecureOverlay.Services
                 })
                 .ToList();
 
-            if (providers.Count == 0)
-            {
-                providers = AIModelRegistry.GetAllProviders()
-                    .Select(providerId => new ManagedAiProviderOptionDto
-                    {
-                        ProviderId = providerId,
-                        Label = providerId,
-                        Models = new List<ManagedAiModelOptionDto>()
-                    })
-                    .ToList();
-            }
-
             settings.ByoAiCatalogCache = new ManagedAiCatalogDto
             {
                 RefreshedAtUtc = catalog.RefreshedAtUtc == default ? DateTime.UtcNow : catalog.RefreshedAtUtc,
@@ -113,11 +86,6 @@ namespace SecureOverlay.Services
 
             foreach (var provider in providers)
             {
-                if (provider.Models.Count == 0)
-                {
-                    continue;
-                }
-
                 settings.ProviderModelCatalogRefreshedAtUtc[provider.ProviderId] = provider.RefreshedAtUtc;
             }
         }

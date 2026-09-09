@@ -84,10 +84,6 @@ private struct LoginView: View {
                     }
                 }
                 Spacer()
-                Text(store.configuration.desktopBackendBaseUrl)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(PhantomColors.dim)
-                    .lineLimit(1)
             }
             .padding(42)
             .frame(width: 420)
@@ -314,14 +310,14 @@ private struct ChatView: View {
                         options: store.byoProviderChoices.map { ($0.label, $0.providerId) },
                         compact: true
                     )
-                    .frame(width: 120)
+                    .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
                     InWindowPicker(
                         "Model",
                         selection: $store.selectedModelId,
                         options: store.byoModelChoices.map { ($0.displayName, $0.modelId) },
                         compact: true
                     )
-                    .frame(width: 150)
+                    .frame(minWidth: 120, idealWidth: 150, maxWidth: 220)
                 }
 
                 Button(action: store.captureScreenshot) {
@@ -733,7 +729,6 @@ private struct SettingsView: View {
                             value: NSDecimalNumber(decimal: store.account?.availableCredits ?? 0).stringValue
                         )
                         ReadOnlyRow(label: "Power flag", value: store.account?.canUseDesktopPowerFeatures == true ? "Enabled" : "Disabled")
-                        ReadOnlyRow(label: "Backend", value: store.configuration.desktopBackendBaseUrl)
                         Button("Restart Phantom and restore this conversation", action: store.restartApp)
                         if store.account?.canUseDesktopPowerFeatures == true {
                             HStack {
@@ -836,8 +831,11 @@ private struct InWindowPicker<Value: Hashable>: View {
                                 isExpanded = false
                             } label: {
                                 HStack {
-                                    Text(option.title).foregroundColor(PhantomColors.frost).lineLimit(1)
-                                    Spacer()
+                                    Text(option.title)
+                                        .foregroundColor(PhantomColors.frost)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer(minLength: 0)
                                     if option.value == selection {
                                         Image(systemName: "checkmark").foregroundColor(PhantomColors.blue)
                                     }
@@ -853,6 +851,12 @@ private struct InWindowPicker<Value: Hashable>: View {
                     }
                 }
                 .padding(4)
+                .frame(
+                    minWidth: compact ? 100 : 160,
+                    maxWidth: compact ? 220 : 320,
+                    minHeight: InWindowPickerSizing.minimumHeight,
+                    maxHeight: InWindowPickerSizing.maximumHeight
+                )
                 .frame(height: InWindowPickerSizing.height(optionCount: options.count))
                 .background(PhantomColors.obsidian)
                 .clipShape(RoundedRectangle(cornerRadius: 7))

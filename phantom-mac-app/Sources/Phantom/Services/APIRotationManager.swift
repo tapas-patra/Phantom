@@ -21,7 +21,7 @@ final class APIRotationManager {
 
     func save(provider: String, keys: [String]) throws {
         let clean = Array(keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(2))
-        let alreadyConfigured = BYOCatalog.providers.filter { !self.keys(for: $0.providerId).isEmpty }.map(\.providerId)
+        let alreadyConfigured = BYOCatalog.providerIds.filter { !self.keys(for: $0).isEmpty }
         guard !clean.isEmpty || alreadyConfigured.contains(provider) else { return }
         guard alreadyConfigured.contains(provider) || alreadyConfigured.count < 3 else {
             throw RotationError.providerLimit

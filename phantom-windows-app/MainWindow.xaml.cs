@@ -19,6 +19,7 @@ using System.Windows.Shapes;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using FormsScreen = System.Windows.Forms.Screen;
+using FormsControl = System.Windows.Forms.Control;
 using SecureOverlay.Application.Billing;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Interviews;
@@ -290,9 +291,18 @@ namespace SecureOverlay
             {
                 _cursorManager?.SetApplicationFocusActive(true);
                 FocusInput();
+                // Activate/Topmost can put the main overlay above the live cursor window.
+                _cursorManager?.EnsureLiveCursorAbove();
             };
             this.Deactivated += (s, e) =>
             {
+                // Owned dropdown menus take activation; do not tear the cursor down.
+                if (_currentDropdownMenu?.IsVisible == true)
+                {
+                    _cursorManager?.SetOwnedOverlayActive(true);
+                    return;
+                }
+
                 SetChatCursorHidden(false);
                 _cursorManager?.SetApplicationFocusActive(false);
             };
@@ -1432,17 +1442,12 @@ namespace SecureOverlay
         {
             if (HasByoEntitlement())
             {
-                var byoProviders = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                // BYO: catalog cache only — never fall back to AIModelRegistry model IDs.
+                return (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                     .Select(item => item.ProviderId)
                     .Where(item => !string.IsNullOrWhiteSpace(item))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                if (byoProviders.Length > 0)
-                {
-                    return byoProviders;
-                }
-
-                return AIModelRegistry.GetAllProviders();
             }
 
             var providers = _settings.PremiumConfiguredProviders?
@@ -1490,6 +1495,14 @@ namespace SecureOverlay
             // the pointer is still inside the outer Phantom window.
             if (_cursorManager?.IsPointerInsideParentWindow() == true)
                 return;
+
+            // Provider/model menus are separate Topmost windows. Leaving the main
+            // chrome onto them must not tear down the live cursor.
+            if (IsPointerOverCurrentDropdownMenu())
+            {
+                _cursorManager?.EnsureLiveCursorAbove();
+                return;
+            }
 
             ResetEmbeddedCursorState();
             _cursorManager?.DeactivateCustomCursor();
@@ -4318,6 +4331,7 @@ namespace SecureOverlay
                 this.Topmost = true;
                 
                 FocusInput();
+                _cursorManager?.EnsureLiveCursorAbove();
                 
                 Log.WriteLine("✓ Window shown and focused");
             }
@@ -5008,7 +5022,7 @@ namespace SecureOverlay
                 WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.Arrow,
+                Cursor = Cursors.None,
                 Owner = this  // ✅ SET OWNER - This fixes Z-order!
             };
 
@@ -5032,7 +5046,8 @@ namespace SecureOverlay
                 BorderThickness = new Thickness(2),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(5),
-                MinWidth = 150
+                MinWidth = 140,
+                MaxWidth = 220
             };
 
             var menuStack = new StackPanel();
@@ -5041,6 +5056,7 @@ namespace SecureOverlay
                 Content = menuStack,
                 MaxHeight = 320,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 CanContentScroll = true
             };
 
@@ -5048,9 +5064,16 @@ namespace SecureOverlay
             
             foreach (var provider in providers)
             {
+                var label = provider == _settings.SelectedAI ? $"✓ {provider}" : $"   {provider}";
                 var button = new Button
                 {
-                    Content = provider == _settings.SelectedAI ? $"✓ {provider}" : $"   {provider}",
+                    Content = new TextBlock
+                    {
+                        Text = label,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        TextWrapping = TextWrapping.NoWrap,
+                        MaxWidth = 190
+                    },
                     Foreground = provider == _settings.SelectedAI ? 
                         new SolidColorBrush(Color.FromRgb(255, 215, 0)) : Brushes.White,
                     Background = System.Windows.Media.Brushes.Transparent,
@@ -5059,7 +5082,9 @@ namespace SecureOverlay
                     FontWeight = provider == _settings.SelectedAI ? FontWeights.Bold : FontWeights.Normal,
                     Padding = new Thickness(15, 8, 15, 8),
                     HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Cursor = Cursors.Arrow,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    MaxWidth = 210,
+                    Cursor = Cursors.None,
                     Tag = provider
                 };
                 
@@ -5098,6 +5123,7 @@ namespace SecureOverlay
             menuWindow.Show();
             PositionDropdownMenu(menuWindow, ProviderSelectorBorder);
             menuWindow.Activate();
+            AttachDropdownCursorTracking(menuWindow);
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
             var timer = new System.Windows.Threading.DispatcherTimer 
@@ -5143,7 +5169,7 @@ namespace SecureOverlay
                 WindowStartupLocation = WindowStartupLocation.Manual,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.Arrow,
+                Cursor = Cursors.None,
                 Owner = this  // ✅ SET OWNER - This fixes Z-order!
             };
 
@@ -5167,7 +5193,8 @@ namespace SecureOverlay
                 BorderThickness = new Thickness(2),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(5),
-                MinWidth = 200
+                MinWidth = 180,
+                MaxWidth = 320
             };
 
             var menuStack = new StackPanel();
@@ -5176,21 +5203,43 @@ namespace SecureOverlay
                 Content = menuStack,
                 MaxHeight = 320,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 CanContentScroll = true
             };
 
-            // ✅ USE REGISTRY - Get models for current provider
+            // BYO / managed: models come from catalog cache only (empty is valid).
             string[] models = GetAvailableModelsForSelectedProvider();
             string currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
+
+            if (models.Length == 0)
+            {
+                menuStack.Children.Add(new TextBlock
+                {
+                    Text = "(no models)",
+                    Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 160)),
+                    FontSize = 12,
+                    FontStyle = FontStyles.Italic,
+                    Padding = new Thickness(15, 8, 15, 8),
+                    MaxWidth = 290,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+            }
             
             foreach (var model in models)
             {
                 // ✅ USE REGISTRY - Get display name
             var displayName = GetModelDisplayName(_settings.SelectedAI, model);
+                var label = model == currentModel ? $"✓ {displayName}" : $"   {displayName}";
                 
                 var button = new Button
                 {
-                    Content = model == currentModel ? $"✓ {displayName}" : $"   {displayName}",
+                    Content = new TextBlock
+                    {
+                        Text = label,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        TextWrapping = TextWrapping.NoWrap,
+                        MaxWidth = 290
+                    },
                     Foreground = model == currentModel ? 
                         new SolidColorBrush(Color.FromRgb(0, 170, 255)) : Brushes.White,
                     Background = System.Windows.Media.Brushes.Transparent,
@@ -5199,7 +5248,9 @@ namespace SecureOverlay
                     FontWeight = model == currentModel ? FontWeights.Bold : FontWeights.Normal,
                     Padding = new Thickness(15, 8, 15, 8),
                     HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Cursor = Cursors.Arrow,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    MaxWidth = 310,
+                    Cursor = Cursors.None,
                     Tag = model
                 };
                 
@@ -5238,6 +5289,7 @@ namespace SecureOverlay
             menuWindow.Show();
             PositionDropdownMenu(menuWindow, ModelSelectorBorder);
             menuWindow.Activate();
+            AttachDropdownCursorTracking(menuWindow);
 
             // ✅ DELAY ATTACHING DEACTIVATE HANDLER
             var timer = new System.Windows.Threading.DispatcherTimer 
@@ -5282,6 +5334,52 @@ namespace SecureOverlay
                 {
                     _currentDropdownMenu = null;
                 }
+            }
+        }
+
+        private void AttachDropdownCursorTracking(Window menuWindow)
+        {
+            _cursorManager?.SetOwnedOverlayActive(true);
+            menuWindow.MouseEnter += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            menuWindow.MouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            menuWindow.PreviewMouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            menuWindow.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(_currentDropdownMenu, menuWindow))
+                    _currentDropdownMenu = null;
+
+                _cursorManager?.SetOwnedOverlayActive(false);
+
+                // Resume normal main-window cursor tracking after the menu closes.
+                if (IsActive || _cursorManager?.IsPointerInsideParentWindow() == true)
+                    _cursorManager?.EnsureLiveCursorAbove();
+            };
+
+            // Menu Activate() puts the popup above the live cursor; reassert immediately.
+            _cursorManager?.EnsureLiveCursorAbove();
+            Dispatcher.BeginInvoke(
+                new Action(() => _cursorManager?.EnsureLiveCursorAbove()),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private bool IsPointerOverCurrentDropdownMenu()
+        {
+            var menu = _currentDropdownMenu;
+            if (menu?.IsVisible != true)
+                return false;
+
+            try
+            {
+                var screen = FormsControl.MousePosition;
+                var local = menu.PointFromScreen(new Point(screen.X, screen.Y));
+                return local.X >= 0
+                    && local.Y >= 0
+                    && local.X <= menu.ActualWidth
+                    && local.Y <= menu.ActualHeight;
+            }
+            catch
+            {
+                return false;
             }
         }
 

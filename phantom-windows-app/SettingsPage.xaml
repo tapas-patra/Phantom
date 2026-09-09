@@ -126,6 +126,13 @@
                                        Foreground="White" FontSize="11"
                                        Style="{StaticResource ButtonStyle}"/>
                             </Grid>
+                            <TextBlock x:Name="ByoCatalogStatusText"
+                                       TextWrapping="Wrap"
+                                       FontSize="11"
+                                       Foreground="#B8D4E8"
+                                       Margin="0,0,0,10"
+                                       Visibility="Collapsed"
+                                       Effect="{StaticResource Shadow}"/>
                             <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
                                      FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
                                      Foreground="Black"/>

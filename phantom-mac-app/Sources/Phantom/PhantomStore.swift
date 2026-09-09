@@ -201,16 +201,11 @@ final class PhantomStore: ObservableObject {
     private lazy var speechClient = SpeechTranscriptionClient(backend: backend, rotation: rotation)
     private var managedProviders: [ManagedProvider] = []
     private var byoProviders: [ManagedProvider] = {
+        // Wait for network fetch — never seed hardcoded BYOCatalog models.
         if let cached = BYOCatalogStore.load(), !cached.providers.isEmpty {
             return cached.providers
         }
-        return BYOCatalog.providers.map { provider in
-            ManagedProvider(
-                providerId: provider.providerId,
-                label: provider.label,
-                models: BYOCatalogStore.models(provider: provider.providerId) ?? provider.models
-            )
-        }
+        return []
     }()
     private var chatTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
@@ -319,13 +314,11 @@ final class PhantomStore: ObservableObject {
     }
 
     var byoProviderChoices: [ManagedProvider] {
-        byoProviders.isEmpty ? BYOCatalog.providers : byoProviders
+        byoProviders
     }
 
     var byoModelChoices: [ManagedModel] {
-        byoProviderChoices.first(where: { $0.providerId == selectedProviderId })?.models
-            ?? BYOCatalog.providers.first(where: { $0.providerId == selectedProviderId })?.models
-            ?? []
+        byoProviderChoices.first(where: { $0.providerId == selectedProviderId })?.models ?? []
     }
 
     var selectedSpeechProvider: ManagedProvider? { speechProviders.first(where: { $0.providerId == selectedSpeechProviderId }) }
@@ -865,14 +858,12 @@ final class PhantomStore: ObservableObject {
     }
 
     private func applyBYOCatalog(_ catalog: ManagedCatalog) {
-        let providers = catalog.providers.isEmpty ? BYOCatalog.providers : catalog.providers
-        byoProviders = providers.map { provider in
-            let fallback = BYOCatalog.providers.first(where: { $0.providerId == provider.providerId })?.models ?? []
-            let models = (provider.models.isEmpty ? fallback : provider.models).filter(\.eligibleForChat)
-            return ManagedProvider(
+        // Use catalog as returned (eligibleForChat only). Empty models stay empty — no hardcoded fallback.
+        byoProviders = catalog.providers.map { provider in
+            ManagedProvider(
                 providerId: provider.providerId,
                 label: provider.label.isEmpty ? provider.providerId : provider.label,
-                models: models.isEmpty ? fallback : models,
+                models: provider.models.filter(\.eligibleForChat),
                 refreshedAtUtc: provider.refreshedAtUtc
             )
         }
@@ -884,19 +875,17 @@ final class PhantomStore: ObservableObject {
 
     private func refreshBYOCatalogs(forceProvider: String? = nil, forceAll: Bool = false) {
         guard hasBYOEntitlement, let session else {
-            applyBYOCatalog(ManagedCatalog(providers: BYOCatalog.providers))
+            // No entitlement/session: keep previous cache; do not apply hardcoded BYOCatalog.
             return
         }
 
         Task {
             let cached = BYOCatalogStore.load()
-            let coldStart = cached == nil
-                || cached!.providers.isEmpty
-                || cached!.providers.allSatisfy({ $0.models.isEmpty })
-                || byoProviders.allSatisfy({ $0.models.isEmpty })
+            let coldStart = cached == nil || cached!.providers.isEmpty
             let explicit = forceAll || forceProvider != nil
             let autoAllowed = CatalogRefreshQuota.canAutoRefresh()
-            let shouldFetch = explicit || coldStart || (autoAllowed && (BYOCatalogStore.isStale() || byoProviders.contains(where: { $0.models.isEmpty })))
+            // Empty models after a successful fetch are valid — only age / missing cache is stale.
+            let shouldFetch = explicit || coldStart || (autoAllowed && BYOCatalogStore.isStale())
             guard shouldFetch else {
                 if let cached { applyBYOCatalog(cached) }
                 return
@@ -904,7 +893,7 @@ final class PhantomStore: ObservableObject {
 
             do {
                 let catalog: ManagedCatalog
-                if explicit || coldStart || BYOCatalogStore.isStale() || byoProviders.contains(where: { $0.models.isEmpty }) {
+                if explicit || coldStart || BYOCatalogStore.isStale() {
                     catalog = try await backend.refreshByoCatalog(
                         accessToken: session.accessToken,
                         providerId: forceAll ? "" : (forceProvider ?? "")
@@ -931,9 +920,7 @@ final class PhantomStore: ObservableObject {
                     byoKeyStatus = "BYO chat and speech catalogs refreshed."
                 }
             } catch {
-                if byoProviders.isEmpty {
-                    applyBYOCatalog(ManagedCatalog(providers: BYOCatalog.providers))
-                }
+                // Keep previous cache; never apply hardcoded BYOCatalog on failure.
                 await runtime.track(
                     category: "ai",
                     event: "byo_catalog_refresh_failed",
@@ -1806,7 +1793,10 @@ final class PhantomStore: ObservableObject {
         status = providers.isEmpty ? "No managed AI models are currently available." : launchContext.message
         screen = .chat
         startSessionStatusTimer()
-        refreshBYOCatalogs()
+        // Always hit BYO catalog on enter so Mac does not keep a stale/hardcoded local cache.
+        if hasBYOEntitlement {
+            refreshBYOCatalogs(forceAll: true)
+        }
         if !UserDefaults.standard.bool(forKey: "conversation.restoreAfterRestart") {
             messages.removeAll()
             ConversationStore.clear()

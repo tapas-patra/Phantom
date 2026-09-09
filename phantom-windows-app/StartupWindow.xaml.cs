@@ -34,7 +34,7 @@ namespace SecureOverlay
             IDeviceProfileRepository deviceProfileRepository = new SqliteDeviceProfileRepository(store);
             _deviceIdentityService = new WindowsDeviceIdentityService(deviceProfileRepository, new WindowsSecretVault(store));
             ClearCredentials();
-            BackendModeText.Text = $"{_hostedRuntimeOptions.ModeLabel}\n{_hostedRuntimeOptions.DesktopBackendBaseUrl}";
+            BackendModeText.Text = _hostedRuntimeOptions.ModeLabel;
             _currentContext = startupGateService.GetInitialContext();
             ApplyContext(_currentContext);
         }

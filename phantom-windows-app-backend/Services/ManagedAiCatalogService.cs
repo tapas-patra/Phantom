@@ -148,6 +148,9 @@ public sealed class ManagedAiCatalogService
 
     private ManagedAiCatalogDto BuildByoCatalogDto()
     {
+        // BYO users call providers with their own keys. Serve the admin catalog
+        // (synced + manually added models) regardless of whether Phantom has a
+        // managed credential for that provider.
         var catalogByProvider = _catalogRepository.ListAll()
             .ToDictionary(item => item.ProviderId, StringComparer.OrdinalIgnoreCase);
 
@@ -447,11 +450,15 @@ public sealed class ManagedAiCatalogService
 
                 if (!credentialsByProvider.TryGetValue(providerId, out var credential))
                 {
+                    // No managed credential → cannot live-fetch, but keep catalog rows
+                    // (including admin-manual models) so BYO clients still receive them.
                     results.Add(BuildRefreshResult(
                         providerId,
                         attempted: false,
-                        succeeded: false,
-                        message: "No enabled credential configured.",
+                        succeeded: existingModels.Count > 0,
+                        message: existingModels.Count > 0
+                            ? "No managed credential; serving existing catalog models."
+                            : "No enabled credential configured.",
                         models: existingModels,
                         refreshedAtUtc: existing?.RefreshedAtUtc));
                     continue;

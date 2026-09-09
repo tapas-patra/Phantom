@@ -138,15 +138,36 @@ namespace SecureOverlay
         private async void RefreshByoCatalogButton_Click(object sender, RoutedEventArgs e)
         {
             RefreshByoCatalogButton.IsEnabled = false;
+            SetByoCatalogStatus("Refreshing BYO catalogs…");
             try
             {
-                await RefreshByoCatalogAsync(forceAll: true);
+                var ok = await RefreshByoCatalogAsync(forceAll: true);
                 await RefreshSpeechCatalogAsync(force: true);
+                SetByoCatalogStatus(ok
+                    ? "BYO chat and speech catalogs refreshed."
+                    : "BYO model refresh failed. Try again.");
+            }
+            catch (Exception ex)
+            {
+                SetByoCatalogStatus($"BYO model refresh failed. {UserFacingErrorSanitizer.SanitizeUserFacingError(ex.Message)}");
             }
             finally
             {
                 RefreshByoCatalogButton.IsEnabled = true;
             }
+        }
+
+        private void SetByoCatalogStatus(string message)
+        {
+            if (ByoCatalogStatusText == null)
+            {
+                return;
+            }
+
+            ByoCatalogStatusText.Text = message ?? string.Empty;
+            ByoCatalogStatusText.Visibility = string.IsNullOrWhiteSpace(message)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
         private void ProtectAllComboBoxes()
@@ -171,41 +192,8 @@ namespace SecureOverlay
         private void InitializeControls()
         {
             PopulateProviderChoices();
-
-            // ✅ USE REGISTRY - ChatGPT Models
-            foreach (var model in _settings.ChatGPTModels)
-            {
-                ChatGPTModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Claude Models
-            foreach (var model in _settings.ClaudeModels)
-            {
-                ClaudeModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Mistral Models
-            foreach (var model in _settings.MistralModels)
-            {
-                MistralModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Gemini Models
-            foreach (var model in _settings.GeminiModels)
-            {
-                GeminiModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Groq Models
-            foreach (var model in _settings.GroqModels)
-            {
-                GroqModelBox.Items.Add(model);
-            }
-
-            foreach (var model in _settings.NvidiaModels)
-            {
-                NvidiaModelBox.Items.Add(model);
-            }
+            // Leave BYO model combos empty here. PopulateByoModelChoices after catalog
+            // refresh is the source of truth (avoids seeding stale/hardcoded lists).
         }
 
         private void Root_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1045,12 +1033,9 @@ namespace SecureOverlay
             }
             else
             {
+                // BYO: use backend catalog only — no AIModelRegistry fallback for model lists.
                 providers = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                     .Select(item => item.ProviderId);
-                if (!providers.Any())
-                {
-                    providers = AIModelRegistry.GetAllProviders();
-                }
             }
 
             foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -1143,7 +1128,7 @@ namespace SecureOverlay
             SpeechApiKeyTwoBox.Password = keys.ElementAtOrDefault(1) ?? string.Empty;
         }
 
-        private async Task RefreshByoCatalogAsync(string? forceProvider = null, bool forceAll = false)
+        private async Task<bool> RefreshByoCatalogAsync(string? forceProvider = null, bool forceAll = false)
         {
             var session = _authSessionRepository.Load();
             var selectedProvider = _settings.SelectedAI;
@@ -1157,7 +1142,7 @@ namespace SecureOverlay
                 AIProviderComboBox.SelectedItem = selectedProvider;
                 PopulateByoModelChoices();
                 RestoreByoModelComboSelections(selectedModels);
-                return;
+                return false;
             }
 
             var explicitRefresh = forceAll || !string.IsNullOrWhiteSpace(forceProvider);
@@ -1171,11 +1156,11 @@ namespace SecureOverlay
                     AIProviderComboBox.SelectedItem = selectedProvider;
                     PopulateByoModelChoices();
                     RestoreByoModelComboSelections(selectedModels);
-                    return;
+                    return true;
                 }
             }
 
-            await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
+            var ok = await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
                 _settings,
                 _hostedAccountClient,
                 session.AccessToken,
@@ -1198,6 +1183,7 @@ namespace SecureOverlay
             AIProviderComboBox.SelectedItem = selectedProvider;
             PopulateByoModelChoices();
             RestoreByoModelComboSelections(selectedModels);
+            return ok;
         }
 
         private Dictionary<string, string> CaptureSelectedByoModels()

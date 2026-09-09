@@ -38,6 +38,8 @@ namespace SecureOverlay
 
         // NEW: Track last cursor position for smooth exit animation
         private Point _lastCursorPosition;
+        private int _zOrderRefreshCounter;
+        private const int ZOrderRefreshEveryNMoves = 4;
 
         // Windows API for getting exact cursor position
         [DllImport("user32.dll")]
@@ -193,6 +195,7 @@ namespace SecureOverlay
                     _fakeCursorWindow.Topmost = true;
                     _fakeCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
                     _fakeCursorWindow.Show();
+                    _fakeCursorWindow.EnsureTopmost();
                     
                     // ✅ DIAGNOSTIC: Log window state
                     Log.WriteLine($"✓ Fake cursor window shown:");
@@ -209,6 +212,8 @@ namespace SecureOverlay
                     _protectedCursorWindow.Topmost = true;
                     _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
                     _protectedCursorWindow.Show();
+                    // Live cursor must stay above the Topmost main overlay.
+                    _protectedCursorWindow.EnsureTopmost();
                 }
                 
                 // Hide system cursor
@@ -356,11 +361,61 @@ namespace SecureOverlay
                 if (_protectedCursorWindow != null && GetCursorPos(out var cursorPos))
                 {
                     _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+
+                    // Main overlay is also Topmost; after Activate/Topmost reassert it can
+                    // cover the live cursor even though hits still go to the app.
+                    if ((++_zOrderRefreshCounter % ZOrderRefreshEveryNMoves) == 0)
+                    {
+                        _protectedCursorWindow.EnsureTopmost();
+                    }
                 }
 
                 // Update last position for smooth exit
                 UpdateLastCursorPosition();
             }
+        }
+
+        /// <summary>
+        /// Keep the capture-protected live cursor above temporary overlay windows
+        /// (provider/model dropdowns) and above the main Topmost app window.
+        /// </summary>
+        public void EnsureLiveCursorAbove()
+        {
+            if (!CanActivateCursor())
+                return;
+
+            if (!_customCursorActive)
+            {
+                ActivateCustomCursorImmediate();
+            }
+
+            if (_protectedCursorWindow == null)
+                return;
+
+            if (GetCursorPos(out var cursorPos))
+            {
+                _protectedCursorWindow.PositionAt(cursorPos.X, cursorPos.Y);
+            }
+
+            _protectedCursorWindow.EnsureTopmost();
+            _zOrderRefreshCounter = 0;
+            UpdateLastCursorPosition();
+        }
+
+        /// <summary>
+        /// Owned popups (provider/model menus) steal WPF activation from MainWindow.
+        /// Keep cursor focus semantics active while those overlays are up.
+        /// </summary>
+        public void SetOwnedOverlayActive(bool active)
+        {
+            if (active)
+            {
+                _applicationFocusActive = true;
+                EnsureLiveCursorAbove();
+                return;
+            }
+
+            TryActivateForCurrentPointer();
         }
 
         public void SetEmbeddedSurfaceCursorActive(bool active)
@@ -412,6 +467,7 @@ namespace SecureOverlay
             }
 
             TryActivateForCurrentPointer();
+            EnsureLiveCursorAbove();
         }
 
         private bool CanActivateCursor()

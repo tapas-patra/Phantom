@@ -256,6 +256,15 @@ enum PhantomMain {
             precondition(restartParentPID(arguments: ["Phantom"]) == nil)
             precondition(InWindowPickerSizing.height(optionCount: 0) == InWindowPickerSizing.minimumHeight)
             precondition(InWindowPickerSizing.height(optionCount: 100) == InWindowPickerSizing.maximumHeight)
+            let sanitized = UserFacingText.sanitize("Failed at https://example.com/api/desktop/ai/chat with /api/foo")
+            precondition(!sanitized.contains("http"))
+            precondition(!sanitized.contains("/api/"))
+            let legacyModelJSON = #"{"modelId":"gpt-4o","displayName":"GPT-4o","supportsVision":true}"#.data(using: .utf8)!
+            let legacyModel = try! JSONDecoder().decode(ManagedModel.self, from: legacyModelJSON)
+            precondition(legacyModel.eligibleForChat)
+            precondition(PhantomStore.maxResumeWords == 1_200)
+            precondition(PhantomStore.maxJobDescriptionWords == 450)
+            precondition(PhantomStore.maxAttachedScreenshots == 3)
             runLiveCopilotFixtures()
             print("Phantom self-check and shared live-copilot fixture suite passed.")
             return

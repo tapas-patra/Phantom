@@ -72,8 +72,9 @@ import {
   updateHostedKnowledgeBaseProject,
   updateKnowledgeBaseEmbeddingConfig,
   updateInterviewQuestionBank,
-  updateManagedAiModelVision,
+  updateManagedAiModelFlags,
   updateManagedAiRuntimeSelection,
+  upsertManagedAiCatalogModel,
   updateManagedSpeechRuntimeSelection,
   updateRegistrationSettings,
   uploadHostedKnowledgeBaseDocuments,
@@ -4475,6 +4476,19 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
   );
 }
 
+function isManagedChatEligibleModel(model) {
+  return model?.eligibleForChat !== false;
+}
+
+function getChatEligibleCatalogProviders(catalogProviders) {
+  return (catalogProviders || [])
+    .map((provider) => ({
+      ...provider,
+      models: (provider.models || []).filter(isManagedChatEligibleModel)
+    }))
+    .filter((provider) => provider.models.length > 0);
+}
+
 function ManagedRuntimeSelectionCard({
   accessToken,
   inventory,
@@ -4493,17 +4507,19 @@ function ManagedRuntimeSelectionCard({
   const [success, setSuccess] = useState("");
 
   const catalogProviders = inventory?.catalogs?.providers || [];
+  const chatEligibleProviders = getChatEligibleCatalogProviders(catalogProviders);
   const currentSelection = inventory?.selection || null;
 
   useEffect(() => {
-    const catalogProviderIds = catalogProviders.map((item) => item.providerId);
+    const eligibleProviders = getChatEligibleCatalogProviders(catalogProviders);
+    const catalogProviderIds = eligibleProviders.map((item) => item.providerId);
     const nextProviderId =
       (currentSelection?.providerId && catalogProviderIds.includes(currentSelection.providerId)
         ? currentSelection.providerId
         : catalogProviderIds[0]) || "";
     setSelectionProviderId(nextProviderId);
 
-    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    const nextProvider = eligibleProviders.find((item) => item.providerId === nextProviderId);
     const nextModelId =
       (currentSelection?.providerId === nextProviderId &&
       nextProvider?.models?.some((model) => model.modelId === currentSelection?.modelId)
@@ -4512,12 +4528,12 @@ function ManagedRuntimeSelectionCard({
     setSelectionModelId(nextModelId);
   }, [catalogProviders, currentSelection?.modelId, currentSelection?.providerId]);
 
-  const selectedCatalogProvider = catalogProviders.find((item) => item.providerId === selectionProviderId);
+  const selectedCatalogProvider = chatEligibleProviders.find((item) => item.providerId === selectionProviderId);
   const selectedCatalogModels = selectedCatalogProvider?.models || [];
 
   function handleSelectionProviderChange(nextProviderId) {
     setSelectionProviderId(nextProviderId);
-    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    const nextProvider = chatEligibleProviders.find((item) => item.providerId === nextProviderId);
     setSelectionModelId(nextProvider?.models?.[0]?.modelId || "");
   }
 
@@ -4559,7 +4575,7 @@ function ManagedRuntimeSelectionCard({
       </p>
       {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
       {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
-      {catalogProviders.length === 0 ? (
+      {chatEligibleProviders.length === 0 ? (
         <p>
           No managed model catalog is available yet. Add at least one managed credential and refresh models from the
           Managed AI page before setting the runtime.
@@ -4570,7 +4586,7 @@ function ManagedRuntimeSelectionCard({
             <label>
               Active provider
               <select value={selectionProviderId} onChange={(event) => handleSelectionProviderChange(event.target.value)}>
-                {catalogProviders.map((provider) => (
+                {chatEligibleProviders.map((provider) => (
                   <option key={provider.providerId} value={provider.providerId}>
                     {provider.label}
                   </option>
@@ -5052,7 +5068,13 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState("0");
   const [isEnabled, setIsEnabled] = useState(true);
+  const [manualProviderId, setManualProviderId] = useState("ChatGPT");
+  const [manualModelId, setManualModelId] = useState("");
+  const [manualDisplayName, setManualDisplayName] = useState("");
+  const [manualSupportsVision, setManualSupportsVision] = useState(false);
+  const [manualEligibleForChat, setManualEligibleForChat] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [submittingManualModel, setSubmittingManualModel] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
@@ -5067,6 +5089,12 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
       setProviderId(providers[0].providerId);
     }
   }, [providerId, providers]);
+
+  useEffect(() => {
+    if (providers.length > 0 && !providers.some((item) => item.providerId === manualProviderId)) {
+      setManualProviderId(providers[0].providerId);
+    }
+  }, [manualProviderId, providers]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -5126,19 +5154,45 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
     }
   }
 
-  async function handleVisionToggle(nextProviderId, modelId, supportsVision) {
+  async function handleModelFlagsToggle(nextProviderId, modelId, patch, successMessage) {
     setLocalError("");
     setSuccess("");
     try {
-      await updateManagedAiModelVision(accessToken, {
+      await updateManagedAiModelFlags(accessToken, {
         providerId: nextProviderId,
         modelId,
-        supportsVision: !supportsVision
+        ...patch
       });
       await onRefresh();
-      setSuccess("Model vision support updated.");
+      setSuccess(successMessage);
     } catch (toggleError) {
-      setLocalError(toggleError.message || "Could not update model vision support.");
+      setLocalError(toggleError.message || "Could not update model flags.");
+    }
+  }
+
+  async function handleManualModelSubmit(event) {
+    event.preventDefault();
+    setSubmittingManualModel(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await upsertManagedAiCatalogModel(accessToken, {
+        providerId: manualProviderId,
+        modelId: manualModelId.trim(),
+        displayName: manualDisplayName.trim() || manualModelId.trim(),
+        supportsVision: manualSupportsVision,
+        eligibleForChat: manualEligibleForChat
+      });
+      setManualModelId("");
+      setManualDisplayName("");
+      setManualSupportsVision(false);
+      setManualEligibleForChat(true);
+      setSuccess("Catalog model saved.");
+      await onRefresh();
+    } catch (saveError) {
+      setLocalError(saveError.message || "Could not add catalog model.");
+    } finally {
+      setSubmittingManualModel(false);
     }
   }
 
@@ -5258,6 +5312,70 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
         emptyLabel="No managed credentials configured yet."
       />
 
+      <article className="glass-panel admin-form-panel">
+        <div className="table-header">
+          <div>
+            <p className="eyebrow">Manual catalog entry</p>
+            <h3>Add model manually</h3>
+          </div>
+        </div>
+        <p>Use this when a provider omits a model from refresh, or when you need to seed chat eligibility and vision flags before the next catalog sync.</p>
+        <form className="admin-form" onSubmit={handleManualModelSubmit}>
+          <label>
+            Provider
+            <select value={manualProviderId} onChange={(event) => setManualProviderId(event.target.value)}>
+              {providers.map((provider) => (
+                <option key={provider.providerId} value={provider.providerId}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Model ID
+            <input
+              required
+              value={manualModelId}
+              onChange={(event) => setManualModelId(event.target.value)}
+              placeholder="provider-model-id"
+            />
+          </label>
+          <label>
+            Display name
+            <input
+              value={manualDisplayName}
+              onChange={(event) => setManualDisplayName(event.target.value)}
+              placeholder="Friendly label shown to admins"
+            />
+          </label>
+          <div className="admin-form-inline">
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={manualSupportsVision}
+                onChange={(event) => setManualSupportsVision(event.target.checked)}
+              />
+              <span>Supports vision</span>
+            </label>
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={manualEligibleForChat}
+                onChange={(event) => setManualEligibleForChat(event.target.checked)}
+              />
+              <span>Eligible for chat</span>
+            </label>
+          </div>
+          <button
+            className="button button-primary"
+            type="submit"
+            disabled={submittingManualModel || !manualProviderId || !manualModelId.trim()}
+          >
+            {submittingManualModel ? "Saving..." : "Add Model"}
+          </button>
+        </form>
+      </article>
+
       {providers.map((provider) => {
         const catalog = catalogProviders.find((item) => item.providerId === provider.providerId);
         const providerModels = catalog?.models || [];
@@ -5276,32 +5394,60 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
                   <tr>
                     <th>Model ID</th>
                     <th>Display name</th>
+                    <th>Chat eligible</th>
                     <th>Vision</th>
-                    <th>Action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {providerModels.length === 0 ? (
                     <tr>
-                      <td colSpan="4">No stored catalog for this provider yet.</td>
+                      <td colSpan="5">No stored catalog for this provider yet.</td>
                     </tr>
                   ) : (
-                    providerModels.map((model) => (
-                      <tr key={`${provider.providerId}-${model.modelId}`}>
-                        <td>{model.modelId}</td>
-                        <td>{model.displayName}</td>
-                        <td>{model.supportsVision ? "Yes" : "No"}</td>
-                        <td>
-                          <button
-                            className="table-action"
-                            type="button"
-                            onClick={() => handleVisionToggle(provider.providerId, model.modelId, model.supportsVision)}
-                          >
-                            Mark {model.supportsVision ? "Non-Vision" : "Vision"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    providerModels.map((model) => {
+                      const chatEligible = model.eligibleForChat !== false;
+                      return (
+                        <tr key={`${provider.providerId}-${model.modelId}`}>
+                          <td>{model.modelId}</td>
+                          <td>{model.displayName}</td>
+                          <td>{chatEligible ? "Yes" : "No"}</td>
+                          <td>{model.supportsVision ? "Yes" : "No"}</td>
+                          <td>
+                            <div className="inline-actions">
+                              <button
+                                className="table-action"
+                                type="button"
+                                onClick={() =>
+                                  handleModelFlagsToggle(
+                                    provider.providerId,
+                                    model.modelId,
+                                    { eligibleForChat: !chatEligible },
+                                    "Model chat eligibility updated."
+                                  )
+                                }
+                              >
+                                Mark {chatEligible ? "Chat-Ineligible" : "Chat-Eligible"}
+                              </button>
+                              <button
+                                className="table-action"
+                                type="button"
+                                onClick={() =>
+                                  handleModelFlagsToggle(
+                                    provider.providerId,
+                                    model.modelId,
+                                    { supportsVision: !model.supportsVision },
+                                    "Model vision support updated."
+                                  )
+                                }
+                              >
+                                Mark {model.supportsVision ? "Non-Vision" : "Vision"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

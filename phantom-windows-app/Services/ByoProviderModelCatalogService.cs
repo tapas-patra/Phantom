@@ -119,11 +119,6 @@ namespace SecureOverlay.Services
                 }
 
                 settings.ProviderModelCatalogRefreshedAtUtc[provider.ProviderId] = provider.RefreshedAtUtc;
-                var currentModel = AIModelRegistry.GetCurrentModelForProvider(settings, provider.ProviderId);
-                if (!provider.Models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
-                {
-                    AIModelRegistry.SetModelForProvider(settings, provider.ProviderId, provider.Models[0].ModelId);
-                }
             }
         }
     }

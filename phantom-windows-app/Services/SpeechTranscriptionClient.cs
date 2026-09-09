@@ -69,6 +69,40 @@ namespace SecureOverlay.Services
             throw lastError ?? new InvalidOperationException("No speech API key is currently available.");
         }
 
+        /// <summary>
+        /// Reachability probe for cloud recovery. Bypasses the local "no speech" gate so empty/near-silent
+        /// audio still exercises auth and network. Empty transcript counts as reachable.
+        /// </summary>
+        public async Task ProbeReachabilityAsync(CancellationToken cancellationToken)
+        {
+            // ~250ms of low-amplitude tone so providers accept the payload without needing real speech.
+            var pcm = new byte[8000];
+            for (var i = 0; i + 1 < pcm.Length; i += 2)
+            {
+                pcm[i] = 40;
+                pcm[i + 1] = 0;
+            }
+
+            var wav = BuildWav(pcm, 16_000, 1);
+            if (_managed)
+            {
+                _ = await TranscribeManagedAsync(wav, cancellationToken);
+                return;
+            }
+
+            var keys = GetByoKeys();
+            if (keys.Count == 0) throw new InvalidOperationException("No speech API key is configured.");
+            var selected = NextAvailableKey(keys)
+                ?? throw new InvalidOperationException("No speech API key is currently available.");
+            _ = await PostTranscriptionAsync(
+                GetProviderUrl(_settings.SpeechProviderId),
+                selected.Key,
+                wav,
+                _settings.SpeechModelId,
+                _settings.SpeechLanguage,
+                cancellationToken);
+        }
+
         private async Task<string> TranscribeManagedAsync(byte[] wav, CancellationToken cancellationToken)
         {
             using var form = BuildForm(wav, model: null, _settings.SpeechLanguage);

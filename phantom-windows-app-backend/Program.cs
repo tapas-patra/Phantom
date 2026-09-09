@@ -1682,6 +1682,20 @@ adminGroup.MapPost("/managed-ai/catalog/vision", (
     return Results.Ok(catalogService.UpdateModelVisionSupport(request));
 });
 
+adminGroup.MapPost("/managed-ai/catalog/model-flags", (
+    ManagedAiModelFlagsUpdateRequestDto request,
+    ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.UpdateModelFlags(request));
+});
+
+adminGroup.MapPost("/managed-ai/catalog/models", (
+    ManagedAiModelUpsertRequestDto request,
+    ManagedAiCatalogService catalogService) =>
+{
+    return Results.Ok(catalogService.AddOrUpdateModel(request));
+});
+
 adminGroup.MapPost("/managed-ai/test", async (
     AdminManagedAiTestRequestDto request,
     ManagedAiDiagnosticsService diagnostics,

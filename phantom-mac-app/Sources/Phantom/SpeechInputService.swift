@@ -13,27 +13,107 @@ final class SpeechInputService {
     private var cloudDrainTask: Task<Void, Never>?
     private var fallbackToNative = true
     private var forceNative = false
+    private var preferCloud = false
+    private var cloudCooldownUntil: Date?
+    private var cloudCooldownStep = 0
+    private var immediateCloudProbePending = false
+    private var immediateCloudProbeConsumed = false
+    private var pendingCloudRecovery = false
     private var tapInstalled = false
     private var shouldListen = false
     private var cloudTranscript = ""
+    private var lastNativeTranscript = ""
+
+    private static let cooldownMinutes = [5, 10, 15]
 
     var onTranscript: ((String, Bool) -> Void)?
     var onStateChange: ((String) -> Void)?
     private(set) var isListening = false
-    var isCloudMode: Bool { cloudTranscriber != nil && !forceNative }
+    var isCloudMode: Bool { cloudTranscriber != nil && preferCloud && !forceNative && !isCoolingDown }
 
-    func configureCloud(transcriber: ((Data) async throws -> String)?, fallbackToNative: Bool) {
+    private var isCoolingDown: Bool {
+        guard let until = cloudCooldownUntil else { return false }
+        return until > Date()
+    }
+
+    func configureCloud(transcriber: ((Data) async throws -> String)?, fallbackToNative: Bool, preferCloud: Bool) {
         cloudTranscriber = transcriber
         self.fallbackToNative = fallbackToNative
-        if transcriber == nil { forceNative = false }
+        self.preferCloud = preferCloud && transcriber != nil
+        if transcriber == nil || !preferCloud {
+            forceNative = false
+            pendingCloudRecovery = false
+            immediateCloudProbePending = false
+            immediateCloudProbeConsumed = false
+            cloudCooldownUntil = nil
+            cloudCooldownStep = 0
+        }
     }
 
     func start() async {
         guard !isListening, await requestPermissions() else { return }
         shouldListen = true
         cloudTranscript = ""
+        lastNativeTranscript = ""
         cloudAudio.reset()
-        if isCloudMode { startCloud() } else { startNative() }
+
+        if preferCloud, cloudTranscriber != nil {
+            if forceNative {
+                if immediateCloudProbePending {
+                    // Requirement E: first recovery attempt is the next mic press (no cooldown yet).
+                    immediateCloudProbePending = false
+                    forceNative = false
+                    Diagnostics.log("speech_route_probe route=cloud outcome=immediate_retry")
+                    startCloud()
+                    return
+                }
+                if !isCoolingDown {
+                    // Cooldown finished — keep this utterance on native, then resume cloud afterward.
+                    pendingCloudRecovery = true
+                    Diagnostics.log("speech_route_probe route=cloud outcome=scheduled_after_utterance")
+                }
+                startNative()
+                return
+            }
+            startCloud()
+            return
+        }
+        startNative()
+    }
+
+    private var currentCooldownMinutes: Int {
+        SpeechInputService.cooldownMinutes[min(cloudCooldownStep, SpeechInputService.cooldownMinutes.count - 1)]
+    }
+
+    private func escalateCloudCooldown() {
+        let minutes = currentCooldownMinutes
+        cloudCooldownUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        if cloudCooldownStep < SpeechInputService.cooldownMinutes.count - 1 {
+            cloudCooldownStep += 1
+        }
+    }
+
+    private func clearCloudFallback() {
+        forceNative = false
+        pendingCloudRecovery = false
+        immediateCloudProbePending = false
+        immediateCloudProbeConsumed = false
+        cloudCooldownUntil = nil
+        cloudCooldownStep = 0
+    }
+
+    private func enterNativeFallback(scheduleImmediateProbe: Bool) {
+        forceNative = true
+        if scheduleImmediateProbe {
+            immediateCloudProbePending = true
+            immediateCloudProbeConsumed = true
+            cloudCooldownUntil = nil
+            Diagnostics.log("speech_route_changed route=native_fallback reason=cloud_unavailable probe=next_mic")
+        } else {
+            immediateCloudProbePending = false
+            escalateCloudCooldown()
+            Diagnostics.log("speech_route_changed route=native_fallback reason=cloud_unavailable cooldown_minutes=\(currentCooldownMinutes)")
+        }
     }
 
     private func startNative() {
@@ -49,7 +129,10 @@ final class SpeechInputService {
             let finished = result?.isFinal == true || error != nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let transcript { self.onTranscript?(transcript, result?.isFinal == true) }
+                if let transcript {
+                    self.lastNativeTranscript = transcript
+                    self.onTranscript?(transcript, result?.isFinal == true)
+                }
                 if result?.isFinal == true, let transcript {
                     Diagnostics.log("speech_transcription_succeeded route=\(self.forceNative ? "native_fallback" : "native") transcript_length_bucket=\(Self.lengthBucket(transcript.count))")
                 }
@@ -96,7 +179,12 @@ final class SpeechInputService {
             onStateChange?("Finishing cloud transcription…")
         } else {
             recognitionRequest?.endAudio(); recognitionTask?.finish(); recognitionRequest = nil; recognitionTask = nil
-            onStateChange?("Ready")
+            // If recognition already finished without an isFinal callback, still finalize for auto-send.
+            if !lastNativeTranscript.isEmpty {
+                onTranscript?(lastNativeTranscript, true)
+            }
+            onStateChange?(forceNative ? "Native fallback ready" : "Ready")
+            applyPendingCloudRecoveryIfNeeded()
         }
     }
 
@@ -118,14 +206,28 @@ final class SpeechInputService {
                         let outcome = self.cloudTranscript.isEmpty ? "empty" : "success"
                         Diagnostics.log("speech_transcription_completed route=cloud outcome=\(outcome) transcript_length_bucket=\(Self.lengthBucket(self.cloudTranscript.count))")
                         self.onStateChange?(self.cloudTranscript.isEmpty ? "Cloud speech completed — no speech detected" : "Cloud speech recognized")
+                        if outcome == "success" {
+                            self.clearCloudFallback()
+                        }
                     }
                 } catch {
                     Diagnostics.log("speech_transcription_failed route=cloud error_code=\(String(describing: type(of: error))) fallback=\(self.fallbackToNative)")
                     self.cloudAudio.reset(); self.onStateChange?("Cloud speech unavailable")
                     if self.fallbackToNative {
-                        self.forceNative = true
-                        Diagnostics.log("speech_route_changed route=native_fallback reason=cloud_unavailable")
-                        if self.shouldListen { self.startNative() } else { self.onStateChange?("The next recording will use native speech fallback") }
+                        // First failure → retry cloud on the next mic. Subsequent failures → 5/10/15 cooldown.
+                        let firstFailure = !self.immediateCloudProbeConsumed
+                        self.enterNativeFallback(scheduleImmediateProbe: firstFailure)
+                        if self.shouldListen {
+                            self.startNative()
+                        } else if !self.cloudTranscript.isEmpty {
+                            // Stop already happened — still finalize so auto-send can run.
+                            self.onTranscript?(self.cloudTranscript, true)
+                            self.onStateChange?("Native fallback ready")
+                        } else {
+                            self.onStateChange?(firstFailure
+                                ? "The next recording will retry cloud speech"
+                                : "The next recording will use native speech fallback")
+                        }
                     }
                     break
                 }
@@ -137,6 +239,14 @@ final class SpeechInputService {
     private func finishNative() {
         stopEngine(); recognitionRequest = nil; recognitionTask = nil; isListening = false; shouldListen = false
         onStateChange?(forceNative ? "Native fallback ready" : "Ready")
+        applyPendingCloudRecoveryIfNeeded()
+    }
+
+    private func applyPendingCloudRecoveryIfNeeded() {
+        guard pendingCloudRecovery else { return }
+        clearCloudFallback()
+        Diagnostics.log("speech_route_changed route=cloud reason=probe_success_after_utterance")
+        onStateChange?("Cloud speech ready")
     }
 
     private func stopEngine() {

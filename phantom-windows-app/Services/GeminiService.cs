@@ -27,7 +27,7 @@ namespace SecureOverlay.Services
         public bool IsConfigured() => !string.IsNullOrWhiteSpace(_apiKey);
 
         // Non-streaming method
-        public async Task<string> SendMessageAsync(List<ConversationMessage> messages,  string? imageBase64 = null)
+        public async Task<string> SendMessageAsync(List<ConversationMessage> messages,  IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: Gemini API key not configured. Go to Settings.";
@@ -46,7 +46,7 @@ namespace SecureOverlay.Services
             try
             {
                 // Gemini uses a different message format
-                var contents = ConvertMessagesToGeminiFormat(messages, imageBase64);
+                var contents = ConvertMessagesToGeminiFormat(messages, imagesBase64);
 
                 var request = new
                 {
@@ -88,7 +88,7 @@ namespace SecureOverlay.Services
             List<ConversationMessage> messages, 
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null)
+            IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: Gemini API key not configured. Go to Settings.";
@@ -106,7 +106,7 @@ namespace SecureOverlay.Services
 
             try
             {
-                var contents = ConvertMessagesToGeminiFormat(messages, imageBase64);
+                var contents = ConvertMessagesToGeminiFormat(messages, imagesBase64);
 
                 var request = new
                 {
@@ -194,7 +194,7 @@ namespace SecureOverlay.Services
             }
         }
 
-        private List<object> ConvertMessagesToGeminiFormat(List<ConversationMessage> messages, string? imageBase64 = null)
+        private List<object> ConvertMessagesToGeminiFormat(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64 = null)
         {
             var contents = new List<object>();
             string systemPrompt = "";
@@ -222,22 +222,14 @@ namespace SecureOverlay.Services
                 // Check if this is the last user message and has image
                 bool isLastUserMessage = (index == userMessages.Count - 1 && role == "user");
                 
-                if (isLastUserMessage && !string.IsNullOrEmpty(imageBase64))
+                if (isLastUserMessage && MultimodalContentBuilder.HasImages(imagesBase64))
                 {
-                    // Gemini format with image
                     contents.Add(new
                     {
                         role = role,
-                        parts = new object[]
-                        {
-                            new { text = text },
-                            new { 
-                                inline_data = new { 
-                                    mime_type = "image/png", 
-                                    data = imageBase64 
-                                } 
-                            }
-                        }
+                        parts = MultimodalContentBuilder.BuildGeminiParts(
+                            text,
+                            MultimodalContentBuilder.Normalize(imagesBase64))
                     });
                 }
                 else

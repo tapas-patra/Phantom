@@ -47,7 +47,7 @@ public sealed class ManagedAiCatalogService
 
         var providers = _catalogRepository.ListAll()
             .Where(item => configuredProviderIds.Contains(item.ProviderId))
-            .Select(MapProvider)
+            .Select(MapProviderChatEligible)
             .Where(item => item.Models.Count > 0)
             .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -156,7 +156,7 @@ public sealed class ManagedAiCatalogService
             {
                 if (catalogByProvider.TryGetValue(providerId, out var record))
                 {
-                    return MapProvider(record);
+                    return MapProviderChatEligible(record);
                 }
 
                 return new ManagedAiProviderOptionDto
@@ -188,8 +188,14 @@ public sealed class ManagedAiCatalogService
             .FirstOrDefault()
             ?? throw new BackendValidationException($"No managed credential is configured for {ManagedAiCatalog.GetProviderLabel(providerId)}.");
 
+        var existing = _catalogRepository.FindByProviderId(providerId);
+        var existingModels = existing == null
+            ? Array.Empty<ManagedAiModelOptionDto>()
+            : DeserializeModels(existing.ModelsJson);
+
         var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-        var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+        var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+        var models = MergeFetchedModelsWithExisting(fetched, existingModels);
         var refreshedAtUtc = DateTime.UtcNow;
         _catalogRepository.Save(new ManagedProviderCatalogRecord
         {
@@ -236,6 +242,11 @@ public sealed class ManagedAiCatalogService
         var model = provider.Models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
             ?? throw new BackendValidationException("Managed model not found.");
 
+        if (!model.EligibleForChat)
+        {
+            throw new BackendValidationException("Active premium model must be eligible for chat.");
+        }
+
         if (!_credentials.ListByProvider(provider.ProviderId).Any(item => item.IsEnabled))
         {
             throw new BackendValidationException("At least one enabled credential is required for the selected provider.");
@@ -262,7 +273,9 @@ public sealed class ManagedAiCatalogService
         }
 
         return DeserializeModels(record.ModelsJson)
-            .Any(item => string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase));
+            .Any(item =>
+                string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase)
+                && item.EligibleForChat);
     }
 
     public bool ModelSupportsVision(string provider, string model)
@@ -298,6 +311,100 @@ public sealed class ManagedAiCatalogService
 
         model.SupportsVision = request.SupportsVision;
         record.ModelsJson = JsonSerializer.Serialize(models);
+        record.RefreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(record);
+
+        return MapProvider(record);
+    }
+
+    public ManagedAiProviderOptionDto UpdateModelFlags(ManagedAiModelFlagsUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        if (request.SupportsVision == null && request.EligibleForChat == null)
+        {
+            throw new BackendValidationException("At least one of SupportsVision or EligibleForChat is required.");
+        }
+
+        var record = _catalogRepository.FindByProviderId(request.ProviderId)
+            ?? throw new BackendValidationException("Managed provider catalog not found.");
+        var models = DeserializeModels(record.ModelsJson).ToList();
+        var model = models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new BackendValidationException("Managed model not found.");
+
+        if (request.SupportsVision.HasValue)
+        {
+            model.SupportsVision = request.SupportsVision.Value;
+        }
+
+        if (request.EligibleForChat.HasValue)
+        {
+            model.EligibleForChat = request.EligibleForChat.Value;
+        }
+
+        record.ModelsJson = JsonSerializer.Serialize(models);
+        record.RefreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(record);
+
+        return MapProvider(record);
+    }
+
+    public ManagedAiProviderOptionDto AddOrUpdateModel(ManagedAiModelUpsertRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (!ManagedAiCatalog.IsAllowedProvider(request.ProviderId))
+        {
+            throw new BackendValidationException("Unsupported managed AI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        var providerId = ManagedAiCatalog.GetAllProviders()
+            .First(item => string.Equals(item, request.ProviderId, StringComparison.OrdinalIgnoreCase));
+        var modelId = request.ModelId.Trim();
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? modelId : request.DisplayName.Trim();
+
+        var record = _catalogRepository.FindByProviderId(providerId);
+        var models = record == null
+            ? new List<ManagedAiModelOptionDto>()
+            : DeserializeModels(record.ModelsJson).ToList();
+
+        var model = models.FirstOrDefault(item => string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (model == null)
+        {
+            model = new ManagedAiModelOptionDto { ModelId = modelId };
+            models.Add(model);
+        }
+
+        model.ModelId = modelId;
+        model.DisplayName = displayName;
+        model.SupportsVision = request.SupportsVision;
+        model.EligibleForChat = request.EligibleForChat;
+
+        record ??= new ManagedProviderCatalogRecord
+        {
+            ProviderId = providerId,
+            Label = ManagedAiCatalog.GetProviderLabel(providerId)
+        };
+
+        record.Label = ManagedAiCatalog.GetProviderLabel(providerId);
+        record.ModelsJson = JsonSerializer.Serialize(
+            models.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray());
         record.RefreshedAtUtc = DateTime.UtcNow;
         _catalogRepository.Save(record);
 
@@ -366,7 +473,8 @@ public sealed class ManagedAiCatalogService
                 try
                 {
                     var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                    var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    var models = MergeFetchedModelsWithExisting(fetched, existingModels);
                     var refreshedAtUtc = DateTime.UtcNow;
 
                     _catalogRepository.Save(new ManagedProviderCatalogRecord
@@ -425,6 +533,45 @@ public sealed class ManagedAiCatalogService
             Models = DeserializeModels(record.ModelsJson),
             RefreshedAtUtc = record.RefreshedAtUtc
         };
+    }
+
+    private static ManagedAiProviderOptionDto MapProviderChatEligible(ManagedProviderCatalogRecord record)
+    {
+        var mapped = MapProvider(record);
+        return new ManagedAiProviderOptionDto
+        {
+            ProviderId = mapped.ProviderId,
+            Label = mapped.Label,
+            RefreshedAtUtc = mapped.RefreshedAtUtc,
+            Models = mapped.Models.Where(item => item.EligibleForChat).ToArray()
+        };
+    }
+
+    private static IReadOnlyList<ManagedAiModelOptionDto> MergeFetchedModelsWithExisting(
+        IReadOnlyList<ManagedAiModelOptionDto> fetched,
+        IReadOnlyList<ManagedAiModelOptionDto> existing)
+    {
+        var existingById = existing.ToDictionary(item => item.ModelId, StringComparer.OrdinalIgnoreCase);
+        return fetched
+            .Select(fetchedModel =>
+            {
+                if (!existingById.TryGetValue(fetchedModel.ModelId, out var existingModel))
+                {
+                    return fetchedModel;
+                }
+
+                return new ManagedAiModelOptionDto
+                {
+                    ModelId = fetchedModel.ModelId,
+                    DisplayName = string.IsNullOrWhiteSpace(fetchedModel.DisplayName)
+                        ? existingModel.DisplayName
+                        : fetchedModel.DisplayName,
+                    SupportsVision = existingModel.SupportsVision,
+                    EligibleForChat = existingModel.EligibleForChat
+                };
+            })
+            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static IReadOnlyList<ManagedAiModelOptionDto> DeserializeModels(string modelsJson)
@@ -531,7 +678,7 @@ public sealed class ManagedAiCatalogService
             }
 
             var id = idElement.GetString();
-            if (string.IsNullOrWhiteSpace(id) || !LooksLikeChatModel(id))
+            if (string.IsNullOrWhiteSpace(id) || !LooksLikeInventoryModel(id))
             {
                 continue;
             }
@@ -540,7 +687,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = id,
                 DisplayName = id,
-                SupportsVision = InferVisionSupport(id, null)
+                SupportsVision = InferVisionSupport(id, null),
+                EligibleForChat = LooksLikeChatModel(id)
             });
         }
 
@@ -581,7 +729,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = id,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName!,
-                SupportsVision = InferVisionSupport(id, displayName)
+                SupportsVision = InferVisionSupport(id, displayName),
+                EligibleForChat = true
             });
         }
 
@@ -628,7 +777,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = baseModelId,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? baseModelId : displayName!,
-                SupportsVision = InferVisionSupport(baseModelId, displayName)
+                SupportsVision = InferVisionSupport(baseModelId, displayName),
+                EligibleForChat = true
             });
         }
 
@@ -638,16 +788,24 @@ public sealed class ManagedAiCatalogService
             .ToArray();
     }
 
-    private static bool LooksLikeChatModel(string modelId)
+    private static bool LooksLikeInventoryModel(string modelId)
     {
         var normalized = modelId.ToLowerInvariant();
-        if (normalized.Contains("embedding")
+        return !(normalized.Contains("embedding")
             || normalized.Contains("moderation")
             || normalized.Contains("whisper")
             || normalized.Contains("tts")
             || normalized.Contains("transcribe")
             || normalized.Contains("image")
-            || normalized.Contains("rerank"))
+            || normalized.Contains("rerank")
+            || normalized.Contains("audio")
+            || normalized.Contains("realtime"));
+    }
+
+    private static bool LooksLikeChatModel(string modelId)
+    {
+        var normalized = modelId.ToLowerInvariant();
+        if (!LooksLikeInventoryModel(modelId))
         {
             return false;
         }

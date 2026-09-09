@@ -55,6 +55,22 @@ struct BYOClient {
         imageBase64: String?,
         messages: [ChatMessage]
     ) async throws -> URLSession.AsyncBytes {
+        try await chatStream(
+            provider: provider,
+            model: model,
+            apiKey: apiKey,
+            imagesBase64: imageBase64.map { [$0] } ?? [],
+            messages: messages
+        )
+    }
+
+    func chatStream(
+        provider: String,
+        model: String,
+        apiKey: String,
+        imagesBase64: [String],
+        messages: [ChatMessage]
+    ) async throws -> URLSession.AsyncBytes {
         let endpoint: URL
         switch provider {
         case "ChatGPT": endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
@@ -83,7 +99,7 @@ struct BYOClient {
             withJSONObject: payload(
                 provider: provider,
                 model: model,
-                imageBase64: imageBase64,
+                imagesBase64: imagesBase64,
                 messages: messages
             )
         )
@@ -158,7 +174,7 @@ struct BYOClient {
     private func payload(
         provider: String,
         model: String,
-        imageBase64: String?,
+        imagesBase64: [String],
         messages: [ChatMessage]
     ) -> [String: Any] {
         if provider == "Claude" {
@@ -166,13 +182,13 @@ struct BYOClient {
                 "model": model,
                 "max_tokens": 2_000,
                 "system": messages.first(where: { $0.role == "system" })?.content ?? "",
-                "messages": claudeMessages(messages, imageBase64: imageBase64),
+                "messages": claudeMessages(messages, imagesBase64: imagesBase64),
                 "stream": true
             ]
         }
         if provider == "Gemini" {
             return [
-                "contents": geminiMessages(messages, imageBase64: imageBase64),
+                "contents": geminiMessages(messages, imagesBase64: imagesBase64),
                 "generationConfig": ["maxOutputTokens": 2_000, "temperature": 0.7]
             ]
         }
@@ -180,7 +196,7 @@ struct BYOClient {
             "model": model,
             "messages": openAIMessages(
                 messages,
-                imageBase64: imageBase64,
+                imagesBase64: imagesBase64,
                 mistralImageURL: provider == "Mistral"
             ),
             "max_tokens": 2_000,
@@ -190,46 +206,42 @@ struct BYOClient {
 
     private func openAIMessages(
         _ messages: [ChatMessage],
-        imageBase64: String?,
+        imagesBase64: [String],
         mistralImageURL: Bool
     ) -> [[String: Any]] {
         let valid = messages.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let lastUserId = valid.last(where: { $0.role == "user" })?.id
         return valid.map { message in
-            guard message.id == lastUserId, let imageBase64 else {
+            guard message.id == lastUserId, !imagesBase64.isEmpty else {
                 return ["role": message.role, "content": message.content]
             }
-            let imageURL: Any = mistralImageURL
-                ? "data:image/png;base64,\(imageBase64)"
-                : ["url": "data:image/png;base64,\(imageBase64)"]
-            return [
-                "role": "user",
-                "content": [
-                    ["type": "text", "text": message.content],
-                    ["type": "image_url", "image_url": imageURL]
-                ]
-            ]
+            var content: [[String: Any]] = [["type": "text", "text": message.content]]
+            for image in imagesBase64 {
+                let imageURL: Any = mistralImageURL
+                    ? "data:image/png;base64,\(image)"
+                    : ["url": "data:image/png;base64,\(image)"]
+                content.append(["type": "image_url", "image_url": imageURL])
+            }
+            return ["role": "user", "content": content]
         }
     }
 
-    private func claudeMessages(_ messages: [ChatMessage], imageBase64: String?) -> [[String: Any]] {
+    private func claudeMessages(_ messages: [ChatMessage], imagesBase64: [String]) -> [[String: Any]] {
         let valid = messages.filter { $0.role != "system" && !$0.content.isEmpty }
         let lastUserId = valid.last(where: { $0.role == "user" })?.id
         return valid.map { message in
-            guard message.id == lastUserId, let imageBase64 else {
+            guard message.id == lastUserId, !imagesBase64.isEmpty else {
                 return ["role": message.role, "content": message.content]
             }
-            return [
-                "role": "user",
-                "content": [
-                    ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": imageBase64]],
-                    ["type": "text", "text": message.content]
-                ]
-            ]
+            var content: [[String: Any]] = imagesBase64.map { image in
+                ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": image]]
+            }
+            content.append(["type": "text", "text": message.content])
+            return ["role": "user", "content": content]
         }
     }
 
-    private func geminiMessages(_ messages: [ChatMessage], imageBase64: String?) -> [[String: Any]] {
+    private func geminiMessages(_ messages: [ChatMessage], imagesBase64: [String]) -> [[String: Any]] {
         let system = messages.first(where: { $0.role == "system" })?.content ?? ""
         let valid = messages.filter { $0.role != "system" && !$0.content.isEmpty }
         let firstUserId = valid.first(where: { $0.role == "user" })?.id
@@ -240,8 +252,10 @@ struct BYOClient {
                 ? system + "\n\n" + message.content
                 : message.content
             var parts: [[String: Any]] = [["text": text]]
-            if message.id == lastUserId, let imageBase64 {
-                parts.append(["inline_data": ["mime_type": "image/png", "data": imageBase64]])
+            if message.id == lastUserId {
+                for image in imagesBase64 {
+                    parts.append(["inline_data": ["mime_type": "image/png", "data": image]])
+                }
             }
             return ["role": role, "parts": parts]
         }

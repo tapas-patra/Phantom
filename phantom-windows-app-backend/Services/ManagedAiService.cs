@@ -179,7 +179,8 @@ public sealed class ManagedAiService
             throw new BackendValidationException("Unsupported managed model.");
         }
 
-        if (!string.IsNullOrWhiteSpace(request.ImageBase64)
+        var attachedImages = request.GetNormalizedImages();
+        if (attachedImages.Count > 0
             && !_catalogService.ModelSupportsVision(request.Provider, request.Model))
         {
             throw new BackendValidationException("The selected managed model is not marked as vision-capable.");
@@ -297,7 +298,7 @@ public sealed class ManagedAiService
             "managed_ai_milestone service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} stage={Stage} execution_lane={ExecutionLane} elapsed_ms={ElapsedMs} provider={Provider} model={Model} image_present={ImagePresent}",
             "phantom-windows-app-backend", "managed_ai", milestone, request.RequestId, request.RequestId, request.TurnId,
             milestone, "managed", stopwatch.Elapsed.TotalMilliseconds, request.Provider, request.Model,
-            !string.IsNullOrWhiteSpace(request.ImageBase64));
+            !string.IsNullOrWhiteSpace(request.ImageBase64) || (request.ImagesBase64?.Count > 0));
     }
 
     public async Task<AdminManagedAiTestResponseDto> RunAdminTestAsync(
@@ -317,7 +318,9 @@ public sealed class ManagedAiService
                 request.ProviderId,
                 request.ModelId,
                 request.Messages,
-                request.ImageBase64,
+                string.IsNullOrWhiteSpace(request.ImageBase64)
+                    ? Array.Empty<string>()
+                    : new[] { request.ImageBase64 },
                 timeoutCts.Token);
 
             stopwatch.Stop();
@@ -425,7 +428,7 @@ public sealed class ManagedAiService
         string providerId,
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
-        string? imageBase64,
+        IReadOnlyList<string>? imagesBase64,
         CancellationToken cancellationToken,
         int maxOutputTokens = 64)
     {
@@ -445,7 +448,7 @@ public sealed class ManagedAiService
                     providerId,
                     modelId,
                     messages,
-                    imageBase64,
+                    imagesBase64,
                     apiKey,
                     cancellationToken,
                     maxOutputTokens);
@@ -528,14 +531,14 @@ public sealed class ManagedAiService
             "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} max_output_tokens={MaxOutputTokens} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
             "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.RequestId, request.TurnId,
             request.Provider, request.Model, "managed", outputBudget, request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
-            request.Messages.Count, !string.IsNullOrWhiteSpace(request.ImageBase64));
+            request.Messages.Count, request.GetNormalizedImages().Count > 0);
         switch (request.Provider)
         {
             case ManagedAiCatalog.ChatGpt:
                 await StreamOpenAiCompatibleAsync(
                     streamWriter,
                     "https://api.openai.com/v1/chat/completions",
-                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
                     outputBudget,
                     apiKey,
@@ -545,7 +548,7 @@ public sealed class ManagedAiService
                 await StreamOpenAiCompatibleAsync(
                     streamWriter,
                     "https://api.mistral.ai/v1/chat/completions",
-                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: true),
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: true),
                     request.Model,
                     outputBudget,
                     apiKey,
@@ -555,7 +558,7 @@ public sealed class ManagedAiService
                 await StreamOpenAiCompatibleAsync(
                     streamWriter,
                     "https://api.groq.com/openai/v1/chat/completions",
-                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
                     outputBudget,
                     apiKey,
@@ -571,7 +574,7 @@ public sealed class ManagedAiService
                 await StreamOpenAiCompatibleAsync(
                     streamWriter,
                     "https://integrate.api.nvidia.com/v1/chat/completions",
-                    BuildOpenAiMessages(request.Messages, request.ImageBase64, mistralImageUrl: false),
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
                     outputBudget,
                     apiKey,
@@ -586,7 +589,7 @@ public sealed class ManagedAiService
         string providerId,
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
-        string? imageBase64,
+        IReadOnlyList<string>? imagesBase64,
         string apiKey,
         CancellationToken cancellationToken,
         int maxOutputTokens)
@@ -595,30 +598,30 @@ public sealed class ManagedAiService
         {
             ManagedAiCatalog.ChatGpt => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.openai.com/v1/chat/completions",
-                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
                 cancellationToken,
                 maxOutputTokens),
             ManagedAiCatalog.Mistral => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.mistral.ai/v1/chat/completions",
-                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: true),
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: true),
                 modelId,
                 apiKey,
                 cancellationToken,
                 maxOutputTokens),
             ManagedAiCatalog.Groq => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.groq.com/openai/v1/chat/completions",
-                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
                 cancellationToken,
                 maxOutputTokens),
-            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken, maxOutputTokens),
-            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imageBase64, apiKey, cancellationToken, maxOutputTokens),
+            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, maxOutputTokens),
+            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, maxOutputTokens),
             ManagedAiCatalog.Nvidia => await GenerateOpenAiCompatibleResponseAsync(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
-                BuildOpenAiMessages(messages, imageBase64, mistralImageUrl: false),
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
                 cancellationToken,
@@ -758,7 +761,7 @@ public sealed class ManagedAiService
             .Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content))
             .ToArray();
 
-        var apiMessages = BuildClaudeMessages(filteredMessages, request.ImageBase64);
+        var apiMessages = BuildClaudeMessages(filteredMessages, request.GetNormalizedImages());
         var payload = JsonSerializer.Serialize(new
         {
             model = request.Model,
@@ -838,7 +841,7 @@ public sealed class ManagedAiService
     private async Task<string> GenerateClaudeResponseAsync(
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
-        string? imageBase64,
+        IReadOnlyList<string>? imagesBase64,
         string apiKey,
         CancellationToken cancellationToken,
         int maxOutputTokens)
@@ -853,7 +856,7 @@ public sealed class ManagedAiService
             model = modelId,
             max_tokens = maxOutputTokens,
             system = systemPrompt,
-            messages = BuildClaudeMessages(filteredMessages, imageBase64)
+            messages = BuildClaudeMessages(filteredMessages, imagesBase64)
         });
 
         using var outbound = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
@@ -887,7 +890,7 @@ public sealed class ManagedAiService
 
     private async Task StreamGeminiAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, int outputBudget, CancellationToken cancellationToken)
     {
-        var contents = BuildGeminiContents(request.Messages, request.ImageBase64);
+        var contents = BuildGeminiContents(request.Messages, request.GetNormalizedImages());
         var payload = JsonSerializer.Serialize(new
         {
             contents,
@@ -964,14 +967,14 @@ public sealed class ManagedAiService
     private async Task<string> GenerateGeminiResponseAsync(
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
-        string? imageBase64,
+        IReadOnlyList<string>? imagesBase64,
         string apiKey,
         CancellationToken cancellationToken,
         int maxOutputTokens)
     {
         var payload = JsonSerializer.Serialize(new
         {
-            contents = BuildGeminiContents(messages, imageBase64),
+            contents = BuildGeminiContents(messages, imagesBase64),
             generationConfig = new
             {
                 maxOutputTokens,
@@ -1011,8 +1014,9 @@ public sealed class ManagedAiService
                 .Select(item => item.GetProperty("text").GetString()!.Trim()));
     }
 
-    private static object[] BuildOpenAiMessages(IReadOnlyList<DesktopAiChatMessageDto> messages, string? imageBase64, bool mistralImageUrl)
+    private static object[] BuildOpenAiMessages(IReadOnlyList<DesktopAiChatMessageDto> messages, IReadOnlyList<string>? imagesBase64, bool mistralImageUrl)
     {
+        var images = NormalizeImages(imagesBase64);
         var filtered = messages
             .Where(item => !string.IsNullOrWhiteSpace(item.Content))
             .ToArray();
@@ -1030,11 +1034,11 @@ public sealed class ManagedAiService
         return filtered
             .Select((item, index) =>
             {
-                var attachImage = index == lastUserIndex
+                var attachImages = index == lastUserIndex
                     && string.Equals(item.Role, "user", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(imageBase64);
+                    && images.Count > 0;
 
-                if (!attachImage)
+                if (!attachImages)
                 {
                     return (object)new
                     {
@@ -1043,48 +1047,53 @@ public sealed class ManagedAiService
                     };
                 }
 
+                var content = new List<object> { new { type = "text", text = item.Content } };
+                foreach (var image in images)
+                {
+                    content.Add(mistralImageUrl
+                        ? (object)new { type = "image_url", image_url = $"data:image/png;base64,{image}" }
+                        : (object)new { type = "image_url", image_url = new { url = $"data:image/png;base64,{image}" } });
+                }
+
                 return new
                 {
                     role = "user",
-                    content = new object[]
-                    {
-                        new { type = "text", text = item.Content },
-                        mistralImageUrl
-                            ? (object)new { type = "image_url", image_url = $"data:image/png;base64,{imageBase64}" }
-                            : (object)new { type = "image_url", image_url = new { url = $"data:image/png;base64,{imageBase64}" } }
-                    }
+                    content = content.ToArray()
                 };
             })
             .ToArray();
     }
 
-    private static object[] BuildClaudeMessages(IReadOnlyList<DesktopAiChatMessageDto> filteredMessages, string? imageBase64)
+    private static object[] BuildClaudeMessages(IReadOnlyList<DesktopAiChatMessageDto> filteredMessages, IReadOnlyList<string>? imagesBase64)
     {
+        var images = NormalizeImages(imagesBase64);
         return filteredMessages
             .Select((item, index) =>
             {
                 var isLastUser = string.Equals(item.Role, "user", StringComparison.OrdinalIgnoreCase)
                     && index == filteredMessages.Count - 1;
 
-                if (isLastUser && !string.IsNullOrWhiteSpace(imageBase64))
+                if (isLastUser && images.Count > 0)
                 {
+                    var content = new List<object>();
+                    foreach (var image in images)
+                    {
+                        content.Add(new
+                        {
+                            type = "image",
+                            source = new
+                            {
+                                type = "base64",
+                                media_type = "image/png",
+                                data = image
+                            }
+                        });
+                    }
+                    content.Add(new { type = "text", text = item.Content });
                     return (object)new
                     {
                         role = "user",
-                        content = new object[]
-                        {
-                            new
-                            {
-                                type = "image",
-                                source = new
-                                {
-                                    type = "base64",
-                                    media_type = "image/png",
-                                    data = imageBase64
-                                }
-                            },
-                            new { type = "text", text = item.Content }
-                        }
+                        content = content.ToArray()
                     };
                 }
 
@@ -1097,8 +1106,9 @@ public sealed class ManagedAiService
             .ToArray();
     }
 
-    private static object[] BuildGeminiContents(IReadOnlyList<DesktopAiChatMessageDto> messages, string? imageBase64)
+    private static object[] BuildGeminiContents(IReadOnlyList<DesktopAiChatMessageDto> messages, IReadOnlyList<string>? imagesBase64)
     {
+        var images = NormalizeImages(imagesBase64);
         var systemPrompt = messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
         var filtered = messages.Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content)).ToArray();
         var items = new List<object>();
@@ -1111,27 +1121,29 @@ public sealed class ManagedAiService
                 ? $"{systemPrompt}\n\n{item.Content}"
                 : item.Content;
 
-            var attachImage = i == filtered.Length - 1
+            var attachImages = i == filtered.Length - 1
                 && role == "user"
-                && !string.IsNullOrWhiteSpace(imageBase64);
+                && images.Count > 0;
 
-            if (attachImage)
+            if (attachImages)
             {
+                var parts = new List<object> { new { text } };
+                foreach (var image in images)
+                {
+                    parts.Add(new
+                    {
+                        inline_data = new
+                        {
+                            mime_type = "image/png",
+                            data = image
+                        }
+                    });
+                }
+
                 items.Add(new
                 {
                     role,
-                    parts = new object[]
-                    {
-                        new { text },
-                        new
-                        {
-                            inline_data = new
-                            {
-                                mime_type = "image/png",
-                                data = imageBase64
-                            }
-                        }
-                    }
+                    parts = parts.ToArray()
                 });
             }
             else
@@ -1148,6 +1160,20 @@ public sealed class ManagedAiService
         }
 
         return items.ToArray();
+    }
+
+    private static IReadOnlyList<string> NormalizeImages(IReadOnlyList<string>? imagesBase64)
+    {
+        if (imagesBase64 == null || imagesBase64.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return imagesBase64
+            .Where(image => !string.IsNullOrWhiteSpace(image))
+            .Select(image => image.Trim())
+            .Take(DesktopAiChatRequestDto.MaxAttachedImages)
+            .ToArray();
     }
 
     private static string ReadOpenAiContent(JsonElement content)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -59,17 +60,17 @@ namespace SecureOverlay.Services
             return EnsureValidSession() != null;
         }
 
-        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
+        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64 = null)
         {
             var builder = new StringBuilder();
-            return await SendMessageStreamAsync(messages, chunk => builder.Append(chunk), CancellationToken.None, imageBase64);
+            return await SendMessageStreamAsync(messages, chunk => builder.Append(chunk), CancellationToken.None, imagesBase64);
         }
 
         public async Task<string> SendMessageStreamAsync(
             List<ConversationMessage> messages,
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null)
+            IReadOnlyList<string>? imagesBase64 = null)
         {
             var session = EnsureValidSession();
             if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
@@ -86,7 +87,8 @@ namespace SecureOverlay.Services
                     provider = _provider,
                     model = _model,
                     allowPaidSessionExtension = _allowPaidSessionExtension,
-                    imageBase64,
+                    imageBase64 = MultimodalContentBuilder.Normalize(imagesBase64).FirstOrDefault(),
+                    imagesBase64 = MultimodalContentBuilder.Normalize(imagesBase64).Take(3).ToList(),
                     messages = messages.ConvertAll(message => new
                     {
                         role = message.Role,
@@ -118,7 +120,7 @@ namespace SecureOverlay.Services
                                 messages,
                                 onChunkReceived,
                                 cancellationToken,
-                                imageBase64);
+                                imagesBase64);
                         }
                     }
 
@@ -208,7 +210,7 @@ namespace SecureOverlay.Services
             List<ConversationMessage> messages,
             Action<string> onChunkReceived,
             CancellationToken cancellationToken,
-            string? imageBase64)
+            IReadOnlyList<string>? imagesBase64)
         {
             var payload = new
             {
@@ -217,7 +219,8 @@ namespace SecureOverlay.Services
                 provider = _provider,
                 model = _model,
                 allowPaidSessionExtension = _allowPaidSessionExtension,
-                imageBase64,
+                imageBase64 = MultimodalContentBuilder.Normalize(imagesBase64).FirstOrDefault(),
+                imagesBase64 = MultimodalContentBuilder.Normalize(imagesBase64).Take(3).ToList(),
                 messages = messages.ConvertAll(message => new
                 {
                     role = message.Role,

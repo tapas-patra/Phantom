@@ -27,7 +27,7 @@ namespace SecureOverlay.Services
 
         public bool IsConfigured() => !string.IsNullOrWhiteSpace(_apiKey) && !string.IsNullOrWhiteSpace(_model);
 
-        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
+        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: NVIDIA API key or model not configured. Go to Settings.";
@@ -41,7 +41,7 @@ namespace SecureOverlay.Services
 
             try
             {
-                var apiMessages = BuildMessages(messages, imageBase64);
+                var apiMessages = BuildMessages(messages, imagesBase64);
                 var request = new
                 {
                     model = _model,
@@ -75,7 +75,7 @@ namespace SecureOverlay.Services
             List<ConversationMessage> messages,
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null)
+            IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: NVIDIA API key or model not configured. Go to Settings.";
@@ -92,7 +92,7 @@ namespace SecureOverlay.Services
                 var request = new
                 {
                     model = _model,
-                    messages = BuildMessages(messages, imageBase64),
+                    messages = BuildMessages(messages, imagesBase64),
                     max_tokens = 2000,
                     stream = true
                 };
@@ -164,26 +164,20 @@ namespace SecureOverlay.Services
             }
         }
 
-        private static List<object> BuildMessages(List<ConversationMessage> messages, string? imageBase64)
+        private static List<object> BuildMessages(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64)
         {
             var apiMessages = new List<object>();
             foreach (var msg in messages.Where(m => !string.IsNullOrWhiteSpace(m.Content)))
             {
                 bool isLastUserMessage = msg == messages.Last(m => m.Role == "user" && !string.IsNullOrWhiteSpace(m.Content));
-                if (msg.Role == "user" && isLastUserMessage && !string.IsNullOrWhiteSpace(imageBase64))
+                if (msg.Role == "user" && isLastUserMessage && MultimodalContentBuilder.HasImages(imagesBase64))
                 {
                     apiMessages.Add(new
                     {
                         role = "user",
-                        content = new object[]
-                        {
-                            new { type = "text", text = msg.Content },
-                            new
-                            {
-                                type = "image_url",
-                                image_url = new { url = $"data:image/png;base64,{imageBase64}" }
-                            }
-                        }
+                        content = MultimodalContentBuilder.BuildOpenAiContent(
+                            msg.Content,
+                            MultimodalContentBuilder.Normalize(imagesBase64))
                     });
                 }
                 else

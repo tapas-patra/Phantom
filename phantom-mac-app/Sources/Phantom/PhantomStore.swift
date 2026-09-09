@@ -12,7 +12,12 @@ final class PhantomStore: ObservableObject {
     @Published var screen: Screen = .login
     @Published var email = ""
     @Published var password = ""
-    @Published var status = "Checking saved session…"
+    @Published var status = "Checking saved session…" {
+        didSet {
+            let cleaned = UserFacingText.sanitize(status)
+            if cleaned != status { status = cleaned }
+        }
+    }
     @Published var isBusy = false
     @Published var session: AuthSession?
     @Published var account: StartupSnapshot?
@@ -42,7 +47,7 @@ final class PhantomStore: ObservableObject {
             if !selectedProviderId.isEmpty {
                 UserDefaults.standard.set(selectedModelId, forKey: "chat.model.\(selectedProviderId.lowercased())")
             }
-            if attachedScreenshot != nil, !selectedModelSupportsVision { removeScreenshot() }
+            if !attachedScreenshots.isEmpty, !selectedModelSupportsVision { removeScreenshot() }
         }
     }
     @Published var prompt = ""
@@ -86,12 +91,20 @@ final class PhantomStore: ObservableObject {
         didSet { UserDefaults.standard.set(debugErrorSimulation, forKey: "debug.simulation") }
     }
     @Published var debugRequestCount = 0
-    @Published var attachedScreenshot: Data?
+    @Published var attachedScreenshots: [Data] = []
     @Published var isScreenshotPreviewVisible = false
     @Published var isCapturingScreenshot = false
+    static let maxAttachedScreenshots = 3
+    static let maxResumeWords = 1_200
+    static let maxJobDescriptionWords = 450
     @Published var isCompact = false
     @Published var isListening = false
-    @Published var voiceStatus = "Ready"
+    @Published var voiceStatus = "Ready" {
+        didSet {
+            let cleaned = UserFacingText.sanitize(voiceStatus)
+            if cleaned != voiceStatus { voiceStatus = cleaned }
+        }
+    }
     @Published var voiceEnabled: Bool {
         didSet { UserDefaults.standard.set(voiceEnabled, forKey: "voice.enabled") }
     }
@@ -316,9 +329,9 @@ final class PhantomStore: ObservableObject {
     }
 
     var selectedSpeechProvider: ManagedProvider? { speechProviders.first(where: { $0.providerId == selectedSpeechProviderId }) }
-    var usesManagedSpeech: Bool { isPremiumAccount }
-    var usesCloudSpeech: Bool { usesManagedSpeech || (isByoSpeechEligible && speechRecognitionMode == "Cloud") }
-    private var isByoSpeechEligible: Bool { account?.accessTier.lowercased() == "pro_byo" }
+    var usesManagedSpeech: Bool { !useBYOProvider }
+    var usesCloudSpeech: Bool { usesManagedSpeech || (useBYOProvider && hasBYOEntitlement && speechRecognitionMode == "Cloud") }
+    private var isByoSpeechEligible: Bool { hasBYOEntitlement }
 
     var protectionStatus: String {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 15
@@ -327,8 +340,14 @@ final class PhantomStore: ObservableObject {
     }
 
     var selectedModelSupportsVision: Bool {
-        (!useBYOProvider && isPremiumAccount)
-            || selectedProvider?.models.first(where: { $0.modelId == selectedModelId })?.supportsVision == true
+        selectedProvider?.models.first(where: { $0.modelId == selectedModelId })?.supportsVision == true
+    }
+
+    var attachedScreenshotCount: Int { attachedScreenshots.count }
+
+    var hasConfiguredBYOKeys: Bool {
+        byoProviders.contains(where: { !rotation.keys(for: $0.providerId).isEmpty })
+            || !rotation.keys(for: selectedProviderId).isEmpty
     }
 
     var isFreeTrialAccount: Bool { AccountAccess.isFree(account?.accessTier) }
@@ -393,6 +412,17 @@ final class PhantomStore: ObservableObject {
     }
     var activeKeyPosition: String { useBYOProvider ? rotation.keyPosition(provider: selectedProviderId) : "" }
 
+    /// Credit-mode chip: show BYO when BYO credits exist even if keys are missing (never Idle in that case).
+    var activeCreditModeLabel: String {
+        guard let account else { return "Idle" }
+        if isFreeTrialAccount { return "Trial" }
+        if account.wallet.premiumNegativeCredits > 0 { return "Debt" }
+        if useBYOProvider || account.wallet.proAvailableCredits > 0 { return "BYO" }
+        if hasPremiumManagedEntitlement { return "Premium" }
+        if hasBYOEntitlement { return "BYO" }
+        return "Idle"
+    }
+
     var contextPackHasUnsavedChanges: Bool {
         guard let pack = contextPacks.first(where: { $0.packId == selectedContextPackId }) else { return false }
         return pack.name != contextPackName || pack.resumeText != resumeText || pack.jobDescriptionText != jobDescriptionText
@@ -400,6 +430,8 @@ final class PhantomStore: ObservableObject {
 
     var resumeWordCount: Int { resumeText.split(whereSeparator: { $0.isWhitespace }).count }
     var jobDescriptionWordCount: Int { jobDescriptionText.split(whereSeparator: { $0.isWhitespace }).count }
+    var resumeOverLimit: Bool { resumeWordCount > Self.maxResumeWords }
+    var jobDescriptionOverLimit: Bool { jobDescriptionWordCount > Self.maxJobDescriptionWords }
 
     func bootstrap() {
         Diagnostics.log("bootstrap:start")
@@ -525,6 +557,10 @@ final class PhantomStore: ObservableObject {
     }
 
     func saveSettings() {
+        if resumeOverLimit || jobDescriptionOverLimit {
+            status = "Resume is limited to \(Self.maxResumeWords) words and job description to \(Self.maxJobDescriptionWords). Shorten them before saving."
+            return
+        }
         let savedClickThrough = settingsClickThrough
         if let old = settingsSnapshot, old.resume != resumeText || old.job != jobDescriptionText {
             conversationManager.reset()
@@ -726,7 +762,7 @@ final class PhantomStore: ObservableObject {
     }
 
     func showScreenshotPreview() {
-        guard attachedScreenshot != nil else { return }
+        guard !attachedScreenshots.isEmpty else { return }
         isScreenshotPreviewVisible = true
     }
 
@@ -786,7 +822,7 @@ final class PhantomStore: ObservableObject {
         speechInput.stop()
         isSending = false
         isListening = false
-        attachedScreenshot = nil
+        attachedScreenshots = []
         isScreenshotPreviewVisible = false
         messages.removeAll()
         resumeText = ""
@@ -806,7 +842,7 @@ final class PhantomStore: ObservableObject {
         speechInput.stop()
         isSending = false
         isListening = false
-        attachedScreenshot = nil
+        attachedScreenshots = []
         isScreenshotPreviewVisible = false
         messages.removeAll()
         jobDescriptionText = ""
@@ -832,16 +868,17 @@ final class PhantomStore: ObservableObject {
         let providers = catalog.providers.isEmpty ? BYOCatalog.providers : catalog.providers
         byoProviders = providers.map { provider in
             let fallback = BYOCatalog.providers.first(where: { $0.providerId == provider.providerId })?.models ?? []
+            let models = (provider.models.isEmpty ? fallback : provider.models).filter(\.eligibleForChat)
             return ManagedProvider(
                 providerId: provider.providerId,
                 label: provider.label.isEmpty ? provider.providerId : provider.label,
-                models: provider.models.isEmpty ? fallback : provider.models,
+                models: models.isEmpty ? fallback : models,
                 refreshedAtUtc: provider.refreshedAtUtc
             )
         }
         if useBYOProvider {
             self.providers = byoProviders
-            selectAvailableModel()
+            ensureValidChatSelection(preferConfiguredKeys: false)
         }
     }
 
@@ -852,11 +889,22 @@ final class PhantomStore: ObservableObject {
         }
 
         Task {
+            let cached = BYOCatalogStore.load()
+            let coldStart = cached == nil
+                || cached!.providers.isEmpty
+                || cached!.providers.allSatisfy({ $0.models.isEmpty })
+                || byoProviders.allSatisfy({ $0.models.isEmpty })
+            let explicit = forceAll || forceProvider != nil
+            let autoAllowed = CatalogRefreshQuota.canAutoRefresh()
+            let shouldFetch = explicit || coldStart || (autoAllowed && (BYOCatalogStore.isStale() || byoProviders.contains(where: { $0.models.isEmpty })))
+            guard shouldFetch else {
+                if let cached { applyBYOCatalog(cached) }
+                return
+            }
+
             do {
-                let needsForce = forceAll || forceProvider != nil || BYOCatalogStore.isStale()
-                    || byoProviders.contains(where: { $0.models.isEmpty })
                 let catalog: ManagedCatalog
-                if needsForce {
+                if explicit || coldStart || BYOCatalogStore.isStale() || byoProviders.contains(where: { $0.models.isEmpty }) {
                     catalog = try await backend.refreshByoCatalog(
                         accessToken: session.accessToken,
                         providerId: forceAll ? "" : (forceProvider ?? "")
@@ -866,10 +914,21 @@ final class PhantomStore: ObservableObject {
                 }
                 BYOCatalogStore.save(catalog)
                 applyBYOCatalog(catalog)
+                if !explicit { CatalogRefreshQuota.recordAutoRefresh() }
+
+                if let speechCatalog = try? await backend.speechCatalog(accessToken: session.accessToken) {
+                    SpeechCatalogStore.save(speechCatalog)
+                    let next = speechCatalog.providers.filter { !$0.models.isEmpty }
+                    if next != speechProviders {
+                        speechProviders = next
+                        selectSpeechModel()
+                    }
+                }
+
                 if catalog.providers.allSatisfy({ $0.models.isEmpty }) {
                     byoKeyStatus = "BYO providers loaded, but models are still empty. Tap Refresh models."
-                } else if forceAll || forceProvider != nil {
-                    byoKeyStatus = "BYO models refreshed from Phantom."
+                } else if explicit {
+                    byoKeyStatus = "BYO chat and speech catalogs refreshed."
                 }
             } catch {
                 if byoProviders.isEmpty {
@@ -891,6 +950,10 @@ final class PhantomStore: ObservableObject {
             status = "Choose a vision-capable model before attaching a screenshot."
             return
         }
+        guard attachedScreenshots.count < Self.maxAttachedScreenshots else {
+            status = "You can attach up to \(Self.maxAttachedScreenshots) screenshots."
+            return
+        }
         guard let onCaptureScreenshot else {
             status = "Screenshot capture is unavailable."
             return
@@ -901,18 +964,29 @@ final class PhantomStore: ObservableObject {
         Task {
             defer { isCapturingScreenshot = false }
             do {
-                attachedScreenshot = try await onCaptureScreenshot()
-                status = "Screenshot attached"
+                let data = try await onCaptureScreenshot()
+                guard attachedScreenshots.count < Self.maxAttachedScreenshots else {
+                    status = "You can attach up to \(Self.maxAttachedScreenshots) screenshots."
+                    return
+                }
+                attachedScreenshots.append(data)
+                status = "Screenshot \(attachedScreenshots.count)/\(Self.maxAttachedScreenshots) attached"
             } catch {
                 status = error.localizedDescription
             }
         }
     }
 
-    func removeScreenshot() {
-        attachedScreenshot = nil
-        isScreenshotPreviewVisible = false
-        status = "Screenshot removed"
+    func removeScreenshot(at index: Int? = nil) {
+        if let index, attachedScreenshots.indices.contains(index) {
+            attachedScreenshots.remove(at: index)
+        } else {
+            attachedScreenshots = []
+        }
+        if attachedScreenshots.isEmpty { isScreenshotPreviewVisible = false }
+        status = attachedScreenshots.isEmpty
+            ? "Screenshots removed"
+            : "Screenshot removed • \(attachedScreenshots.count)/\(Self.maxAttachedScreenshots) remaining"
     }
 
     func toggleVoiceInput() {
@@ -957,7 +1031,7 @@ final class PhantomStore: ObservableObject {
             return
         }
         var text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty, attachedScreenshot != nil { text = "Please analyze this screenshot." }
+        if text.isEmpty, !attachedScreenshots.isEmpty { text = "Please analyze this screenshot." }
         guard !text.isEmpty,
               !isSending,
               let session,
@@ -978,17 +1052,23 @@ final class PhantomStore: ObservableObject {
             runtimeLaneOverride = false
             syncRuntimeLane()
         }
-        if attachedScreenshot != nil, !selectedModelSupportsVision {
+        if !attachedScreenshots.isEmpty, !selectedModelSupportsVision {
             removeScreenshot()
-            status = "The screenshot was removed because the selected model does not support vision."
+            status = "The screenshots were removed because the selected model does not support vision."
         }
-        if useBYOProvider && rotation.keys(for: selectedProviderId).isEmpty {
-            status = "Add a \(selectedProviderId) API key in Settings."
-            return
+        if useBYOProvider {
+            if rotation.keys(for: selectedProviderId).isEmpty {
+                if let configured = byoProviders.first(where: { !rotation.keys(for: $0.providerId).isEmpty }) {
+                    selectedProviderId = configured.providerId
+                } else {
+                    status = "Add a \(selectedProviderId.isEmpty ? "provider" : selectedProviderId) API key in Settings before sending."
+                    return
+                }
+            }
         }
 
         prompt = ""
-        let imageBase64 = attachedScreenshot?.base64EncodedString()
+        let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
         let model = selectedModelId
         let usesBYO = useBYOProvider
@@ -1023,7 +1103,20 @@ final class PhantomStore: ObservableObject {
                     canStartNewInterview: launchContext.canStartInterview || startingPaidExtension,
                     allowPaidExtension: startingPaidExtension
                 )
-                guard activation.allowed else { throw BackendError.server("\(activation.title): \(activation.message)") }
+                guard activation.allowed else {
+                    let byoNeeded = usesBYO
+                        || account.wallet.proAvailableCredits > 0
+                        || AccountAccess.usesBYO(
+                            tier: account.accessTier,
+                            proCredits: account.wallet.proAvailableCredits,
+                            premiumCredits: account.wallet.premiumAvailableCredits,
+                            preferBYO: preferBYOCreditsFirst
+                        )
+                    if byoNeeded, !hasConfiguredBYOKeys {
+                        throw BackendError.server("Add a \(provider.isEmpty ? "provider" : provider) API key in Settings before sending.")
+                    }
+                    throw BackendError.server("\(activation.title): \(activation.message)")
+                }
                 lastInterviewActivityAt = Date()
                 startHeartbeat()
                 try await runtime.metering.trackQuestion(text)
@@ -1085,7 +1178,7 @@ final class PhantomStore: ObservableObject {
                                 let selected = try await self.byoResponseWithRotation(
                                     provider: provider,
                                     selectedModel: self.selectedModelId,
-                                    imageBase64: imageBase64,
+                                    imagesBase64: imagesBase64,
                                     messages: outbound,
                                     onDelta: onDelta,
                                     onRetryCleanup: onRetryCleanup
@@ -1120,7 +1213,7 @@ final class PhantomStore: ObservableObject {
                                     provider: managedProvider,
                                     model: self.managedProviders.first?.models.first?.modelId ?? model,
                                     allowPaidSessionExtension: true,
-                                    imageBase64: imageBase64,
+                                    imagesBase64: imagesBase64,
                                     messages: outbound,
                                     turnId: requestId,
                                     operationId: operationId,
@@ -1135,7 +1228,7 @@ final class PhantomStore: ObservableObject {
                             provider: self.selectedProviderId,
                             model: self.selectedModelId,
                             allowPaidSessionExtension: self.isFreeTrialAccount ? self.allowFreeTrialSessionExtension : self.allowPaidSessionExtension,
-                            imageBase64: imageBase64,
+                            imagesBase64: imagesBase64,
                             messages: outbound,
                             turnId: requestId,
                             operationId: operationId,
@@ -1295,9 +1388,14 @@ final class PhantomStore: ObservableObject {
                     ]) { current, _ in current },
                     accessToken: session.accessToken
                 )
-                let failureMessage = error is PhantomProtocolError
-                    ? "The selected AI model returned an invalid response format. Please retry or choose another model."
-                    : "The AI provider could not complete this request. Please retry."
+                let failureMessage: String
+                if let backendError = error as? BackendError {
+                    failureMessage = UserFacingText.sanitize(backendError.localizedDescription)
+                } else if error is PhantomProtocolError {
+                    failureMessage = "The selected AI model returned an invalid response format. Please retry or choose another model."
+                } else {
+                    failureMessage = "The AI provider could not complete this request. Please retry."
+                }
                 if let reply, let index = messages.firstIndex(where: { $0.id == reply.id }) {
                     messages[index].content = "Error: \(failureMessage)"
                     messages[index].responseTimeMs = max(0, Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))
@@ -1305,7 +1403,7 @@ final class PhantomStore: ObservableObject {
                 }
                 status = failureMessage
             }
-            attachedScreenshot = nil
+            attachedScreenshots = []
             Diagnostics.event("session_ended", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
             ConversationStore.save(messages)
         }
@@ -1334,7 +1432,7 @@ final class PhantomStore: ObservableObject {
     private func byoResponseWithRotation(
         provider: String,
         selectedModel: String,
-        imageBase64: String?,
+        imagesBase64: [String],
         messages: [ChatMessage],
         onDelta: @escaping (String) -> Void,
         onRetryCleanup: @escaping () -> Void
@@ -1357,7 +1455,7 @@ final class PhantomStore: ObservableObject {
                     provider: provider,
                     model: model,
                     apiKey: key.value,
-                    imageBase64: imageBase64,
+                    imagesBase64: imagesBase64,
                     messages: messages
                 )
                 Diagnostics.event("provider_headers_received", sessionId: copilotSessionId, turnId: activeTurnId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["elapsed_ms": "\(Int(Date().timeIntervalSince(modelStartedAt) * 1_000))", "provider": provider, "model": model])
@@ -1439,7 +1537,7 @@ final class PhantomStore: ObservableObject {
         provider: String,
         model: String,
         allowPaidSessionExtension: Bool,
-        imageBase64: String?,
+        imagesBase64: [String],
         messages: [ChatMessage],
         turnId: String,
         operationId: String,
@@ -1457,7 +1555,7 @@ final class PhantomStore: ObservableObject {
                     provider: provider,
                     model: model,
                     allowPaidSessionExtension: allowPaidSessionExtension,
-                    imageBase64: imageBase64,
+                    imagesBase64: imagesBase64,
                     messages: messages,
                     turnId: turnId,
                     operationId: operationId
@@ -1574,7 +1672,7 @@ final class PhantomStore: ObservableObject {
         selectedContextPackId = ""
         contextPackName = ""
         messages = []
-        attachedScreenshot = nil
+        attachedScreenshots = []
         ConversationStore.clear()
         screen = .login
         status = "Signed out."
@@ -1720,7 +1818,12 @@ final class PhantomStore: ObservableObject {
     }
 
     private func selectAvailableModel() {
-        if useBYOProvider,
+        ensureValidChatSelection(preferConfiguredKeys: true)
+    }
+
+    private func ensureValidChatSelection(preferConfiguredKeys: Bool) {
+        if preferConfiguredKeys,
+           useBYOProvider,
            rotation.keys(for: selectedProviderId).isEmpty,
            let configured = byoProviders.first(where: { !rotation.keys(for: $0.providerId).isEmpty }) {
             selectedProviderId = configured.providerId
@@ -1732,10 +1835,27 @@ final class PhantomStore: ObservableObject {
             selectedModelId = ""
             return
         }
-        if !provider.models.contains(where: { $0.modelId == selectedModelId }) {
-            selectedModelId = provider.models.first?.modelId ?? ""
+        let chatModels = provider.models.filter(\.eligibleForChat)
+        let models = chatModels.isEmpty ? provider.models : chatModels
+        if !models.contains(where: { $0.modelId == selectedModelId }) {
+            selectedModelId = models.first?.modelId ?? ""
         }
         loadBYOKey()
+    }
+
+    private func ensureValidSpeechSelection() {
+        guard let firstProvider = speechProviders.first else {
+            if !selectedSpeechModelId.isEmpty { selectedSpeechModelId = "" }
+            return
+        }
+        if !speechProviders.contains(where: { $0.providerId == selectedSpeechProviderId }) {
+            selectedSpeechProviderId = firstProvider.providerId
+            return
+        }
+        guard let provider = selectedSpeechProvider else { return }
+        if !provider.models.contains(where: { $0.modelId == selectedSpeechModelId }) {
+            selectedSpeechModelId = provider.models.first?.modelId ?? ""
+        }
     }
 
     private func loadContextPacks(selecting preferredId: String? = nil) async {
@@ -1838,18 +1958,7 @@ final class PhantomStore: ObservableObject {
     }
 
     private func selectSpeechModel() {
-        guard let firstProvider = speechProviders.first else {
-            if !selectedSpeechModelId.isEmpty { selectedSpeechModelId = "" }
-            return
-        }
-        if !speechProviders.contains(where: { $0.providerId == selectedSpeechProviderId }) {
-            selectedSpeechProviderId = firstProvider.providerId
-            return
-        }
-        guard let provider = selectedSpeechProvider else { return }
-        if !provider.models.contains(where: { $0.modelId == selectedSpeechModelId }) {
-            selectedSpeechModelId = provider.models.first?.modelId ?? ""
-        }
+        ensureValidSpeechSelection()
     }
 
     private func loadSpeechKeys() {
@@ -1873,7 +1982,7 @@ final class PhantomStore: ObservableObject {
 
     private func configureSpeechRuntime() {
         guard usesCloudSpeech, let session else {
-            speechInput.configureCloud(transcriber: nil, fallbackToNative: true)
+            speechInput.configureCloud(transcriber: nil, fallbackToNative: true, preferCloud: false)
             return
         }
         let managed = usesManagedSpeech
@@ -1894,7 +2003,7 @@ final class PhantomStore: ObservableObject {
                 Diagnostics.log("speech_provider_failed route=\(managed ? "managed" : "byo") provider=\(provider) model=\(model) error_code=\(failure.kind.rawValue)")
                 throw error
             }
-        }, fallbackToNative: managed || autoFallbackToNativeSpeech)
+        }, fallbackToNative: managed || autoFallbackToNativeSpeech, preferCloud: usesCloudSpeech)
     }
 
     private func syncRuntimeLane() {
@@ -1955,7 +2064,7 @@ final class PhantomStore: ObservableObject {
         )
         guard let active = live.session else {
             sessionTimerText = ""
-            sessionStatusText = "Idle"
+            sessionStatusText = activeCreditModeLabel
             meteringSessionId = ""
             laneChargeBaseline = 0
             runtimeLaneOverride = nil
@@ -2053,7 +2162,7 @@ final class PhantomStore: ObservableObject {
         } else {
             bytes = try await backend.chatStream(
                 session: session, provider: provider, model: model, allowPaidSessionExtension: false,
-                imageBase64: nil, messages: messages, turnId: UUID().uuidString, operationId: UUID().uuidString)
+                imagesBase64: [], messages: messages, turnId: UUID().uuidString, operationId: UUID().uuidString)
         }
         var value = ""
         for try await line in bytes.lines {

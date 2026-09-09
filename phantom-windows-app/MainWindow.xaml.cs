@@ -115,8 +115,14 @@ namespace SecureOverlay
 
         private TaskViewMonitor _taskViewMonitor; 
         
-        private BitmapImage? _attachedScreenshot = null;
-        private string? _attachedScreenshotBase64;
+        private sealed class AttachedScreenshotItem
+        {
+            public BitmapImage Image { get; init; } = null!;
+            public string? Base64 { get; set; }
+        }
+
+        private const int MaxAttachedScreenshots = 3;
+        private readonly List<AttachedScreenshotItem> _attachedScreenshots = new();
 
         private Window? _currentDropdownMenu = null;
         private readonly AppLaunchContext _launchContext;
@@ -183,7 +189,7 @@ namespace SecureOverlay
                 _accountCacheRepository,
                 interviewSessionRepository,
                 () => _settings.PreferByoCreditsFirst,
-                () => HasAnyConfiguredByoProvider());
+                () => HasByoEntitlement() && HasAnyConfiguredByoProvider());
             _contextPackService = new LocalContextPackService(contextPackRepository);
             _knowledgeRetrievalService = new HostedKnowledgeRetrievalService(
                 new LocalKnowledgeRetrievalService(),
@@ -211,8 +217,7 @@ namespace SecureOverlay
                 _hostedRuntimeOptions);
             _accountSnapshot = _accountCacheRepository.Load();
             UpdateLegacyFallbackButtonState();
-            _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
-            _ = RefreshByoCatalogCacheAsync();
+            _managedCatalogRefreshTask = RefreshDesktopCatalogsAsync(force: false);
 
             var activeInterviewSession = _creditMeteringService.GetActiveSession();
             if (activeInterviewSession != null)
@@ -448,10 +453,10 @@ namespace SecureOverlay
 
             if (CanContinueRestrictedInterview())
             {
-                StatusText.Text = $"⚠️ {_launchContext.Title}";
+                StatusText.Text = $"⚠️ {UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Title)}";
                 StatusIndicator.Fill = Brushes.Orange;
                 AddToChat(
-                    $"⚠️ **{_launchContext.Title}**\n\n{_launchContext.Message}\n\n{_launchContext.Detail}\n\nExisting locked interview continuation is still allowed on this device.",
+                    $"⚠️ **{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Title)}**\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Message)}\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Detail)}\n\nExisting locked interview continuation is still allowed on this device.",
                     true);
                 return;
             }
@@ -465,11 +470,11 @@ namespace SecureOverlay
             SendButton.IsEnabled = false;
             InputBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(180, 255, 176, 0));
 
-            StatusText.Text = $"⚠️ {_launchContext.Title}";
+            StatusText.Text = $"⚠️ {UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Title)}";
             StatusIndicator.Fill = Brushes.Orange;
 
             AddToChat(
-                $"⚠️ **{_launchContext.Title}**\n\n{_launchContext.Message}\n\n{_launchContext.Detail}",
+                $"⚠️ **{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Title)}**\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Message)}\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(_launchContext.Detail)}",
                 true);
         }
 
@@ -493,17 +498,13 @@ namespace SecureOverlay
 
         private bool ShouldShowByoSelectors()
         {
-            if (!HasByoEntitlement())
+            if (!HasByoEntitlement() || !HasAnyConfiguredByoProvider())
             {
                 return false;
             }
 
-            if (!HasAnyConfiguredByoProvider())
-            {
-                return false;
-            }
-
-            return PreferByoCreditsFirst() || IsByoLaneActiveNow();
+            // PreferByoCreditsFirst alone is not enough while premium is still the active lane.
+            return IsByoLaneActiveNow();
         }
 
         private void UpdateCreditIndicator()
@@ -598,8 +599,10 @@ namespace SecureOverlay
                 return ("Premium", new SolidColorBrush(Color.FromArgb(0x50, 0x6A, 0x4C, 0x1F)));
             }
 
-            if (HasByoEntitlement() && HasAnyConfiguredByoProvider())
+            if (HasByoEntitlement())
             {
+                // Show BYO whenever BYO credits/tier exist — even before keys are configured —
+                // so Idle is reserved for accounts with no usable paid lane.
                 return ("BYO", new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x72, 0x45)));
             }
 
@@ -919,7 +922,7 @@ namespace SecureOverlay
         private decimal GetTotalPaidCreditsAvailable()
         {
             var premiumCredits = _accountSnapshot?.PremiumAvailableCredits ?? 0m;
-            var byoCredits = HasByoEntitlement() && HasAnyConfiguredByoProvider()
+            var byoCredits = HasByoEntitlement()
                 ? (_accountSnapshot?.ProAvailableCredits ?? 0m)
                 : 0m;
             return premiumCredits + byoCredits;
@@ -930,7 +933,21 @@ namespace SecureOverlay
             return !IsFreeTrialAccount() && (HasPremiumManagedEntitlement() || HasByoEntitlement());
         }
 
-        private async Task RefreshManagedCatalogCacheAsync()
+        private async Task RefreshDesktopCatalogsAsync(bool force)
+        {
+            var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
+                || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+            if (!force && !CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+            {
+                Log.WriteLine("Automatic catalog refresh skipped (daily quota)");
+                return;
+            }
+
+            await RefreshManagedCatalogCacheAsync(force: true);
+            await RefreshByoCatalogCacheAsync(forceAll: true);
+        }
+
+        private async Task RefreshManagedCatalogCacheAsync(bool force = false)
         {
             try
             {
@@ -938,6 +955,17 @@ namespace SecureOverlay
                 if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
                 {
                     return;
+                }
+
+                if (!force)
+                {
+                    var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
+                        || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+                    if (!CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+                    {
+                        Log.WriteLine("Automatic managed/speech catalog refresh skipped (daily quota)");
+                        return;
+                    }
                 }
 
                 var catalog = await _hostedAccountClient.GetManagedCatalogAsync(session.AccessToken);
@@ -985,12 +1013,40 @@ namespace SecureOverlay
                 return;
             }
 
+            var explicitRefresh = forceAll || !string.IsNullOrWhiteSpace(forceProvider);
+            if (!explicitRefresh)
+            {
+                var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
+                    || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+                if (!CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+                {
+                    Log.WriteLine("Automatic BYO/speech catalog refresh skipped (daily quota)");
+                    return;
+                }
+            }
+
+            var selectedProvider = _settings.SelectedAI;
+            var selectedModels = CaptureSelectedByoModels();
+            var speechProvider = _settings.SpeechProviderId;
+            var speechModel = _settings.SpeechModelId;
+
             await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
                 _settings,
                 _hostedAccountClient,
                 session.AccessToken,
                 forceProvider,
                 forceAll);
+
+            try
+            {
+                _settings.SpeechCatalogCache = await _hostedAccountClient.GetSpeechCatalogAsync(session.AccessToken);
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Speech catalog refresh skipped: {ex.GetType().Name}");
+            }
+
+            RestoreSelectedByoModels(selectedProvider, selectedModels, speechProvider, speechModel);
             SettingsManager.Save(_settings);
             if (_currentAI != null && IsByoLaneActiveNow() && GetConfiguredModelsForProvider(_settings.SelectedAI).Length > 0)
             {
@@ -999,6 +1055,52 @@ namespace SecureOverlay
 
             ApplyAccountTierChrome();
             UpdateProviderAndModelDisplay();
+        }
+
+        private Dictionary<string, string> CaptureSelectedByoModels()
+        {
+            var selected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var provider in AIModelRegistry.GetAllProviders())
+            {
+                var model = AIModelRegistry.GetCurrentModelForProvider(_settings, provider);
+                if (!string.IsNullOrWhiteSpace(model))
+                {
+                    selected[provider] = model;
+                }
+            }
+
+            return selected;
+        }
+
+        private void RestoreSelectedByoModels(
+            string selectedProvider,
+            Dictionary<string, string> selectedModels,
+            string speechProvider,
+            string speechModel)
+        {
+            if (!string.IsNullOrWhiteSpace(selectedProvider))
+            {
+                _settings.SelectedAI = selectedProvider;
+            }
+
+            foreach (var pair in selectedModels)
+            {
+                var available = ProviderModelCatalogCache.GetModelIds(_settings, pair.Key, byo: true);
+                if (available.Length == 0 || available.Contains(pair.Value, StringComparer.OrdinalIgnoreCase))
+                {
+                    AIModelRegistry.SetModelForProvider(_settings, pair.Key, pair.Value);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(speechProvider))
+            {
+                _settings.SpeechProviderId = speechProvider;
+            }
+
+            if (!string.IsNullOrWhiteSpace(speechModel))
+            {
+                _settings.SpeechModelId = speechModel;
+            }
         }
 
         private ManagedAiProviderOptionDto? GetManagedProviderCatalog(string provider)
@@ -1111,6 +1213,44 @@ namespace SecureOverlay
         private bool HasConfiguredByoKeysForProvider(string provider)
         {
             return _rotationManager != null && _rotationManager.GetTotalKeyCount(provider) > 0;
+        }
+
+        /// <summary>
+        /// True when BYO is the only viable paid lane (or the lane that would start next) but no provider keys exist.
+        /// Used to surface a key-required error before interview metering.
+        /// </summary>
+        private bool RequiresByoProviderKeysBeforeSend(out string provider)
+        {
+            provider = string.IsNullOrWhiteSpace(_settings.SelectedAI) ? "provider" : _settings.SelectedAI;
+            if (IsFreeTrialAccount() || !HasByoEntitlement() || HasAnyConfiguredByoProvider())
+            {
+                return false;
+            }
+
+            var byoCredits = _accountSnapshot?.ProAvailableCredits ?? 0m;
+            if (byoCredits <= 0m)
+            {
+                return false;
+            }
+
+            // Prefer-BYO-first would meter on BYO when credits exist — require keys even if Premium remains.
+            if (!PreferByoCreditsFirst()
+                && HasPremiumManagedEntitlement()
+                && PremiumCreditsCanStillCoverCurrentSession())
+            {
+                return false;
+            }
+
+            // Prefer configured selection, else first BYO catalog provider id.
+            if (string.IsNullOrWhiteSpace(provider) || IsManagedProvider(provider))
+            {
+                provider = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId)
+                    .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id))
+                    ?? provider;
+            }
+
+            return true;
         }
 
         private bool HasAnyConfiguredByoProvider()
@@ -1460,7 +1600,7 @@ namespace SecureOverlay
             Log.WriteLine("Initializing AI service...");
 
             // NEW: Configure debug mode
-            var debugModeEnabled = HasByoEntitlement() && _settings.DebugModeEnabled;
+            var debugModeEnabled = _accountSnapshot?.CanUseDesktopPowerFeatures == true && _settings.DebugModeEnabled;
             ErrorSimulator.IsDebugModeEnabled = debugModeEnabled;
             ErrorSimulator.SimulationMode = debugModeEnabled ? _settings.DebugErrorSimulation : "None";
             
@@ -1921,7 +2061,7 @@ namespace SecureOverlay
             
             if (string.IsNullOrEmpty(message) || message == "Ask me anything...") 
             {
-                if (_attachedScreenshot == null)
+                if (_attachedScreenshots.Count == 0)
                 {
                     Log.WriteLine("Send message called with empty input and no screenshot - ignoring");
                     return;
@@ -1938,7 +2078,7 @@ namespace SecureOverlay
                 GetCurrentRuntimeProviderId(),
                 GetCurrentRuntimeModelId(),
                 _nextRequestIsVoice,
-                _attachedScreenshot != null,
+                _attachedScreenshots.Count > 0,
                 _settings.CopilotMode.ToLowerInvariant(),
                 _settings.InterviewDeliveryStyle.ToLowerInvariant(),
                 _currentAI is HostedManagedAiService ? "managed" : "byo",
@@ -1951,6 +2091,21 @@ namespace SecureOverlay
                 ["execution_lane"] = requestTrace.ExecutionLane, ["usage_source"] = requestTrace.UsageSource
             });
             _nextRequestIsVoice = false;
+
+            // BYO credits without keys must fail with a key-required message before metering,
+            // even when the runtime still looks "managed" because IsByoLaneActiveNow requires keys.
+            if (RequiresByoProviderKeysBeforeSend(out var missingByoProvider))
+            {
+                Log.WriteLine($"BYO credits available but no {missingByoProvider} key configured - blocking before metering");
+                AddToChat(
+                    $"⚠️ **{missingByoProvider} key required**\n\n" +
+                    $"Add a {missingByoProvider} API key in Settings before starting this interview. BYO credits are available, but Phantom cannot call the provider without a key.",
+                    false);
+                StatusText.Text = "⚠️ BYO provider key required";
+                StatusIndicator.Fill = Brushes.Orange;
+                FocusInput();
+                return;
+            }
 
             if (_currentAI == null || !_currentAI.IsConfigured())
             {
@@ -1991,7 +2146,7 @@ namespace SecureOverlay
                 return;
             }
 
-            if (_attachedScreenshot != null && !CurrentModelSupportsVision())
+            if (_attachedScreenshots.Count > 0 && !CurrentModelSupportsVision())
             {
                 Log.WriteLine("✗ Screenshot attached but current model doesn't support vision");
                 InvisibleMessageBox.Show(
@@ -2017,9 +2172,9 @@ namespace SecureOverlay
             if (!meteringActivation.Allowed)
             {
                 Log.WriteLine($"Interview metering denied: {meteringActivation.Title} | {meteringActivation.Message}");
-                StatusText.Text = $"⚠️ {meteringActivation.Title}";
+                StatusText.Text = $"⚠️ {UserFacingErrorSanitizer.SanitizeUserFacingError(meteringActivation.Title)}";
                 StatusIndicator.Fill = Brushes.Orange;
-                AddToChat($"⚠️ **{meteringActivation.Title}**\n\n{meteringActivation.Message}", false);
+                AddToChat($"⚠️ **{UserFacingErrorSanitizer.SanitizeUserFacingError(meteringActivation.Title)}**\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(meteringActivation.Message)}", false);
                 FocusInput();
                 return;
             }
@@ -2053,17 +2208,29 @@ namespace SecureOverlay
 
             _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
 
-            string? imageBase64 = null;
-            if (_attachedScreenshot != null)
+            var imagesBase64 = new List<string>();
+            if (_attachedScreenshots.Count > 0)
             {
-                imageBase64 = _attachedScreenshotBase64 ??= await BitmapImageToBase64Async(_attachedScreenshot);
-                if (imageBase64 != null)
+                foreach (var item in _attachedScreenshots)
                 {
-                    Log.WriteLine($"✓ Screenshot encoded for transmission ({imageBase64.Length} chars)");
+                    item.Base64 ??= await BitmapImageToBase64Async(item.Image);
+                    if (!string.IsNullOrWhiteSpace(item.Base64))
+                    {
+                        imagesBase64.Add(item.Base64);
+                    }
+                }
+
+                if (imagesBase64.Count > 0)
+                {
+                    Log.WriteLine($"✓ Encoded {imagesBase64.Count} screenshot(s) for transmission");
+                    if (_currentAI is HostedManagedAiService && imagesBase64.Count > 1)
+                    {
+                        message += $"\n\n({imagesBase64.Count} screenshots attached.)";
+                    }
                 }
                 else
                 {
-                    Log.WriteLine("✗ Failed to encode screenshot - sending without image");
+                    Log.WriteLine("✗ Failed to encode screenshots - sending without images");
                 }
             }
 
@@ -2149,7 +2316,7 @@ namespace SecureOverlay
                         message,
                         onChunk,
                         _currentRequestCancellation.Token,
-                        imageBase64,
+                        imagesBase64,
                         ResetCurrentStreamingAttempt),
                     _currentRequestCancellation.Token);
                 
@@ -2202,7 +2369,7 @@ namespace SecureOverlay
                             message,
                             onChunk,
                             _currentRequestCancellation.Token,
-                            imageBase64,
+                            imagesBase64,
                             ResetCurrentStreamingAttempt),
                         _currentRequestCancellation.Token);
 
@@ -2248,7 +2415,7 @@ namespace SecureOverlay
                     _streamMessageId = null;
                     await RefreshChatSurfaceAsync();
                     
-                    AddToChat($"❌ **Error:** {error}", true);
+                    AddToChat($"❌ **Error:** {UserFacingErrorSanitizer.SanitizeUserFacingError(error)}", true);
 
                     if (isDesktopAuthFailure)
                     {
@@ -2321,10 +2488,9 @@ namespace SecureOverlay
                     RecordInterviewActivity("response_completed");
                     
                 }
-                // ✅ NEW: Clear screenshot after successful send
-                if (_attachedScreenshot != null)
+                if (_attachedScreenshots.Count > 0)
                 {
-                    Log.WriteLine("✓ Clearing screenshot attachment after successful send");
+                    Log.WriteLine("✓ Clearing screenshot attachments after successful send");
                     ClearAttachedScreenshot();
                 }
 
@@ -2348,7 +2514,7 @@ namespace SecureOverlay
                 StatusText.Text = "⚠️ Cancelled";
                 StatusIndicator.Fill = Brushes.Orange;
 
-                if (_attachedScreenshot != null)
+                if (_attachedScreenshots.Count > 0)
                 {
                     ClearAttachedScreenshot();
                 }
@@ -2362,7 +2528,7 @@ namespace SecureOverlay
                 _streamingChatMarkdown = null;
                 await RefreshChatSurfaceAsync();
                 
-                AddToChat($"❌ **Exception:** {ex.Message}", true);
+                AddToChat($"❌ **Exception:** {UserFacingErrorSanitizer.SanitizeUserFacingError(ex.Message)}", true);
                 PauseInterviewSessionForError("runtime_exception");
                 AddToChat("⏸️ **Interview paused**\n\nPhantom paused the active interview after this exception. The session timer and billing stay frozen until a later response succeeds.", false);
                 
@@ -2371,7 +2537,7 @@ namespace SecureOverlay
                 RegenerateButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastRetryableQuestion);
                 RestoreChatInputForRetry();
 
-                if (_attachedScreenshot != null)
+                if (_attachedScreenshots.Count > 0)
                 {
                     ClearAttachedScreenshot();
                 }
@@ -2767,7 +2933,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine($"Interview lock heartbeat failed: {heartbeat.Title} | {heartbeat.Message}");
                 _interviewLockHeartbeatTimer?.Stop();
-                StatusText.Text = $"⚠️ {heartbeat.Title}";
+                StatusText.Text = $"⚠️ {UserFacingErrorSanitizer.SanitizeUserFacingError(heartbeat.Title)}";
                 StatusIndicator.Fill = Brushes.Orange;
                 _telemetryService.Track("lock", "interview_lock_heartbeat_failed", new Dictionary<string, string>
                 {
@@ -3183,7 +3349,8 @@ namespace SecureOverlay
                 }
                 _voiceService = new VoiceInputService(
                     cloudSpeech == null ? null : cloudSpeech.TranscribePcm16Async,
-                    useManagedSpeech || _settings.AutoFallbackToNativeSpeech);
+                    useManagedSpeech || _settings.AutoFallbackToNativeSpeech,
+                    cloudSpeech == null ? null : cloudSpeech.ProbeReachabilityAsync);
                 
                 _voiceService.SpeechRecognized += OnSpeechRecognized;
                 _voiceService.StatusChanged += OnVoiceStatusChanged;
@@ -3233,7 +3400,8 @@ namespace SecureOverlay
                 VoiceStatusText.Text = "Error";
                 VoiceStatusText.Foreground = Brushes.Red;
                 
-                InvisibleMessageBox.Show($"Voice initialization error:\n\n{ex.Message}", "Error");
+                InvisibleMessageBox.Show(
+                    $"Voice initialization error:\n\n{UserFacingErrorSanitizer.SanitizeUserFacingError(ex.Message)}", "Error");
             }
             
             Log.WriteLine("═══════════════════════════════════════════════");
@@ -3309,6 +3477,17 @@ namespace SecureOverlay
                 else
                 {
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 200, 200, 200));
+                }
+
+                // After cloud→native fallback (or cloud failure while waiting), keep auto-send alive.
+                if (_autoSendAfterVoice
+                    && _voiceService != null
+                    && !_voiceService.IsListening()
+                    && (status.Contains("Native fallback", StringComparison.OrdinalIgnoreCase)
+                        || status.Contains("Cloud speech unavailable", StringComparison.OrdinalIgnoreCase)
+                        || status.Contains("recognized", StringComparison.OrdinalIgnoreCase)))
+                {
+                    StartVoiceCompletionTimer();
                 }
             });
         }
@@ -3600,8 +3779,7 @@ namespace SecureOverlay
                 
                 // Reload settings
                 _settings = SettingsManager.Load();
-                _managedCatalogRefreshTask = RefreshManagedCatalogCacheAsync();
-                _ = RefreshByoCatalogCacheAsync(_settings.SelectedAI);
+                _managedCatalogRefreshTask = RefreshDesktopCatalogsAsync(force: false);
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 HeaderOpacitySlider.Value = _settings.WindowOpacity;
@@ -4349,9 +4527,8 @@ namespace SecureOverlay
         private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
         {
             Log.WriteLine("Screenshot button clicked");
-            
-            // If screenshot already attached, show options menu
-            if (_attachedScreenshot != null)
+
+            if (_attachedScreenshots.Count > 0)
             {
                 ShowScreenshotOptions();
             }
@@ -4375,15 +4552,12 @@ namespace SecureOverlay
                 Cursor = Cursors.Arrow
             };
 
-            // Apply screen capture protection
             menuWindow.Loaded += (s, e) =>
             {
                 var hwnd = new WindowInteropHelper(menuWindow).Handle;
                 WindowProtection.ApplyProtection(hwnd);
-                Log.WriteLine("✓ Screenshot menu protected from screen capture");
             };
 
-            // Create menu content
             var menuBorder = new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(240, 30, 30, 30)),
@@ -4394,72 +4568,86 @@ namespace SecureOverlay
             };
 
             var menuStack = new StackPanel();
-            var menuScrollViewer = new ScrollViewer
-            {
-                Content = menuStack,
-                MaxHeight = 320,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                CanContentScroll = true
-            };
-
-            // ✅ FIX #1: Declare handler variable before use
             EventHandler? deactivateHandler = null;
 
-            // Preview button
-            var previewButton = new Button
-            {
-                Content = "👁️ Preview Screenshot",
-                Foreground = Brushes.White,
-                Background = System.Windows.Media.Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                FontSize = 13,
-                Padding = new Thickness(15, 8, 15, 8),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Cursor = Cursors.Arrow
-            };
-            previewButton.Click += (s, e) =>
+            void CloseMenu()
             {
                 if (deactivateHandler != null)
                     menuWindow.Deactivated -= deactivateHandler;
                 menuWindow.Close();
-                PreviewScreenshot();
-            };
-            menuStack.Children.Add(previewButton);
+            }
 
-            // Replace button
-            var replaceButton = new Button
+            var addButton = new Button
             {
-                Content = "🔄 Replace Screenshot",
+                Content = _attachedScreenshots.Count >= MaxAttachedScreenshots
+                    ? "📸 Limit reached (3/3)"
+                    : $"📸 Add Screenshot ({_attachedScreenshots.Count}/{MaxAttachedScreenshots})",
                 Foreground = Brushes.White,
                 Background = System.Windows.Media.Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 FontSize = 13,
                 Padding = new Thickness(15, 8, 15, 8),
                 HorizontalContentAlignment = HorizontalAlignment.Left,
+                IsEnabled = _attachedScreenshots.Count < MaxAttachedScreenshots,
                 Cursor = Cursors.Arrow
             };
-            replaceButton.Click += (s, e) =>
+            addButton.Click += (s, e) =>
             {
-                if (deactivateHandler != null)
-                    menuWindow.Deactivated -= deactivateHandler;
-                menuWindow.Close();
+                CloseMenu();
                 CaptureScreenshot();
             };
-            menuStack.Children.Add(replaceButton);
+            menuStack.Children.Add(addButton);
 
-            // Separator
-            var separator = new System.Windows.Shapes.Rectangle
+            for (var index = 0; index < _attachedScreenshots.Count; index++)
+            {
+                var captureIndex = index;
+                var previewButton = new Button
+                {
+                    Content = $"👁️ Preview #{captureIndex + 1}",
+                    Foreground = Brushes.White,
+                    Background = System.Windows.Media.Brushes.Transparent,
+                    BorderThickness = new Thickness(0),
+                    FontSize = 13,
+                    Padding = new Thickness(15, 8, 15, 8),
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Cursor = Cursors.Arrow
+                };
+                previewButton.Click += (s, e) =>
+                {
+                    CloseMenu();
+                    PreviewScreenshot(captureIndex);
+                };
+                menuStack.Children.Add(previewButton);
+
+                var removeOneButton = new Button
+                {
+                    Content = $"🗑️ Remove #{captureIndex + 1}",
+                    Foreground = new SolidColorBrush(Color.FromRgb(255, 100, 100)),
+                    Background = System.Windows.Media.Brushes.Transparent,
+                    BorderThickness = new Thickness(0),
+                    FontSize = 13,
+                    Padding = new Thickness(15, 8, 15, 8),
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Cursor = Cursors.Arrow
+                };
+                removeOneButton.Click += (s, e) =>
+                {
+                    CloseMenu();
+                    RemoveAttachedScreenshotAt(captureIndex);
+                };
+                menuStack.Children.Add(removeOneButton);
+            }
+
+            menuStack.Children.Add(new System.Windows.Shapes.Rectangle
             {
                 Height = 1,
                 Fill = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
                 Margin = new Thickness(5)
-            };
-            menuStack.Children.Add(separator);
+            });
 
-            // Remove button
-            var removeButton = new Button
+            var clearAllButton = new Button
             {
-                Content = "🗑️ Remove Screenshot",
+                Content = "🗑️ Clear All Screenshots",
                 Foreground = new SolidColorBrush(Color.FromRgb(255, 100, 100)),
                 Background = System.Windows.Media.Brushes.Transparent,
                 BorderThickness = new Thickness(0),
@@ -4468,83 +4656,50 @@ namespace SecureOverlay
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 Cursor = Cursors.Arrow
             };
-            removeButton.Click += (s, e) =>
+            clearAllButton.Click += (s, e) =>
             {
-                if (deactivateHandler != null)
-                    menuWindow.Deactivated -= deactivateHandler;
-                menuWindow.Close();
+                CloseMenu();
                 ClearAttachedScreenshot();
             };
-            menuStack.Children.Add(removeButton);
+            menuStack.Children.Add(clearAllButton);
 
-            menuBorder.Child = menuScrollViewer;
+            menuBorder.Child = new ScrollViewer
+            {
+                Content = menuStack,
+                MaxHeight = 360,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            };
             menuWindow.Content = menuBorder;
 
-            // Position correctly relative to main window
-            var mainWindowPosition = this.PointToScreen(new System.Windows.Point(0, 0));
-            var buttonRelativePosition = ScreenshotButton.TransformToAncestor(this).Transform(new System.Windows.Point(0, 0));
-            
-            menuWindow.Left = mainWindowPosition.X + buttonRelativePosition.X;
-            menuWindow.Top = mainWindowPosition.Y + buttonRelativePosition.Y - 140;
-
-            // Safe close on deactivate
+            var buttonPosition = ScreenshotButton.PointToScreen(new Point(0, 0));
+            menuWindow.Left = buttonPosition.X;
+            menuWindow.Top = buttonPosition.Y - 12;
             deactivateHandler = (s, e) =>
             {
-                try
-                {
-                    if (deactivateHandler != null)
-                        menuWindow.Deactivated -= deactivateHandler;
-                    menuWindow.Close();
-                }
-                catch (InvalidOperationException)
-                {
-                    // Window already closing, ignore
-                }
+                try { menuWindow.Close(); } catch { }
             };
             menuWindow.Deactivated += deactivateHandler;
-
-            // NO cursor changes - keep arrow
-            foreach (var child in menuStack.Children)
-            {
-                if (child is Button btn)
-                {
-                    btn.MouseEnter += (s, e) =>
-                    {
-                        btn.Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
-                    };
-                    btn.MouseLeave += (s, e) =>
-                    {
-                        btn.Background = System.Windows.Media.Brushes.Transparent;
-                    };
-                }
-            }
-
             menuWindow.Show();
             menuWindow.Activate();
         }
 
-
-
-        private void PreviewScreenshot()
+        private void PreviewScreenshot(int index = 0)
         {
-            if (_attachedScreenshot == null)
+            if (_attachedScreenshots.Count == 0 || index < 0 || index >= _attachedScreenshots.Count)
             {
                 Log.WriteLine("No screenshot to preview");
                 return;
             }
 
-            Log.WriteLine("Opening screenshot preview");
-
-            // ✅ Create preview window with same protection as main window
             var previewWindow = new Window
             {
-                Title = "Screenshot Preview",
+                Title = $"Screenshot Preview #{index + 1}",
                 Width = 800,
                 Height = 600,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
-                WindowStyle = WindowStyle.None,  // ✅ No title bar
-                AllowsTransparency = true,       // ✅ Allow transparency
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
                 ResizeMode = ResizeMode.CanResize,
                 ShowInTaskbar = false,
                 Topmost = true,
@@ -4552,59 +4707,40 @@ namespace SecureOverlay
                 BorderThickness = new Thickness(2)
             };
 
-            // ✅ Apply screen capture protection BEFORE window is shown
             previewWindow.SourceInitialized += (s, e) =>
             {
                 var hwnd = new WindowInteropHelper(previewWindow).Handle;
                 if (hwnd != IntPtr.Zero)
                 {
                     WindowProtection.ApplyProtection(hwnd);
-                    Log.WriteLine("✓ Preview window protected from screen capture");
-                    
-                    // Verify protection
-                    uint affinity;
-                    if (NativeMethods.GetWindowDisplayAffinity(hwnd, out affinity))
-                    {
-                        Log.WriteLine($"  Preview window affinity: 0x{affinity:X}");
-                    }
                 }
             };
 
             var mainGrid = new Grid();
-
-            // Image display
-            var image = new Image
+            mainGrid.Children.Add(new Image
             {
-                Source = _attachedScreenshot,
+                Source = _attachedScreenshots[index].Image,
                 Stretch = Stretch.Uniform,
                 Margin = new Thickness(10)
-            };
-            mainGrid.Children.Add(image);
+            });
 
-            // Top bar with title and close button
             var topBar = new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(200, 30, 30, 30)),
                 Height = 40,
                 VerticalAlignment = VerticalAlignment.Top
             };
-            
             var topBarGrid = new Grid();
             topBar.Child = topBarGrid;
-
-            // Title
-            var titleText = new TextBlock
+            topBarGrid.Children.Add(new TextBlock
             {
-                Text = "📸 Screenshot Preview",
+                Text = $"📸 Screenshot Preview ({index + 1}/{_attachedScreenshots.Count})",
                 Foreground = Brushes.White,
                 FontSize = 14,
                 FontWeight = FontWeights.Bold,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(15, 0, 0, 0)
-            };
-            topBarGrid.Children.Add(titleText);
-
-            // Close button
+            });
             var closeButton = new Button
             {
                 Content = "✕",
@@ -4616,52 +4752,18 @@ namespace SecureOverlay
                 BorderThickness = new Thickness(0),
                 FontSize = 20,
                 FontWeight = FontWeights.Bold,
-                Cursor = Cursors.Arrow  // ✅ Keep arrow cursor
+                Cursor = Cursors.Arrow
             };
-            
             closeButton.Click += (s, e) => previewWindow.Close();
-            
-            // Hover effect
-            closeButton.MouseEnter += (s, e) =>
-            {
-                closeButton.Background = new SolidColorBrush(Color.FromArgb(200, 255, 68, 68));
-            };
-            closeButton.MouseLeave += (s, e) =>
-            {
-                closeButton.Background = new SolidColorBrush(Color.FromArgb(0, 255, 68, 68));
-            };
-            
             topBarGrid.Children.Add(closeButton);
             mainGrid.Children.Add(topBar);
-
-            // ✅ Make top bar draggable
             topBar.MouseLeftButtonDown += (s, e) =>
             {
                 if (e.LeftButton == MouseButtonState.Pressed)
                 {
-                    try
-                    {
-                        previewWindow.DragMove();
-                    }
-                    catch { }
+                    try { previewWindow.DragMove(); } catch { }
                 }
             };
-
-            // ✅ Add resize grip (optional)
-            var resizeGrip = new System.Windows.Controls.Primitives.ResizeGrip
-            {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Bottom,
-                Width = 16,
-                Height = 16,
-                Margin = new Thickness(0, 0, 5, 5),
-                Foreground = new SolidColorBrush(Color.FromArgb(150, 255, 255, 255))
-            };
-            mainGrid.Children.Add(resizeGrip);
-
-            previewWindow.Content = mainGrid;
-
-            // ✅ Add keyboard shortcuts
             previewWindow.KeyDown += (s, e) =>
             {
                 if (e.Key == Key.Escape || e.Key == Key.Enter)
@@ -4669,41 +4771,40 @@ namespace SecureOverlay
                     previewWindow.Close();
                 }
             };
-
+            previewWindow.Content = mainGrid;
             previewWindow.ShowDialog();
         }
-
 
         private void CaptureScreenshot()
         {
             try
             {
-                // Hide main window during capture
+                if (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                {
+                    StatusText.Text = "⚠️ Max 3 screenshots attached";
+                    StatusIndicator.Fill = Brushes.Orange;
+                    InvisibleMessageBox.Show(
+                        "You can attach up to 3 screenshots per message.\n\nRemove one before capturing another.",
+                        "Screenshot Limit");
+                    return;
+                }
+
                 ResetEmbeddedCursorState();
                 _cursorManager?.DeactivateCustomCursor();
                 this.Hide();
-                System.Threading.Thread.Sleep(200); // Let window hide
-                
+                System.Threading.Thread.Sleep(200);
+
                 var screenshot = ScreenshotCapture.CaptureScreenshot();
-                
-                // Show main window again
                 this.Show();
-                
+
                 if (screenshot != null)
                 {
-                    _attachedScreenshot = screenshot;
-                    _attachedScreenshotBase64 = null;
-                    Log.WriteLine("✓ Screenshot attached");
-                    
-                    // Show visual feedback
-                    ScreenshotButtonText.Text = "📸✓";
-                    ScreenshotButton.Background = new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromArgb(80, 0, 170, 255)
-                    );
-                    
-                    StatusText.Text = "✓ Screenshot attached - Click 📸 for options";
+                    _attachedScreenshots.Add(new AttachedScreenshotItem { Image = screenshot });
+                    Log.WriteLine($"✓ Screenshot attached ({_attachedScreenshots.Count}/{MaxAttachedScreenshots})");
+                    UpdateScreenshotButtonChrome();
+                    StatusText.Text = $"✓ Screenshot {_attachedScreenshots.Count}/{MaxAttachedScreenshots} attached";
                     StatusIndicator.Fill = Brushes.LightGreen;
-                    
+
                     var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
                     timer.Tick += (s, args) =>
                     {
@@ -4724,23 +4825,34 @@ namespace SecureOverlay
             }
         }
 
+        private void RemoveAttachedScreenshotAt(int index)
+        {
+            if (index < 0 || index >= _attachedScreenshots.Count)
+            {
+                return;
+            }
+
+            _attachedScreenshots.RemoveAt(index);
+            UpdateScreenshotButtonChrome();
+            StatusText.Text = _attachedScreenshots.Count == 0
+                ? "Screenshot removed"
+                : $"Screenshots: {_attachedScreenshots.Count}/{MaxAttachedScreenshots}";
+            StatusIndicator.Fill = Brushes.Orange;
+        }
+
         private void ClearAttachedScreenshot()
         {
-            if (_attachedScreenshot != null)
+            if (_attachedScreenshots.Count > 0)
             {
-                Log.WriteLine("Clearing attached screenshot");
+                Log.WriteLine("Clearing attached screenshots");
             }
-            
-            _attachedScreenshot = null;
-            _attachedScreenshotBase64 = null;
-            ScreenshotButtonText.Text = "📸";
-            ScreenshotButton.Background = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromArgb(80, 0, 170, 255)
-            );
-            
-            StatusText.Text = "Screenshot removed";
+
+            _attachedScreenshots.Clear();
+            UpdateScreenshotButtonChrome();
+
+            StatusText.Text = "Screenshots removed";
             StatusIndicator.Fill = Brushes.Orange;
-            
+
             var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             timer.Tick += (s, args) =>
             {
@@ -4751,6 +4863,18 @@ namespace SecureOverlay
             timer.Start();
         }
 
+        private void UpdateScreenshotButtonChrome()
+        {
+            if (ScreenshotButtonText == null || ScreenshotButton == null)
+            {
+                return;
+            }
+
+            ScreenshotButtonText.Text = _attachedScreenshots.Count == 0
+                ? "📸"
+                : $"📸 {_attachedScreenshots.Count}/{MaxAttachedScreenshots}";
+            ScreenshotButton.Background = new SolidColorBrush(Color.FromArgb(80, 0, 170, 255));
+        }
 
         // ═══════════════════════════════════════════════════════════════
         // CHECK IF CURRENT MODEL SUPPORTS VISION
@@ -4758,28 +4882,29 @@ namespace SecureOverlay
 
         private bool CurrentModelSupportsVision()
         {
-            if (_settings == null || _rotationManager == null) 
+            if (_settings == null)
             {
-                Log.WriteLine("Settings or RotationManager not initialized");
+                Log.WriteLine("Settings not initialized");
                 return false;
             }
 
             var provider = GetCurrentRuntimeProviderId();
-            var currentModel = _currentAI is HostedManagedAiService
-                ? GetManagedRuntimeModelId(provider)
-                : _rotationManager.GetCurrentModel(provider);
-            
+            var currentModel = GetCurrentRuntimeModelId();
+            if (string.IsNullOrWhiteSpace(currentModel) && _rotationManager != null)
+            {
+                currentModel = _currentAI is HostedManagedAiService
+                    ? GetManagedRuntimeModelId(provider)
+                    : _rotationManager.GetCurrentModel(provider);
+            }
+
             Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
 
-            var model = ProviderModelCatalogCache.GetModel(
-                _settings,
-                provider,
-                currentModel,
-                byo: _currentAI is not HostedManagedAiService);
-            bool supportsVision = model?.SupportsVision ?? AIModelRegistry.SupportsVision(currentModel);
-            
-            Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");
-            
+            var useByoCatalog = _currentAI is not HostedManagedAiService;
+            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: useByoCatalog)
+                ?? ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: !useByoCatalog);
+            bool supportsVision = model?.SupportsVision == true;
+
+            Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")} (catalog only)");
             return supportsVision;
         }
 
@@ -4831,19 +4956,24 @@ namespace SecureOverlay
 
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING SCREENSHOT BUTTON VISIBILITY");
-            
+
             if (CurrentModelSupportsVision())
             {
                 ScreenshotButton.Visibility = Visibility.Visible;
+                UpdateScreenshotButtonChrome();
                 Log.WriteLine("✓ Screenshot button VISIBLE (model supports vision)");
             }
             else
             {
                 ScreenshotButton.Visibility = Visibility.Collapsed;
-                ClearAttachedScreenshot();
+                if (_attachedScreenshots.Count > 0)
+                {
+                    _attachedScreenshots.Clear();
+                    UpdateScreenshotButtonChrome();
+                }
                 Log.WriteLine("✗ Screenshot button HIDDEN (model doesn't support vision)");
             }
-            
+
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 

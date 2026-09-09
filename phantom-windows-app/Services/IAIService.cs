@@ -7,17 +7,14 @@ namespace SecureOverlay.Services
 {
     public interface IAIService
     {
-        // Original method
-        Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null);
-        
-        // Streaming method with cancellation support
+        Task<string> SendMessageAsync(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64 = null);
+
         Task<string> SendMessageStreamAsync(
-            List<ConversationMessage> messages, 
+            List<ConversationMessage> messages,
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null
-        );
-        
+            IReadOnlyList<string>? imagesBase64 = null);
+
         string GetProviderName();
         bool IsConfigured();
     }

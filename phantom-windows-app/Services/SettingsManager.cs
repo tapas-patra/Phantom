@@ -62,7 +62,9 @@ namespace SecureOverlay.Services
         // Rotation state (persisted)
         public APIRotationState RotationState { get; set; } = new APIRotationState();
         public Dictionary<string, DateTime> ProviderModelCatalogRefreshedAtUtc { get; set; } = new Dictionary<string, DateTime>();
-        
+        public string CatalogAutoRefreshLocalDate { get; set; } = string.Empty;
+        public int CatalogAutoRefreshCountForLocalDate { get; set; }
+
         // UI Settings
         public bool VoiceInputEnabled { get; set; } = true;
         public bool AutoSendAfterVoiceStopEnabled { get; set; } = true;

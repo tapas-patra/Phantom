@@ -189,7 +189,23 @@ struct ManagedModel: Codable, Identifiable, Hashable {
     let modelId: String
     let displayName: String
     let supportsVision: Bool
+    let eligibleForChat: Bool
     var id: String { modelId }
+
+    init(modelId: String, displayName: String, supportsVision: Bool, eligibleForChat: Bool = true) {
+        self.modelId = modelId
+        self.displayName = displayName
+        self.supportsVision = supportsVision
+        self.eligibleForChat = eligibleForChat
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        modelId = try values.decode(String.self, forKey: .modelId)
+        displayName = try values.decode(String.self, forKey: .displayName)
+        supportsVision = try values.decode(Bool.self, forKey: .supportsVision)
+        eligibleForChat = values.value(Bool.self, forKey: .eligibleForChat, default: true)
+    }
 }
 
 struct ContextPack: Codable, Identifiable, Hashable {
@@ -677,7 +693,7 @@ struct BackendClient {
         provider: String,
         model: String,
         allowPaidSessionExtension: Bool,
-        imageBase64: String?,
+        imagesBase64: [String],
         messages: [ChatMessage],
         turnId: String,
         operationId: String
@@ -693,9 +709,11 @@ struct BackendClient {
             let model: String
             let allowPaidSessionExtension: Bool
             let imageBase64: String?
+            let imagesBase64: [String]
             let messages: [WireMessage]
         }
 
+        let normalizedImages = Array(imagesBase64.prefix(3))
         var request = URLRequest(url: url("/api/desktop/ai/chat"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -708,7 +726,8 @@ struct BackendClient {
             provider: provider,
             model: model,
             allowPaidSessionExtension: allowPaidSessionExtension,
-            imageBase64: imageBase64,
+            imageBase64: normalizedImages.first,
+            imagesBase64: normalizedImages,
             messages: messages.map { WireMessage(role: $0.role, content: $0.content) }
         ))
 

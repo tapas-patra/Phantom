@@ -611,11 +611,27 @@ export async function deleteManagedAiCredential(accessToken, credentialId) {
   );
 }
 
-export async function updateManagedAiModelVision(accessToken, payload) {
-  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/vision", {
+export async function updateManagedAiModelFlags(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/model-flags", {
     method: "POST",
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
+  });
+}
+
+export async function upsertManagedAiCatalogModel(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/models", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateManagedAiModelVision(accessToken, payload) {
+  return updateManagedAiModelFlags(accessToken, {
+    providerId: payload.providerId,
+    modelId: payload.modelId,
+    supportsVision: payload.supportsVision
   });
 }
 

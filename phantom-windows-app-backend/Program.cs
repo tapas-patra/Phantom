@@ -79,6 +79,10 @@ builder.Services.AddSingleton<DownloadEventRepository>();
 builder.Services.AddSingleton<FeedbackSubmissionRepository>();
 builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<LoginAttemptRepository>();
+builder.Services.AddSingleton<CompanionPairingRepository>();
+builder.Services.AddSingleton<CompanionPairingCodeRepository>();
+builder.Services.AddSingleton<CompanionRelayTicketRepository>();
+builder.Services.AddSingleton<CompanionAuditRepository>();
 builder.Services.AddSingleton(new PasswordHasher(backendOptions.PasswordIterationCount));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<DesktopSessionService>();
@@ -121,6 +125,9 @@ builder.Services.AddSingleton<TelemetryIngestService>();
 builder.Services.AddSingleton<AdminService>();
 builder.Services.AddSingleton<DownloadLinkService>();
 builder.Services.AddSingleton<BrowserSessionCookieService>();
+builder.Services.AddSingleton<CompanionRelayHost>();
+builder.Services.AddSingleton<CompanionRelayTicketService>();
+builder.Services.AddSingleton<CompanionPairingService>();
 builder.Services.AddSingleton<AdminApiKeyFilter>();
 builder.Services.AddSingleton<AdminAuditFilter>();
 builder.Services.AddSingleton<InternalApiKeyFilter>();
@@ -253,6 +260,10 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseRouting();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(20)
+});
 app.Use(async (context, next) =>
 {
     var incomingCorrelation = context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault();
@@ -1435,6 +1446,84 @@ app.MapPost("/api/desktop/locks/release", (
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
     return Results.Ok(locks.Release(request, session));
+}).RequireRateLimiting("desktop-api");
+
+// --- Companion pairing + relay (desktop authority) ---
+app.MapPost("/api/companion/pairings/start", (
+    HttpContext httpContext,
+    CompanionPairingStartRequestDto request,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService pairings) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(pairings.Start(session, request));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/companion/pairings/complete", (
+    HttpContext httpContext,
+    CompanionPairingCompleteRequestDto request,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService pairings) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(pairings.Complete(session, request));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/companion/pairings", (
+    HttpContext httpContext,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService pairings) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(pairings.List(session));
+}).RequireRateLimiting("desktop-api");
+
+app.MapDelete("/api/companion/pairings/{pairingId}", (
+    HttpContext httpContext,
+    string pairingId,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService pairings) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(pairings.Revoke(session, pairingId));
+}).RequireRateLimiting("desktop-api");
+
+app.MapPost("/api/companion/relay-ticket", (
+    HttpContext httpContext,
+    CompanionRelayTicketRequestDto request,
+    DesktopSessionService desktopSessions,
+    CompanionRelayTicketService tickets) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    return Results.Ok(tickets.Issue(session, request));
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/companion/sessions/current", (
+    HttpContext httpContext,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService pairings) =>
+{
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    var list = pairings.List(session);
+    var active = list.Pairings.FirstOrDefault();
+    if (active == null)
+    {
+        return Results.NotFound(new { error = "No active companion session." });
+    }
+    var snapshot = pairings.GetCurrentSnapshot(active.PairingId);
+    if (snapshot == null)
+    {
+        return Results.NotFound(new { error = "No active companion session." });
+    }
+    return Results.Ok(snapshot);
+}).RequireRateLimiting("desktop-api");
+
+app.MapGet("/api/companion/relay", async (
+    HttpContext httpContext,
+    CompanionRelayHost relay) =>
+{
+    await relay.AcceptAsync(httpContext);
+    return Results.Empty;
 }).RequireRateLimiting("desktop-api");
 
 internalGroup.MapGet("/session/user", (

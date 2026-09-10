@@ -32,6 +32,55 @@ enum ScreenshotCapture {
         }
     }
 
+    /// Headless full-display capture for Companion Mode. Uses CGDisplayCreateImage + encode
+    /// and does NOT present AreaSelectionController or activate the app. Throws
+    /// `permissionDenied` if Screen Recording access is missing — Companion Mode must not
+    /// trigger the system permission prompt itself.
+    static func captureDisplay(id displayId: String?) throws -> Data {
+        guard CGPreflightScreenCaptureAccess() else { throw ScreenshotError.permissionDenied }
+        guard let displayID = resolveDisplayId(displayId),
+              let image = CGDisplayCreateImage(displayID) else {
+            throw ScreenshotError.captureFailed
+        }
+        return try encode(image)
+    }
+
+    /// Lists available displays for the desktop.hello frame. Id is the NSScreenNumber as a
+    /// string; isDefault marks the main screen.
+    static func listDisplays() -> [(id: String, name: String, isDefault: Bool)] {
+        NSScreen.screens.map { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let id = number.map { String($0.uint32Value) } ?? UUID().uuidString
+            let name = screen.localizedName
+            return (id: id, name: name, isDefault: screen == NSScreen.main)
+        }
+    }
+
+    private static func resolveDisplayId(_ displayId: String?) -> CGDirectDisplayID? {
+        guard let displayId, !displayId.isEmpty else {
+            return mainDisplayId()
+        }
+        for screen in NSScreen.screens {
+            if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+                if String(number.uint32Value) == displayId {
+                    return CGDirectDisplayID(number.uint32Value)
+                }
+            }
+        }
+        if let parsed = UInt32(displayId) {
+            return parsed
+        }
+        return mainDisplayId()
+    }
+
+    private static func mainDisplayId() -> CGDirectDisplayID? {
+        guard let main = NSScreen.main,
+              let number = main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
+        }
+        return CGDirectDisplayID(number.uint32Value)
+    }
+
     fileprivate static func encode(_ image: CGImage) throws -> Data {
         let maxEdge: CGFloat = 1_600
         let scale = min(1, maxEdge / CGFloat(max(image.width, image.height)))

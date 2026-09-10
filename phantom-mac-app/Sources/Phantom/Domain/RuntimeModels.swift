@@ -151,6 +151,59 @@ struct DeviceLockResult: Decodable {
     let holderSessionId: String
 }
 
+// MARK: - Companion pairing + relay
+
+struct CompanionPairingStartResult: Decodable {
+    let code: String
+    let expiresAtUtc: Date
+    let qrPayload: String
+}
+
+struct CompanionPairing: Decodable {
+    let pairingId: String
+    let desktopDeviceLabel: String
+    let desktopPlatform: String
+    let companionDeviceLabel: String
+    let companionPlatform: String
+    let createdAtUtc: Date
+    let desktopOnline: Bool
+    let phoneOnline: Bool
+}
+
+struct CompanionPairingsResponse: Decodable {
+    let pairings: [CompanionPairing]
+}
+
+struct CompanionRelayTicket: Decodable {
+    let ticket: String
+    let expiresAtUtc: Date
+    let relayUrl: String
+}
+
+struct CompanionDisplay: Codable {
+    let id: String
+    let name: String
+    let isDefault: Bool
+}
+
+struct CompanionTurn: Codable {
+    let role: String
+    let text: String
+    let atUtc: Date
+}
+
+struct CompanionSessionSnapshot: Codable {
+    var pairingId: String
+    var desktopStatus: String
+    var provider: String
+    var model: String
+    var vision: Bool
+    var displays: [CompanionDisplay]
+    var selectedDisplayId: String
+    var turns: [CompanionTurn]
+}
+
+
 struct UsageReconciliationResult: Decodable {
     let accepted: Bool
     let ledgerEntryId: String

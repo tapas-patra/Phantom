@@ -34,6 +34,7 @@ namespace SecureOverlay
         private readonly AccountCacheSnapshot? _accountSnapshot;
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedAccountClient _hostedAccountClient;
+        private readonly IHostedCompanionClient _hostedCompanionClient;
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
         private bool _isUpdatingContextPackSelection;
@@ -62,6 +63,7 @@ namespace SecureOverlay
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
             _authSessionRepository = new SqliteAuthSessionRepository(store);
             _hostedAccountClient = HostedClientFactory.CreateAccountClient(HostedClientFactory.LoadOptions());
+            _hostedCompanionClient = HostedClientFactory.CreateCompanionClient(HostedClientFactory.LoadOptions());
 
             InitializeControls();
             LoadSettings();
@@ -275,7 +277,12 @@ namespace SecureOverlay
             BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
-            
+
+            CompanionEnabledCheckBox.IsChecked = _settings.CompanionEnabled;
+            CompanionStatusText.Text = string.IsNullOrWhiteSpace(_settings.CompanionPairingId)
+                ? "Not paired"
+                : $"Paired: {_settings.CompanionPairingId}";
+
             _isUpdatingSlider = true;
             
             double displayValue = _settings.FakeCursorSize * 100;
@@ -1711,7 +1718,9 @@ namespace SecureOverlay
                 _settings.ClickThroughEnabled = ClickThroughCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
-                
+
+                _settings.CompanionEnabled = CompanionEnabledCheckBox.IsChecked == true;
+
                 if (double.TryParse(FakeCursorSizeTextBox.Text, out double percentage))
                 {
                     _settings.FakeCursorSize = Math.Max(0.5, Math.Min(2.0, percentage / 100.0));
@@ -2334,6 +2343,89 @@ namespace SecureOverlay
             {
                 throw new InvalidOperationException(
                     $"{oversizedProvider.Name} can store at most {MaxKeysPerProvider} API keys for BYO accounts.");
+            }
+        }
+
+        private void CompanionShowCodeButton_Click(object sender, RoutedEventArgs e)
+        {
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                CompanionStatusText.Text = "Sign in to pair a phone.";
+                return;
+            }
+
+            try
+            {
+                var label = Environment.MachineName ?? "Windows PC";
+                var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+                var request = new CompanionPairingStartRequestDto
+                {
+                    DesktopDeviceLabel = label,
+                    DesktopPlatform = "windows",
+                    AppVersion = appVersion
+                };
+                var result = _hostedCompanionClient.StartPairing(request, session.AccessToken);
+                CompanionPairingCodeText.Text = result.Code;
+                CompanionPairingCodeText.Visibility = Visibility.Visible;
+                CompanionQrPayloadText.Text = result.QrPayload;
+                CompanionQrPayloadText.Visibility = Visibility.Visible;
+                CompanionStatusText.Text = $"Pairing code ready (expires {result.ExpiresAtUtc:O}). Open the phone app and enter the code.";
+            }
+            catch (Exception ex)
+            {
+                CompanionStatusText.Text = "Update / backend not ready.";
+                Log.WriteLine($"Companion pairing start failed: {ex.Message}");
+            }
+        }
+
+        private void CompanionUnpairButton_Click(object sender, RoutedEventArgs e)
+        {
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                CompanionStatusText.Text = "Sign in to unpair.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+            {
+                // Refresh pairings from backend in case the id was set on another device.
+                try
+                {
+                    var list = _hostedCompanionClient.ListPairings(session.AccessToken);
+                    var active = list?.Pairings?.FirstOrDefault(p => p.DesktopPlatform == "windows" || !string.IsNullOrWhiteSpace(p.PairingId));
+                    if (active != null)
+                    {
+                        _settings.CompanionPairingId = active.PairingId;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Companion list pairings failed: {ex.Message}");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+            {
+                CompanionStatusText.Text = "Not paired.";
+                return;
+            }
+
+            try
+            {
+                _hostedCompanionClient.RevokePairing(_settings.CompanionPairingId, session.AccessToken);
+                _settings.CompanionPairingId = string.Empty;
+                _settings.CompanionEnabled = false;
+                CompanionEnabledCheckBox.IsChecked = false;
+                CompanionPairingCodeText.Visibility = Visibility.Collapsed;
+                CompanionQrPayloadText.Visibility = Visibility.Collapsed;
+                CompanionStatusText.Text = "Unpaired.";
+            }
+            catch (Exception ex)
+            {
+                CompanionStatusText.Text = "Unpair failed. Try again.";
+                Log.WriteLine($"Companion unpair failed: {ex.Message}");
             }
         }
     }

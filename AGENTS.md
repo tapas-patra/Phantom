@@ -152,10 +152,14 @@
   - work in `phantom-website-dashboard/`
   - start with `src/App.jsx` and `src/lib/api.js`
 - Cross-surface contract changes:
-  - check `phantom-windows-app-backend/Contracts/`
-  - then check website API usage in `phantom-website-dashboard/src/lib/api.js`
-  - then check Windows callers under `phantom-windows-app/Services/`
-  - then check macOS callers under `phantom-mac-app/Sources/Phantom/`
+ - check `phantom-windows-app-backend/Contracts/`
+ - then check website API usage in `phantom-website-dashboard/src/lib/api.js`
+ - then check Windows callers under `phantom-windows-app/Services/`
+ - then check macOS callers under `phantom-mac-app/Sources/Phantom/`
+- Companion (phone-as-remote-control) relay/pairing/capture/chat work:
+ - backend: `phantom-windows-app-backend/Services/CompanionPairingService.cs`, `CompanionRelayTicketService.cs`, `CompanionRelayHost.cs`, and the `/api/companion/*` routes in `Program.cs` (migration `028_companion_pairings`)
+ - Windows: `phantom-windows-app/Services/CompanionOrchestrator.cs`, `CompanionRelayClient.cs`, `CompanionCommandHost.cs`, `HeadlessScreenCapture.cs`, and the Companion Mode panel in `SettingsPage.xaml`
+ - macOS: `phantom-mac-app/Sources/Phantom/CompanionOrchestrator.swift`, `CompanionRelayClient.swift`, `CompanionCommandHost.swift`, the `captureDisplay(id:)`/`listDisplays()` helpers in `ScreenshotCapture.swift`, and the Companion Mode section in `ContentView.swift`
 
 ## Verification Expectations
 - Backend changes:

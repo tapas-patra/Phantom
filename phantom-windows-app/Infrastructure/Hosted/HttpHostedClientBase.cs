@@ -181,5 +181,68 @@ namespace SecureOverlay.Infrastructure.Hosted
             request.Headers.TryAddWithoutValidation("X-Phantom-Correlation-Id", trace.TurnId);
             request.Headers.TryAddWithoutValidation("X-Phantom-Operation-Id", trace.OperationId);
         }
+
+        protected TResponse DeleteJson<TResponse>(string relativePath, string? bearerToken = null)
+        {
+            try
+            {
+                return DeleteJsonAsync<TResponse>(relativePath, bearerToken).GetAwaiter().GetResult();
+            }
+            catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HostedServiceException(
+                    $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
+                    ex);
+            }
+        }
+
+        protected async Task<TResponse> DeleteJsonAsync<TResponse>(
+            string relativePath,
+            string? bearerToken = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Delete, $"{_baseUrl}{relativePath}");
+                if (!string.IsNullOrWhiteSpace(bearerToken))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                }
+                AddCorrelationHeaders(request);
+
+                using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
+                }
+
+                var result = JsonConvert.DeserializeObject<TResponse>(body);
+                if (result == null)
+                {
+                    throw new HostedServiceException($"Hosted response was empty for {relativePath}.");
+                }
+
+                return result;
+            }
+            catch (HostedServiceException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HostedServiceException(
+                    $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
+                    ex);
+            }
+        }
     }
 }

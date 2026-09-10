@@ -30,6 +30,7 @@ public sealed class BackendOptions
     public string BootstrapAdminPassword { get; init; } = string.Empty;
     public string BootstrapAdminDisplayName { get; init; } = string.Empty;
     public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
+    public string PublicApiBaseUrl { get; init; } = string.Empty;
     public string SmtpHost { get; init; } = string.Empty;
     public int SmtpPort { get; init; } = 587;
     public string SmtpUsername { get; init; } = string.Empty;
@@ -248,6 +249,10 @@ public sealed class BackendOptions
                 "PHANTOM_PUBLIC_WEBSITE_BASE_URL",
                 section["PublicWebsiteBaseUrl"],
                 DefaultPublicWebsiteBaseUrl),
+            PublicApiBaseUrl = ReadString(
+                "PHANTOM_WINDOWS_BACKEND_PUBLIC_API_BASE_URL",
+                section["PublicApiBaseUrl"],
+                string.Empty),
             SmtpHost = ReadString(
                 "PHANTOM_WINDOWS_BACKEND_SMTP_HOST",
                 section["SmtpHost"],

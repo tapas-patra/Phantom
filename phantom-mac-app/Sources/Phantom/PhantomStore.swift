@@ -95,6 +95,14 @@ final class PhantomStore: ObservableObject {
     @Published var isScreenshotPreviewVisible = false
     @Published var isCapturingScreenshot = false
     static let maxAttachedScreenshots = 3
+
+    // Companion Mode hooks. Set by CompanionCommandHost so streamed deltas and turn
+    // completions are forwarded to the phone relay without the relay layer knowing about
+    // the chat pipeline internals.
+    @Published var companionSelectedDisplayId: String = ""
+    var companionRequestId: String?
+    var companionDeltaHandler: ((String) -> Void)?
+    var companionTurnFinishedHandler: ((Bool) -> Void)?
     static let maxResumeWords = 1_200
     static let maxJobDescriptionWords = 450
     @Published var isCompact = false
@@ -306,6 +314,75 @@ final class PhantomStore: ObservableObject {
         loadSpeechKeys()
         configureSpeechInput()
         scheduleContextWarmup()
+        companion = CompanionOrchestrator(backend: backend, store: self)
+        companionEnabled = defaults.bool(forKey: "companion.enabled")
+        companionPairingId = defaults.string(forKey: "companion.pairingId") ?? ""
+    }
+
+    private(set) var companion: CompanionOrchestrator? = nil
+    @Published var companionEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(companionEnabled, forKey: "companion.enabled") }
+    }
+    @Published var companionPairingId: String = "" {
+        didSet { UserDefaults.standard.set(companionPairingId, forKey: "companion.pairingId") }
+    }
+    @Published var companionPairingCode: String = ""
+    @Published var companionPairingQrPayload: String = ""
+    @Published var companionStatusText: String = "Not paired"
+    @Published var companionRelayState: CompanionRelayState = .disconnected
+
+    func startCompanionPairing() {
+        guard let session, !session.accessToken.isEmpty else {
+            companionStatusText = "Sign in to pair a phone."
+            return
+        }
+        let label = device.label
+        let version = AppVersion.current
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await backend.startPairing(accessToken: session.accessToken, deviceLabel: label, appVersion: version)
+                self.companionPairingCode = result.code
+                self.companionPairingQrPayload = result.qrPayload
+                self.companionStatusText = "Pairing code ready. Open the phone app and enter the code."
+            } catch {
+                self.companionStatusText = "Update / backend not ready."
+                print("[companion] pairing failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func unpairCompanion() {
+        guard let session, !session.accessToken.isEmpty else {
+            companionStatusText = "Sign in to unpair."
+            return
+        }
+        let pairingId = companionPairingId
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                if !pairingId.isEmpty {
+                    try await backend.revokePairing(accessToken: session.accessToken, pairingId: pairingId)
+                }
+                self.companionPairingId = ""
+                self.companionEnabled = false
+                await self.companion?.stop()
+                self.companionStatusText = "Unpaired."
+            } catch {
+                self.companionStatusText = "Unpair failed. Try again."
+                print("[companion] unpair failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func reconcileCompanion() {
+        guard let session else { return }
+        let enabled = companionEnabled
+        let pairingId = companionPairingId
+        let token = session.accessToken
+        Task { [weak self] in
+            await self?.companion?.reconcile(enabled: enabled, pairingId: pairingId, accessToken: token)
+        }
     }
 
     var selectedProvider: ManagedProvider? {
@@ -564,6 +641,7 @@ final class PhantomStore: ObservableObject {
         refreshManagedCatalog()
         screen = .chat
         clickThrough = savedClickThrough
+        reconcileCompanion()
     }
 
     func cancelSettings() {
@@ -1081,6 +1159,7 @@ final class PhantomStore: ObservableObject {
         activeRequestStartedAt = Date()
         firstChunkRecorded = false
         isSending = true
+        var companionTurnSucceeded = false
         status = copilotMode == .interview ? "Starting interview session…" : "Starting briefing session…"
         Diagnostics.event("session_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
         Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
@@ -1354,6 +1433,7 @@ final class PhantomStore: ObservableObject {
                     accessToken: session.accessToken
                 )
                 status = result.decision.action == .clarify ? "Needs clarification" : "Ready"
+                companionTurnSucceeded = true
             } catch is CancellationError {
                 status = "Request cancelled."
                 Diagnostics.event("turn_cancelled", level: "Information", sessionId: copilotSessionId, turnId: requestId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "cancelled", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))"])
@@ -1404,6 +1484,13 @@ final class PhantomStore: ObservableObject {
             attachedScreenshots = []
             Diagnostics.event("session_ended", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
             ConversationStore.save(messages)
+            // Notify the companion relay that the turn finished and clear the per-turn hooks.
+            let succeeded = companionTurnSucceeded
+            let handler = companionTurnFinishedHandler
+            companionDeltaHandler = nil
+            companionTurnFinishedHandler = nil
+            companionRequestId = nil
+            handler?(succeeded)
         }
     }
 
@@ -1425,6 +1512,21 @@ final class PhantomStore: ObservableObject {
         }
         status = "Request cancelled."
         ConversationStore.save(messages)
+    }
+
+    // MARK: - Companion lock probes (used by CompanionCommandHost)
+
+    /// True when the desktop currently holds an active interview lock (belt-and-suspenders
+    /// check for the relay's lock_missing guard).
+    func companionHasActiveLock() async -> Bool {
+        guard let session = await runtime.metering.activeSession(),
+              let expiry = session.lockExpiresAtUtc,
+              !session.lockToken.isEmpty else { return false }
+        return expiry > Date()
+    }
+
+    func companionLockExpiresAt() async -> Date? {
+        await runtime.metering.activeSession()?.lockExpiresAtUtc
     }
 
     private func byoResponseWithRotation(
@@ -1595,6 +1697,8 @@ final class PhantomStore: ObservableObject {
     private func append(_ delta: String, to replyId: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == replyId }) else { return }
         messages[index].content += delta
+        // Forward the stream chunk to the companion relay (phone) as chat.delta.
+        companionDeltaHandler?(delta)
         if !firstChunkRecorded {
             firstChunkRecorded = true
             let latency = Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000)

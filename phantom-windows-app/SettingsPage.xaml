@@ -924,6 +924,33 @@
                                          IsChecked="True"/>
                             </Grid>
                         </Border>
+
+                        <!-- Companion Mode -->
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,20">
+                            <StackPanel>
+                                <TextBlock Text="Companion Mode" FontSize="14" FontWeight="Bold" Foreground="White" Margin="0,0,0,8"/>
+                                <TextBlock Text="Pair your phone to trigger Capture &amp; Ask remotely. Grant nothing extra on Windows beyond what Phantom already uses. Pair before the session."
+                                           TextWrapping="Wrap" FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="CompanionEnabledCheckBox" Content="Enable Companion Mode"
+                                          Foreground="White" FontSize="13" Margin="0,0,0,10"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="CompanionShowCodeButton" Content="Show pairing code" Width="140" Height="28"
+                                            Click="CompanionShowCodeButton_Click" Margin="0,0,10,0"
+                                            Background="#5000AA00" BorderBrush="#9000AA00" BorderThickness="1.5"
+                                            Foreground="White" FontSize="11" Style="{StaticResource ButtonStyle}"/>
+                                    <Button x:Name="CompanionUnpairButton" Content="Unpair" Width="90" Height="28"
+                                            Click="CompanionUnpairButton_Click"
+                                            Background="#50FF0000" BorderBrush="#90FF0000" BorderThickness="1.5"
+                                            Foreground="White" FontSize="11" Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+                                <TextBlock x:Name="CompanionPairingCodeText" FontFamily="Consolas" FontSize="20"
+                                           Foreground="#00FF00" Margin="0,0,0,6" Visibility="Collapsed"/>
+                                <TextBlock x:Name="CompanionQrPayloadText" FontFamily="Consolas" FontSize="10"
+                                           Foreground="#AAAAAA" Margin="0,0,0,6" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                <TextBlock x:Name="CompanionStatusText" Text="Not paired"
+                                           Foreground="#CCCCCC" FontSize="12" Margin="0,0,0,0"/>
+                            </StackPanel>
+                        </Border>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>

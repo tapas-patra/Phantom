@@ -134,6 +134,7 @@ namespace SecureOverlay
         private readonly AppLaunchContext _launchContext;
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedAccountClient _hostedAccountClient;
+        private readonly IHostedCompanionClient _hostedCompanionClient;
         private readonly ICreditMeteringService _creditMeteringService;
         private readonly IContextPackService _contextPackService;
         private readonly IInterviewLockService _interviewLockService;
@@ -142,6 +143,8 @@ namespace SecureOverlay
         private readonly ITelemetryService _telemetryService;
         private readonly IAccountCacheRepository _accountCacheRepository;
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
+        private CompanionOrchestrator? _companionOrchestrator;
+        private string? _companionActiveRequestId;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionInactivityTimer;
@@ -192,6 +195,7 @@ namespace SecureOverlay
             ITelemetryRepository telemetryRepository = new SqliteTelemetryRepository(store);
             _hostedRuntimeOptions = HostedClientFactory.LoadOptions();
             _hostedAccountClient = HostedClientFactory.CreateAccountClient(_hostedRuntimeOptions);
+            _hostedCompanionClient = HostedClientFactory.CreateCompanionClient(_hostedRuntimeOptions);
             _creditMeteringService = new LocalCreditMeteringService(
                 _authSessionRepository,
                 _accountCacheRepository,
@@ -214,6 +218,15 @@ namespace SecureOverlay
                 _authSessionRepository,
                 HostedClientFactory.CreateLockClient(_hostedRuntimeOptions),
                 deviceProfile.InstallId);
+
+            _companionOrchestrator = new CompanionOrchestrator(
+                _hostedCompanionClient,
+                () => _authSessionRepository.Load()?.AccessToken,
+                () => Environment.MachineName ?? "Windows PC",
+                ProvideCompanionStatus,
+                ProvideCompanionSnapshot,
+                new MainWindowCompanionTarget(this));
+
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
                 _authSessionRepository,
@@ -2421,6 +2434,8 @@ namespace SecureOverlay
                                 Dispatcher.BeginInvoke(new Action(() => RecordInterviewActivity("response_stream")));
                             }
                             _streamBuffer.Append(chunk);
+                            // Forward the stream chunk to the companion relay (phone) as chat.delta.
+                            _companionOrchestrator?.OnAssistantDelta(chunk);
                         }
                     }
                 };
@@ -2676,7 +2691,14 @@ namespace SecureOverlay
                 {
                     _activeRequestTrace = null;
                 }
-                
+
+                // Publish a companion session snapshot after each completed/cancelled turn.
+                if (_companionOrchestrator != null)
+                {
+                    _ = _companionOrchestrator.OnTurnCompleted(_companionActiveRequestId, succeeded: true);
+                    _companionActiveRequestId = null;
+                }
+
                 RestoreChatInputForRetry();
                 FocusInput();
             }
@@ -4013,7 +4035,15 @@ namespace SecureOverlay
                 UpdateScreenshotButtonVisibility();
                 UpdateProviderAndModelDisplay();  // ✅ Critical for sync!
                 StartSessionInactivityTimer();
-                
+
+                // Companion Mode: start or stop the relay based on the saved toggle.
+                if (_companionOrchestrator != null)
+                {
+                    _ = _companionOrchestrator.ReconcileAsync(
+                        _settings.CompanionEnabled,
+                        _settings.CompanionPairingId);
+                }
+
                 Log.WriteLine("✓ Settings reloaded successfully");
                 Log.WriteLine($"  Final model: {newModel}");
             }
@@ -4032,6 +4062,177 @@ namespace SecureOverlay
 
             this.Activate();
             FocusInput();
+        }
+
+        private CompanionDesktopStatus ProvideCompanionStatus()
+        {
+            var provider = _currentAI?.GetProviderName() ?? _settings.SelectedAI ?? string.Empty;
+            var model = _rotationManager?.GetCurrentModel(_settings.SelectedAI ?? string.Empty) ?? string.Empty;
+            var vision = CurrentModelSupportsVision();
+            var displays = HeadlessScreenCapture.ListDisplays();
+            var activeSession = _creditMeteringService?.GetActiveSession();
+            var lockExpiry = activeSession?.LockExpiresAtUtc;
+            var status = "ready";
+            if (_isProcessingRequest) status = "thinking";
+            return new CompanionDesktopStatus
+            {
+                Status = status,
+                Provider = provider,
+                Model = model,
+                Vision = vision,
+                Displays = displays,
+                LockExpiresAtUtc = lockExpiry
+            };
+        }
+
+        private CompanionSessionSnapshotDto ProvideCompanionSnapshot()
+        {
+            var status = ProvideCompanionStatus();
+            var turns = new List<CompanionTurnDto>();
+            try
+            {
+                var history = _conversationManager?.GetAllMessages();
+                if (history != null)
+                {
+                    foreach (var turn in history.TakeLast(20))
+                    {
+                        turns.Add(new CompanionTurnDto
+                        {
+                            Role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user",
+                            Text = turn.Content ?? string.Empty,
+                            AtUtc = turn.Timestamp.ToUniversalTime()
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"ProvideCompanionSnapshot history read failed: {ex.Message}");
+            }
+
+            return new CompanionSessionSnapshotDto
+            {
+                PairingId = _settings.CompanionPairingId ?? string.Empty,
+                DesktopStatus = status.Status,
+                Provider = status.Provider,
+                Model = status.Model,
+                Vision = status.Vision,
+                Displays = status.Displays,
+                SelectedDisplayId = _settings.CompanionSelectedDisplayId ?? string.Empty,
+                Turns = turns
+            };
+        }
+
+        private void CompanionCaptureAsk(string requestId, string? displayId, string? prompt)
+        {
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                _companionActiveRequestId = requestId;
+                if (!CurrentModelSupportsVision())
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "vision_unsupported", "Current model does not support vision.");
+                    return;
+                }
+
+                var image = HeadlessScreenCapture.CaptureDisplay(displayId);
+                if (image == null)
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "capture_permission_missing", "Headless capture failed.");
+                    return;
+                }
+
+                while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                {
+                    _attachedScreenshots.RemoveAt(0);
+                }
+                _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                var question = string.IsNullOrWhiteSpace(prompt) ? "Please analyze this screenshot." : prompt!;
+                InputTextBox.Text = question;
+                await SendMessage(captureQuestion: false);
+            }));
+        }
+
+        private void CompanionCaptureFull(string requestId, string? displayId, bool attachOnly)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _companionActiveRequestId = requestId;
+                if (!CurrentModelSupportsVision())
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "vision_unsupported", "Current model does not support vision.");
+                    return;
+                }
+                var image = HeadlessScreenCapture.CaptureDisplay(displayId);
+                if (image == null)
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "capture_permission_missing", "Headless capture failed.");
+                    return;
+                }
+                while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                {
+                    _attachedScreenshots.RemoveAt(0);
+                }
+                _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                if (!attachOnly)
+                {
+                    InputTextBox.Text = "Please analyze this screenshot.";
+                    _ = SendMessage(captureQuestion: false);
+                }
+            }));
+        }
+
+        private void CompanionChatSend(string requestId, string text)
+        {
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                _companionActiveRequestId = requestId;
+                InputTextBox.Text = text;
+                await SendMessage(captureQuestion: false);
+            }));
+        }
+
+        private void CompanionChatCancel(string? requestId)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _currentRequestCancellation?.Cancel();
+                if (!string.IsNullOrEmpty(requestId))
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "cancelled", "Cancelled.");
+                }
+            }));
+        }
+
+        private void CompanionChatNewTopic()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try { _conversationManager?.StartNewTopic(); }
+                catch (Exception ex) { Log.WriteLine($"Companion new topic failed: {ex.Message}"); }
+                _ = _companionOrchestrator?.OnTurnCompleted(null, succeeded: true);
+            }));
+        }
+
+        private void CompanionDisplaySelect(string? displayId)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _settings.CompanionSelectedDisplayId = displayId ?? string.Empty;
+                SettingsManager.Save(_settings);
+            }));
+        }
+
+        private sealed class MainWindowCompanionTarget : ICompanionCommandTarget
+        {
+            private readonly MainWindow _owner;
+            public MainWindowCompanionTarget(MainWindow owner) { _owner = owner; }
+            public string? CurrentRequestId => _owner._companionActiveRequestId;
+            public void CaptureAsk(string requestId, string? displayId, string? prompt) => _owner.CompanionCaptureAsk(requestId, displayId, prompt);
+            public void CaptureFull(string requestId, string? displayId, bool attachOnly) => _owner.CompanionCaptureFull(requestId, displayId, attachOnly);
+            public void ChatSend(string requestId, string text) => _owner.CompanionChatSend(requestId, text);
+            public void ChatCancel(string? requestId) => _owner.CompanionChatCancel(requestId);
+            public void ChatNewTopic() => _owner.CompanionChatNewTopic();
+            public void DisplaySelect(string? displayId) => _owner.CompanionDisplaySelect(displayId);
         }
 
         private void ApplySelectedContextPackToConversation(ContextPack selectedPack, bool resetConversation)

@@ -747,6 +747,30 @@ private struct SettingsView: View {
                         ReadOnlyRow(label: "Quit Phantom", value: "F14")
                     }
 
+                    SettingsSection(title: "Companion Mode", systemImage: "iphone") {
+                        Text("Pair your phone to trigger Capture & Ask remotely. Grant nothing extra on macOS beyond what Phantom already uses. Pair before the session.")
+                            .font(.caption)
+                            .foregroundColor(PhantomColors.muted)
+                        Toggle("Enable Companion Mode", isOn: $store.companionEnabled)
+                        HStack {
+                            Button("Show pairing code", action: store.startCompanionPairing)
+                            Button("Unpair", action: store.unpairCompanion)
+                                .disabled(store.companionPairingId.isEmpty)
+                        }
+                        if !store.companionPairingCode.isEmpty {
+                            Text(store.companionPairingCode)
+                                .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                                .foregroundColor(PhantomColors.amber)
+                            Text(store.companionPairingQrPayload)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(PhantomColors.muted)
+                                .textSelection(.enabled)
+                        }
+                        Text(store.companionStatusText)
+                            .font(.caption)
+                            .foregroundColor(PhantomColors.muted)
+                    }
+
                     if store.canViewDiagnostics {
                     SettingsSection(title: "Diagnostics", systemImage: "stethoscope") {
                         HStack {

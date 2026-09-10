@@ -41,7 +41,10 @@ public sealed class ManagedSpeechCatalogService
             return new ManagedAiCatalogDto { RefreshedAtUtc = DateTime.UtcNow };
 
         var providers = ListCatalogProviders().Where(item => item.Models.Count > 0).ToArray();
-        if (string.Equals(tier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase))
+        var hasByo = account.ProAvailableCredits > 0m
+            || string.Equals(account.AccessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(tier, AccessModeResolver.Premium, StringComparison.OrdinalIgnoreCase) && !hasByo)
         {
             var selection = ResolveSelection(providers);
             providers = selection == null

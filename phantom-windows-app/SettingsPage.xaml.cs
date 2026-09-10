@@ -128,6 +128,8 @@ namespace SecureOverlay
                 PopulateProviderChoices();
                 AIProviderComboBox.SelectedItem = _settings.SelectedAI;
                 PopulateByoModelChoices();
+                PopulateSpeechProviders();
+                UpdateSpeechControls();
                 return;
             }
 
@@ -1101,9 +1103,9 @@ namespace SecureOverlay
             foreach (var provider in (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                 .Where(item => item.Models.Count > 0))
                 SpeechProviderComboBox.Items.Add(provider.ProviderId);
-            SpeechProviderComboBox.SelectedItem = SpeechProviderComboBox.Items.Contains(_settings.SpeechProviderId)
-                ? _settings.SpeechProviderId
-                : SpeechProviderComboBox.Items.OfType<string>().FirstOrDefault();
+            SpeechProviderComboBox.SelectedItem = SpeechProviderComboBox.Items.OfType<string>()
+                .FirstOrDefault(item => string.Equals(item, _settings.SpeechProviderId, StringComparison.OrdinalIgnoreCase))
+                ?? SpeechProviderComboBox.Items.OfType<string>().FirstOrDefault();
             PopulateSpeechModels();
         }
 
@@ -1114,9 +1116,9 @@ namespace SecureOverlay
             var provider = (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                 .FirstOrDefault(item => string.Equals(item.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
             foreach (var model in provider?.Models ?? new List<ManagedAiModelOptionDto>()) SpeechModelComboBox.Items.Add(model.ModelId);
-            SpeechModelComboBox.SelectedItem = SpeechModelComboBox.Items.Contains(_settings.SpeechModelId)
-                ? _settings.SpeechModelId
-                : SpeechModelComboBox.Items.OfType<string>().FirstOrDefault();
+            SpeechModelComboBox.SelectedItem = SpeechModelComboBox.Items.OfType<string>()
+                .FirstOrDefault(item => string.Equals(item, _settings.SpeechModelId, StringComparison.OrdinalIgnoreCase))
+                ?? SpeechModelComboBox.Items.OfType<string>().FirstOrDefault();
             LoadDedicatedSpeechKeys();
         }
 
@@ -1693,15 +1695,15 @@ namespace SecureOverlay
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
-                _settings.SpeechRecognitionMode = IsPremiumAccount()
+                _settings.SpeechRecognitionMode = UsesManagedPremiumSpeechUi()
                     ? "Cloud"
                     : ((SpeechModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Native");
                 _settings.SpeechProviderId = SpeechProviderComboBox.SelectedItem as string ?? _settings.SpeechProviderId;
                 _settings.SpeechModelId = SpeechModelComboBox.SelectedItem as string ?? _settings.SpeechModelId;
                 _settings.SpeechLanguage = string.IsNullOrWhiteSpace(SpeechLanguageTextBox.Text) ? "en" : SpeechLanguageTextBox.Text.Trim();
                 _settings.UseChatProviderApiKeysForSpeech = UseChatKeysForSpeechCheckBox.IsChecked == true;
-                _settings.AutoFallbackToNativeSpeech = IsPremiumAccount() || SpeechNativeFallbackCheckBox.IsChecked == true;
-                if (!IsPremiumAccount() && !_settings.UseChatProviderApiKeysForSpeech && !string.IsNullOrWhiteSpace(_settings.SpeechProviderId))
+                _settings.AutoFallbackToNativeSpeech = UsesManagedPremiumSpeechUi() || SpeechNativeFallbackCheckBox.IsChecked == true;
+                if (!UsesManagedPremiumSpeechUi() && !_settings.UseChatProviderApiKeysForSpeech && !string.IsNullOrWhiteSpace(_settings.SpeechProviderId))
                 {
                     _settings.SpeechApiKeys[_settings.SpeechProviderId] = new[] { SpeechApiKeyOneBox.Password, SpeechApiKeyTwoBox.Password }
                         .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).Take(MaxKeysPerProvider).ToList();

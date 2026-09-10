@@ -37,6 +37,8 @@ namespace SecureOverlay.Services
             }
             var wav = BuildWav(pcm16, 16_000, 1);
             if (_managed) return await TranscribeManagedAsync(wav, cancellationToken);
+            if (string.IsNullOrWhiteSpace(_settings.SpeechModelId))
+                throw new InvalidOperationException("Choose a speech model in Settings.");
 
             var keys = GetByoKeys();
             if (keys.Count == 0) throw new InvalidOperationException("No speech API key is configured.");
@@ -89,6 +91,8 @@ namespace SecureOverlay.Services
                 _ = await TranscribeManagedAsync(wav, cancellationToken);
                 return;
             }
+            if (string.IsNullOrWhiteSpace(_settings.SpeechModelId))
+                throw new InvalidOperationException("Choose a speech model in Settings.");
 
             var keys = GetByoKeys();
             if (keys.Count == 0) throw new InvalidOperationException("No speech API key is configured.");
@@ -146,16 +150,30 @@ namespace SecureOverlay.Services
 
         private List<string> GetByoKeys()
         {
-            if (!_settings.UseChatProviderApiKeysForSpeech)
-                return _settings.SpeechApiKeys.TryGetValue(_settings.SpeechProviderId, out var dedicated) ? dedicated : new List<string>();
-            return _settings.SpeechProviderId switch
-            {
-                "ChatGPT" => _settings.ChatGPTApiKeys,
-                "Groq" => _settings.GroqApiKeys,
-                "Mistral" => _settings.MistralApiKeys,
-                _ => new List<string>()
-            };
+            var dedicated = NormalizeKeys(
+                _settings.SpeechApiKeys != null
+                && _settings.SpeechApiKeys.TryGetValue(_settings.SpeechProviderId, out var stored)
+                    ? stored
+                    : null);
+            var chat = NormalizeKeys(GetChatKeysForSpeechProvider(_settings.SpeechProviderId));
+            var keys = _settings.UseChatProviderApiKeysForSpeech
+                ? (chat.Count > 0 ? chat : dedicated)
+                : (dedicated.Count > 0 ? dedicated : chat);
+            Log.WriteLine(
+                $"BYO speech keys source={(_settings.UseChatProviderApiKeysForSpeech ? "chat" : "dedicated")} provider={_settings.SpeechProviderId} count={keys.Count} chat_count={chat.Count} dedicated_count={dedicated.Count}");
+            return keys;
         }
+
+        private List<string> GetChatKeysForSpeechProvider(string provider)
+        {
+            if (string.Equals(provider, "ChatGPT", StringComparison.OrdinalIgnoreCase)) return _settings.ChatGPTApiKeys ?? new List<string>();
+            if (string.Equals(provider, "Groq", StringComparison.OrdinalIgnoreCase)) return _settings.GroqApiKeys ?? new List<string>();
+            if (string.Equals(provider, "Mistral", StringComparison.OrdinalIgnoreCase)) return _settings.MistralApiKeys ?? new List<string>();
+            return new List<string>();
+        }
+
+        private static List<string> NormalizeKeys(IEnumerable<string>? keys) =>
+            (keys ?? Array.Empty<string>()).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).ToList();
 
         private (int Index, string Key)? NextAvailableKey(IReadOnlyList<string> keys)
         {
@@ -175,13 +193,16 @@ namespace SecureOverlay.Services
         private string RotationScope => $"{_settings.SpeechProviderId}:{(_settings.UseChatProviderApiKeysForSpeech ? "chat" : "dedicated")}";
         private string CooldownName(int index) => $"{RotationScope}:{index}";
 
-        private static string GetProviderUrl(string provider) => provider switch
+        private static string GetProviderUrl(string provider)
         {
-            "ChatGPT" => "https://api.openai.com/v1/audio/transcriptions",
-            "Groq" => "https://api.groq.com/openai/v1/audio/transcriptions",
-            "Mistral" => "https://api.mistral.ai/v1/audio/transcriptions",
-            _ => throw new InvalidOperationException("Unsupported speech provider.")
-        };
+            if (string.Equals(provider, "ChatGPT", StringComparison.OrdinalIgnoreCase))
+                return "https://api.openai.com/v1/audio/transcriptions";
+            if (string.Equals(provider, "Groq", StringComparison.OrdinalIgnoreCase))
+                return "https://api.groq.com/openai/v1/audio/transcriptions";
+            if (string.Equals(provider, "Mistral", StringComparison.OrdinalIgnoreCase))
+                return "https://api.mistral.ai/v1/audio/transcriptions";
+            throw new InvalidOperationException("Unsupported speech provider.");
+        }
 
         private static byte[] BuildWav(byte[] pcm, int sampleRate, short channels)
         {

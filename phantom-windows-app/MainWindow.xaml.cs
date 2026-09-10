@@ -148,6 +148,8 @@ namespace SecureOverlay
         private int _interviewLockHeartbeatCount;
         private string? _lastRetryableQuestion;
         private Task _managedCatalogRefreshTask = Task.CompletedTask;
+        private bool _voiceRoutedAsManaged;
+        private bool _voiceRoutedAsByoCloud;
 
         public MainWindow() : this(new AppLaunchContext())
         {
@@ -1071,6 +1073,13 @@ namespace SecureOverlay
             }
 
             RestoreSelectedByoModels(selectedProvider, selectedModels, speechProvider, speechModel);
+            var previousSpeechProvider = _settings.SpeechProviderId;
+            var previousSpeechModel = _settings.SpeechModelId;
+            if (UsesByoProviderLane()
+                && string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase))
+            {
+                EnsureByoSpeechSelection();
+            }
             SettingsManager.Save(_settings);
             if (_currentAI != null && IsByoLaneActiveNow() && GetConfiguredModelsForProvider(_settings.SelectedAI).Length > 0)
             {
@@ -1079,6 +1088,14 @@ namespace SecureOverlay
 
             ApplyAccountTierChrome();
             UpdateProviderAndModelDisplay();
+            if (_settings.VoiceInputEnabled
+                && _voiceRoutedAsByoCloud
+                && _voiceService?.IsListening() != true
+                && (!string.Equals(previousSpeechProvider, _settings.SpeechProviderId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(previousSpeechModel, _settings.SpeechModelId, StringComparison.OrdinalIgnoreCase)))
+            {
+                InitializeVoice();
+            }
         }
 
         private Dictionary<string, string> CaptureSelectedByoModels()
@@ -1345,6 +1362,48 @@ namespace SecureOverlay
             return _settings.PreferByoCreditsFirst && HasByoEntitlement() && HasPremiumManagedEntitlement();
         }
 
+        /// <summary>
+        /// Matches Mac AccountAccess.usesBYO: the BYO provider lane is active when the account
+        /// has BYO entitlement and either has no usable Premium credits or prefers BYO first.
+        /// Unlike IsByoLaneActiveNow, this does not require chat keys — dedicated speech keys
+        /// are enough for cloud recognition.
+        /// </summary>
+        private bool UsesByoProviderLane()
+        {
+            if (IsFreeTrialAccount() || !HasByoEntitlement())
+            {
+                return false;
+            }
+
+            if (!HasPremiumManagedEntitlement() || (_accountSnapshot?.PremiumAvailableCredits ?? 0m) <= 0m)
+            {
+                return true;
+            }
+
+            return _settings.PreferByoCreditsFirst;
+        }
+
+        private void EnsureByoSpeechSelection()
+        {
+            var providers = (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .Where(item => item.Models != null && item.Models.Count > 0)
+                .ToList();
+            if (providers.Count == 0)
+            {
+                return;
+            }
+
+            var provider = providers.FirstOrDefault(item =>
+                    string.Equals(item.ProviderId, _settings.SpeechProviderId, StringComparison.OrdinalIgnoreCase))
+                ?? providers[0];
+            _settings.SpeechProviderId = provider.ProviderId;
+
+            var model = provider.Models.FirstOrDefault(item =>
+                    string.Equals(item.ModelId, _settings.SpeechModelId, StringComparison.OrdinalIgnoreCase))
+                ?? provider.Models[0];
+            _settings.SpeechModelId = model.ModelId;
+        }
+
         private bool IsByoLaneActiveNow()
         {
             if (IsFreeTrialAccount() || !HasByoEntitlement() || !HasAnyConfiguredByoProvider())
@@ -1421,6 +1480,27 @@ namespace SecureOverlay
                 Log.WriteLine($"Credit lane changed - reinitializing AI. BYO required: {shouldUseByoRuntime}");
                 InitializeAI();
             }
+
+            SyncVoiceWithCurrentCreditLane();
+        }
+
+        private void SyncVoiceWithCurrentCreditLane()
+        {
+            if (!_settings.VoiceInputEnabled || _voiceService == null || _voiceService.IsListening())
+            {
+                return;
+            }
+
+            var useManagedSpeech = !UsesByoProviderLane() && HasPremiumManagedEntitlement();
+            var useByoCloudSpeech = UsesByoProviderLane()
+                && string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase);
+            if (_voiceRoutedAsManaged == useManagedSpeech && _voiceRoutedAsByoCloud == useByoCloudSpeech)
+            {
+                return;
+            }
+
+            Log.WriteLine($"Voice credit lane changed - reinitializing recognizer. managed={useManagedSpeech} byo_cloud={useByoCloudSpeech}");
+            InitializeVoice();
         }
 
         private bool ShouldUseByoRuntimeForCurrentSelection(string provider)
@@ -3362,11 +3442,31 @@ namespace SecureOverlay
 
             try
             {
+                _voiceService?.Dispose();
+                _voiceService = null;
+
                 Log.WriteLine("Creating browser-based VoiceInputService...");
                 var session = _authSessionRepository.Load();
-                var useManagedSpeech = IsPremiumAccount();
-                var useByoCloudSpeech = IsByoAccount()
+                var useManagedSpeech = !UsesByoProviderLane() && HasPremiumManagedEntitlement();
+                var useByoCloudSpeech = UsesByoProviderLane()
                     && string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase);
+                if (useByoCloudSpeech)
+                {
+                    var previousProvider = _settings.SpeechProviderId;
+                    var previousModel = _settings.SpeechModelId;
+                    EnsureByoSpeechSelection();
+                    if (!string.Equals(previousProvider, _settings.SpeechProviderId, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(previousModel, _settings.SpeechModelId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SettingsManager.Save(_settings);
+                    }
+                }
+
+                _voiceRoutedAsManaged = useManagedSpeech;
+                _voiceRoutedAsByoCloud = useByoCloudSpeech;
+                Log.WriteLine(
+                    $"Voice cloud routing managed={useManagedSpeech} byo_cloud={useByoCloudSpeech} mode={_settings.SpeechRecognitionMode} provider={_settings.SpeechProviderId} model={_settings.SpeechModelId} shared_chat_keys={_settings.UseChatProviderApiKeysForSpeech}");
+
                 SpeechTranscriptionClient? cloudSpeech = null;
                 if ((useManagedSpeech || useByoCloudSpeech) && session?.IsAuthenticated == true)
                 {
@@ -3856,8 +3956,6 @@ namespace SecureOverlay
                 if (_settings.VoiceInputEnabled)
                 {
                     Log.WriteLine("Applying voice recognizer settings");
-                    _voiceService?.Dispose();
-                    _voiceService = null;
                     InitializeVoice();
                 }
                 else if (!_settings.VoiceInputEnabled && _voiceService != null)

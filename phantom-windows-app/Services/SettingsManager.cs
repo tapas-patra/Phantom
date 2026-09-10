@@ -474,7 +474,9 @@ namespace SecureOverlay.Services
 
         private static void ApplyDerivedSettings(AppSettings settings)
         {
-            settings.SpeechApiKeys ??= new Dictionary<string, List<string>>();
+            settings.SpeechApiKeys = new Dictionary<string, List<string>>(
+                settings.SpeechApiKeys ?? new Dictionary<string, List<string>>(),
+                StringComparer.OrdinalIgnoreCase);
             settings.SpeechRotationState ??= new APIRotationState();
             settings.SpeechCatalogCache ??= new ManagedAiCatalogDto();
             settings.ByoAiCatalogCache ??= new ManagedAiCatalogDto();

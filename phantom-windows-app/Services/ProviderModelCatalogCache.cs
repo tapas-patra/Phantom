@@ -8,33 +8,24 @@ namespace SecureOverlay.Services
 {
     public static class ProviderModelCatalogCache
     {
-        public static ManagedAiProviderOptionDto? GetProvider(AppSettings settings, string providerId)
+        public static ManagedAiProviderOptionDto? GetProvider(AppSettings settings, string providerId, bool byo = false)
         {
-            return settings.ManagedAiCatalogCache?.Providers?
+            return GetCatalog(settings, byo).Providers?
                 .FirstOrDefault(item => string.Equals(item.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
         }
 
-        public static string[] GetModelIds(AppSettings settings, string providerId)
+        public static string[] GetModelIds(AppSettings settings, string providerId, bool byo = false)
         {
-            var cachedProvider = GetProvider(settings, providerId);
-            if (cachedProvider?.Models != null)
-            {
-                return cachedProvider.Models
-                    .Select(item => item.ModelId)
-                    .Where(item => !string.IsNullOrWhiteSpace(item))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-            }
-
-            return GetLegacyModelList(settings, providerId)
+            return (GetProvider(settings, providerId, byo)?.Models ?? new List<ManagedAiModelOptionDto>())
+                .Select(item => item.ModelId)
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
 
-        public static ManagedAiModelOptionDto? GetModel(AppSettings settings, string providerId, string modelId)
+        public static ManagedAiModelOptionDto? GetModel(AppSettings settings, string providerId, string modelId, bool byo = false)
         {
-            return GetProvider(settings, providerId)?.Models?
+            return GetProvider(settings, providerId, byo)?.Models?
                 .FirstOrDefault(item => string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -52,7 +43,6 @@ namespace SecureOverlay.Services
                 ? catalog.RefreshedAtUtc
                 : settings.ManagedAiCatalogCache.Providers.Max(item => item.RefreshedAtUtc);
 
-            SyncLegacyModelListsFromCache(settings);
         }
 
         public static void ReplaceCatalog(AppSettings settings, ManagedAiCatalogDto catalog)
@@ -87,7 +77,6 @@ namespace SecureOverlay.Services
                     .ToList()
             };
 
-            SyncLegacyModelListsFromCache(settings);
         }
 
         public static void UpsertProvider(
@@ -95,10 +84,11 @@ namespace SecureOverlay.Services
             string providerId,
             string? label,
             IEnumerable<ManagedAiModelOptionDto> models,
-            DateTime refreshedAtUtc)
+            DateTime refreshedAtUtc,
+            bool byo = false)
         {
-            settings.ManagedAiCatalogCache ??= new ManagedAiCatalogDto();
-            settings.ManagedAiCatalogCache.Providers ??= new List<ManagedAiProviderOptionDto>();
+            var catalog = GetCatalog(settings, byo);
+            catalog.Providers ??= new List<ManagedAiProviderOptionDto>();
 
             var normalizedModels = models
                 .Where(item => !string.IsNullOrWhiteSpace(item.ModelId))
@@ -116,10 +106,10 @@ namespace SecureOverlay.Services
                 .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var existing = GetProvider(settings, providerId);
+            var existing = GetProvider(settings, providerId, byo);
             if (existing == null)
             {
-                settings.ManagedAiCatalogCache.Providers.Add(new ManagedAiProviderOptionDto
+                catalog.Providers.Add(new ManagedAiProviderOptionDto
                 {
                     ProviderId = providerId,
                     Label = string.IsNullOrWhiteSpace(label) ? providerId : label!,
@@ -134,51 +124,25 @@ namespace SecureOverlay.Services
                 existing.RefreshedAtUtc = refreshedAtUtc;
             }
 
-            settings.ManagedAiCatalogCache.Providers = settings.ManagedAiCatalogCache.Providers
+            catalog.Providers = catalog.Providers
                 .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            settings.ManagedAiCatalogCache.RefreshedAtUtc = settings.ManagedAiCatalogCache.Providers.Count == 0
+            catalog.RefreshedAtUtc = catalog.Providers.Count == 0
                 ? refreshedAtUtc
-                : settings.ManagedAiCatalogCache.Providers.Max(item => item.RefreshedAtUtc);
+                : catalog.Providers.Max(item => item.RefreshedAtUtc);
 
-            SyncLegacyModelsForProvider(settings, providerId, normalizedModels.Select(item => item.ModelId));
-        }
-
-        public static void BackfillFromLegacySettings(AppSettings settings)
-        {
-            foreach (var providerId in AIModelRegistry.GetAllProviders())
+            if (byo)
             {
-                if (GetProvider(settings, providerId)?.Models?.Count > 0)
-                {
-                    continue;
-                }
-
-                var models = GetLegacyModelList(settings, providerId)
-                    .Where(item => !string.IsNullOrWhiteSpace(item))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Select(modelId => new ManagedAiModelOptionDto
-                    {
-                        ModelId = modelId,
-                        DisplayName = AIModelRegistry.GetDisplayName(modelId),
-                        SupportsVision = InferVisionSupport(modelId, AIModelRegistry.GetDisplayName(modelId))
-                    })
-                    .ToList();
-
-                if (models.Count == 0)
-                {
-                    continue;
-                }
-
-                UpsertProvider(settings, providerId, providerId, models, DateTime.UtcNow);
+                SyncLegacyModelsForProvider(settings, providerId, normalizedModels.Select(item => item.ModelId));
             }
         }
 
-        public static void SyncLegacyModelListsFromCache(AppSettings settings)
+        public static void SyncLegacyModelListsFromCache(AppSettings settings, bool byo)
         {
             foreach (var providerId in AIModelRegistry.GetAllProviders())
             {
-                SyncLegacyModelsForProvider(settings, providerId, GetModelIds(settings, providerId));
+                SyncLegacyModelsForProvider(settings, providerId, GetModelIds(settings, providerId, byo));
             }
         }
 
@@ -204,18 +168,16 @@ namespace SecureOverlay.Services
                 || normalized.Contains("scout");
         }
 
-        private static List<string> GetLegacyModelList(AppSettings settings, string providerId)
+        private static ManagedAiCatalogDto GetCatalog(AppSettings settings, bool byo)
         {
-            return providerId switch
+            if (byo)
             {
-                "ChatGPT" => settings.ChatGPTModels,
-                "Claude" => settings.ClaudeModels,
-                "Mistral" => settings.MistralModels,
-                "Gemini" => settings.GeminiModels,
-                "Groq" => settings.GroqModels,
-                "NVIDIA" => settings.NvidiaModels,
-                _ => AIModelRegistry.GetModelsForProvider(providerId).ToList()
-            };
+                settings.ByoAiCatalogCache ??= new ManagedAiCatalogDto();
+                return settings.ByoAiCatalogCache;
+            }
+
+            settings.ManagedAiCatalogCache ??= new ManagedAiCatalogDto();
+            return settings.ManagedAiCatalogCache;
         }
 
         private static void SyncLegacyModelsForProvider(AppSettings settings, string providerId, IEnumerable<string> models)

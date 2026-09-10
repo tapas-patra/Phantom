@@ -47,7 +47,7 @@ public sealed class ManagedAiCatalogService
 
         var providers = _catalogRepository.ListAll()
             .Where(item => configuredProviderIds.Contains(item.ProviderId))
-            .Select(MapProvider)
+            .Select(MapProviderChatEligible)
             .Where(item => item.Models.Count > 0)
             .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -97,6 +97,124 @@ public sealed class ManagedAiCatalogService
         };
     }
 
+    public ManagedAiCatalogDto GetByoCatalog(DesktopAccountRecord account)
+    {
+        RequireByoAccess(account);
+        return BuildByoCatalogDto();
+    }
+
+    public async Task<ManagedAiCatalogDto> RefreshByoCatalogAsync(
+        DesktopAccountRecord account,
+        ByoModelCatalogRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        RequireByoAccess(account);
+        var providerId = request.ProviderId?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(providerId) && !ManagedAiCatalog.IsAllowedProvider(providerId))
+        {
+            throw new BackendValidationException("Unsupported BYO provider.");
+        }
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                await RefreshCatalogAsync(force: true, cancellationToken);
+            }
+            else
+            {
+                await RefreshSingleProviderCatalogAsync(providerId, cancellationToken);
+            }
+
+            return BuildByoCatalogDto();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (BackendValidationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "BYO AI catalog refresh failed for provider {ProviderId}; error_type={ErrorType}",
+                string.IsNullOrWhiteSpace(providerId) ? "all" : providerId,
+                ex.GetType().Name);
+            throw new BackendValidationException("Unable to refresh BYO model catalogs. Please retry.");
+        }
+    }
+
+    private ManagedAiCatalogDto BuildByoCatalogDto()
+    {
+        // BYO users call providers with their own keys. Serve the admin catalog
+        // (synced + manually added models) regardless of whether Phantom has a
+        // managed credential for that provider.
+        var catalogByProvider = _catalogRepository.ListAll()
+            .ToDictionary(item => item.ProviderId, StringComparer.OrdinalIgnoreCase);
+
+        var providers = ManagedAiCatalog.GetAllProviders()
+            .Select(providerId =>
+            {
+                if (catalogByProvider.TryGetValue(providerId, out var record))
+                {
+                    return MapProviderChatEligible(record);
+                }
+
+                return new ManagedAiProviderOptionDto
+                {
+                    ProviderId = providerId,
+                    Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                    Models = Array.Empty<ManagedAiModelOptionDto>(),
+                    // Never emit DateTime.MinValue — macOS ISO-8601 decoding rejects 0001-01-01.
+                    RefreshedAtUtc = DateTime.UtcNow
+                };
+            })
+            .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new ManagedAiCatalogDto
+        {
+            Providers = providers,
+            RefreshedAtUtc = providers.Length == 0
+                ? DateTime.UtcNow
+                : providers.Max(item => item.RefreshedAtUtc)
+        };
+    }
+
+    private async Task RefreshSingleProviderCatalogAsync(string providerId, CancellationToken cancellationToken)
+    {
+        var credential = _credentials.ListByProvider(providerId)
+            .Where(item => item.IsEnabled)
+            .OrderBy(item => item.Priority)
+            .ThenByDescending(item => item.UpdatedAtUtc)
+            .FirstOrDefault()
+            ?? throw new BackendValidationException($"No managed credential is configured for {ManagedAiCatalog.GetProviderLabel(providerId)}.");
+
+        var existing = _catalogRepository.FindByProviderId(providerId);
+        var existingModels = existing == null
+            ? Array.Empty<ManagedAiModelOptionDto>()
+            : DeserializeModels(existing.ModelsJson);
+
+        var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
+        var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+        var models = MergeFetchedModelsWithExisting(fetched, existingModels);
+        var refreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(new ManagedProviderCatalogRecord
+        {
+            ProviderId = providerId,
+            Label = ManagedAiCatalog.GetProviderLabel(providerId),
+            ModelsJson = JsonSerializer.Serialize(models),
+            RefreshedAtUtc = refreshedAtUtc
+        });
+
+        _logger.LogInformation(
+            "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
+            providerId,
+            models.Count);
+    }
+
     public IReadOnlyList<ManagedAiProviderOptionDto> ListCatalogProviders()
     {
         return _catalogRepository.ListAll()
@@ -128,6 +246,11 @@ public sealed class ManagedAiCatalogService
         var model = provider.Models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
             ?? throw new BackendValidationException("Managed model not found.");
 
+        if (!model.EligibleForChat)
+        {
+            throw new BackendValidationException("Active premium model must be eligible for chat.");
+        }
+
         if (!_credentials.ListByProvider(provider.ProviderId).Any(item => item.IsEnabled))
         {
             throw new BackendValidationException("At least one enabled credential is required for the selected provider.");
@@ -154,7 +277,9 @@ public sealed class ManagedAiCatalogService
         }
 
         return DeserializeModels(record.ModelsJson)
-            .Any(item => string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase));
+            .Any(item =>
+                string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase)
+                && item.EligibleForChat);
     }
 
     public bool ModelSupportsVision(string provider, string model)
@@ -190,6 +315,100 @@ public sealed class ManagedAiCatalogService
 
         model.SupportsVision = request.SupportsVision;
         record.ModelsJson = JsonSerializer.Serialize(models);
+        record.RefreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(record);
+
+        return MapProvider(record);
+    }
+
+    public ManagedAiProviderOptionDto UpdateModelFlags(ManagedAiModelFlagsUpdateRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        if (request.SupportsVision == null && request.EligibleForChat == null)
+        {
+            throw new BackendValidationException("At least one of SupportsVision or EligibleForChat is required.");
+        }
+
+        var record = _catalogRepository.FindByProviderId(request.ProviderId)
+            ?? throw new BackendValidationException("Managed provider catalog not found.");
+        var models = DeserializeModels(record.ModelsJson).ToList();
+        var model = models.FirstOrDefault(item => string.Equals(item.ModelId, request.ModelId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new BackendValidationException("Managed model not found.");
+
+        if (request.SupportsVision.HasValue)
+        {
+            model.SupportsVision = request.SupportsVision.Value;
+        }
+
+        if (request.EligibleForChat.HasValue)
+        {
+            model.EligibleForChat = request.EligibleForChat.Value;
+        }
+
+        record.ModelsJson = JsonSerializer.Serialize(models);
+        record.RefreshedAtUtc = DateTime.UtcNow;
+        _catalogRepository.Save(record);
+
+        return MapProvider(record);
+    }
+
+    public ManagedAiProviderOptionDto AddOrUpdateModel(ManagedAiModelUpsertRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProviderId))
+        {
+            throw new BackendValidationException("ProviderId is required.");
+        }
+
+        if (!ManagedAiCatalog.IsAllowedProvider(request.ProviderId))
+        {
+            throw new BackendValidationException("Unsupported managed AI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            throw new BackendValidationException("ModelId is required.");
+        }
+
+        var providerId = ManagedAiCatalog.GetAllProviders()
+            .First(item => string.Equals(item, request.ProviderId, StringComparison.OrdinalIgnoreCase));
+        var modelId = request.ModelId.Trim();
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? modelId : request.DisplayName.Trim();
+
+        var record = _catalogRepository.FindByProviderId(providerId);
+        var models = record == null
+            ? new List<ManagedAiModelOptionDto>()
+            : DeserializeModels(record.ModelsJson).ToList();
+
+        var model = models.FirstOrDefault(item => string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (model == null)
+        {
+            model = new ManagedAiModelOptionDto { ModelId = modelId };
+            models.Add(model);
+        }
+
+        model.ModelId = modelId;
+        model.DisplayName = displayName;
+        model.SupportsVision = request.SupportsVision;
+        model.EligibleForChat = request.EligibleForChat;
+
+        record ??= new ManagedProviderCatalogRecord
+        {
+            ProviderId = providerId,
+            Label = ManagedAiCatalog.GetProviderLabel(providerId)
+        };
+
+        record.Label = ManagedAiCatalog.GetProviderLabel(providerId);
+        record.ModelsJson = JsonSerializer.Serialize(
+            models.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray());
         record.RefreshedAtUtc = DateTime.UtcNow;
         _catalogRepository.Save(record);
 
@@ -232,11 +451,15 @@ public sealed class ManagedAiCatalogService
 
                 if (!credentialsByProvider.TryGetValue(providerId, out var credential))
                 {
+                    // No managed credential → cannot live-fetch, but keep catalog rows
+                    // (including admin-manual models) so BYO clients still receive them.
                     results.Add(BuildRefreshResult(
                         providerId,
                         attempted: false,
-                        succeeded: false,
-                        message: "No enabled credential configured.",
+                        succeeded: existingModels.Count > 0,
+                        message: existingModels.Count > 0
+                            ? "No managed credential; serving existing catalog models."
+                            : "No enabled credential configured.",
                         models: existingModels,
                         refreshedAtUtc: existing?.RefreshedAtUtc));
                     continue;
@@ -258,7 +481,8 @@ public sealed class ManagedAiCatalogService
                 try
                 {
                     var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                    var models = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+                    var models = MergeFetchedModelsWithExisting(fetched, existingModels);
                     var refreshedAtUtc = DateTime.UtcNow;
 
                     _catalogRepository.Save(new ManagedProviderCatalogRecord
@@ -315,8 +539,53 @@ public sealed class ManagedAiCatalogService
             ProviderId = record.ProviderId,
             Label = record.Label,
             Models = DeserializeModels(record.ModelsJson),
-            RefreshedAtUtc = record.RefreshedAtUtc
+            RefreshedAtUtc = NormalizeCatalogTimestamp(record.RefreshedAtUtc)
         };
+    }
+
+    private static DateTime NormalizeCatalogTimestamp(DateTime value)
+    {
+        // Swift clients reject DateTime.MinValue / year-0001 ISO strings.
+        return value.Year < 2 ? DateTime.UtcNow : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+    }
+
+    private static ManagedAiProviderOptionDto MapProviderChatEligible(ManagedProviderCatalogRecord record)
+    {
+        var mapped = MapProvider(record);
+        return new ManagedAiProviderOptionDto
+        {
+            ProviderId = mapped.ProviderId,
+            Label = mapped.Label,
+            RefreshedAtUtc = mapped.RefreshedAtUtc,
+            Models = mapped.Models.Where(item => item.EligibleForChat).ToArray()
+        };
+    }
+
+    private static IReadOnlyList<ManagedAiModelOptionDto> MergeFetchedModelsWithExisting(
+        IReadOnlyList<ManagedAiModelOptionDto> fetched,
+        IReadOnlyList<ManagedAiModelOptionDto> existing)
+    {
+        var existingById = existing.ToDictionary(item => item.ModelId, StringComparer.OrdinalIgnoreCase);
+        return fetched
+            .Select(fetchedModel =>
+            {
+                if (!existingById.TryGetValue(fetchedModel.ModelId, out var existingModel))
+                {
+                    return fetchedModel;
+                }
+
+                return new ManagedAiModelOptionDto
+                {
+                    ModelId = fetchedModel.ModelId,
+                    DisplayName = string.IsNullOrWhiteSpace(fetchedModel.DisplayName)
+                        ? existingModel.DisplayName
+                        : fetchedModel.DisplayName,
+                    SupportsVision = existingModel.SupportsVision,
+                    EligibleForChat = existingModel.EligibleForChat
+                };
+            })
+            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static IReadOnlyList<ManagedAiModelOptionDto> DeserializeModels(string modelsJson)
@@ -423,7 +692,7 @@ public sealed class ManagedAiCatalogService
             }
 
             var id = idElement.GetString();
-            if (string.IsNullOrWhiteSpace(id) || !LooksLikeChatModel(id))
+            if (string.IsNullOrWhiteSpace(id) || !LooksLikeInventoryModel(id))
             {
                 continue;
             }
@@ -432,7 +701,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = id,
                 DisplayName = id,
-                SupportsVision = InferVisionSupport(id, null)
+                SupportsVision = InferVisionSupport(id, null),
+                EligibleForChat = LooksLikeChatModel(id)
             });
         }
 
@@ -473,7 +743,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = id,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName!,
-                SupportsVision = InferVisionSupport(id, displayName)
+                SupportsVision = InferVisionSupport(id, displayName),
+                EligibleForChat = true
             });
         }
 
@@ -485,9 +756,9 @@ public sealed class ManagedAiCatalogService
 
     private static async Task<IReadOnlyList<ManagedAiModelOptionDto>> FetchGeminiModelsAsync(string apiKey, CancellationToken cancellationToken)
     {
-        using var response = await HttpClient.GetAsync(
-            $"https://generativelanguage.googleapis.com/v1beta/models?key={Uri.EscapeDataString(apiKey)}",
-            cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://generativelanguage.googleapis.com/v1beta/models");
+        request.Headers.Add("x-goog-api-key", apiKey);
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -520,7 +791,8 @@ public sealed class ManagedAiCatalogService
             {
                 ModelId = baseModelId,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? baseModelId : displayName!,
-                SupportsVision = InferVisionSupport(baseModelId, displayName)
+                SupportsVision = InferVisionSupport(baseModelId, displayName),
+                EligibleForChat = true
             });
         }
 
@@ -530,16 +802,24 @@ public sealed class ManagedAiCatalogService
             .ToArray();
     }
 
-    private static bool LooksLikeChatModel(string modelId)
+    private static bool LooksLikeInventoryModel(string modelId)
     {
         var normalized = modelId.ToLowerInvariant();
-        if (normalized.Contains("embedding")
+        return !(normalized.Contains("embedding")
             || normalized.Contains("moderation")
             || normalized.Contains("whisper")
             || normalized.Contains("tts")
             || normalized.Contains("transcribe")
             || normalized.Contains("image")
-            || normalized.Contains("rerank"))
+            || normalized.Contains("rerank")
+            || normalized.Contains("audio")
+            || normalized.Contains("realtime"));
+    }
+
+    private static bool LooksLikeChatModel(string modelId)
+    {
+        var normalized = modelId.ToLowerInvariant();
+        if (!LooksLikeInventoryModel(modelId))
         {
             return false;
         }
@@ -610,5 +890,23 @@ public sealed class ManagedAiCatalogService
         var message = ex.Message?.Trim() ?? ex.GetType().Name;
         var newlineIndex = message.IndexOfAny(['\r', '\n']);
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
+    }
+
+    private static void RequireByoAccess(DesktopAccountRecord account)
+    {
+        if (account.ProAvailableCredits > 0m)
+        {
+            return;
+        }
+
+        var effectiveTier = AccessModeResolver.GetEffectiveAccessTier(account);
+        if (string.Equals(effectiveTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(account.AccessTier, AccessModeResolver.ProByo, StringComparison.OrdinalIgnoreCase)
+            || account.CanUseDesktopPowerFeatures)
+        {
+            return;
+        }
+
+        throw new BackendValidationException("BYO model catalog access requires a Pro BYO entitlement.");
     }
 }

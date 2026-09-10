@@ -84,10 +84,6 @@ private struct LoginView: View {
                     }
                 }
                 Spacer()
-                Text(store.configuration.desktopBackendBaseUrl)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(PhantomColors.dim)
-                    .lineLimit(1)
             }
             .padding(42)
             .frame(width: 420)
@@ -138,15 +134,16 @@ private struct ChatView: View {
             if let confirmation {
                 protectedConfirmation(confirmation)
             }
-            if store.isScreenshotPreviewVisible, let data = store.attachedScreenshot, let image = NSImage(data: data) {
+            if store.isScreenshotPreviewVisible, !store.attachedScreenshots.isEmpty {
                 ScreenshotPreview(
-                    image: image,
+                    images: store.attachedScreenshots.prefix(PhantomStore.maxAttachedScreenshots).compactMap { NSImage(data: $0) },
                     onClose: store.closeScreenshotPreview,
-                    onReplace: {
+                    onAdd: {
                         store.closeScreenshotPreview()
                         store.captureScreenshot()
                     },
-                    onRemove: store.removeScreenshot
+                    onRemoveAt: { store.removeScreenshot(at: $0) },
+                    onRemoveAll: { store.removeScreenshot() }
                 )
             }
         }
@@ -158,7 +155,7 @@ private struct ChatView: View {
         HStack(spacing: 8) {
             BrandMark(compact: true, showsName: false)
             StatusPill(text: store.creditStatus, color: PhantomColors.blue)
-            StatusPill(text: store.accountTypeLabel, color: PhantomColors.amber)
+            StatusPill(text: store.activeCreditModeLabel, color: PhantomColors.amber)
             StatusPill(text: store.sessionTimerText.isEmpty ? "00:00:00" : store.sessionTimerText, color: PhantomColors.green)
 
             if !store.isCompact {
@@ -173,9 +170,19 @@ private struct ChatView: View {
 
             if store.isCompact {
                 Button(action: store.captureScreenshot) {
-                    Image(systemName: store.attachedScreenshot == nil ? "camera.viewfinder" : "camera.fill")
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: store.attachedScreenshots.isEmpty ? "camera.viewfinder" : "camera.fill")
+                        if store.attachedScreenshotCount > 0 {
+                            Text("\(store.attachedScreenshotCount)")
+                                .font(.system(size: 9, weight: .bold))
+                                .padding(.horizontal, 3)
+                                .background(PhantomColors.blue)
+                                .clipShape(Capsule())
+                                .offset(x: 6, y: -6)
+                        }
+                    }
                 }
-                .disabled(!store.selectedModelSupportsVision || store.isCapturingScreenshot)
+                .disabled(!store.selectedModelSupportsVision || store.isCapturingScreenshot || store.attachedScreenshotCount >= PhantomStore.maxAttachedScreenshots)
                 .accessibilityLabel("Capture screenshot")
 
                 Button(action: store.toggleVoiceInput) {
@@ -249,25 +256,39 @@ private struct ChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let data = store.attachedScreenshot, let image = NSImage(data: data) {
-                HStack(spacing: 10) {
-                    Button(action: store.showScreenshotPreview) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 72, height: 46)
-                            .clipShape(RoundedRectangle(cornerRadius: 7))
+            if !store.attachedScreenshots.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(Array(store.attachedScreenshots.enumerated()), id: \.offset) { index, data in
+                        if let image = NSImage(data: data) {
+                            ZStack(alignment: .topTrailing) {
+                                Button(action: store.showScreenshotPreview) {
+                                    Image(nsImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 56, height: 38)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Preview screenshot \(index + 1)")
+                                Button {
+                                    store.removeScreenshot(at: index)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 12))
+                                }
+                                .buttonStyle(.borderless)
+                                .offset(x: 4, y: -4)
+                                .accessibilityLabel("Remove screenshot \(index + 1)")
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Preview attached screenshot")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Screenshot attached").font(.system(size: 12, weight: .semibold))
-                        Text("Included with the next message").font(.caption).foregroundColor(PhantomColors.muted)
-                    }
+                    Text("\(store.attachedScreenshotCount)/\(PhantomStore.maxAttachedScreenshots)")
+                        .font(.caption)
+                        .foregroundColor(PhantomColors.muted)
                     Spacer()
-                    Button(action: store.removeScreenshot) { Image(systemName: "xmark.circle.fill") }
+                    Button("Clear", action: { store.removeScreenshot() })
                         .buttonStyle(.borderless)
-                        .accessibilityLabel("Remove screenshot")
+                        .font(.caption)
                 }
                 .padding(8)
                 .background(PhantomColors.blue.opacity(0.12))
@@ -282,11 +303,38 @@ private struct ChatView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(PhantomColors.stroke))
                     .accessibilityLabel("Message")
 
+                if store.useBYOProvider && store.hasBYOEntitlement {
+                    InWindowPicker(
+                        "Provider",
+                        selection: $store.selectedProviderId,
+                        options: store.byoProviderChoices.map { ($0.label, $0.providerId) },
+                        compact: true
+                    )
+                    .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
+                    InWindowPicker(
+                        "Model",
+                        selection: $store.selectedModelId,
+                        options: store.byoModelChoices.map { ($0.displayName, $0.modelId) },
+                        compact: true
+                    )
+                    .frame(minWidth: 120, idealWidth: 150, maxWidth: 220)
+                }
+
                 Button(action: store.captureScreenshot) {
-                    Image(systemName: store.attachedScreenshot == nil ? "camera.viewfinder" : "camera.fill")
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: store.attachedScreenshots.isEmpty ? "camera.viewfinder" : "camera.fill")
+                        if store.attachedScreenshotCount > 0 {
+                            Text("\(store.attachedScreenshotCount)")
+                                .font(.system(size: 9, weight: .bold))
+                                .padding(.horizontal, 3)
+                                .background(PhantomColors.blue)
+                                .clipShape(Capsule())
+                                .offset(x: 8, y: -8)
+                        }
+                    }
                 }
                 .buttonStyle(.bordered)
-                .disabled(!store.selectedModelSupportsVision || store.isCapturingScreenshot)
+                .disabled(!store.selectedModelSupportsVision || store.isCapturingScreenshot || store.attachedScreenshotCount >= PhantomStore.maxAttachedScreenshots)
                 .accessibilityLabel("Capture screenshot")
 
                 Button(action: store.toggleVoiceInput) {
@@ -309,15 +357,15 @@ private struct ChatView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    (store.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.attachedScreenshot == nil)
+                    (store.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.attachedScreenshots.isEmpty)
                 )
                 if store.isSending {
                     Button("Cancel", action: store.cancelCurrentRequest).buttonStyle(.bordered)
                 }
             }
 
-            if store.isListening || store.voiceStatus != "Ready" {
-                Text(store.voiceStatus)
+            if store.isListening || store.voiceStatus != "Ready" || (!store.status.isEmpty && store.status != "Ready" && store.status != "Account validation passed.") {
+                Text(store.isListening || store.voiceStatus != "Ready" ? store.voiceStatus : store.status)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(store.isListening ? PhantomColors.amber : PhantomColors.muted)
             }
@@ -347,7 +395,7 @@ private struct ChatView: View {
         ProtectedConfirmation(
             title: isClear ? "Clear everything?" : "Start a new topic?",
             message: isClear
-                ? "This removes the conversation, resume, job description, and screenshot attachment."
+                ? "This removes the conversation, resume, job description, and screenshot attachments."
                 : "The conversation and job description will be cleared. Your resume stays available.",
             confirmTitle: isClear ? "Clear Chat and Context" : "Start New Topic",
             destructive: isClear,
@@ -430,7 +478,9 @@ private struct SettingsView: View {
                 Spacer()
                 Text("Settings").font(.headline)
                 Spacer()
-                Button("Save", action: store.saveSettings).buttonStyle(.borderedProminent)
+                Button("Save", action: store.saveSettings)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.resumeOverLimit || store.jobDescriptionOverLimit)
             }
             .padding(.horizontal, 20)
             .frame(height: 58)
@@ -479,6 +529,33 @@ private struct SettingsView: View {
                     SettingsSection(title: "Voice input", systemImage: "mic") {
                         Toggle("Enable microphone transcription", isOn: $store.voiceEnabled)
                         Toggle("Send automatically after stopping", isOn: $store.autoSendAfterVoiceStop)
+                        if store.usesManagedSpeech {
+                            ReadOnlyRow(label: "Recognizer", value: "Managed speech with native fallback")
+                            Text("Managed speech runs on the Premium lane without exposing provider or model details. Native recognition is used automatically if cloud speech fails.")
+                                .font(.caption).foregroundColor(PhantomColors.muted)
+                        } else if store.useBYOProvider && store.hasBYOEntitlement {
+                            InWindowPicker("Recognizer", selection: $store.speechRecognitionMode, options: [("Native", "Native"), ("Cloud", "Cloud")])
+                            if store.speechRecognitionMode == "Cloud" {
+                                InWindowPicker("Speech provider", selection: $store.selectedSpeechProviderId, options: store.speechProviders.map { ($0.label, $0.providerId) })
+                                InWindowPicker("Speech model", selection: $store.selectedSpeechModelId, options: (store.selectedSpeechProvider?.models ?? []).map { ($0.displayName, $0.modelId) })
+                                TextField("Language code", text: $store.speechLanguage).textFieldStyle(.roundedBorder).accessibilityLabel("Speech language code")
+                                Toggle("Use chat provider API keys", isOn: $store.useChatKeysForSpeech)
+                                if !store.useChatKeysForSpeech {
+                                    SecureField("Dedicated speech API key #1", text: $store.speechAPIKey).textFieldStyle(.roundedBorder)
+                                    SecureField("Dedicated speech API key #2 (optional)", text: $store.speechSecondAPIKey).textFieldStyle(.roundedBorder)
+                                    HStack {
+                                        Button("Save Speech Keys", action: store.saveSpeechKeys)
+                                        Button("Remove Speech Keys", role: .destructive, action: store.removeSpeechKeys)
+                                    }
+                                    Text(store.speechKeyStatus).font(.caption).foregroundColor(PhantomColors.muted)
+                                }
+                                Toggle("Fall back to native recognition on errors or exhausted credit", isOn: $store.autoFallbackToNativeSpeech)
+                                Text("Speech model choices come from the Phantom backend catalog. BYO audio and keys stay between this Mac and the selected provider.")
+                                    .font(.caption).foregroundColor(PhantomColors.muted)
+                            }
+                        } else {
+                            ReadOnlyRow(label: "Recognizer", value: "Native")
+                        }
                         Text(store.voicePermissionStatus)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(PhantomColors.muted)
@@ -494,17 +571,27 @@ private struct SettingsView: View {
 
                     SettingsSection(title: "Managed AI", systemImage: "cpu") {
                         ReadOnlyRow(label: "Runtime", value: store.useBYOProvider ? "Pro BYO" : "Phantom managed")
-                        if store.useBYOProvider, !store.isPremiumAccount {
+                        if store.useBYOProvider && store.hasBYOEntitlement {
                             InWindowPicker(
                                 "Provider",
                                 selection: $store.selectedProviderId,
-                                options: store.providers.map { ($0.label, $0.providerId) }
+                                options: store.byoProviderChoices.map { ($0.label, $0.providerId) }
                             )
                             InWindowPicker(
                                 "Model",
                                 selection: $store.selectedModelId,
-                                options: (store.selectedProvider?.models ?? []).map { ($0.displayName, $0.modelId) }
+                                options: store.byoModelChoices.map { ($0.displayName, $0.modelId) }
                             )
+                            Button("Refresh models", action: store.refreshBYOModels)
+                                .buttonStyle(.bordered)
+                        } else if store.useBYOProvider {
+                            Text("BYO lane is active, but this account still needs Pro BYO entitlement and provider keys.")
+                                .font(.caption)
+                                .foregroundColor(PhantomColors.muted)
+                        } else {
+                            Text("Provider and model are managed by Phantom on this lane.")
+                                .font(.caption)
+                                .foregroundColor(PhantomColors.muted)
                         }
                         if store.isFreeTrialAccount {
                             Toggle("Allow the second 15-minute free-trial block", isOn: $store.allowFreeTrialSessionExtension)
@@ -600,24 +687,34 @@ private struct SettingsView: View {
                                 options: [("Standard", .standard), ("Desi — Natural Indian English", .desi)]
                             )
                         }
-                        Text("Resume • \(store.resumeWordCount) words")
+                        Text("Resume • \(store.resumeWordCount)/\(PhantomStore.maxResumeWords) words")
                             .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(store.resumeOverLimit ? .red : PhantomColors.frost)
                         TextEditor(text: $store.resumeText)
                             .frame(minHeight: 110)
                             .padding(6)
                             .background(PhantomColors.obsidian)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(PhantomColors.stroke))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(store.resumeOverLimit ? Color.red : PhantomColors.stroke))
                             .accessibilityLabel("Resume")
-                        Text("Job description • \(store.jobDescriptionWordCount) words")
+                        if store.resumeOverLimit {
+                            Text("Resume exceeds the \(PhantomStore.maxResumeWords)-word limit.")
+                                .font(.caption).foregroundColor(.red)
+                        }
+                        Text("Job description • \(store.jobDescriptionWordCount)/\(PhantomStore.maxJobDescriptionWords) words")
                             .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(store.jobDescriptionOverLimit ? .red : PhantomColors.frost)
                         TextEditor(text: $store.jobDescriptionText)
                             .frame(minHeight: 110)
                             .padding(6)
                             .background(PhantomColors.obsidian)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(PhantomColors.stroke))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(store.jobDescriptionOverLimit ? Color.red : PhantomColors.stroke))
                             .accessibilityLabel("Job description")
+                        if store.jobDescriptionOverLimit {
+                            Text("Job description exceeds the \(PhantomStore.maxJobDescriptionWords)-word limit.")
+                                .font(.caption).foregroundColor(.red)
+                        }
                         Text("These fields are added to the system context for every interview response.")
                             .font(.caption)
                             .foregroundColor(PhantomColors.muted)
@@ -632,7 +729,6 @@ private struct SettingsView: View {
                             value: NSDecimalNumber(decimal: store.account?.availableCredits ?? 0).stringValue
                         )
                         ReadOnlyRow(label: "Power flag", value: store.account?.canUseDesktopPowerFeatures == true ? "Enabled" : "Disabled")
-                        ReadOnlyRow(label: "Backend", value: store.configuration.desktopBackendBaseUrl)
                         Button("Restart Phantom and restore this conversation", action: store.restartApp)
                         if store.account?.canUseDesktopPowerFeatures == true {
                             HStack {
@@ -686,12 +782,14 @@ private struct InWindowPicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let options: [(title: String, value: Value)]
+    var compact: Bool = false
     @State private var isExpanded = false
 
-    init(_ title: String, selection: Binding<Value>, options: [(String, Value)]) {
+    init(_ title: String, selection: Binding<Value>, options: [(String, Value)], compact: Bool = false) {
         self.title = title
         _selection = selection
         self.options = options
+        self.compact = compact
     }
 
     private var selectedTitle: String {
@@ -699,20 +797,22 @@ private struct InWindowPicker<Value: Hashable>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: compact ? 4 : 6) {
             Button {
                 isExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
-                    Text(title).foregroundColor(PhantomColors.muted)
-                    Spacer()
+                    if !compact {
+                        Text(title).foregroundColor(PhantomColors.muted)
+                        Spacer()
+                    }
                     Text(selectedTitle).foregroundColor(PhantomColors.frost).lineLimit(1)
                     Image(systemName: "chevron.down")
                         .foregroundColor(PhantomColors.muted)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
-                .padding(.horizontal, 10)
-                .frame(minHeight: 32)
+                .padding(.horizontal, compact ? 8 : 10)
+                .frame(minHeight: compact ? 28 : 32)
                 .frame(maxWidth: .infinity)
                 .background(PhantomColors.obsidian)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -731,14 +831,17 @@ private struct InWindowPicker<Value: Hashable>: View {
                                 isExpanded = false
                             } label: {
                                 HStack {
-                                    Text(option.title).foregroundColor(PhantomColors.frost)
-                                    Spacer()
+                                    Text(option.title)
+                                        .foregroundColor(PhantomColors.frost)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer(minLength: 0)
                                     if option.value == selection {
                                         Image(systemName: "checkmark").foregroundColor(PhantomColors.blue)
                                     }
                                 }
                                 .padding(.horizontal, 10)
-                                .frame(minHeight: 30)
+                                .frame(minHeight: compact ? 26 : 30)
                                 .frame(maxWidth: .infinity)
                                 .contentShape(Rectangle())
                             }
@@ -748,6 +851,12 @@ private struct InWindowPicker<Value: Hashable>: View {
                     }
                 }
                 .padding(4)
+                .frame(
+                    minWidth: compact ? 100 : 160,
+                    maxWidth: compact ? 220 : 320,
+                    minHeight: InWindowPickerSizing.minimumHeight,
+                    maxHeight: InWindowPickerSizing.maximumHeight
+                )
                 .frame(height: InWindowPickerSizing.height(optionCount: options.count))
                 .background(PhantomColors.obsidian)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -792,30 +901,87 @@ private struct ProtectedConfirmation: View {
 }
 
 private struct ScreenshotPreview: View {
-    let image: NSImage
+    let images: [NSImage]
     let onClose: () -> Void
-    let onReplace: () -> Void
-    let onRemove: () -> Void
+    let onAdd: () -> Void
+    let onRemoveAt: (Int) -> Void
+    let onRemoveAll: () -> Void
+    @State private var selectedIndex = 0
+
+    private var safeIndex: Int {
+        guard !images.isEmpty else { return 0 }
+        return min(max(0, selectedIndex), images.count - 1)
+    }
 
     var body: some View {
         ZStack {
             Color.black.opacity(0.88).ignoresSafeArea()
             VStack(spacing: 14) {
                 HStack {
-                    Text("Screenshot Preview").font(.headline)
+                    Text(images.count > 1 ? "Screenshots (\(images.count)/\(PhantomStore.maxAttachedScreenshots))" : "Screenshot Preview")
+                        .font(.headline)
                     Spacer()
                     Button(action: onClose) { Image(systemName: "xmark") }
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Close screenshot preview")
                 }
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 760, maxHeight: 430)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                if !images.isEmpty {
+                    Image(nsImage: images[safeIndex])
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 760, maxHeight: 430)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                if images.count > 1 {
+                    HStack(spacing: 8) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                            ZStack(alignment: .topTrailing) {
+                                Button {
+                                    selectedIndex = index
+                                } label: {
+                                    Image(nsImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 64, height: 42)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(index == safeIndex ? PhantomColors.blue : PhantomColors.stroke, lineWidth: index == safeIndex ? 2 : 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Select screenshot \(index + 1)")
+                                Button {
+                                    onRemoveAt(index)
+                                    if selectedIndex >= images.count - 1 {
+                                        selectedIndex = max(0, images.count - 2)
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 12))
+                                }
+                                .buttonStyle(.borderless)
+                                .offset(x: 4, y: -4)
+                                .accessibilityLabel("Remove screenshot \(index + 1)")
+                            }
+                        }
+                        Spacer()
+                    }
+                }
                 HStack {
-                    Button("Replace", action: onReplace)
-                    Button("Remove", role: .destructive, action: onRemove)
+                    Button("Add another", action: onAdd)
+                        .disabled(images.count >= PhantomStore.maxAttachedScreenshots)
+                    Button(images.count > 1 ? "Remove selected" : "Remove", role: .destructive) {
+                        if images.count > 1 {
+                            onRemoveAt(safeIndex)
+                            selectedIndex = max(0, safeIndex - 1)
+                        } else {
+                            onRemoveAll()
+                        }
+                    }
+                    if images.count > 1 {
+                        Button("Remove all", role: .destructive, action: onRemoveAll)
+                    }
                     Spacer()
                     Button("Done", action: onClose).buttonStyle(.borderedProminent)
                 }
@@ -827,6 +993,10 @@ private struct ScreenshotPreview: View {
             .padding(28)
         }
         .zIndex(110)
+        .onChange(of: images.count) { count in
+            if count == 0 { onClose() }
+            else if selectedIndex >= count { selectedIndex = count - 1 }
+        }
     }
 }
 

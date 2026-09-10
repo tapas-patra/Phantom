@@ -40,6 +40,26 @@ public sealed class ManagedAiAdminService
         };
     }
 
+    public async Task<object?> GetSpeechCredentialInventory(string authorizationHeader, CancellationToken cancellationToken)
+    {
+        var credentialsTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-speech/credentials", authorizationHeader, null, cancellationToken);
+        var catalogsTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-speech/catalog", authorizationHeader, null, cancellationToken);
+        var selectionTask = _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/managed-speech/selection", authorizationHeader, null, cancellationToken);
+        await Task.WhenAll(credentialsTask, catalogsTask, selectionTask);
+        return new
+        {
+            managedProviders = new[]
+            {
+                new { providerId = "ChatGPT", label = "OpenAI", lane = "speech" },
+                new { providerId = "Groq", label = "Groq", lane = "speech" },
+                new { providerId = "Mistral", label = "Mistral", lane = "speech" }
+            },
+            credentials = await credentialsTask,
+            catalogs = await catalogsTask,
+            selection = await selectionTask
+        };
+    }
+
     public Task<object?> GetOverview(string authorizationHeader, CancellationToken cancellationToken)
     {
         return _authority.SendAsync<object>(HttpMethod.Get, "/api/admin/overview", authorizationHeader, null, cancellationToken);
@@ -75,6 +95,15 @@ public sealed class ManagedAiAdminService
         return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", authorizationHeader, null, cancellationToken);
     }
 
+    public Task<object?> UpsertSpeechCredential(string authorizationHeader, object payload, CancellationToken cancellationToken) =>
+        _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-speech/credentials", authorizationHeader, payload, cancellationToken);
+
+    public Task<object?> RefreshSpeechCatalog(string authorizationHeader, CancellationToken cancellationToken) =>
+        _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-speech/catalog/refresh", authorizationHeader, null, cancellationToken);
+
+    public Task<object?> UpdateSpeechRuntimeSelection(string authorizationHeader, object payload, CancellationToken cancellationToken) =>
+        _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-speech/selection", authorizationHeader, payload, cancellationToken);
+
     public Task<object?> UpdateRuntimeSelection(string authorizationHeader, object payload, CancellationToken cancellationToken)
     {
         return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/selection", authorizationHeader, payload, cancellationToken);
@@ -89,4 +118,7 @@ public sealed class ManagedAiAdminService
     {
         await _authority.SendAsync<object>(HttpMethod.Delete, $"/api/admin/managed-ai/credentials/{Uri.EscapeDataString(credentialId)}", authorizationHeader, null, cancellationToken);
     }
+
+    public async Task DeleteSpeechCredential(string authorizationHeader, string credentialId, CancellationToken cancellationToken) =>
+        await _authority.SendAsync<object>(HttpMethod.Delete, $"/api/admin/managed-speech/credentials/{Uri.EscapeDataString(credentialId)}", authorizationHeader, null, cancellationToken);
 }

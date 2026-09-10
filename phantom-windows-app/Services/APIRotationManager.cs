@@ -185,6 +185,28 @@ namespace SecureOverlay.Services
             SaveRotationState();
         }
 
+        public void ResetFailuresIfKeysChanged(string provider, IEnumerable<string> previousKeys)
+        {
+            if (previousKeys.SequenceEqual(GetKeysForProvider(provider), StringComparer.Ordinal))
+            {
+                return;
+            }
+
+            var failedProperty = _settings.GetType().GetProperty($"{provider}_Failed");
+            (failedProperty?.GetValue(_settings) as List<int>)?.Clear();
+            _state.FailedKeys429.Remove(provider);
+            _state.Last429Time.Remove(provider);
+            foreach (var key in _state.KeyCooldownUntilUtc.Keys
+                .Where(key => key.StartsWith(provider + ":", StringComparison.OrdinalIgnoreCase))
+                .ToArray())
+            {
+                _state.KeyCooldownUntilUtc.Remove(key);
+            }
+            _state.LastKeyIndex[provider] = -1;
+            SaveRotationState();
+            Log.WriteLine($"Cleared stale key failures after {provider} credentials changed");
+        }
+
         public void RecordCurrentFailure(string provider, ProviderFailureDecision failure)
         {
             var index = GetCurrentKeyIndex(provider);

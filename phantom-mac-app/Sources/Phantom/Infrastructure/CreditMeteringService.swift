@@ -52,11 +52,13 @@ actor CreditMeteringService {
         guard wallet.premiumNegativeCredits <= 0 else { return denied("Negative Premium Balance", "New interviews stay blocked until the Premium debt is cleared.") }
 
         let free = tier.lowercased() == "free"
+        let hasPro = wallet.proAvailableCredits > 0
+        let hasPremium = wallet.premiumAvailableCredits > 0
         let ledger: CreditLedger?
-        if !free, canUseBYO, preferBYO, wallet.proAvailableCredits > 0 { ledger = .pro }
-        else if !free, wallet.premiumAvailableCredits > 0 { ledger = .premium }
-        else if canUseBYO, wallet.proAvailableCredits > 0 { ledger = .pro }
-        else if wallet.premiumAvailableCredits > 0 { ledger = .premium }
+        if !free, canUseBYO, preferBYO, hasPro { ledger = .pro }
+        else if !free, hasPremium { ledger = .premium }
+        else if canUseBYO, hasPro { ledger = .pro }
+        else if hasPremium { ledger = .premium }
         else if !free, allowPaidExtension, wallet.premiumNegativeCredits < Self.protectedContinuationCap { ledger = .premium }
         else { ledger = nil }
 

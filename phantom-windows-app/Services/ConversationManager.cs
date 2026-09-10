@@ -149,12 +149,12 @@ namespace SecureOverlay.Services
             catch { return false; }
         }
 
-        public Task<(string response, string error)> SendMessageAsync(string userMessage, string? imageBase64 = null)
-            => SendMessageStreamAsync(userMessage, _ => { }, CancellationToken.None, imageBase64);
+        public Task<(string response, string error)> SendMessageAsync(string userMessage, IReadOnlyList<string>? imagesBase64 = null)
+            => SendMessageStreamAsync(userMessage, _ => { }, CancellationToken.None, imagesBase64);
 
         public async Task<(string response, string error)> SendMessageStreamAsync(
             string userMessage, Action<string> onChunkReceived, CancellationToken cancellationToken = default,
-            string? imageBase64 = null, Action? onRetryCleanup = null)
+            IReadOnlyList<string>? imagesBase64 = null, Action? onRetryCleanup = null)
         {
             PendingClarificationOptions = Array.Empty<ClarificationOption>();
             var user = Message("user", userMessage);
@@ -172,13 +172,13 @@ namespace SecureOverlay.Services
                     _copilotMode, _deliveryStyle, knowledge, resume, roleContext, _activeEvidence[_copilotMode], protocolRepair: true);
                 var repairContext = BuildAdaptiveContext(repairPrompt);
                 var firstProtocolAttempt = 0;
-                LiveRequestTrace.Current?.SetContext("adaptive", imageBase64 != null, firstContext.Sum(x => x.EstimatedTokens));
+                LiveRequestTrace.Current?.SetContext("adaptive", MultimodalContentBuilder.HasImages(imagesBase64), firstContext.Sum(x => x.EstimatedTokens));
 
                 var result = await new LiveCopilotOrchestrator().ExecuteAsync(
                     CopilotPromptRegistry.EntityIds(knowledge, _copilotMode), CopilotPromptRegistry.DocumentIds(knowledge, _copilotMode),
                     (publish, cleanup, token) => RunModelOperationAsync(
                         "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
-                        publish, cleanup, token, imageBase64),
+                        publish, cleanup, token, imagesBase64),
                     async (decision, token) =>
                     {
                         StageChanged?.Invoke(this, "Searching your knowledge…");
@@ -215,7 +215,7 @@ namespace SecureOverlay.Services
                         var prompt = CopilotPromptRegistry.BuildSecondCallPrompt(
                             _copilotMode, _deliveryStyle, decision, retrieval, knowledge, resume, roleContext);
                         var context = BuildAdaptiveContext(prompt);
-                        return (publish, cleanup, token) => RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imageBase64);
+                        return (publish, cleanup, token) => RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imagesBase64);
                     },
                     chunk => { StageChanged?.Invoke(this, "Answering…"); LiveRequestTrace.Current?.Mark("answer_first_visible_token"); onChunkReceived(chunk); },
                     onRetryCleanup, cancellationToken,
@@ -254,11 +254,11 @@ namespace SecureOverlay.Services
 
         private async Task<(string Response, string Error)> RunModelOperationAsync(
             string operation, int index, List<ConversationMessage> context, Action<string> publish,
-            Action cleanup, CancellationToken token, string? imageBase64)
+            Action cleanup, CancellationToken token, IReadOnlyList<string>? imagesBase64)
         {
             LastOperationHadOutput = false;
             LiveRequestTrace.Current?.StartOperation(operation, index);
-            var result = await SendWithRetryStreamAsync(context, publish, token, imageBase64, cleanup).ConfigureAwait(false);
+            var result = await SendWithRetryStreamAsync(context, publish, token, imagesBase64, cleanup).ConfigureAwait(false);
             LiveRequestTrace.Current?.CompleteOperation("model_call_completed", string.IsNullOrEmpty(result.error) ? "success" : "error",
                 string.IsNullOrEmpty(result.error) ? null : result.error);
             return (result.response, result.error);
@@ -299,7 +299,7 @@ namespace SecureOverlay.Services
 
         private async Task<(string response, string error)> SendWithRetryStreamAsync(
             List<ConversationMessage> context, Action<string> publish, CancellationToken token,
-            string? imageBase64, Action? cleanup)
+            IReadOnlyList<string>? imagesBase64, Action? cleanup)
         {
             var maxAttempts = _aiService is HostedManagedAiService
                 ? ProviderResiliencePolicy.ManagedDesktopMaxAttempts
@@ -318,7 +318,7 @@ namespace SecureOverlay.Services
                             LastOperationHadOutput = true;
                         }
                         publish(chunk);
-                    }, token, imageBase64).ConfigureAwait(false);
+                    }, token, imagesBase64).ConfigureAwait(false);
                     if (!response.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
                     {
                         if (_aiService is not HostedManagedAiService)

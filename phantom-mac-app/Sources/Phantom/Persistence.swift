@@ -40,7 +40,7 @@ struct HostedConfiguration: Decodable {
                   let scheme = url.scheme?.lowercased(),
                   ["http", "https"].contains(scheme),
                   url.host != nil else {
-                return "The Phantom \(name) URL is invalid: \(value)"
+                return "The Phantom \(name) URL is invalid."
             }
         }
         return nil
@@ -134,21 +134,117 @@ enum ManagedCatalogStore {
     }
 }
 
+enum SpeechCatalogStore {
+    private static let key = "speech.catalog"
+    static func load() -> ManagedCatalog? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(ManagedCatalog.self, from: data)
+    }
+    static func save(_ catalog: ManagedCatalog) {
+        if let data = try? JSONEncoder().encode(catalog) { UserDefaults.standard.set(data, forKey: key) }
+    }
+}
+
 enum BYOCatalogStore {
+    private static let catalogKey = "catalog.byo.full"
+    private static let refreshedKey = "catalog.byo.refreshedAt"
+    private static let cacheVersionKey = "catalog.byo.cacheVersion"
+    /// Bumped when hardcoded local model lists were removed as a fallback source.
+    private static let currentCacheVersion = 2
+
+    static func migrateIfNeeded() {
+        let version = UserDefaults.standard.integer(forKey: cacheVersionKey)
+        guard version < currentCacheVersion else { return }
+        clearAll()
+        UserDefaults.standard.set(currentCacheVersion, forKey: cacheVersionKey)
+    }
+
+    static func load() -> ManagedCatalog? {
+        migrateIfNeeded()
+        if let data = UserDefaults.standard.data(forKey: catalogKey),
+           let catalog = try? JSONDecoder().decode(ManagedCatalog.self, from: data),
+           !catalog.providers.isEmpty {
+            return catalog
+        }
+
+        // Legacy per-provider keys only — never invent model lists.
+        let providers = BYOCatalog.providerIds.compactMap { providerId -> ManagedProvider? in
+            guard let models = legacyModels(provider: providerId), !models.isEmpty else { return nil }
+            return ManagedProvider(
+                providerId: providerId,
+                label: providerId,
+                models: models,
+                refreshedAtUtc: UserDefaults.standard.object(forKey: "catalog.\(providerId.lowercased()).refreshedAt") as? Date
+            )
+        }
+        return providers.isEmpty ? nil : ManagedCatalog(providers: providers)
+    }
+
     static func models(provider: String) -> [ManagedModel]? {
+        if let catalog = load(),
+           let match = catalog.providers.first(where: { $0.providerId.caseInsensitiveCompare(provider) == .orderedSame }) {
+            // Empty models after a successful backend fetch are valid.
+            return match.models
+        }
+        return legacyModels(provider: provider)
+    }
+
+    private static func legacyModels(provider: String) -> [ManagedModel]? {
         guard let data = UserDefaults.standard.data(forKey: "catalog.\(provider.lowercased()).models") else { return nil }
         return try? JSONDecoder().decode([ManagedModel].self, from: data)
     }
 
+    static func isStale(now: Date = Date()) -> Bool {
+        guard let refreshed = UserDefaults.standard.object(forKey: refreshedKey) as? Date else { return true }
+        // Empty models are valid; only age (or missing refresh timestamp) makes the catalog stale.
+        return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
+    }
+
     static func isStale(provider: String, now: Date = Date()) -> Bool {
+        if let catalog = load(),
+           let match = catalog.providers.first(where: { $0.providerId.caseInsensitiveCompare(provider) == .orderedSame }) {
+            if let refreshed = match.refreshedAtUtc {
+                return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
+            }
+        }
         guard let refreshed = UserDefaults.standard.object(forKey: "catalog.\(provider.lowercased()).refreshedAt") as? Date else { return true }
         return now.timeIntervalSince(refreshed) >= 12 * 60 * 60
     }
 
+    static func save(_ catalog: ManagedCatalog, now: Date = Date()) {
+        guard !catalog.providers.isEmpty, let data = try? JSONEncoder().encode(catalog) else { return }
+        UserDefaults.standard.set(data, forKey: catalogKey)
+        UserDefaults.standard.set(catalog.refreshedAtUtc ?? now, forKey: refreshedKey)
+        for provider in catalog.providers {
+            if provider.models.isEmpty {
+                clear(provider: provider.providerId)
+            } else {
+                save(provider: provider.providerId, models: provider.models, now: provider.refreshedAtUtc ?? now)
+            }
+        }
+    }
+
     static func save(provider: String, models: [ManagedModel], now: Date = Date()) {
-        guard !models.isEmpty, let data = try? JSONEncoder().encode(models) else { return }
+        guard !models.isEmpty, let data = try? JSONEncoder().encode(models) else {
+            clear(provider: provider)
+            return
+        }
         UserDefaults.standard.set(data, forKey: "catalog.\(provider.lowercased()).models")
         UserDefaults.standard.set(now, forKey: "catalog.\(provider.lowercased()).refreshedAt")
+    }
+
+    static func clear(provider: String) {
+        UserDefaults.standard.removeObject(forKey: "catalog.\(provider.lowercased()).models")
+        UserDefaults.standard.removeObject(forKey: "catalog.\(provider.lowercased()).refreshedAt")
+    }
+
+    /// Drop any pre-hosted hardcoded cache so the next fetch becomes source of truth.
+    static func clearAll() {
+        UserDefaults.standard.removeObject(forKey: catalogKey)
+        UserDefaults.standard.removeObject(forKey: refreshedKey)
+        for providerId in BYOCatalog.providerIds {
+            clear(provider: providerId)
+        }
     }
 }
 

@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using SecureOverlay.Helpers;
+using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Services
@@ -12,236 +12,82 @@ namespace SecureOverlay.Services
     public static class ByoProviderModelCatalogService
     {
         private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(12);
-        private static readonly HttpClient HttpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(30)
-        };
 
-        public static void RefreshStaleCatalogs(AppSettings settings)
+        public static async Task<bool> RefreshStaleCatalogsAsync(
+            AppSettings settings,
+            IHostedAccountClient hostedClient,
+            string accessToken,
+            string? forceProvider = null,
+            bool forceAll = false,
+            CancellationToken cancellationToken = default)
         {
-            foreach (var provider in AIModelProviders())
+            try
             {
-                var keys = GetKeysForProvider(settings, provider);
-                if (keys.Count == 0)
-                {
-                    continue;
-                }
+                var needsForceRefresh = forceAll
+                    || !string.IsNullOrWhiteSpace(forceProvider)
+                    || IsCatalogStale(settings);
 
-                var cachedProvider = ProviderModelCatalogCache.GetProvider(settings, provider);
-                var cacheMissing = cachedProvider?.Models == null || cachedProvider.Models.Count == 0;
-                var stillUsingDefaultSeedModels = UsesSeedModelList(settings, provider);
-                if (settings.ProviderModelCatalogRefreshedAtUtc.TryGetValue(provider, out var refreshedAtUtc)
-                    && refreshedAtUtc > DateTime.UtcNow - RefreshInterval
-                    && !cacheMissing
-                    && !stillUsingDefaultSeedModels)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    var models = FetchModels(provider, keys[0]);
-                    ProviderModelCatalogCache.UpsertProvider(settings, provider, provider, models, DateTime.UtcNow);
-                    settings.ProviderModelCatalogRefreshedAtUtc[provider] = DateTime.UtcNow;
-                    var currentModel = AIModelRegistry.GetCurrentModelForProvider(settings, provider);
-                    if (models.Count > 0
-                        && !models.Any(item => string.Equals(item.ModelId, currentModel, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        AIModelRegistry.SetModelForProvider(settings, provider, models[0].ModelId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.WriteLine($"BYO model refresh skipped for {provider}: {ex.GetType().Name}");
-                }
-            }
-        }
-
-        private static bool UsesSeedModelList(AppSettings settings, string provider)
-        {
-            var currentModels = ProviderModelCatalogCache.GetModelIds(settings, provider);
-            var seededModels = AIModelRegistry.GetModelsForProvider(provider);
-            if (currentModels.Length == 0 || seededModels.Length == 0)
-            {
-                return currentModels.Length == seededModels.Length;
-            }
-
-            return currentModels.Length == seededModels.Length
-                && currentModels.All(model => seededModels.Contains(model, StringComparer.OrdinalIgnoreCase));
-        }
-
-        private static List<ManagedAiModelOptionDto> FetchModels(string provider, string apiKey)
-        {
-            return provider switch
-            {
-                "ChatGPT" => FetchOpenAiLikeModels("https://api.openai.com/v1/models", apiKey),
-                "Claude" => FetchAnthropicModels(apiKey),
-                "Gemini" => FetchGeminiModels(apiKey),
-                "Mistral" => FetchOpenAiLikeModels("https://api.mistral.ai/v1/models", apiKey),
-                "Groq" => FetchOpenAiLikeModels("https://api.groq.com/openai/v1/models", apiKey),
-                "NVIDIA" => FetchOpenAiLikeModels("https://integrate.api.nvidia.com/v1/models", apiKey),
-                _ => new List<ManagedAiModelOptionDto>()
-            };
-        }
-
-        private static List<ManagedAiModelOptionDto> FetchOpenAiLikeModels(string url, string apiKey)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            using var response = HttpClient.SendAsync(request).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
-            using var document = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
-            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            {
-                return new List<ManagedAiModelOptionDto>();
-            }
-
-            return data.EnumerateArray()
-                .Select(item => item.TryGetProperty("id", out var idElement) ? idElement.GetString() : null)
-                .Where(id => !string.IsNullOrWhiteSpace(id) && LooksLikeChatModel(id!))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
-                .Select(id => new ManagedAiModelOptionDto
-                {
-                    ModelId = id!,
-                    DisplayName = id!,
-                    SupportsVision = ProviderModelCatalogCache.InferVisionSupport(id, null)
-                })
-                .ToList();
-        }
-
-        private static List<ManagedAiModelOptionDto> FetchAnthropicModels(string apiKey)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/v1/models");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-            using var response = HttpClient.SendAsync(request).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
-            using var document = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
-            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            {
-                return new List<ManagedAiModelOptionDto>();
-            }
-
-            return data.EnumerateArray()
-                .Select(item =>
-                {
-                    var id = item.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
-                    var displayName = item.TryGetProperty("display_name", out var displayNameElement) ? displayNameElement.GetString() : id;
-                    return string.IsNullOrWhiteSpace(id)
-                        ? null
-                        : new ManagedAiModelOptionDto
+                var catalog = needsForceRefresh
+                    ? await hostedClient.RefreshByoCatalogAsync(
+                        accessToken,
+                        new ByoModelCatalogRequestDto
                         {
-                            ModelId = id,
-                            DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName!,
-                            SupportsVision = ProviderModelCatalogCache.InferVisionSupport(id, displayName)
-                        };
-                })
-                .Where(item => item != null)
-                .GroupBy(item => item!.ModelId, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First()!)
-                .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
+                            ProviderId = forceAll ? string.Empty : (forceProvider ?? string.Empty)
+                        },
+                        cancellationToken)
+                    : await hostedClient.GetByoCatalogAsync(accessToken, cancellationToken);
 
-        private static List<ManagedAiModelOptionDto> FetchGeminiModels(string apiKey)
-        {
-            using var response = HttpClient.GetAsync(
-                $"https://generativelanguage.googleapis.com/v1beta/models?key={Uri.EscapeDataString(apiKey)}")
-                .GetAwaiter()
-                .GetResult();
-            response.EnsureSuccessStatusCode();
-            using var document = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
-            if (!document.RootElement.TryGetProperty("models", out var data) || data.ValueKind != JsonValueKind.Array)
-            {
-                return new List<ManagedAiModelOptionDto>();
+                ApplyCatalog(settings, catalog);
+                SettingsManager.Save(settings);
+                return true;
             }
-
-            return data.EnumerateArray()
-                .Where(item => item.TryGetProperty("supportedGenerationMethods", out var methods)
-                    && methods.ValueKind == JsonValueKind.Array
-                    && methods.EnumerateArray().Any(method => string.Equals(method.GetString(), "generateContent", StringComparison.OrdinalIgnoreCase)))
-                .Select(item =>
-                {
-                    var id = item.TryGetProperty("baseModelId", out var idElement) ? idElement.GetString() : null;
-                    var displayName = item.TryGetProperty("displayName", out var displayNameElement) ? displayNameElement.GetString() : id;
-                    return string.IsNullOrWhiteSpace(id)
-                        ? null
-                        : new ManagedAiModelOptionDto
-                        {
-                            ModelId = id,
-                            DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName!,
-                            SupportsVision = ProviderModelCatalogCache.InferVisionSupport(id, displayName)
-                        };
-                })
-                .Where(item => item != null)
-                .GroupBy(item => item!.ModelId, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First()!)
-                .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static bool LooksLikeChatModel(string modelId)
-        {
-            var normalized = modelId.ToLowerInvariant();
-            if (normalized.Contains("embedding")
-                || normalized.Contains("moderation")
-                || normalized.Contains("whisper")
-                || normalized.Contains("tts")
-                || normalized.Contains("transcribe")
-                || normalized.Contains("image")
-                || normalized.Contains("rerank"))
+            catch (Exception ex)
             {
+                Log.WriteLine($"BYO provider catalog refresh skipped: {ex.GetType().Name}");
+                // Keep previous cache; never seed hardcoded registry models on failure.
                 return false;
             }
-
-            return normalized.Contains("gpt")
-                || normalized.StartsWith("o1")
-                || normalized.StartsWith("o3")
-                || normalized.StartsWith("o4")
-                || normalized.Contains("claude")
-                || normalized.Contains("mistral")
-                || normalized.Contains("mixtral")
-                || normalized.Contains("pixtral")
-                || normalized.Contains("gemini")
-                || normalized.Contains("compound")
-                || normalized.Contains("llama")
-                || normalized.Contains("nemotron")
-                || normalized.Contains("gemma")
-                || normalized.Contains("qwen")
-                || normalized.Contains("deepseek")
-                || normalized.Contains("kimi")
-                || normalized.Contains("glm")
-                || normalized.Contains("instruct")
-                || normalized.Contains("chat")
-                || normalized.Contains("reasoning");
         }
 
-        private static List<string> GetKeysForProvider(AppSettings settings, string provider)
+        private static bool IsCatalogStale(AppSettings settings)
         {
-            return provider switch
+            var providers = settings.ByoAiCatalogCache?.Providers;
+            // Missing cache entirely is stale. Empty models after a successful fetch are valid.
+            if (providers == null || providers.Count == 0)
             {
-                "ChatGPT" => settings.ChatGPTApiKeys,
-                "Claude" => settings.ClaudeApiKeys,
-                "Mistral" => settings.MistralApiKeys,
-                "Gemini" => settings.GeminiApiKeys,
-                "Groq" => settings.GroqApiKeys,
-                "NVIDIA" => settings.NvidiaApiKeys,
-                _ => new List<string>()
-            };
+                return true;
+            }
+
+            var refreshedAt = settings.ByoAiCatalogCache?.RefreshedAtUtc ?? DateTime.MinValue;
+            return refreshedAt <= DateTime.UtcNow - RefreshInterval;
         }
 
-        private static string[] AIModelProviders()
+        private static void ApplyCatalog(AppSettings settings, ManagedAiCatalogDto catalog)
         {
-            return new[]
+            // Trust backend providers/models as-is (empty lists allowed). No registry model seeding.
+            var providers = (catalog.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProviderId))
+                .Select(item => new ManagedAiProviderOptionDto
+                {
+                    ProviderId = item.ProviderId,
+                    Label = string.IsNullOrWhiteSpace(item.Label) ? item.ProviderId : item.Label,
+                    Models = item.Models ?? new List<ManagedAiModelOptionDto>(),
+                    RefreshedAtUtc = item.RefreshedAtUtc
+                })
+                .ToList();
+
+            settings.ByoAiCatalogCache = new ManagedAiCatalogDto
             {
-                "ChatGPT",
-                "Claude",
-                "Mistral",
-                "Gemini",
-                "Groq",
-                "NVIDIA"
+                RefreshedAtUtc = catalog.RefreshedAtUtc == default ? DateTime.UtcNow : catalog.RefreshedAtUtc,
+                Providers = providers
             };
+
+            ProviderModelCatalogCache.SyncLegacyModelListsFromCache(settings, byo: true);
+
+            foreach (var provider in providers)
+            {
+                settings.ProviderModelCatalogRefreshedAtUtc[provider.ProviderId] = provider.RefreshedAtUtc;
+            }
         }
     }
 }

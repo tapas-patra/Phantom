@@ -69,6 +69,15 @@ namespace SecureOverlay
         private const int WS_EX_NOACTIVATE = 0x08000000;
         private const int WS_EX_TRANSPARENT = 0x00000020;
 
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+
         private System.Windows.Threading.DispatcherTimer? _cursorUpdateTimer;
         private IntPtr _lastCursorHandle = IntPtr.Zero;
         private BitmapSource? _cursorBitmap;
@@ -321,11 +330,24 @@ namespace SecureOverlay
 
         public void EnsureTopmost()
         {
-            if (this.IsVisible)
+            if (!this.IsVisible)
+                return;
+
+            // Keep WPF and Win32 topmost state aligned without toggling (avoids flicker).
+            this.Topmost = true;
+
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
             {
-                this.Topmost = false;
-                this.Topmost = true;
-                Log.WriteLine("✓ Fake cursor window forced to top");
+                // Re-assert above other Topmost peers (main overlay, provider/model menus).
+                SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
             }
         }
 

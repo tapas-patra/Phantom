@@ -519,6 +519,55 @@ adminGroup.MapDelete("/managed-ai/credentials/{credentialId}", async (
     return Results.Ok(new { deleted = true, credentialId });
 });
 
+adminGroup.MapGet("/managed-speech/credentials", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.GetSpeechCredentialInventory(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request), cancellationToken));
+});
+adminGroup.MapPost("/managed-speech/credentials", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpsertSpeechCredential(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request), payload, cancellationToken));
+});
+adminGroup.MapPost("/managed-speech/catalog/refresh", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.RefreshSpeechCatalog(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request), cancellationToken));
+});
+adminGroup.MapPost("/managed-speech/selection", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    JsonElement payload,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.UpdateSpeechRuntimeSelection(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request), payload, cancellationToken));
+});
+adminGroup.MapDelete("/managed-speech/credentials/{credentialId}", async (
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    string credentialId,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    await managedAi.DeleteSpeechCredential(cookies.GetAdminAuthorizationHeader(httpContext.Request), credentialId, cancellationToken);
+    return Results.Ok(new { deleted = true, credentialId });
+});
+
 static bool IsValidOpaqueId(string? value) => value is { Length: >= 8 and <= 128 }
     && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 

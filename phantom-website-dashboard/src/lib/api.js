@@ -481,6 +481,12 @@ export async function fetchManagedAiAdminInventory(accessToken) {
   });
 }
 
+export async function fetchManagedSpeechAdminInventory(accessToken) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/credentials", {
+    headers: authHeaders(accessToken)
+  });
+}
+
 export async function fetchAdminPaymentOrders(accessToken, { page = 1, pageSize = 20, query = "", status = "all" } = {}) {
   const params = new URLSearchParams({
     page: String(page),
@@ -547,6 +553,30 @@ export async function upsertManagedAiCredential(accessToken, payload) {
   });
 }
 
+export async function upsertManagedSpeechCredential(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/credentials", {
+    method: "POST", headers: authHeaders(accessToken), body: JSON.stringify(payload)
+  });
+}
+
+export async function triggerManagedSpeechCatalogRefresh(accessToken) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/catalog/refresh", {
+    method: "POST", headers: authHeaders(accessToken)
+  });
+}
+
+export async function updateManagedSpeechRuntimeSelection(accessToken, payload) {
+  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-speech/selection", {
+    method: "POST", headers: authHeaders(accessToken), body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteManagedSpeechCredential(accessToken, credentialId) {
+  return request(DASHBOARD_API_BASE, `/api/dashboard/admin/managed-speech/credentials/${encodeURIComponent(credentialId)}`, {
+    method: "DELETE", headers: authHeaders(accessToken)
+  });
+}
+
 export async function triggerManagedAiCatalogRefresh(accessToken) {
   return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
     method: "POST",
@@ -581,11 +611,27 @@ export async function deleteManagedAiCredential(accessToken, credentialId) {
   );
 }
 
-export async function updateManagedAiModelVision(accessToken, payload) {
-  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/vision", {
+export async function updateManagedAiModelFlags(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/model-flags", {
     method: "POST",
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload)
+  });
+}
+
+export async function upsertManagedAiCatalogModel(accessToken, payload) {
+  return request(WINDOWS_BACKEND_API_BASE, "/api/admin/managed-ai/catalog/models", {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateManagedAiModelVision(accessToken, payload) {
+  return updateManagedAiModelFlags(accessToken, {
+    providerId: payload.providerId,
+    modelId: payload.modelId,
+    supportsVision: payload.supportsVision
   });
 }
 

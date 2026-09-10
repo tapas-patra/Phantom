@@ -162,20 +162,50 @@ struct KnowledgeProject: Codable {
 
 struct ManagedCatalog: Codable {
     let providers: [ManagedProvider]
+    let refreshedAtUtc: Date?
+
+    init(providers: [ManagedProvider], refreshedAtUtc: Date? = nil) {
+        self.providers = providers
+        self.refreshedAtUtc = refreshedAtUtc
+    }
 }
 
 struct ManagedProvider: Codable, Identifiable, Hashable {
     let providerId: String
     let label: String
     let models: [ManagedModel]
+    let refreshedAtUtc: Date?
     var id: String { providerId }
+
+    init(providerId: String, label: String, models: [ManagedModel], refreshedAtUtc: Date? = nil) {
+        self.providerId = providerId
+        self.label = label
+        self.models = models
+        self.refreshedAtUtc = refreshedAtUtc
+    }
 }
 
 struct ManagedModel: Codable, Identifiable, Hashable {
     let modelId: String
     let displayName: String
     let supportsVision: Bool
+    let eligibleForChat: Bool
     var id: String { modelId }
+
+    init(modelId: String, displayName: String, supportsVision: Bool, eligibleForChat: Bool = true) {
+        self.modelId = modelId
+        self.displayName = displayName
+        self.supportsVision = supportsVision
+        self.eligibleForChat = eligibleForChat
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        modelId = try values.decode(String.self, forKey: .modelId)
+        displayName = try values.decode(String.self, forKey: .displayName)
+        supportsVision = try values.decode(Bool.self, forKey: .supportsVision)
+        eligibleForChat = values.value(Bool.self, forKey: .eligibleForChat, default: true)
+    }
 }
 
 struct ContextPack: Codable, Identifiable, Hashable {
@@ -395,13 +425,10 @@ struct BackendClient {
         value.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let text = try container.decode(String.self)
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let regular = ISO8601DateFormatter()
-            guard let date = fractional.date(from: text) ?? regular.date(from: text) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 date: \(text)")
+            if let date = Self.parseBackendDate(text) {
+                return date
             }
-            return date
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 date: \(text)")
         }
         return value
     }()
@@ -410,6 +437,37 @@ struct BackendClient {
         value.dateEncodingStrategy = .iso8601
         return value
     }()
+
+    private static func parseBackendDate(_ text: String) -> Date? {
+        // .NET DateTime.MinValue / unspecified timestamps break strict ISO8601 parsers.
+        if text.hasPrefix("0001-01-01") {
+            return Date.distantPast
+        }
+
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let regular = ISO8601DateFormatter()
+        regular.formatOptions = [.withInternetDateTime]
+        if let date = fractional.date(from: text) ?? regular.date(from: text) {
+            return date
+        }
+
+        // Unspecified local-style timestamps from System.Text.Json (no Z / offset).
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(secondsFromGMT: 0)
+        for format in [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSSS",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ss"
+        ] {
+            fallback.dateFormat = format
+            if let date = fallback.date(from: text) {
+                return date
+            }
+        }
+        return nil
+    }
 
     func login(email: String, password: String, device: DeviceIdentity) async throws -> AuthSession {
         struct Body: Encodable {
@@ -463,6 +521,47 @@ struct BackendClient {
         var request = URLRequest(url: url("/api/desktop/ai/catalog"))
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         return try await send(request)
+    }
+
+    func byoCatalog(accessToken: String) async throws -> ManagedCatalog {
+        var request = URLRequest(url: url("/api/desktop/ai/byo/catalog"))
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func refreshByoCatalog(accessToken: String, providerId: String = "") async throws -> ManagedCatalog {
+        struct Body: Encodable {
+            let providerId: String
+            let apiKey: String
+        }
+        return try await post(
+            "/api/desktop/ai/byo/catalog/refresh",
+            body: Body(providerId: providerId, apiKey: ""),
+            bearer: accessToken
+        )
+    }
+
+    func speechCatalog(accessToken: String) async throws -> ManagedCatalog {
+        var request = URLRequest(url: url("/api/desktop/speech/catalog"))
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func transcribeManagedSpeech(accessToken: String, wav: Data, language: String) async throws -> String {
+        let boundary = "Phantom-\(UUID().uuidString)"
+        var body = Data()
+        body.appendMultipart("--\(boundary)\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n\(language)\r\n")
+        body.appendMultipart("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        body.append(wav)
+        body.appendMultipart("\r\n--\(boundary)--\r\n")
+        var request = URLRequest(url: url("/api/desktop/speech/transcribe"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
+        let result: SpeechTranscriptionResult = try await send(request)
+        return result.text
     }
 
     func logout(_ session: AuthSession) async throws {
@@ -622,7 +721,7 @@ struct BackendClient {
         provider: String,
         model: String,
         allowPaidSessionExtension: Bool,
-        imageBase64: String?,
+        imagesBase64: [String],
         messages: [ChatMessage],
         turnId: String,
         operationId: String
@@ -638,9 +737,11 @@ struct BackendClient {
             let model: String
             let allowPaidSessionExtension: Bool
             let imageBase64: String?
+            let imagesBase64: [String]
             let messages: [WireMessage]
         }
 
+        let normalizedImages = Array(imagesBase64.prefix(3))
         var request = URLRequest(url: url("/api/desktop/ai/chat"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -653,7 +754,8 @@ struct BackendClient {
             provider: provider,
             model: model,
             allowPaidSessionExtension: allowPaidSessionExtension,
-            imageBase64: imageBase64,
+            imageBase64: normalizedImages.first,
+            imagesBase64: normalizedImages,
             messages: messages.map { WireMessage(role: $0.role, content: $0.content) }
         ))
 
@@ -713,6 +815,12 @@ struct BackendClient {
         let path = (context.codingPath.map(\.stringValue) + [field]).filter { !$0.isEmpty }.joined(separator: ".")
         return "The backend response is missing or has an invalid field: \(path)."
     }
+}
+
+private struct SpeechTranscriptionResult: Decodable { let text: String }
+
+private extension Data {
+    mutating func appendMultipart(_ value: String) { append(Data(value.utf8)) }
 }
 
 private struct LogoutResult: Decodable {

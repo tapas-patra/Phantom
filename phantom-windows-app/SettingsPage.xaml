@@ -113,8 +113,26 @@
                         <StackPanel x:Name="ByoConfigurationSection">
                         <!-- AI Provider Selection -->
                         <StackPanel x:Name="ProviderSelectionSection">
-                            <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold" 
-                                      Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock Text="AI Provider" FontSize="14" FontWeight="Bold"
+                                          Foreground="White" VerticalAlignment="Center"
+                                          Effect="{StaticResource Shadow}"/>
+                                <Button x:Name="RefreshByoCatalogButton"
+                                       Content="Refresh models"
+                                       Width="120" Height="28"
+                                       HorizontalAlignment="Right"
+                                       Click="RefreshByoCatalogButton_Click"
+                                       Background="#5000AAFF" BorderBrush="#9000AAFF" BorderThickness="1"
+                                       Foreground="White" FontSize="11"
+                                       Style="{StaticResource ButtonStyle}"/>
+                            </Grid>
+                            <TextBlock x:Name="ByoCatalogStatusText"
+                                       TextWrapping="Wrap"
+                                       FontSize="11"
+                                       Foreground="#B8D4E8"
+                                       Margin="0,0,0,10"
+                                       Visibility="Collapsed"
+                                       Effect="{StaticResource Shadow}"/>
                             <ComboBox x:Name="AIProviderComboBox" Height="35" Margin="0,0,0,20"
                                      FontSize="14" SelectionChanged="AIProviderComboBox_SelectionChanged"
                                      Foreground="Black"/>
@@ -642,7 +660,7 @@
                         <TextBlock FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" Effect="{StaticResource Shadow}">
                             <Run Text="Provide your resume for personalized AI responses."/>
                             <LineBreak/>
-                            <Run Text="• Limit: 1000 words recommended"/>
+                            <Run Text="• Limit: 1200 words maximum"/>
                             <LineBreak/>
                             <Run Text="• AI will summarize it once and use it for context"/>
                             <LineBreak/>
@@ -669,7 +687,7 @@
                                 
                                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,5,0,0">
                                     <TextBlock x:Name="ResumeWordCount" 
-                                              Text="Words: 0 / 1000" 
+                                              Text="Words: 0 / 1200" 
                                               Foreground="#AAAAAA" 
                                               FontSize="10"/>
                                     <TextBlock x:Name="ResumeSummaryStatus" 
@@ -687,7 +705,7 @@
                         <TextBlock FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" Effect="{StaticResource Shadow}">
                             <Run Text="Paste the job description you're interviewing for."/>
                             <LineBreak/>
-                            <Run Text="• Limit: 350 words recommended"/>
+                            <Run Text="• Limit: 450 words maximum"/>
                             <LineBreak/>
                             <Run Text="• AI will provide interview-specific guidance"/>
                             <LineBreak/>
@@ -714,7 +732,7 @@
                                 
                                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,5,0,0">
                                     <TextBlock x:Name="JobDescriptionWordCount" 
-                                            Text="Words: 0 / 350" 
+                                            Text="Words: 0 / 450" 
                                             Foreground="#AAAAAA" 
                                             FontSize="10"/>
                                     <TextBlock x:Name="JobDescriptionSummaryStatus" 
@@ -732,6 +750,37 @@
                         <CheckBox x:Name="AutoSendAfterVoiceStopCheckBox"
                                  Content="Auto-send after stopping the microphone"
                                  Foreground="White" FontSize="13" Margin="0,0,0,20"/>
+
+                        <Border x:Name="SpeechModelsSection" Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,20">
+                            <StackPanel>
+                                <TextBlock Text="Speech Models" FontSize="14" FontWeight="Bold" Foreground="White" Margin="0,0,0,8"/>
+                                <TextBlock x:Name="SpeechRuntimeNotice" TextWrapping="Wrap" FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="SpeechModePanel">
+                                    <TextBlock Text="Recognizer" Foreground="White" FontSize="12" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="SpeechModeComboBox" Height="30" SelectionChanged="SpeechModeComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="Native"/>
+                                        <ComboBoxItem Content="Cloud"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel x:Name="SpeechCloudOptions" Margin="0,10,0,0">
+                                    <TextBlock Text="Provider" Foreground="White" FontSize="12" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="SpeechProviderComboBox" Height="30" SelectionChanged="SpeechProviderComboBox_SelectionChanged"/>
+                                    <TextBlock Text="Model" Foreground="White" FontSize="12" Margin="0,10,0,4"/>
+                                    <ComboBox x:Name="SpeechModelComboBox" Height="30"/>
+                                    <TextBlock Text="Language (ISO-639-1)" Foreground="White" FontSize="12" Margin="0,10,0,4"/>
+                                    <TextBox x:Name="SpeechLanguageTextBox" Height="28" Text="en"/>
+                                    <CheckBox x:Name="UseChatKeysForSpeechCheckBox" Content="Use chat provider API keys" Foreground="White" Margin="0,12,0,8" Checked="UseChatKeysForSpeechCheckBox_Changed" Unchecked="UseChatKeysForSpeechCheckBox_Changed"/>
+                                    <StackPanel x:Name="DedicatedSpeechKeysPanel">
+                                        <PasswordBox x:Name="SpeechApiKeyOneBox" Height="28" Margin="0,0,0,6" ToolTip="Dedicated speech API key #1"/>
+                                        <PasswordBox x:Name="SpeechApiKeyTwoBox" Height="28" ToolTip="Dedicated speech API key #2 (optional)"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="SpeechNativeFallbackCheckBox" Content="Automatically fall back to native recognition on provider errors or exhausted credit" Foreground="White" Margin="0,12,0,0"/>
+                                </StackPanel>
+                                <TextBlock x:Name="SpeechCatalogHintText"
+                                           Text="Model choices are fetched from the Phantom backend catalog; BYO audio still goes directly to your selected provider."
+                                           TextWrapping="Wrap" FontSize="10" Foreground="#AAAAAA" Margin="0,10,0,0"/>
+                            </StackPanel>
+                        </Border>
 
                         <!-- Click-through -->
                         <TextBlock Text="Window Interaction" FontSize="14" FontWeight="Bold"
@@ -830,6 +879,50 @@
                                     <Run Text="⚠️ Turn OFF for normal use!"/>
                                 </TextBlock>
                             </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="🐛 Debug Logs" FontSize="14" FontWeight="Bold"
+                                Foreground="White" Margin="0,10,0,10" Effect="{StaticResource Shadow}"/>
+                        <Border Background="#30FFFFFF" CornerRadius="8" Padding="15" Margin="0,0,0,15"
+                                BorderBrush="#70FF00FF" BorderThickness="1.5">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="220"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                                    <Button Content="📋 Copy" Width="70" Height="25" Click="CopyLogsButton_Click"
+                                        Background="#50FFFFFF" BorderBrush="#90FFFFFF" BorderThickness="1"
+                                        Foreground="White" FontSize="11" Margin="0,0,5,0"
+                                        Style="{StaticResource ButtonStyle}"/>
+                                    <Button Content="🗑️ Clear" Width="70" Height="25" Click="ClearLogsButton_Click"
+                                        Background="#50FF0000" BorderBrush="#90FF0000" BorderThickness="1"
+                                        Foreground="White" FontSize="11"
+                                        Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+
+                                <Border Grid.Row="1" Background="#30000000" BorderBrush="#50FFFFFF"
+                                        BorderThickness="1" CornerRadius="4" Padding="8">
+                                    <ScrollViewer x:Name="DebugScrollViewer" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="DebugLogsList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                                              Foreground="#00FF00" FontFamily="Consolas"
+                                                              FontSize="11" Margin="0,1"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+
+                                <CheckBox Grid.Row="2" x:Name="AutoScrollCheckBox"
+                                         Content="Auto-scroll to latest"
+                                         Foreground="White" FontSize="11" Margin="0,8,0,0"
+                                         IsChecked="True"/>
+                            </Grid>
                         </Border>
                         </StackPanel>
                     </StackPanel>

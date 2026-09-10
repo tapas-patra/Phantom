@@ -28,7 +28,7 @@ namespace SecureOverlay.Services
         public bool IsConfigured() => !string.IsNullOrWhiteSpace(_apiKey);
 
         // Original non-streaming method
-        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, string? imageBase64 = null)
+        public async Task<string> SendMessageAsync(List<ConversationMessage> messages, IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: ChatGPT API key not configured. Go to Settings.";
@@ -49,20 +49,14 @@ namespace SecureOverlay.Services
                     // ✅ Check if this is the last user message and has an image
                     bool isLastUserMessage = (msg == messages.Last(m => m.Role == "user" && !string.IsNullOrWhiteSpace(m.Content)));
                     
-                    if (msg.Role == "user" && isLastUserMessage && !string.IsNullOrEmpty(imageBase64))
+                    if (msg.Role == "user" && isLastUserMessage && MultimodalContentBuilder.HasImages(imagesBase64))
                     {
-                        // GPT-4 Vision format: content is an array
                         apiMessages.Add(new
                         {
                             role = "user",
-                            content = new object[]
-                            {
-                                new { type = "text", text = msg.Content },
-                                new { 
-                                    type = "image_url", 
-                                    image_url = new { url = $"data:image/png;base64,{imageBase64}" }
-                                }
-                            }
+                            content = MultimodalContentBuilder.BuildOpenAiContent(
+                                msg.Content,
+                                MultimodalContentBuilder.Normalize(imagesBase64))
                         });
                     }
                     else
@@ -113,7 +107,7 @@ namespace SecureOverlay.Services
             List<ConversationMessage> messages, 
             Action<string> onChunkReceived,
             CancellationToken cancellationToken = default,
-            string? imageBase64 = null)
+            IReadOnlyList<string>? imagesBase64 = null)
         {
             if (!IsConfigured())
                 return "Error: ChatGPT API key not configured. Go to Settings.";
@@ -133,19 +127,14 @@ namespace SecureOverlay.Services
                 {
                     bool isLastUserMessage = (msg == messages.Last(m => m.Role == "user" && !string.IsNullOrWhiteSpace(m.Content)));
                     
-                    if (msg.Role == "user" && isLastUserMessage && !string.IsNullOrEmpty(imageBase64))
+                    if (msg.Role == "user" && isLastUserMessage && MultimodalContentBuilder.HasImages(imagesBase64))
                     {
                         apiMessages.Add(new
                         {
                             role = "user",
-                            content = new object[]
-                            {
-                                new { type = "text", text = msg.Content },
-                                new { 
-                                    type = "image_url", 
-                                    image_url = new { url = $"data:image/png;base64,{imageBase64}" }
-                                }
-                            }
+                            content = MultimodalContentBuilder.BuildOpenAiContent(
+                                msg.Content,
+                                MultimodalContentBuilder.Normalize(imagesBase64))
                         });
                     }
                     else

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SecureOverlay.Platform.Windows;
@@ -9,6 +10,8 @@ namespace SecureOverlay.Services
 {
     public class VoiceInputService : IDisposable
     {
+        private static readonly int[] CloudRecoveryCooldownMinutes = { 5, 10, 15 };
+
         private WebView2? _webView;
         private System.Windows.Controls.Grid? _hostContainer;
         private bool _isListening = false;
@@ -17,12 +20,34 @@ namespace SecureOverlay.Services
         private bool _permissionGranted = false;
         private bool _isDisposed = false;
         private EventHandler<CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
+        private readonly Func<byte[], CancellationToken, Task<string>>? _cloudTranscriber;
+        private readonly Func<CancellationToken, Task>? _cloudProbe;
+        private readonly bool _fallbackToNative;
+        private readonly bool _preferCloud;
+        private readonly SemaphoreSlim _audioGate = new SemaphoreSlim(1, 1);
+        private readonly CancellationTokenSource _disposeCancellation = new CancellationTokenSource();
+        private bool _useCloud;
+        private bool _fallbackStarted;
+        private int _cloudRecoveryCooldownIndex;
+        private DateTime? _nextCloudRecoveryProbeUtc;
+        private bool _probeCloudOnNextStart;
+        private bool _pendingCloudRecovery;
+        private bool _immediateCloudProbePending;
+        private bool _immediateCloudProbeConsumed;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? StatusChanged;
 
-        public VoiceInputService()
+        public VoiceInputService(
+            Func<byte[], CancellationToken, Task<string>>? cloudTranscriber = null,
+            bool fallbackToNative = true,
+            Func<CancellationToken, Task>? cloudProbe = null)
         {
+            _cloudTranscriber = cloudTranscriber;
+            _cloudProbe = cloudProbe;
+            _preferCloud = cloudTranscriber != null;
+            _useCloud = cloudTranscriber != null;
+            _fallbackToNative = fallbackToNative;
             Log.WriteLine("VoiceInputService constructor");
         }
 
@@ -112,7 +137,6 @@ namespace SecureOverlay.Services
                         
                         Log.WriteLine("Step 5: Configuring permissions...");
 
-                        // Set up permission handler
                         _permissionRequestedHandler = OnPermissionRequested;
                         _webView.CoreWebView2.PermissionRequested += _permissionRequestedHandler;
 
@@ -124,7 +148,6 @@ namespace SecureOverlay.Services
                         Log.WriteLine("Step 7: Loading speech recognition HTML...");
                         StatusChanged?.Invoke(this, "Loading speech engine...");
 
-                        // Use file:// protocol (same as permission window for shared permissions)
                         var tempFolder = WindowsAppPaths.TempRoot;
 
                         if (!System.IO.Directory.Exists(tempFolder))
@@ -133,11 +156,10 @@ namespace SecureOverlay.Services
                         }
 
                         var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
-                        System.IO.File.WriteAllText(htmlFilePath, GetSpeechRecognitionHTML());
+                        System.IO.File.WriteAllText(htmlFilePath, _useCloud ? GetCloudCaptureHTML() : GetSpeechRecognitionHTML());
 
                         Log.WriteLine($"  HTML saved to: {htmlFilePath}");
 
-                        // Navigate to file:// (secure context, shares permissions)
                         _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
                         
                         Log.WriteLine("Step 8: Waiting for page load...");
@@ -169,7 +191,6 @@ namespace SecureOverlay.Services
                             Log.WriteLine("  ✓ Page loaded successfully");
                             await Task.Delay(500);
                             
-                            // Check if permission is already granted
                             try
                             {
                                 var permResult = await _webView.CoreWebView2.ExecuteScriptAsync(@"
@@ -241,12 +262,24 @@ namespace SecureOverlay.Services
                 if (message.StartsWith("TRANSCRIPT:"))
                 {
                     var text = message.Substring("TRANSCRIPT:".Length);
-                    Log.WriteLine($"✓ Transcript received length_bucket={LengthBucket(text.Length)}");
+                    var route = _fallbackStarted ? "native_fallback" : "native";
+                    Log.WriteLine($"Speech transcription succeeded route={route} transcript_length_bucket={LengthBucket(text.Length)}");
                     SpeechRecognized?.Invoke(this, text);
+                    StatusChanged?.Invoke(this, _fallbackStarted ? "Native fallback recognized" : "Native speech recognized");
+                }
+                else if (message.StartsWith("AUDIO:"))
+                {
+                    _ = ProcessCloudAudioAsync(message.Substring("AUDIO:".Length));
                 }
                 else if (message.StartsWith("STATUS:"))
                 {
                     var status = message.Substring("STATUS:".Length);
+                    if (_fallbackStarted)
+                    {
+                        status = status.Contains("Listening", StringComparison.OrdinalIgnoreCase)
+                            ? "Listening with native fallback"
+                            : status == "Ready" ? "Native fallback ready" : status;
+                    }
                     Log.WriteLine($"Status: {status}");
                     StatusChanged?.Invoke(this, status);
                 }
@@ -254,8 +287,12 @@ namespace SecureOverlay.Services
                 {
                     var error = message.Substring("ERROR:".Length);
                     Log.WriteLine($"Error: {error}");
+                    if (_useCloud && _fallbackToNative)
+                    {
+                        _ = FallbackToNativeAsync();
+                        return;
+                    }
                     
-                    // Only show permission window if it's a permission error
                     if (error.Contains("not-allowed") || error.Contains("permission"))
                     {
                         System.Windows.Application.Current.Dispatcher.Invoke(() =>
@@ -289,6 +326,213 @@ namespace SecureOverlay.Services
             <= 640 => "161-640",
             _ => "641+"
         };
+
+        private async Task ProcessCloudAudioAsync(string base64)
+        {
+            if (!_useCloud || _cloudTranscriber == null || _fallbackStarted) return;
+            var acquired = false;
+            try
+            {
+                await _audioGate.WaitAsync(_disposeCancellation.Token);
+                acquired = true;
+                if (_fallbackStarted) return;
+                var pcm = Convert.FromBase64String(base64);
+                var transcript = await _cloudTranscriber(pcm, _disposeCancellation.Token);
+                if (!string.IsNullOrWhiteSpace(transcript))
+                {
+                    var text = transcript.Trim();
+                    Log.WriteLine($"Speech transcription succeeded route=cloud transcript_length_bucket={LengthBucket(text.Length)}");
+                    ClearCloudFallbackState();
+                    SpeechRecognized?.Invoke(this, text);
+                    StatusChanged?.Invoke(this, "Cloud speech recognized");
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Speech transcription failed route=cloud error_code={ex.GetType().Name} fallback={_fallbackToNative}");
+                StatusChanged?.Invoke(this, "Cloud speech unavailable");
+                if (_fallbackToNative) await FallbackToNativeAsync();
+            }
+            finally { if (acquired) _audioGate.Release(); }
+        }
+
+        private async Task FallbackToNativeAsync()
+        {
+            if (_fallbackStarted || _webView?.CoreWebView2 == null) return;
+            _fallbackStarted = true;
+            _useCloud = false;
+            _pendingCloudRecovery = false;
+            // First failure: retry cloud on the next mic. Later failures: 5 → 10 → 15 minute cooldown.
+            if (!_immediateCloudProbeConsumed)
+            {
+                _immediateCloudProbeConsumed = true;
+                _immediateCloudProbePending = true;
+                _probeCloudOnNextStart = true;
+                Log.WriteLine("Speech recognition route changed route=native_fallback reason=cloud_unavailable probe=next_mic");
+            }
+            else
+            {
+                ScheduleCloudRecoveryProbe();
+            }
+            StatusChanged?.Invoke(this, "Using native speech fallback");
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
+                System.IO.File.WriteAllText(htmlFilePath, GetSpeechRecognitionHTML());
+                _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                await Task.Delay(500);
+                if (_isListening) await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
+            });
+        }
+
+        private void ScheduleCloudRecoveryProbe()
+        {
+            if (!_preferCloud || !_fallbackToNative)
+            {
+                return;
+            }
+
+            _immediateCloudProbePending = false;
+            _pendingCloudRecovery = false;
+            var minutes = CloudRecoveryCooldownMinutes[Math.Min(_cloudRecoveryCooldownIndex, CloudRecoveryCooldownMinutes.Length - 1)];
+            _nextCloudRecoveryProbeUtc = DateTime.UtcNow.AddMinutes(minutes);
+            if (_cloudRecoveryCooldownIndex < CloudRecoveryCooldownMinutes.Length - 1)
+            {
+                _cloudRecoveryCooldownIndex++;
+            }
+
+            _probeCloudOnNextStart = true;
+            Log.WriteLine($"Cloud speech recovery scheduled in {minutes} minutes");
+        }
+
+        private void ClearCloudFallbackState()
+        {
+            _fallbackStarted = false;
+            _pendingCloudRecovery = false;
+            _probeCloudOnNextStart = false;
+            _immediateCloudProbePending = false;
+            _immediateCloudProbeConsumed = false;
+            _nextCloudRecoveryProbeUtc = null;
+            _cloudRecoveryCooldownIndex = 0;
+            _useCloud = _preferCloud;
+        }
+
+        /// <summary>
+        /// After cloud→native fallback: on the next mic (or after cooldown), probe cloud while staying
+        /// on native for this utterance. Switch back only after StopListening if the probe succeeds.
+        /// Failed probes escalate cooldown: 5 → 10 → 15 minutes.
+        /// </summary>
+        private async Task ProbeCloudRecoveryIfDueAsync()
+        {
+            if (!_preferCloud
+                || _cloudTranscriber == null
+                || !_fallbackStarted
+                || !_probeCloudOnNextStart)
+            {
+                return;
+            }
+
+            if (!_immediateCloudProbePending
+                && _nextCloudRecoveryProbeUtc.HasValue
+                && DateTime.UtcNow < _nextCloudRecoveryProbeUtc.Value)
+            {
+                Log.WriteLine("Cloud speech recovery still cooling down - continuing with native");
+                StatusChanged?.Invoke(this, "Listening with native fallback");
+                return;
+            }
+
+            Log.WriteLine(_immediateCloudProbePending
+                ? "Probing cloud speech recovery immediately on next mic (stay native for utterance)"
+                : "Probing cloud speech recovery after cooldown (stay native for utterance)");
+            StatusChanged?.Invoke(this, "Retrying cloud speech…");
+            _immediateCloudProbePending = false;
+            _probeCloudOnNextStart = false;
+
+            try
+            {
+                // Prefer dedicated reachability probe (bypasses local "no speech" gate).
+                if (_cloudProbe != null)
+                {
+                    await _cloudProbe(_disposeCancellation.Token);
+                }
+                else if (_cloudTranscriber != null)
+                {
+                    _ = await _cloudTranscriber(Array.Empty<byte>(), _disposeCancellation.Token);
+                }
+                else
+                {
+                    return;
+                }
+
+                _pendingCloudRecovery = true;
+                Log.WriteLine("Cloud speech probe succeeded - will switch after this native utterance");
+                StatusChanged?.Invoke(this, "Cloud speech recovered — switching after this utterance");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Cloud speech probe failed error_code={ex.GetType().Name}");
+                ScheduleCloudRecoveryProbe();
+                var minutes = CloudRecoveryCooldownMinutes[Math.Min(Math.Max(0, _cloudRecoveryCooldownIndex - 1), CloudRecoveryCooldownMinutes.Length - 1)];
+                StatusChanged?.Invoke(this, $"Cloud speech still unavailable — using native ({minutes}m cooldown)");
+            }
+        }
+
+        private async Task ApplyPendingCloudRecoveryIfNeededAsync()
+        {
+            if (!_pendingCloudRecovery || !_preferCloud || _cloudTranscriber == null || _webView?.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            Log.WriteLine("Speech recognition route changed route=cloud reason=probe_success_after_utterance");
+            ClearCloudFallbackState();
+            StatusChanged?.Invoke(this, "Cloud speech ready");
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                var htmlFilePath = WindowsAppPaths.SpeechRecognitionHtmlPath;
+                System.IO.File.WriteAllText(htmlFilePath, GetCloudCaptureHTML());
+                _webView.CoreWebView2.Navigate($"file:///{htmlFilePath.Replace("\\", "/")}");
+                await Task.Delay(500);
+            });
+        }
+
+        private static string GetCloudCaptureHTML()
+        {
+            return @"<!doctype html><html><body><p id='status'>Ready</p><script>
+let stream, context, source, processor, listening=false, samples=[];
+function sendChunk(force) {
+  const size = 64000;
+  while (samples.length >= size || (force && samples.length >= 8000)) {
+    const count = samples.length >= size ? size : samples.length;
+    const bytes = new Uint8Array(count * 2);
+    for (let i=0; i<count; i++) { const value=Math.max(-1,Math.min(1,samples[i])); const sample=value<0?value*32768:value*32767; bytes[i*2]=sample&255; bytes[i*2+1]=(sample>>8)&255; }
+    samples=samples.slice(count);
+    let binary=''; for (let i=0;i<bytes.length;i+=8192) binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+    window.chrome.webview.postMessage('AUDIO:'+btoa(binary));
+  }
+}
+async function startListening() {
+  if (listening) return;
+  try {
+    stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    context=new AudioContext(); source=context.createMediaStreamSource(stream); processor=context.createScriptProcessor(4096,1,1);
+    const ratio=context.sampleRate/16000;
+    processor.onaudioprocess=e=>{ const input=e.inputBuffer.getChannelData(0); for(let i=0;i<input.length;i+=ratio) samples.push(input[Math.floor(i)]); sendChunk(false); };
+    source.connect(processor); processor.connect(context.destination); listening=true;
+    window.chrome.webview.postMessage('STATUS:Listening with cloud speech');
+  } catch(e) { window.chrome.webview.postMessage('ERROR:'+e.message); }
+}
+function stopListening() {
+  if (!listening) return; listening=false; processor?.disconnect(); source?.disconnect(); stream?.getTracks().forEach(t=>t.stop()); context?.close(); sendChunk(true);
+  window.chrome.webview.postMessage('STATUS:Ready');
+}
+window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Ready'));
+</script></body></html>";
+        }
 
         private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
         {
@@ -328,7 +572,6 @@ namespace SecureOverlay.Services
                         "Success"
                     );
                     
-                    // Try to start listening again
                     if (_webView?.CoreWebView2 != null)
                     {
                         await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
@@ -394,7 +637,7 @@ namespace SecureOverlay.Services
                 
                 let recognition = null;
                 let isListening = false;
-                let shouldBeListening = false; // Track if we WANT to be listening
+                let shouldBeListening = false;
 
                 function initSpeechRecognition() {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -406,9 +649,8 @@ namespace SecureOverlay.Services
 
                     recognition = new SpeechRecognition();
                     
-                    // CRITICAL: Enable continuous recognition
-                    recognition.continuous = true;  // ← Changed from false
-                    recognition.interimResults = true;  // ← Show interim results for better UX
+                    recognition.continuous = true;
+                    recognition.interimResults = true;
                     recognition.maxAlternatives = 1;
                     recognition.lang = 'en-US';
 
@@ -422,18 +664,15 @@ namespace SecureOverlay.Services
                     recognition.onresult = (event) => {
                         console.log('Got speech result');
                         
-                        // Process all results
                         for (let i = event.resultIndex; i < event.results.length; i++) {
                             const result = event.results[i];
                             const transcript = result[0].transcript.trim();
                             
                             if (result.isFinal) {
-                                // Final result - send to C#
                                 console.log('✓ Final transcript:', transcript);
                                 document.getElementById('status').textContent = '🎤 Heard: ' + transcript;
                                 window.chrome.webview.postMessage('TRANSCRIPT:' + transcript);
                             } else {
-                                // Interim result - show in status
                                 console.log('... Interim:', transcript);
                                 document.getElementById('status').textContent = '🎤 ... ' + transcript;
                             }
@@ -443,15 +682,12 @@ namespace SecureOverlay.Services
                     recognition.onerror = (event) => {
                         console.error('Speech error:', event.error);
                         
-                        // Don't treat 'no-speech' as an error - just keep listening
                         if (event.error === 'no-speech') {
                             console.log('No speech detected, continuing to listen...');
                             document.getElementById('status').textContent = '🎤 Listening... (speak now)';
-                            // Don't send error to C# - just keep listening
                             return;
                         }
                         
-                        // For other errors, log but continue if user wants to keep listening
                         if (event.error === 'aborted') {
                             console.log('Recognition aborted');
                         } else {
@@ -465,7 +701,6 @@ namespace SecureOverlay.Services
                         console.log('Recognition ended');
                         isListening = false;
                         
-                        // CRITICAL: If we should still be listening, restart immediately
                         if (shouldBeListening) {
                             console.log('Auto-restarting recognition...');
                             setTimeout(() => {
@@ -477,7 +712,7 @@ namespace SecureOverlay.Services
                                         console.error('Restart failed:', err);
                                     }
                                 }
-                            }, 100); // Small delay to avoid race conditions
+                            }, 100);
                         } else {
                             console.log('User stopped listening');
                             document.getElementById('status').textContent = 'Ready';
@@ -505,7 +740,7 @@ namespace SecureOverlay.Services
                         return;
                     }
 
-                    shouldBeListening = true; // Mark that we want to keep listening
+                    shouldBeListening = true;
                     
                     try {
                         console.log('Starting continuous recognition...');
@@ -513,7 +748,6 @@ namespace SecureOverlay.Services
                     } catch (err) {
                         console.error('Start error:', err);
                         
-                        // If already started, that's fine
                         if (err.name === 'InvalidStateError') {
                             console.log('Already started, continuing...');
                         } else {
@@ -525,7 +759,7 @@ namespace SecureOverlay.Services
                 function stopListening() {
                     console.log('stopListening() called');
                     
-                    shouldBeListening = false; // Mark that we want to stop
+                    shouldBeListening = false;
                     
                     if (!recognition || !isListening) {
                         console.log('Not listening, nothing to stop');
@@ -568,6 +802,7 @@ namespace SecureOverlay.Services
 
             try
             {
+                await ProbeCloudRecoveryIfDueAsync();
                 await _webView.CoreWebView2.ExecuteScriptAsync("startListening()");
                 _isListening = true;
                 Log.WriteLine("✓ Started listening");
@@ -583,6 +818,7 @@ namespace SecureOverlay.Services
             if (!_isListening || _webView?.CoreWebView2 == null)
             {
                 _isListening = false;
+                _ = ApplyPendingCloudRecoveryIfNeededAsync();
                 return;
             }
 
@@ -592,10 +828,14 @@ namespace SecureOverlay.Services
                 _isListening = false;
             }
             catch { }
+
+            await ApplyPendingCloudRecoveryIfNeededAsync();
         }
 
         public bool IsListening() => _isListening;
         public bool IsInitialized() => _isInitialized;
+        public bool IsCloudMode() => _useCloud && !_fallbackStarted;
+        public bool PrefersCloudMode() => _preferCloud;
 
         public void Dispose()
         {
@@ -603,6 +843,7 @@ namespace SecureOverlay.Services
                 return;
 
             _isDisposed = true;
+            _disposeCancellation.Cancel();
             _isListening = false;
             _isInitializing = false;
 

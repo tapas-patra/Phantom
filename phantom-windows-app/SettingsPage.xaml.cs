@@ -39,6 +39,7 @@ namespace SecureOverlay
         private bool _isUpdatingContextPackSelection;
         private bool _lastAppliedSelectionWasLocalDraft = true;
         private bool _localDraftCacheInvalidated;
+        private bool _debugLogsBound;
         private List<DesktopContextPackDto> _hostedContextPacks = new List<DesktopContextPackDto>();
 
         // API Key collections
@@ -51,11 +52,11 @@ namespace SecureOverlay
 
         public event EventHandler<SettingsCloseResult>? SettingsClosed;
 
-        public SettingsPage(AccountCacheSnapshot? accountSnapshot = null)
+        public SettingsPage(AccountCacheSnapshot? accountSnapshot = null, AppSettings? settings = null)
         {
             InitializeComponent();
 
-            _settings = SettingsManager.Load();
+            _settings = settings ?? SettingsManager.Load();
             _accountSnapshot = accountSnapshot;
             var store = new SqliteRuntimeStore(SettingsManager.GetSettingsPath());
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
@@ -66,8 +67,109 @@ namespace SecureOverlay
             LoadSettings();
             ApplyAccountTierRestrictions();
             ProtectAllComboBoxes();
+            BindDebugLogsPanel();
             
             _isInitializing = false;
+            _ = RefreshCatalogsOnOpenAsync();
+        }
+
+        private void BindDebugLogsPanel()
+        {
+            var debugLogger = DebugLogger.Instance;
+            DebugLogsList.ItemsSource = debugLogger.LogMessages;
+            debugLogger.SetUiCollectionEnabled(_accountSnapshot?.CanUseDesktopPowerFeatures == true);
+            if (_debugLogsBound)
+            {
+                return;
+            }
+
+            _debugLogsBound = true;
+            debugLogger.LogMessages.CollectionChanged += (_, _) =>
+            {
+                if (AutoScrollCheckBox.IsChecked == true)
+                {
+                    Dispatcher.BeginInvoke(new Action(() => DebugScrollViewer.ScrollToEnd()),
+                        System.Windows.Threading.DispatcherPriority.Background);
+                }
+            };
+        }
+
+        private void CopyLogsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var allLogs = DebugLogger.Instance.GetAllLogs();
+                if (!string.IsNullOrEmpty(allLogs))
+                {
+                    Clipboard.SetText(allLogs);
+                    Log.WriteLine($"✓ Copied {allLogs.Length} characters to clipboard from settings");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"✗ Failed to copy logs: {ex.Message}");
+            }
+        }
+
+        private void ClearLogsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (InvisibleMessageBox.ShowYesNo("Clear all debug logs?", "Confirm Clear"))
+            {
+                DebugLogger.Instance.Clear();
+            }
+        }
+
+        private async Task RefreshCatalogsOnOpenAsync()
+        {
+            var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
+                || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+            if (!CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+            {
+                PopulateProviderChoices();
+                AIProviderComboBox.SelectedItem = _settings.SelectedAI;
+                PopulateByoModelChoices();
+                PopulateSpeechProviders();
+                UpdateSpeechControls();
+                return;
+            }
+
+            await RefreshByoCatalogAsync(forceAll: true);
+            await RefreshSpeechCatalogAsync(force: true);
+        }
+
+        private async void RefreshByoCatalogButton_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshByoCatalogButton.IsEnabled = false;
+            SetByoCatalogStatus("Refreshing BYO catalogs…");
+            try
+            {
+                var ok = await RefreshByoCatalogAsync(forceAll: true);
+                await RefreshSpeechCatalogAsync(force: true);
+                SetByoCatalogStatus(ok
+                    ? "BYO chat and speech catalogs refreshed."
+                    : "BYO model refresh failed. Try again.");
+            }
+            catch (Exception ex)
+            {
+                SetByoCatalogStatus($"BYO model refresh failed. {UserFacingErrorSanitizer.SanitizeUserFacingError(ex.Message)}");
+            }
+            finally
+            {
+                RefreshByoCatalogButton.IsEnabled = true;
+            }
+        }
+
+        private void SetByoCatalogStatus(string message)
+        {
+            if (ByoCatalogStatusText == null)
+            {
+                return;
+            }
+
+            ByoCatalogStatusText.Text = message ?? string.Empty;
+            ByoCatalogStatusText.Visibility = string.IsNullOrWhiteSpace(message)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
         private void ProtectAllComboBoxes()
@@ -84,46 +186,16 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
             ComboBoxProtection.ProtectComboBox(SavedContextPackComboBox);
             ComboBoxProtection.ProtectComboBox(DebugErrorTypeComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechModeComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechProviderComboBox);
+            ComboBoxProtection.ProtectComboBox(SpeechModelComboBox);
         }
 
         private void InitializeControls()
         {
             PopulateProviderChoices();
-
-            // ✅ USE REGISTRY - ChatGPT Models
-            foreach (var model in _settings.ChatGPTModels)
-            {
-                ChatGPTModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Claude Models
-            foreach (var model in _settings.ClaudeModels)
-            {
-                ClaudeModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Mistral Models
-            foreach (var model in _settings.MistralModels)
-            {
-                MistralModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Gemini Models
-            foreach (var model in _settings.GeminiModels)
-            {
-                GeminiModelBox.Items.Add(model);
-            }
-
-            // ✅ USE REGISTRY - Groq Models
-            foreach (var model in _settings.GroqModels)
-            {
-                GroqModelBox.Items.Add(model);
-            }
-
-            foreach (var model in _settings.NvidiaModels)
-            {
-                NvidiaModelBox.Items.Add(model);
-            }
+            // Leave BYO model combos empty here. PopulateByoModelChoices after catalog
+            // refresh is the source of truth (avoids seeding stale/hardcoded lists).
         }
 
         private void Root_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -191,6 +263,7 @@ namespace SecureOverlay
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
             AutoSendAfterVoiceStopCheckBox.IsChecked = _settings.AutoSendAfterVoiceStopEnabled;
+            LoadSpeechSettings();
             ClickThroughCheckBox.IsChecked = _settings.ClickThroughEnabled;
             
             // Rotation settings
@@ -465,6 +538,32 @@ namespace SecureOverlay
 
             var resumeText = ResumeBox.Text?.Trim() ?? string.Empty;
             var jobDescriptionText = JobDescriptionBox.Text?.Trim() ?? string.Empty;
+            var resumeWordCount = CountWords(resumeText);
+            var jobDescriptionWordCount = CountWords(jobDescriptionText);
+            if (resumeWordCount > 1200)
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show(
+                        $"Resume is limited to 1200 words (currently {resumeWordCount}). Shorten it before saving.",
+                        "Resume Too Long");
+                }
+
+                return null;
+            }
+
+            if (jobDescriptionWordCount > 450)
+            {
+                if (showSuccessMessage)
+                {
+                    InvisibleMessageBox.Show(
+                        $"Job description is limited to 450 words (currently {jobDescriptionWordCount}). Shorten it before saving.",
+                        "Job Description Too Long");
+                }
+
+                return null;
+            }
+
             if (string.IsNullOrWhiteSpace(resumeText) && string.IsNullOrWhiteSpace(jobDescriptionText))
             {
                 if (showSuccessMessage)
@@ -832,6 +931,16 @@ namespace SecureOverlay
             InvalidateDefaultDraftCacheIfNeeded();
         }
 
+        private static int CountWords(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return 0;
+            }
+
+            return text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        }
+
         private void UpdateJobDescriptionWordCount()
         {
             if (JobDescriptionBox == null || JobDescriptionWordCount == null) return;
@@ -842,9 +951,9 @@ namespace SecureOverlay
                 var wordCount = string.IsNullOrWhiteSpace(text) ? 0 : 
                     text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
                 
-                JobDescriptionWordCount.Text = $"Words: {wordCount} / 350";
+                JobDescriptionWordCount.Text = $"Words: {wordCount} / 450";
                 
-                if (wordCount > 350)
+                if (wordCount > 450)
                 {
                     JobDescriptionWordCount.Foreground = new System.Windows.Media.SolidColorBrush(
                         System.Windows.Media.Color.FromRgb(255, 100, 100));
@@ -916,12 +1025,20 @@ namespace SecureOverlay
         {
             AIProviderComboBox.Items.Clear();
 
-            IEnumerable<string> providers = IsPremiumOnlyAccount()
-                ? (_settings.PremiumConfiguredProviders?.Count > 0
+            IEnumerable<string> providers;
+            if (IsPremiumOnlyAccount())
+            {
+                providers = _settings.PremiumConfiguredProviders?.Count > 0
                     ? _settings.PremiumConfiguredProviders
                     : (_settings.ManagedAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
-                        .Select(item => item.ProviderId))
-                : AIModelRegistry.GetAllProviders();
+                        .Select(item => item.ProviderId);
+            }
+            else
+            {
+                // BYO: use backend catalog only — no AIModelRegistry fallback for model lists.
+                providers = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                    .Select(item => item.ProviderId);
+            }
 
             foreach (var provider in providers.Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -962,12 +1079,230 @@ namespace SecureOverlay
 
         private void PopulateByoModelChoices()
         {
-            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT));
-            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude));
-            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral));
-            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini));
-            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq));
-            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia));
+            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT, byo: true));
+            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude, byo: true));
+            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral, byo: true));
+            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini, byo: true));
+            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq, byo: true));
+            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia, byo: true));
+        }
+
+        private void LoadSpeechSettings()
+        {
+            SpeechModeComboBox.SelectedIndex = string.Equals(_settings.SpeechRecognitionMode, "Cloud", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            SpeechLanguageTextBox.Text = string.IsNullOrWhiteSpace(_settings.SpeechLanguage) ? "en" : _settings.SpeechLanguage;
+            UseChatKeysForSpeechCheckBox.IsChecked = _settings.UseChatProviderApiKeysForSpeech;
+            SpeechNativeFallbackCheckBox.IsChecked = _settings.AutoFallbackToNativeSpeech;
+            PopulateSpeechProviders();
+            UpdateSpeechControls();
+        }
+
+        private void PopulateSpeechProviders()
+        {
+            SpeechProviderComboBox.Items.Clear();
+            foreach (var provider in (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .Where(item => item.Models.Count > 0))
+                SpeechProviderComboBox.Items.Add(provider.ProviderId);
+            SpeechProviderComboBox.SelectedItem = SpeechProviderComboBox.Items.OfType<string>()
+                .FirstOrDefault(item => string.Equals(item, _settings.SpeechProviderId, StringComparison.OrdinalIgnoreCase))
+                ?? SpeechProviderComboBox.Items.OfType<string>().FirstOrDefault();
+            PopulateSpeechModels();
+        }
+
+        private void PopulateSpeechModels()
+        {
+            SpeechModelComboBox.Items.Clear();
+            var providerId = SpeechProviderComboBox.SelectedItem as string;
+            var provider = (_settings.SpeechCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
+                .FirstOrDefault(item => string.Equals(item.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+            foreach (var model in provider?.Models ?? new List<ManagedAiModelOptionDto>()) SpeechModelComboBox.Items.Add(model.ModelId);
+            SpeechModelComboBox.SelectedItem = SpeechModelComboBox.Items.OfType<string>()
+                .FirstOrDefault(item => string.Equals(item, _settings.SpeechModelId, StringComparison.OrdinalIgnoreCase))
+                ?? SpeechModelComboBox.Items.OfType<string>().FirstOrDefault();
+            LoadDedicatedSpeechKeys();
+        }
+
+        private void LoadDedicatedSpeechKeys()
+        {
+            var provider = SpeechProviderComboBox.SelectedItem as string;
+            var keys = provider != null && _settings.SpeechApiKeys.TryGetValue(provider, out var configured) ? configured : new List<string>();
+            SpeechApiKeyOneBox.Password = keys.ElementAtOrDefault(0) ?? string.Empty;
+            SpeechApiKeyTwoBox.Password = keys.ElementAtOrDefault(1) ?? string.Empty;
+        }
+
+        private async Task<bool> RefreshByoCatalogAsync(string? forceProvider = null, bool forceAll = false)
+        {
+            var session = _authSessionRepository.Load();
+            var selectedProvider = _settings.SelectedAI;
+            var selectedModels = CaptureSelectedByoModels();
+            var speechProvider = _settings.SpeechProviderId;
+            var speechModel = _settings.SpeechModelId;
+
+            if (session?.IsAuthenticated != true || string.IsNullOrWhiteSpace(session.AccessToken) || !HasByoEntitlement())
+            {
+                PopulateProviderChoices();
+                AIProviderComboBox.SelectedItem = selectedProvider;
+                PopulateByoModelChoices();
+                RestoreByoModelComboSelections(selectedModels);
+                return false;
+            }
+
+            var explicitRefresh = forceAll || !string.IsNullOrWhiteSpace(forceProvider);
+            if (!explicitRefresh)
+            {
+                var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
+                    || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+                if (!CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+                {
+                    PopulateProviderChoices();
+                    AIProviderComboBox.SelectedItem = selectedProvider;
+                    PopulateByoModelChoices();
+                    RestoreByoModelComboSelections(selectedModels);
+                    return true;
+                }
+            }
+
+            var ok = await ByoProviderModelCatalogService.RefreshStaleCatalogsAsync(
+                _settings,
+                _hostedAccountClient,
+                session.AccessToken,
+                forceProvider,
+                forceAll);
+
+            _settings.SelectedAI = selectedProvider;
+            foreach (var pair in selectedModels)
+            {
+                var available = ProviderModelCatalogCache.GetModelIds(_settings, pair.Key, byo: true);
+                if (available.Length == 0 || available.Contains(pair.Value, StringComparer.OrdinalIgnoreCase))
+                {
+                    AIModelRegistry.SetModelForProvider(_settings, pair.Key, pair.Value);
+                }
+            }
+            _settings.SpeechProviderId = speechProvider;
+            _settings.SpeechModelId = speechModel;
+            SettingsManager.Save(_settings);
+            PopulateProviderChoices();
+            AIProviderComboBox.SelectedItem = selectedProvider;
+            PopulateByoModelChoices();
+            RestoreByoModelComboSelections(selectedModels);
+            return ok;
+        }
+
+        private Dictionary<string, string> CaptureSelectedByoModels()
+        {
+            var selected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var provider in AIModelRegistry.GetAllProviders())
+            {
+                var model = AIModelRegistry.GetCurrentModelForProvider(_settings, provider);
+                if (!string.IsNullOrWhiteSpace(model))
+                {
+                    selected[provider] = model;
+                }
+            }
+            return selected;
+        }
+
+        private void RestoreByoModelComboSelections(Dictionary<string, string> selectedModels)
+        {
+            void Restore(ComboBox box, string provider)
+            {
+                if (selectedModels.TryGetValue(provider, out var model) && box.Items.Contains(model))
+                {
+                    box.SelectedItem = model;
+                }
+            }
+
+            Restore(ChatGPTModelBox, AIModelRegistry.Providers.ChatGPT);
+            Restore(ClaudeModelBox, AIModelRegistry.Providers.Claude);
+            Restore(MistralModelBox, AIModelRegistry.Providers.Mistral);
+            Restore(GeminiModelBox, AIModelRegistry.Providers.Gemini);
+            Restore(GroqModelBox, AIModelRegistry.Providers.Groq);
+            Restore(NvidiaModelBox, AIModelRegistry.Providers.Nvidia);
+        }
+
+        private async Task RefreshSpeechCatalogAsync(bool force = false)
+        {
+            var session = _authSessionRepository.Load();
+            if (session?.IsAuthenticated != true || string.IsNullOrWhiteSpace(session.AccessToken)) return;
+
+            if (!force)
+            {
+                var cacheEmpty = CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
+                if (!CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
+                {
+                    return;
+                }
+            }
+
+            var speechProvider = _settings.SpeechProviderId;
+            var speechModel = _settings.SpeechModelId;
+            try
+            {
+                _settings.SpeechCatalogCache = await _hostedAccountClient.GetSpeechCatalogAsync(session.AccessToken);
+                _settings.SpeechProviderId = speechProvider;
+                _settings.SpeechModelId = speechModel;
+                SettingsManager.Save(_settings);
+                PopulateSpeechProviders();
+                UpdateSpeechControls();
+            }
+            catch (Exception ex)
+            {
+                SpeechRuntimeNotice.Text = $"Speech catalog unavailable; cached choices remain in use. {UserFacingErrorSanitizer.SanitizeUserFacingError(ex.Message)}";
+            }
+        }
+
+        private void SpeechModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSpeechControls();
+
+        private void SpeechProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_isInitializing) PopulateSpeechModels();
+            UpdateSpeechControls();
+        }
+
+        private void UseChatKeysForSpeechCheckBox_Changed(object sender, RoutedEventArgs e) => UpdateSpeechControls();
+
+        private void UpdateSpeechControls()
+        {
+            if (SpeechCloudOptions == null) return;
+            if (UsesManagedPremiumSpeechUi())
+            {
+                if (SpeechModePanel != null)
+                {
+                    SpeechModePanel.Visibility = Visibility.Collapsed;
+                }
+                SpeechModeComboBox.Visibility = Visibility.Collapsed;
+                SpeechCloudOptions.Visibility = Visibility.Collapsed;
+                DedicatedSpeechKeysPanel.Visibility = Visibility.Collapsed;
+                UseChatKeysForSpeechCheckBox.Visibility = Visibility.Collapsed;
+                SpeechNativeFallbackCheckBox.Visibility = Visibility.Collapsed;
+                if (SpeechCatalogHintText != null)
+                {
+                    SpeechCatalogHintText.Visibility = Visibility.Collapsed;
+                }
+                return;
+            }
+
+            if (SpeechModePanel != null)
+            {
+                SpeechModePanel.Visibility = Visibility.Visible;
+            }
+            if (SpeechCatalogHintText != null)
+            {
+                SpeechCatalogHintText.Visibility = Visibility.Visible;
+            }
+            var cloud = (SpeechModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() == "Cloud";
+            SpeechModeComboBox.Visibility = Visibility.Visible;
+            SpeechCloudOptions.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
+            DedicatedSpeechKeysPanel.Visibility = UseChatKeysForSpeechCheckBox.IsChecked != true
+                ? Visibility.Visible : Visibility.Collapsed;
+            UseChatKeysForSpeechCheckBox.Visibility = Visibility.Visible;
+            SpeechNativeFallbackCheckBox.Visibility = Visibility.Visible;
+        }
+
+        private bool UsesManagedPremiumSpeechUi()
+        {
+            // Premium-only accounts hide Cloud/Native + provider/model pickers.
+            return IsPremiumOnlyAccount();
         }
 
         private static void RebindModelCombo(ComboBox comboBox, IEnumerable<string> models)
@@ -1006,6 +1341,13 @@ namespace SecureOverlay
                 return;
             }
 
+            // While any ComboBox dropdown is open, never scroll the settings page behind it.
+            if (HasOpenComboBoxDropDown(this))
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (e.OriginalSource is DependencyObject source
                 && FindAncestor<TextBoxBase>(source) != null)
             {
@@ -1017,6 +1359,26 @@ namespace SecureOverlay
             var nextOffset = Math.Max(0d, Math.Min(scrollViewer.ScrollableHeight, scrollViewer.VerticalOffset + delta));
             scrollViewer.ScrollToVerticalOffset(nextOffset);
             e.Handled = true;
+        }
+
+        private static bool HasOpenComboBoxDropDown(DependencyObject root)
+        {
+            if (root is ComboBox combo && combo.IsDropDownOpen)
+            {
+                return true;
+            }
+
+            var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (var i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (HasOpenComboBoxDropDown(child))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
@@ -1165,9 +1527,9 @@ namespace SecureOverlay
                 var wordCount = string.IsNullOrWhiteSpace(text) ? 0 : 
                     text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
                 
-                ResumeWordCount.Text = $"Words: {wordCount} / 1000";
+                ResumeWordCount.Text = $"Words: {wordCount} / 1200";
                 
-                if (wordCount > 1000)
+                if (wordCount > 1200)
                 {
                     ResumeWordCount.Foreground = new System.Windows.Media.SolidColorBrush(
                         System.Windows.Media.Color.FromRgb(255, 100, 100));
@@ -1226,13 +1588,41 @@ namespace SecureOverlay
             }
         }
 
-        private void SaveButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                var resumeWordCount = CountWords(ResumeBox.Text);
+                var jobDescriptionWordCount = CountWords(JobDescriptionBox.Text);
+                if (resumeWordCount > 1200)
+                {
+                    InvisibleMessageBox.Show(
+                        $"Resume is limited to 1200 words (currently {resumeWordCount}). Shorten it before saving.",
+                        "Resume Too Long");
+                    return;
+                }
+
+                if (jobDescriptionWordCount > 450)
+                {
+                    InvisibleMessageBox.Show(
+                        $"Job description is limited to 450 words (currently {jobDescriptionWordCount}). Shorten it before saving.",
+                        "Job Description Too Long");
+                    return;
+                }
+
                 var previousAppliedPack = _contextPackService.GetSelectedPack();
                 var previousLocalDraftApplied = _contextPackService.IsLocalDraftApplied();
-                _settings.SelectedAI = AIProviderComboBox.SelectedItem as string ?? "ChatGPT";
+                var previousKeys = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ChatGPT"] = _settings.ChatGPTApiKeys.ToArray(),
+                    ["Claude"] = _settings.ClaudeApiKeys.ToArray(),
+                    ["Mistral"] = _settings.MistralApiKeys.ToArray(),
+                    ["Gemini"] = _settings.GeminiApiKeys.ToArray(),
+                    ["Groq"] = _settings.GroqApiKeys.ToArray(),
+                    ["NVIDIA"] = _settings.NvidiaApiKeys.ToArray()
+                };
+                _settings.SelectedAI = AIProviderComboBox.SelectedItem as string
+                    ?? (string.IsNullOrWhiteSpace(_settings.SelectedAI) ? "ChatGPT" : _settings.SelectedAI);
                 
                 if (IsPremiumOnlyAccount())
                 {
@@ -1245,12 +1635,18 @@ namespace SecureOverlay
                 }
                 else
                 {
-                    _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.GroqApiKeys = _groqKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
-                    _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    _settings.ChatGPTApiKeys = _chatGPTKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.ClaudeApiKeys = _claudeKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.MistralApiKeys = _mistralKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.GroqApiKeys = _groqKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                }
+
+                var rotation = new APIRotationManager(_settings);
+                foreach (var provider in previousKeys.Keys)
+                {
+                    rotation.ResetFailuresIfKeysChanged(provider, previousKeys[provider]);
                 }
 
                 ValidateByoProviderLimits();
@@ -1275,11 +1671,11 @@ namespace SecureOverlay
                 _settings.NvidiaApiKey = _settings.NvidiaApiKeys.FirstOrDefault() ?? "";
                 
                 // Save models
-                _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? "gpt-4";
-                _settings.ClaudeModel = ClaudeModelBox.SelectedItem as string ?? "claude-3-sonnet-20240229";
-                _settings.MistralModel = MistralModelBox.SelectedItem as string ?? "mistral-large-latest";
-                _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? "gemini-2.5-flash";
-                _settings.GroqModel = GroqModelBox.SelectedItem as string ?? "llama-3.3-70b-versatile";
+                _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? _settings.ChatGPTModel;
+                _settings.ClaudeModel = ClaudeModelBox.SelectedItem as string ?? _settings.ClaudeModel;
+                _settings.MistralModel = MistralModelBox.SelectedItem as string ?? _settings.MistralModel;
+                _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? _settings.GeminiModel;
+                _settings.GroqModel = GroqModelBox.SelectedItem as string ?? _settings.GroqModel;
                 _settings.NvidiaModel = NvidiaModelBox.SelectedItem as string ?? _settings.NvidiaModel;
 
                 if (IsPremiumOnlyAccount())
@@ -1299,6 +1695,19 @@ namespace SecureOverlay
 
                 _settings.VoiceInputEnabled = VoiceInputCheckBox.IsChecked == true;
                 _settings.AutoSendAfterVoiceStopEnabled = AutoSendAfterVoiceStopCheckBox.IsChecked == true;
+                _settings.SpeechRecognitionMode = UsesManagedPremiumSpeechUi()
+                    ? "Cloud"
+                    : ((SpeechModeComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Native");
+                _settings.SpeechProviderId = SpeechProviderComboBox.SelectedItem as string ?? _settings.SpeechProviderId;
+                _settings.SpeechModelId = SpeechModelComboBox.SelectedItem as string ?? _settings.SpeechModelId;
+                _settings.SpeechLanguage = string.IsNullOrWhiteSpace(SpeechLanguageTextBox.Text) ? "en" : SpeechLanguageTextBox.Text.Trim();
+                _settings.UseChatProviderApiKeysForSpeech = UseChatKeysForSpeechCheckBox.IsChecked == true;
+                _settings.AutoFallbackToNativeSpeech = UsesManagedPremiumSpeechUi() || SpeechNativeFallbackCheckBox.IsChecked == true;
+                if (!UsesManagedPremiumSpeechUi() && !_settings.UseChatProviderApiKeysForSpeech && !string.IsNullOrWhiteSpace(_settings.SpeechProviderId))
+                {
+                    _settings.SpeechApiKeys[_settings.SpeechProviderId] = new[] { SpeechApiKeyOneBox.Password, SpeechApiKeyTwoBox.Password }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).Take(MaxKeysPerProvider).ToList();
+                }
                 _settings.ClickThroughEnabled = ClickThroughCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
@@ -1357,7 +1766,7 @@ namespace SecureOverlay
                 }
 
                 // debug mode:
-                _settings.DebugModeEnabled = HasByoEntitlement() && DebugModeCheckBox.IsChecked == true;
+                _settings.DebugModeEnabled = _accountSnapshot?.CanUseDesktopPowerFeatures == true && DebugModeCheckBox.IsChecked == true;
                 _settings.DebugErrorSimulation = _settings.DebugModeEnabled
                     ? (DebugErrorTypeComboBox.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "None"
                     : "None";
@@ -1368,11 +1777,7 @@ namespace SecureOverlay
                 }
                 
                 SettingsManager.Save(_settings);
-                _ = Task.Run(() =>
-                {
-                    ByoProviderModelCatalogService.RefreshStaleCatalogs(_settings);
-                    SettingsManager.Save(_settings);
-                });
+                await RefreshByoCatalogAsync(_settings.SelectedAI);
 
                 var selectedHostedPack = (SavedContextPackComboBox.SelectedItem as ContextPackSelectionItem)?.IsBlank == false;
                 if (!IsPremiumAccount() || !selectedHostedPack)
@@ -1625,15 +2030,63 @@ namespace SecureOverlay
                 : Visibility.Collapsed;
             KnowledgeBaseStatusNotice.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
             ContextPackSection.Visibility = IsPremiumAccount() ? Visibility.Visible : Visibility.Collapsed;
-            ByoConfigurationSection.Visibility = (isByo || isPremium) ? Visibility.Visible : Visibility.Collapsed;
-            DebugModeSection.Visibility = isByo ? Visibility.Visible : Visibility.Collapsed;
+            ByoConfigurationSection.Visibility = ShouldShowByoSettingsPanels() ? Visibility.Visible : Visibility.Collapsed;
+            DebugModeSection.Visibility = _accountSnapshot?.CanUseDesktopPowerFeatures == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (UsesManagedPremiumSpeechUi())
+            {
+                if (SpeechModePanel != null)
+                {
+                    SpeechModePanel.Visibility = Visibility.Collapsed;
+                }
+                SpeechModeComboBox.Visibility = Visibility.Collapsed;
+                SpeechCloudOptions.Visibility = Visibility.Collapsed;
+                SpeechNativeFallbackCheckBox.Visibility = Visibility.Collapsed;
+                SpeechModeComboBox.IsEnabled = false;
+                SpeechCloudOptions.IsEnabled = false;
+                SpeechNativeFallbackCheckBox.IsEnabled = false;
+                SpeechModeComboBox.SelectedIndex = 1;
+                SpeechNativeFallbackCheckBox.IsChecked = true;
+                SpeechRuntimeNotice.Text =
+                    "Premium uses managed speech recognition and automatically falls back to native recognition if it fails.";
+                if (SpeechCatalogHintText != null)
+                {
+                    SpeechCatalogHintText.Visibility = Visibility.Collapsed;
+                }
+            }
+            else
+            {
+                if (SpeechModePanel != null)
+                {
+                    SpeechModePanel.Visibility = Visibility.Visible;
+                }
+                if (SpeechCatalogHintText != null)
+                {
+                    SpeechCatalogHintText.Visibility = Visibility.Visible;
+                }
+                SpeechModeComboBox.Visibility = Visibility.Visible;
+                SpeechModeComboBox.IsEnabled = isByo;
+                SpeechCloudOptions.IsEnabled = isByo;
+                SpeechNativeFallbackCheckBox.IsEnabled = isByo;
+                if (isByo)
+                {
+                    SpeechRuntimeNotice.Text = "Choose native recognition or a cloud speech model using shared chat keys or dedicated speech keys.";
+                }
+                else
+                {
+                    SpeechModeComboBox.SelectedIndex = 0;
+                    SpeechRuntimeNotice.Text = "Free accounts use native speech recognition.";
+                }
+            }
+            UpdateSpeechControls();
             var legacyFallbackVisibility = _accountSnapshot?.CanUseDesktopPowerFeatures == true
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             LegacyFallbackHeading.Visibility = legacyFallbackVisibility;
             LegacyFallbackPanel.Visibility = legacyFallbackVisibility;
 
-            if (!isByo)
+            if (_accountSnapshot?.CanUseDesktopPowerFeatures != true)
             {
                 _settings.DebugModeEnabled = false;
                 _settings.DebugErrorSimulation = "None";
@@ -1659,8 +2112,8 @@ namespace SecureOverlay
                 PremiumManagedNoticeTitle.Text = "Premium With BYO Fallback";
                 PremiumManagedNoticeBody.Text =
                     _settings.PreferByoCreditsFirst
-                        ? "BYO credits are prioritized first for this account. Your provider keys and models stay available here immediately, and Phantom falls back to managed Premium only after BYO credits are exhausted."
-                        : "Premium credits use Phantom-managed provider keys first. BYO provider keys remain available here for fallback and for BYO-only providers.";
+                        ? "BYO credits are prioritized first for this account. Your provider keys and models appear here when the BYO lane is active."
+                        : "Premium credits use Phantom-managed provider keys first. BYO provider keys appear here when the BYO lane becomes active.";
             }
 
             if (isFreeTrial)
@@ -1726,6 +2179,56 @@ namespace SecureOverlay
                 : string.IsNullOrWhiteSpace(hostedKnowledgeBase.BlockedReason)
                     ? $"Linked, but not ready yet. Status: {hostedKnowledgeBase.Status}."
                     : $"{hostedKnowledgeBase.BlockedReason} Current status: {hostedKnowledgeBase.Status}.";
+        }
+
+        private bool ShouldShowByoSettingsPanels()
+        {
+            if (!HasByoEntitlement() || IsPremiumOnlyAccount())
+            {
+                return false;
+            }
+
+            if (HasPremiumManagedEntitlement())
+            {
+                return IsByoLaneActiveNow();
+            }
+
+            return true;
+        }
+
+        private bool PreferByoCreditsFirstSetting()
+        {
+            return _settings.PreferByoCreditsFirst && HasByoEntitlement() && HasPremiumManagedEntitlement();
+        }
+
+        private bool IsByoLaneActiveNow()
+        {
+            if (IsFreeTrialAccount() || !HasByoEntitlement() || !HasAnyConfiguredByoProviderKeys())
+            {
+                return false;
+            }
+
+            if (PreferByoCreditsFirstSetting())
+            {
+                return (_accountSnapshot?.ProAvailableCredits ?? 0m) > 0m || !HasPremiumManagedEntitlement();
+            }
+
+            if (HasPremiumManagedEntitlement() && (_accountSnapshot?.PremiumAvailableCredits ?? 0m) > 0m)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool HasAnyConfiguredByoProviderKeys()
+        {
+            return (_settings.ChatGPTApiKeys?.Count ?? 0) > 0
+                || (_settings.ClaudeApiKeys?.Count ?? 0) > 0
+                || (_settings.MistralApiKeys?.Count ?? 0) > 0
+                || (_settings.GeminiApiKeys?.Count ?? 0) > 0
+                || (_settings.GroqApiKeys?.Count ?? 0) > 0
+                || (_settings.NvidiaApiKeys?.Count ?? 0) > 0;
         }
 
         private bool IsPremiumAccount()

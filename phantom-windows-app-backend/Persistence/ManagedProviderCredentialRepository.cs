@@ -12,15 +12,17 @@ public sealed class ManagedProviderCredentialRepository
         _store = store;
     }
 
-    public IReadOnlyList<ManagedProviderCredentialRecord> ListByProvider(string providerId)
+    public IReadOnlyList<ManagedProviderCredentialRecord> ListByProvider(string providerId, string workload = "chat")
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT * FROM managed_provider_credentials
 WHERE provider_id = @providerId
+  AND workload = @workload
 ORDER BY priority ASC, updated_at_utc DESC;";
         command.Parameters.AddWithValue("providerId", providerId);
+        command.Parameters.AddWithValue("workload", workload);
         using var reader = command.ExecuteReader();
         var items = new List<ManagedProviderCredentialRecord>();
         while (reader.Read())
@@ -31,13 +33,15 @@ ORDER BY priority ASC, updated_at_utc DESC;";
         return items;
     }
 
-    public IReadOnlyList<ManagedProviderCredentialRecord> ListAll()
+    public IReadOnlyList<ManagedProviderCredentialRecord> ListAll(string workload = "chat")
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT * FROM managed_provider_credentials
+WHERE workload = @workload
 ORDER BY provider_id ASC, priority ASC, updated_at_utc DESC;";
+        command.Parameters.AddWithValue("workload", workload);
         using var reader = command.ExecuteReader();
         var items = new List<ManagedProviderCredentialRecord>();
         while (reader.Read())
@@ -64,11 +68,12 @@ ORDER BY provider_id ASC, priority ASC, updated_at_utc DESC;";
         using var command = connection.CreateCommand();
         command.CommandText = @"
 INSERT INTO managed_provider_credentials (
-    credential_id, provider_id, label, encrypted_api_key, is_enabled, priority, created_at_utc, updated_at_utc
+    credential_id, workload, provider_id, label, encrypted_api_key, is_enabled, priority, created_at_utc, updated_at_utc
 ) VALUES (
-    @credentialId, @providerId, @label, @encryptedApiKey, @isEnabled, @priority, @createdAtUtc, @updatedAtUtc
+    @credentialId, @workload, @providerId, @label, @encryptedApiKey, @isEnabled, @priority, @createdAtUtc, @updatedAtUtc
 )
 ON CONFLICT (credential_id) DO UPDATE SET
+    workload = EXCLUDED.workload,
     provider_id = EXCLUDED.provider_id,
     label = EXCLUDED.label,
     encrypted_api_key = EXCLUDED.encrypted_api_key,
@@ -79,6 +84,7 @@ ON CONFLICT (credential_id) DO UPDATE SET
     consecutive_failure_count = 0,
     updated_at_utc = EXCLUDED.updated_at_utc;";
         command.Parameters.AddWithValue("credentialId", record.CredentialId);
+        command.Parameters.AddWithValue("workload", record.Workload);
         command.Parameters.AddWithValue("providerId", record.ProviderId);
         command.Parameters.AddWithValue("label", record.Label);
         command.Parameters.AddWithValue("encryptedApiKey", record.EncryptedApiKey);
@@ -136,6 +142,7 @@ WHERE credential_id = @credentialId
         return new ManagedProviderCredentialRecord
         {
             CredentialId = reader.GetString(reader.GetOrdinal("credential_id")),
+            Workload = reader.GetString(reader.GetOrdinal("workload")),
             ProviderId = reader.GetString(reader.GetOrdinal("provider_id")),
             Label = reader.GetString(reader.GetOrdinal("label")),
             EncryptedApiKey = reader.GetString(reader.GetOrdinal("encrypted_api_key")),

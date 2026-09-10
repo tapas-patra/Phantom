@@ -11,6 +11,7 @@ import {
   deleteHostedKnowledgeBaseDocument,
   deleteHostedKnowledgeBaseExperience,
   deleteManagedAiCredential,
+  deleteManagedSpeechCredential,
   fetchAccountSummary,
   fetchAdminOverview,
   fetchAdminAudit,
@@ -33,6 +34,7 @@ import {
   markHostedKnowledgeBaseProjectRecent,
   pasteHostedKnowledgeBaseDocument,
   fetchManagedAiAdminInventory,
+  fetchManagedSpeechAdminInventory,
   fetchManagedAiLatencyStatus,
   fetchPaymentCatalog,
   fetchRegistrationSettings,
@@ -60,6 +62,7 @@ import {
   submitPublicFeedback,
   sendManagedAiAdminTest,
   triggerManagedAiCatalogRefresh,
+  triggerManagedSpeechCatalogRefresh,
   triggerManagedAiLatencyCheck,
   updateAdminUser,
   updateAdminFeedback,
@@ -69,11 +72,14 @@ import {
   updateHostedKnowledgeBaseProject,
   updateKnowledgeBaseEmbeddingConfig,
   updateInterviewQuestionBank,
-  updateManagedAiModelVision,
+  updateManagedAiModelFlags,
   updateManagedAiRuntimeSelection,
+  upsertManagedAiCatalogModel,
+  updateManagedSpeechRuntimeSelection,
   updateRegistrationSettings,
   uploadHostedKnowledgeBaseDocuments,
   upsertManagedAiCredential,
+  upsertManagedSpeechCredential,
   fetchUserSupportTickets,
   verifyPhoneOtp,
   verifyAdminOtp,
@@ -168,6 +174,7 @@ const adminNav = [
   { to: "/admin/tickets", label: "Tickets" },
   { to: "/admin/feedback", label: "Feedback" },
   { to: "/admin/managed-ai", label: "Managed AI" },
+  { to: "/admin/managed-speech", label: "Speech Recognition" },
   { to: "/admin/audit", label: "Audit" },
   { to: "/admin/settings", label: "Settings" }
 ];
@@ -3928,9 +3935,11 @@ function AdminResetPasswordPage() {
 function AdminDashboardPage({ adminSession }) {
   const [overview, setOverview] = useState(null);
   const [inventory, setInventory] = useState(null);
+  const [speechInventory, setSpeechInventory] = useState(null);
   const [latencyStatus, setLatencyStatus] = useState(null);
   const [gmailStatus, setGmailStatus] = useState(null);
   const [catalogRefreshResult, setCatalogRefreshResult] = useState(null);
+  const [speechCatalogRefreshResult, setSpeechCatalogRefreshResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -3946,14 +3955,16 @@ function AdminDashboardPage({ adminSession }) {
         fetchAdminOverview(adminSession.accessToken),
         fetchManagedAiAdminInventory(adminSession.accessToken),
         fetchManagedAiLatencyStatus(adminSession.accessToken),
-        fetchGmailOAuthStatus(adminSession.accessToken)
+        fetchGmailOAuthStatus(adminSession.accessToken),
+        fetchManagedSpeechAdminInventory(adminSession.accessToken)
       ]);
       if (!cancelled) {
-        const [overviewResult, inventoryResult, latencyResult, gmailResult] = results;
+        const [overviewResult, inventoryResult, latencyResult, gmailResult, speechInventoryResult] = results;
         if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
         if (inventoryResult.status === "fulfilled") setInventory(inventoryResult.value);
         if (latencyResult.status === "fulfilled") setLatencyStatus(latencyResult.value);
         if (gmailResult.status === "fulfilled") setGmailStatus(gmailResult.value);
+        if (speechInventoryResult.status === "fulfilled") setSpeechInventory(speechInventoryResult.value);
         const failedCount = results.filter((result) => result.status === "rejected").length;
         if (failedCount > 0) {
           const overviewError = overviewResult.status === "rejected" ? overviewResult.reason?.message : "";
@@ -3986,6 +3997,12 @@ function AdminDashboardPage({ adminSession }) {
       inventory: nextInventory,
       latencyStatus: nextLatencyStatus
     };
+  }
+
+  async function refreshManagedSpeechState() {
+    const nextInventory = await fetchManagedSpeechAdminInventory(adminSession.accessToken);
+    setSpeechInventory(nextInventory);
+    return nextInventory;
   }
 
   async function refreshOverview() {
@@ -4110,6 +4127,18 @@ function AdminDashboardPage({ adminSession }) {
                   onRefresh={refreshManagedAiState}
                   catalogRefreshResult={catalogRefreshResult}
                   onCatalogRefreshResult={setCatalogRefreshResult}
+                />
+              }
+            />
+            <Route
+              path="managed-speech"
+              element={
+                <ManagedSpeechAdminPanel
+                  accessToken={adminSession.accessToken}
+                  inventory={speechInventory}
+                  onRefresh={refreshManagedSpeechState}
+                  catalogRefreshResult={speechCatalogRefreshResult}
+                  onCatalogRefreshResult={setSpeechCatalogRefreshResult}
                 />
               }
             />
@@ -4447,14 +4476,29 @@ function AdminOverviewPanel({ overview, inventory, gmailStatus, accessToken, gma
   );
 }
 
+function isManagedChatEligibleModel(model) {
+  return model?.eligibleForChat !== false;
+}
+
+function getChatEligibleCatalogProviders(catalogProviders) {
+  return (catalogProviders || [])
+    .map((provider) => ({
+      ...provider,
+      models: (provider.models || []).filter(isManagedChatEligibleModel)
+    }))
+    .filter((provider) => provider.models.length > 0);
+}
+
 function ManagedRuntimeSelectionCard({
   accessToken,
   inventory,
   onRefresh,
+  updateSelection = updateManagedAiRuntimeSelection,
   className = "glass-panel admin-form-panel",
   title = "Choose the provider and model used for managed users",
   description,
-  showManageLink = false
+  showManageLink = false,
+  eyebrow = "Managed runtime selection"
 }) {
   const [selectionProviderId, setSelectionProviderId] = useState("");
   const [selectionModelId, setSelectionModelId] = useState("");
@@ -4463,17 +4507,19 @@ function ManagedRuntimeSelectionCard({
   const [success, setSuccess] = useState("");
 
   const catalogProviders = inventory?.catalogs?.providers || [];
+  const chatEligibleProviders = getChatEligibleCatalogProviders(catalogProviders);
   const currentSelection = inventory?.selection || null;
 
   useEffect(() => {
-    const catalogProviderIds = catalogProviders.map((item) => item.providerId);
+    const eligibleProviders = getChatEligibleCatalogProviders(catalogProviders);
+    const catalogProviderIds = eligibleProviders.map((item) => item.providerId);
     const nextProviderId =
       (currentSelection?.providerId && catalogProviderIds.includes(currentSelection.providerId)
         ? currentSelection.providerId
         : catalogProviderIds[0]) || "";
     setSelectionProviderId(nextProviderId);
 
-    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    const nextProvider = eligibleProviders.find((item) => item.providerId === nextProviderId);
     const nextModelId =
       (currentSelection?.providerId === nextProviderId &&
       nextProvider?.models?.some((model) => model.modelId === currentSelection?.modelId)
@@ -4482,12 +4528,12 @@ function ManagedRuntimeSelectionCard({
     setSelectionModelId(nextModelId);
   }, [catalogProviders, currentSelection?.modelId, currentSelection?.providerId]);
 
-  const selectedCatalogProvider = catalogProviders.find((item) => item.providerId === selectionProviderId);
+  const selectedCatalogProvider = chatEligibleProviders.find((item) => item.providerId === selectionProviderId);
   const selectedCatalogModels = selectedCatalogProvider?.models || [];
 
   function handleSelectionProviderChange(nextProviderId) {
     setSelectionProviderId(nextProviderId);
-    const nextProvider = catalogProviders.find((item) => item.providerId === nextProviderId);
+    const nextProvider = chatEligibleProviders.find((item) => item.providerId === nextProviderId);
     setSelectionModelId(nextProvider?.models?.[0]?.modelId || "");
   }
 
@@ -4497,7 +4543,7 @@ function ManagedRuntimeSelectionCard({
     setLocalError("");
     setSuccess("");
     try {
-      await updateManagedAiRuntimeSelection(accessToken, {
+      await updateSelection(accessToken, {
         providerId: selectionProviderId,
         modelId: selectionModelId
       });
@@ -4514,7 +4560,7 @@ function ManagedRuntimeSelectionCard({
     <article className={className}>
       <div className="table-header">
         <div>
-          <p className="eyebrow">Managed runtime selection</p>
+          <p className="eyebrow">{eyebrow}</p>
           <h3>{title}</h3>
         </div>
         {showManageLink ? (
@@ -4529,7 +4575,7 @@ function ManagedRuntimeSelectionCard({
       </p>
       {localError ? <p className="status-message status-error" role="alert">{localError}</p> : null}
       {success ? <p className="status-message" role="status" aria-live="polite">{success}</p> : null}
-      {catalogProviders.length === 0 ? (
+      {chatEligibleProviders.length === 0 ? (
         <p>
           No managed model catalog is available yet. Add at least one managed credential and refresh models from the
           Managed AI page before setting the runtime.
@@ -4540,7 +4586,7 @@ function ManagedRuntimeSelectionCard({
             <label>
               Active provider
               <select value={selectionProviderId} onChange={(event) => handleSelectionProviderChange(event.target.value)}>
-                {catalogProviders.map((provider) => (
+                {chatEligibleProviders.map((provider) => (
                   <option key={provider.providerId} value={provider.providerId}>
                     {provider.label}
                   </option>
@@ -5022,7 +5068,13 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState("0");
   const [isEnabled, setIsEnabled] = useState(true);
+  const [manualProviderId, setManualProviderId] = useState("ChatGPT");
+  const [manualModelId, setManualModelId] = useState("");
+  const [manualDisplayName, setManualDisplayName] = useState("");
+  const [manualSupportsVision, setManualSupportsVision] = useState(false);
+  const [manualEligibleForChat, setManualEligibleForChat] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [submittingManualModel, setSubmittingManualModel] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
@@ -5037,6 +5089,12 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
       setProviderId(providers[0].providerId);
     }
   }, [providerId, providers]);
+
+  useEffect(() => {
+    if (providers.length > 0 && !providers.some((item) => item.providerId === manualProviderId)) {
+      setManualProviderId(providers[0].providerId);
+    }
+  }, [manualProviderId, providers]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -5096,19 +5154,45 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
     }
   }
 
-  async function handleVisionToggle(nextProviderId, modelId, supportsVision) {
+  async function handleModelFlagsToggle(nextProviderId, modelId, patch, successMessage) {
     setLocalError("");
     setSuccess("");
     try {
-      await updateManagedAiModelVision(accessToken, {
+      await updateManagedAiModelFlags(accessToken, {
         providerId: nextProviderId,
         modelId,
-        supportsVision: !supportsVision
+        ...patch
       });
       await onRefresh();
-      setSuccess("Model vision support updated.");
+      setSuccess(successMessage);
     } catch (toggleError) {
-      setLocalError(toggleError.message || "Could not update model vision support.");
+      setLocalError(toggleError.message || "Could not update model flags.");
+    }
+  }
+
+  async function handleManualModelSubmit(event) {
+    event.preventDefault();
+    setSubmittingManualModel(true);
+    setLocalError("");
+    setSuccess("");
+    try {
+      await upsertManagedAiCatalogModel(accessToken, {
+        providerId: manualProviderId,
+        modelId: manualModelId.trim(),
+        displayName: manualDisplayName.trim() || manualModelId.trim(),
+        supportsVision: manualSupportsVision,
+        eligibleForChat: manualEligibleForChat
+      });
+      setManualModelId("");
+      setManualDisplayName("");
+      setManualSupportsVision(false);
+      setManualEligibleForChat(true);
+      setSuccess("Catalog model saved.");
+      await onRefresh();
+    } catch (saveError) {
+      setLocalError(saveError.message || "Could not add catalog model.");
+    } finally {
+      setSubmittingManualModel(false);
     }
   }
 
@@ -5228,6 +5312,70 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
         emptyLabel="No managed credentials configured yet."
       />
 
+      <article className="glass-panel admin-form-panel">
+        <div className="table-header">
+          <div>
+            <p className="eyebrow">Manual catalog entry</p>
+            <h3>Add model manually</h3>
+          </div>
+        </div>
+        <p>Use this when a provider omits a model from refresh, or when you need to seed chat eligibility and vision flags before the next catalog sync.</p>
+        <form className="admin-form" onSubmit={handleManualModelSubmit}>
+          <label>
+            Provider
+            <select value={manualProviderId} onChange={(event) => setManualProviderId(event.target.value)}>
+              {providers.map((provider) => (
+                <option key={provider.providerId} value={provider.providerId}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Model ID
+            <input
+              required
+              value={manualModelId}
+              onChange={(event) => setManualModelId(event.target.value)}
+              placeholder="provider-model-id"
+            />
+          </label>
+          <label>
+            Display name
+            <input
+              value={manualDisplayName}
+              onChange={(event) => setManualDisplayName(event.target.value)}
+              placeholder="Friendly label shown to admins"
+            />
+          </label>
+          <div className="admin-form-inline">
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={manualSupportsVision}
+                onChange={(event) => setManualSupportsVision(event.target.checked)}
+              />
+              <span>Supports vision</span>
+            </label>
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={manualEligibleForChat}
+                onChange={(event) => setManualEligibleForChat(event.target.checked)}
+              />
+              <span>Eligible for chat</span>
+            </label>
+          </div>
+          <button
+            className="button button-primary"
+            type="submit"
+            disabled={submittingManualModel || !manualProviderId || !manualModelId.trim()}
+          >
+            {submittingManualModel ? "Saving..." : "Add Model"}
+          </button>
+        </form>
+      </article>
+
       {providers.map((provider) => {
         const catalog = catalogProviders.find((item) => item.providerId === provider.providerId);
         const providerModels = catalog?.models || [];
@@ -5246,32 +5394,60 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
                   <tr>
                     <th>Model ID</th>
                     <th>Display name</th>
+                    <th>Chat eligible</th>
                     <th>Vision</th>
-                    <th>Action</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {providerModels.length === 0 ? (
                     <tr>
-                      <td colSpan="4">No stored catalog for this provider yet.</td>
+                      <td colSpan="5">No stored catalog for this provider yet.</td>
                     </tr>
                   ) : (
-                    providerModels.map((model) => (
-                      <tr key={`${provider.providerId}-${model.modelId}`}>
-                        <td>{model.modelId}</td>
-                        <td>{model.displayName}</td>
-                        <td>{model.supportsVision ? "Yes" : "No"}</td>
-                        <td>
-                          <button
-                            className="table-action"
-                            type="button"
-                            onClick={() => handleVisionToggle(provider.providerId, model.modelId, model.supportsVision)}
-                          >
-                            Mark {model.supportsVision ? "Non-Vision" : "Vision"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    providerModels.map((model) => {
+                      const chatEligible = model.eligibleForChat !== false;
+                      return (
+                        <tr key={`${provider.providerId}-${model.modelId}`}>
+                          <td>{model.modelId}</td>
+                          <td>{model.displayName}</td>
+                          <td>{chatEligible ? "Yes" : "No"}</td>
+                          <td>{model.supportsVision ? "Yes" : "No"}</td>
+                          <td>
+                            <div className="inline-actions">
+                              <button
+                                className="table-action"
+                                type="button"
+                                onClick={() =>
+                                  handleModelFlagsToggle(
+                                    provider.providerId,
+                                    model.modelId,
+                                    { eligibleForChat: !chatEligible },
+                                    "Model chat eligibility updated."
+                                  )
+                                }
+                              >
+                                Mark {chatEligible ? "Chat-Ineligible" : "Chat-Eligible"}
+                              </button>
+                              <button
+                                className="table-action"
+                                type="button"
+                                onClick={() =>
+                                  handleModelFlagsToggle(
+                                    provider.providerId,
+                                    model.modelId,
+                                    { supportsVision: !model.supportsVision },
+                                    "Model vision support updated."
+                                  )
+                                }
+                              >
+                                Mark {model.supportsVision ? "Non-Vision" : "Vision"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -5279,6 +5455,115 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function ManagedSpeechAdminPanel({ accessToken, inventory, onRefresh, catalogRefreshResult, onCatalogRefreshResult }) {
+  const providers = inventory?.managedProviders || [];
+  const credentials = inventory?.credentials || [];
+  const catalogs = inventory?.catalogs?.providers || [];
+  const [providerId, setProviderId] = useState(providers[0]?.providerId || "ChatGPT");
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [priority, setPriority] = useState("0");
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (providers.length && !providers.some((item) => item.providerId === providerId)) setProviderId(providers[0].providerId);
+  }, [providerId, providers]);
+
+  async function saveCredential(event) {
+    event.preventDefault(); setBusy("save"); setError(""); setMessage("");
+    try {
+      await upsertManagedSpeechCredential(accessToken, {
+        providerId, label, apiKey, isEnabled,
+        priority: parseRequiredInteger(priority, "Credential priority", 0, 1000)
+      });
+      setLabel(""); setApiKey(""); setPriority("0");
+      setMessage("Speech credential saved.");
+      await onRefresh();
+    } catch (nextError) { setError(nextError.message || "Could not save speech credential."); }
+    finally { setBusy(""); }
+  }
+
+  async function refreshCatalog() {
+    setBusy("refresh"); setError(""); setMessage("");
+    try {
+      const result = await triggerManagedSpeechCatalogRefresh(accessToken);
+      onCatalogRefreshResult(result); await onRefresh(); setMessage("Speech model catalog refreshed.");
+    } catch (nextError) { setError(nextError.message || "Could not refresh speech models."); }
+    finally { setBusy(""); }
+  }
+
+  async function removeCredential(credentialId) {
+    if (!window.confirm("Remove this managed speech credential?")) return;
+    setError(""); setMessage("");
+    try { await deleteManagedSpeechCredential(accessToken, credentialId); await onRefresh(); setMessage("Speech credential removed."); }
+    catch (nextError) { setError(nextError.message || "Could not remove speech credential."); }
+  }
+
+  return (
+    <div className="dashboard-grid">
+      <article className="glass-panel dashboard-hero table-span-full">
+        <p className="eyebrow">Managed speech recognition</p>
+        <h1>Choose one global speech model for Premium accounts.</h1>
+        <p>Premium audio uses backend-managed credentials and automatically returns to native recognition if this service is unavailable. BYO clients use the same dynamic catalog with their own local keys.</p>
+      </article>
+
+      <ManagedRuntimeSelectionCard
+        accessToken={accessToken}
+        inventory={inventory}
+        onRefresh={onRefresh}
+        updateSelection={updateManagedSpeechRuntimeSelection}
+        title="Choose the provider and model used for Premium speech"
+        eyebrow="Global speech recognizer"
+      />
+
+      <article className="glass-panel admin-form-panel">
+        <div className="table-header">
+          <div><p className="eyebrow">Speech credentials</p><h3>Provider rotation</h3></div>
+          <div className="inline-actions">
+            <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>Refresh</button>
+            <button className="button button-primary button-compact" type="button" onClick={refreshCatalog} disabled={busy === "refresh"}>{busy === "refresh" ? "Updating..." : "Update Models"}</button>
+          </div>
+        </div>
+        {error ? <p className="status-message status-error" role="alert">{error}</p> : null}
+        {message ? <p className="status-message" role="status">{message}</p> : null}
+        <form className="admin-form" onSubmit={saveCredential}>
+          <label>Provider<select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option key={provider.providerId} value={provider.providerId}>{provider.label}</option>)}</select></label>
+          <label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Primary / backup" /></label>
+          <label>API key<textarea rows={4} required value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste backend-managed speech key" /></label>
+          <div className="admin-form-inline">
+            <label>Priority<input type="number" min="0" max="1000" required value={priority} onChange={(event) => setPriority(event.target.value)} /></label>
+            <label className="admin-toggle"><input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} /><span>Enabled for rotation</span></label>
+          </div>
+          <button className="button button-primary" type="submit" disabled={busy === "save"}>{busy === "save" ? "Saving..." : "Add Speech Credential"}</button>
+        </form>
+      </article>
+
+      <DataTable
+        title="Speech provider status"
+        columns={["Provider", "Enabled creds", "Fetched models", "Catalog refreshed", "Last refresh outcome"]}
+        rows={providers.map((provider) => {
+          const catalog = catalogs.find((item) => item.providerId === provider.providerId);
+          const result = catalogRefreshResult?.providers?.find((item) => item.providerId === provider.providerId);
+          return [provider.label, credentials.filter((item) => item.providerId === provider.providerId && item.isEnabled).length, catalog?.models?.length || 0, formatDate(catalog?.refreshedAtUtc), result?.message || "No refresh run in this session."];
+        })}
+      />
+      <DataTable
+        title="Managed speech credentials"
+        columns={["Provider", "Label", "Priority", "Status", "Updated", "Action"]}
+        rows={credentials.length ? credentials.map((item) => [item.providerId, item.label, item.priority, item.isEnabled ? "Enabled" : "Disabled", formatDate(item.updatedAtUtc), <button className="table-action" type="button" onClick={() => removeCredential(item.credentialId)}>Remove</button>]) : null}
+        emptyLabel="No managed speech credentials configured yet."
+      />
+      {catalogs.map((provider) => (
+        <DataTable key={provider.providerId} title={`${provider.label} speech models`} columns={["Model ID", "Display name"]}
+          rows={(provider.models || []).map((model) => [model.modelId, model.displayName])} emptyLabel="No speech models fetched." />
+      ))}
     </div>
   );
 }

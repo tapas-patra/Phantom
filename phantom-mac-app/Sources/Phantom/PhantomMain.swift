@@ -220,6 +220,7 @@ enum PhantomMain {
             precondition(PhantomStore.extractCorrectedMermaidSource("```mermaid\nflowchart TD\nA-->B\n```") == "flowchart TD\nA-->B")
             precondition(PhantomStore.mergeTranscript(current: "I work", lastRendered: "I am working", previous: "I am working", next: "I am working today", prefix: "", preservingEdits: false).text == "I work today")
             precondition(PhantomStore.mergeTranscript(current: "Question: ", lastRendered: "Question: ", previous: "", next: "Tell me", prefix: "Question: ", preservingEdits: false).text == "Question: Tell me")
+            precondition(SpeechTranscriptionClient.selfCheck())
             precondition(SSEParser.parse("data: {\"delta\":\"hello\"}") == .delta("hello"))
             precondition(SSEParser.parse("data: {\"error\":\"stopped\"}") == .failure("stopped"))
             precondition(SSEParser.parse("data: [DONE]") == .done)
@@ -255,6 +256,24 @@ enum PhantomMain {
             precondition(restartParentPID(arguments: ["Phantom"]) == nil)
             precondition(InWindowPickerSizing.height(optionCount: 0) == InWindowPickerSizing.minimumHeight)
             precondition(InWindowPickerSizing.height(optionCount: 100) == InWindowPickerSizing.maximumHeight)
+            let sanitized = UserFacingText.sanitize("Failed at https://example.com/api/desktop/ai/chat with /api/foo")
+            precondition(!sanitized.contains("http"))
+            precondition(!sanitized.contains("/api/"))
+            let legacyModelJSON = #"{"modelId":"gpt-4o","displayName":"GPT-4o","supportsVision":true}"#.data(using: .utf8)!
+            let legacyModel = try! JSONDecoder().decode(ManagedModel.self, from: legacyModelJSON)
+            precondition(legacyModel.eligibleForChat)
+            let minDateJSON = #""0001-01-01T00:00:00""#.data(using: .utf8)!
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .custom { decoder in
+                let container = try decoder.singleValueContainer()
+                let text = try container.decode(String.self)
+                if text.hasPrefix("0001-01-01") { return Date.distantPast }
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: text)
+            }
+            precondition((try? decoder.decode(Date.self, from: minDateJSON)) != nil)
+            precondition(PhantomStore.maxResumeWords == 1_200)
+            precondition(PhantomStore.maxJobDescriptionWords == 450)
+            precondition(PhantomStore.maxAttachedScreenshots == 3)
             runLiveCopilotFixtures()
             print("Phantom self-check and shared live-copilot fixture suite passed.")
             return

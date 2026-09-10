@@ -67,6 +67,11 @@ namespace SecureOverlay
         // ═══════════════════════════════════════════════════════════════
         private CursorManager? _cursorManager;
         private bool _isDraggingWindow = false;
+        // Snapshot of UseFakeCursor taken before the SettingsPage opens. The SettingsPage
+        // mutates the shared _settings instance in place on Save, so reading
+        // _settings.UseFakeCursor in OnSettingsClosed would already return the NEW value
+        // and the diff check used to reinitialize the cursor manager would always fail.
+        private bool _useFakeCursorSnapshotBeforeSettings;
 
         // Streaming state
         private StringBuilder _streamBuffer = new StringBuilder();
@@ -3885,6 +3890,11 @@ namespace SecureOverlay
             RefreshAccountSnapshot();
             Activate();
 
+            // Snapshot BEFORE the SettingsPage is constructed: it holds a direct reference
+            // to _settings and mutates it in place on Save, so reading later would not
+            // reflect the value that the currently-active cursor manager was built with.
+            _useFakeCursorSnapshotBeforeSettings = _settings.UseFakeCursor;
+
             _settingsPage = new SettingsPage(_accountSnapshot, _settings);
             _settingsPage.SettingsClosed += OnSettingsClosed;
             SettingsPageHost.Content = _settingsPage;
@@ -3903,7 +3913,11 @@ namespace SecureOverlay
             {
                 var oldProvider = _currentAI?.GetProviderName() ?? "None";
                 var oldModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "unknown";
-                var oldUseFakeCursor = _settings.UseFakeCursor;
+                // Use the snapshot taken before the SettingsPage opened; _settings.UseFakeCursor
+                // has already been overwritten in place by the SettingsPage save routine, so
+                // reading it here would not detect a change and the cursor manager would never
+                // be rebuilt with the new value.
+                var oldUseFakeCursor = _useFakeCursorSnapshotBeforeSettings;
                 _forcedManagedExtensionProviderId = null;
                 
                 // Reload settings

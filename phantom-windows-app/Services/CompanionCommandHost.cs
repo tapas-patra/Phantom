@@ -16,6 +16,16 @@ namespace SecureOverlay.Services
     /// </summary>
     public sealed class CompanionCommandHost : IDisposable
     {
+        // Contract §5.2: all body field names are camelCase on the wire. The DTOs use
+        // PascalCase properties, so every outbound serialization must apply CamelCase
+        // naming or the phone (kotlinx camelCase decoder with ignoreUnknownKeys) reads
+        // nulls/defaults for every field (C1).
+        private static readonly JsonSerializerOptions WireJsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            IncludeFields = false
+        };
+
         private readonly CompanionRelayClient _client;
         private readonly Func<CompanionDesktopStatus> _statusProvider;
         private readonly Func<CompanionSessionSnapshotDto> _snapshotProvider;
@@ -131,7 +141,7 @@ namespace SecureOverlay.Services
                     lockExpiresAtUtc = status.LockExpiresAtUtc
                 }
             };
-            await _client.SendRawAsync(JsonSerializer.Serialize(envelope));
+            await _client.SendRawAsync(JsonSerializer.Serialize(envelope, WireJsonOptions));
         }
 
         public async Task SendDesktopStatusAsync(string statusText)
@@ -154,7 +164,7 @@ namespace SecureOverlay.Services
                     lockExpiresAtUtc = status.LockExpiresAtUtc
                 }
             };
-            await _client.SendRawAsync(JsonSerializer.Serialize(envelope));
+            await _client.SendRawAsync(JsonSerializer.Serialize(envelope, WireJsonOptions));
         }
 
         public async Task SendCaptureStartedAsync(string requestId, string? displayId)
@@ -241,14 +251,25 @@ namespace SecureOverlay.Services
         {
             var snapshot = _snapshotProvider();
             if (snapshot == null) return;
-            snapshot.PairingId = _client.PairingId;
+            // Contract §5.2: session.snapshot body is the same shape as /sessions/current
+            // MINUS pairingId (pairingId lives at the envelope top level only). Build an
+            // explicit camelCase body so the DTO's PairingId is never echoed into the body (C1).
             var envelope = new
             {
                 v = 1, id = Guid.NewGuid().ToString("N"), type = "session.snapshot",
                 ts = DateTime.UtcNow, pairingId = _client.PairingId, role = "desktop",
-                body = snapshot
+                body = new
+                {
+                    desktopStatus = snapshot.DesktopStatus,
+                    provider = snapshot.Provider,
+                    model = snapshot.Model,
+                    vision = snapshot.Vision,
+                    displays = snapshot.Displays ?? new List<CompanionDisplayDto>(),
+                    selectedDisplayId = snapshot.SelectedDisplayId,
+                    turns = snapshot.Turns ?? new List<CompanionTurnDto>()
+                }
             };
-            await _client.SendRawAsync(JsonSerializer.Serialize(envelope));
+            await _client.SendRawAsync(JsonSerializer.Serialize(envelope, WireJsonOptions));
         }
     }
 

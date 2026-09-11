@@ -103,6 +103,11 @@ final class PhantomStore: ObservableObject {
     var companionRequestId: String?
     var companionDeltaHandler: ((String) -> Void)?
     var companionTurnFinishedHandler: ((Bool) -> Void)?
+    // Companion capture/error status flags (spec §5.2: status may be `capturing` or
+    // `error`). Set/cleared by CompanionCommandHost around headless capture and on
+    // turn outcome; read by desktopStatus() for desktop.hello / session.snapshot (H1).
+    @Published var companionIsCapturing: Bool = false
+    @Published var companionHasError: Bool = false
     // True while companion mode has hidden the overlay (spec §8.2). Driven by the
     // orchestrator via setCompanionOverlayHidden(); PhantomMain observes this to
     // order out / restore the window without activating the app.
@@ -326,7 +331,14 @@ final class PhantomStore: ObservableObject {
 
     private(set) var companion: CompanionOrchestrator? = nil
     @Published var companionEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(companionEnabled, forKey: "companion.enabled") }
+        didSet {
+            UserDefaults.standard.set(companionEnabled, forKey: "companion.enabled")
+            if companionEnabled {
+                // Reset transient capture/error flags when companion mode is (re)enabled (H1).
+                companionIsCapturing = false
+                companionHasError = false
+            }
+        }
     }
     @Published var companionPairingId: String = "" {
         didSet { UserDefaults.standard.set(companionPairingId, forKey: "companion.pairingId") }

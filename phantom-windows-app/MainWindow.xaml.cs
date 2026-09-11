@@ -146,6 +146,11 @@ namespace SecureOverlay
         private CompanionOrchestrator? _companionOrchestrator;
         private string? _companionActiveRequestId;
         private bool _companionOverlayHidden;
+        // Companion capture/error status flags (spec §5.2: status may be `capturing` or
+        // `error`). Read by ProvideCompanionStatus on the relay thread, written on the
+        // dispatcher thread — kept volatile for cross-thread visibility (H1).
+        private volatile bool _isCompanionCapturing;
+        private volatile bool _companionHasError;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionInactivityTimer;
@@ -2736,12 +2741,14 @@ namespace SecureOverlay
                     switch (companionOutcome)
                     {
                         case CompanionTurnOutcome.Succeeded:
+                            _companionHasError = false; // clear transient error on success (H1)
                             _ = _companionOrchestrator.OnTurnCompleted(reqId, succeeded: true);
                             break;
                         case CompanionTurnOutcome.Cancelled:
                             _ = _companionOrchestrator.OnTurnCancelled(reqId);
                             break;
                         case CompanionTurnOutcome.Failed:
+                            _companionHasError = true; // surface error status until next success (H1)
                             _ = _companionOrchestrator.OnTurnCompleted(reqId, succeeded: false, companionErrorCode ?? "internal_error", companionErrorMessage ?? "Request failed.");
                             break;
                         default:
@@ -4144,6 +4151,17 @@ namespace SecureOverlay
             {
                 status = "idle";
             }
+            else if (_companionHasError)
+            {
+                // Surface the most recent capture/chat failure until the next successful
+                // turn clears it (H1). The phone also infers error from capture.failed /
+                // chat.failed frames, but the status string must be able to carry it too.
+                status = "error";
+            }
+            else if (_isCompanionCapturing)
+            {
+                status = "capturing";
+            }
             else if (_isProcessingRequest)
             {
                 status = "thinking";
@@ -4265,33 +4283,44 @@ namespace SecureOverlay
                 _companionActiveRequestId = requestId;
                 if (!CurrentModelSupportsVision())
                 {
+                    _companionHasError = true;
                     await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
                     return;
                 }
                 if (!CompanionHasActiveLock())
                 {
+                    _companionHasError = true;
                     await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
                     return;
                 }
 
                 await SendCompanionCaptureStarted(requestId, displayId);
-                var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
-                if (image == null)
+                _isCompanionCapturing = true;
+                try
                 {
-                    await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
-                    return;
-                }
+                    var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
+                    if (image == null)
+                    {
+                        _companionHasError = true;
+                        await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
+                        return;
+                    }
 
-                while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                    while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                    {
+                        _attachedScreenshots.RemoveAt(0);
+                    }
+                    _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                    await SendCompanionCaptureCompleted(requestId, image);
+
+                    var question = string.IsNullOrWhiteSpace(prompt) ? "Please analyze this screenshot." : prompt!;
+                    InputTextBox.Text = question;
+                    await SendMessage(captureQuestion: false);
+                }
+                finally
                 {
-                    _attachedScreenshots.RemoveAt(0);
+                    _isCompanionCapturing = false;
                 }
-                _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
-                await SendCompanionCaptureCompleted(requestId, image);
-
-                var question = string.IsNullOrWhiteSpace(prompt) ? "Please analyze this screenshot." : prompt!;
-                InputTextBox.Text = question;
-                await SendMessage(captureQuestion: false);
             }));
         }
 
@@ -4302,39 +4331,50 @@ namespace SecureOverlay
                 _companionActiveRequestId = requestId;
                 if (!CurrentModelSupportsVision())
                 {
+                    _companionHasError = true;
                     await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
                     return;
                 }
                 if (!CompanionHasActiveLock())
                 {
+                    _companionHasError = true;
                     await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
                     return;
                 }
 
                 await SendCompanionCaptureStarted(requestId, displayId);
-                var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
-                if (image == null)
+                _isCompanionCapturing = true;
+                try
                 {
-                    await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
-                    return;
-                }
+                    var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
+                    if (image == null)
+                    {
+                        _companionHasError = true;
+                        await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
+                        return;
+                    }
 
-                while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
-                {
-                    _attachedScreenshots.RemoveAt(0);
-                }
-                _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
-                await SendCompanionCaptureCompleted(requestId, image);
+                    while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                    {
+                        _attachedScreenshots.RemoveAt(0);
+                    }
+                    _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                    await SendCompanionCaptureCompleted(requestId, image);
 
-                if (!attachOnly)
-                {
-                    InputTextBox.Text = "Please analyze this screenshot.";
-                    await SendMessage(captureQuestion: false);
+                    if (!attachOnly)
+                    {
+                        InputTextBox.Text = "Please analyze this screenshot.";
+                        await SendMessage(captureQuestion: false);
+                    }
+                    else
+                    {
+                        // Attach-only: no chat turn. Just publish a snapshot so the phone sees state.
+                        _ = _companionOrchestrator?.OnCaptureCompleted(requestId);
+                    }
                 }
-                else
+                finally
                 {
-                    // Attach-only: no chat turn. Just publish a snapshot so the phone sees state.
-                    _ = _companionOrchestrator?.OnCaptureCompleted(requestId);
+                    _isCompanionCapturing = false;
                 }
             }));
         }
@@ -4346,11 +4386,13 @@ namespace SecureOverlay
                 _companionActiveRequestId = requestId;
                 if (!CompanionHasActiveLock())
                 {
+                    _companionHasError = true;
                     _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "lock_missing", "No active interview lock.");
                     return;
                 }
                 if (string.IsNullOrWhiteSpace(text))
                 {
+                    _companionHasError = true;
                     _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "chat_failed", "Empty message.");
                     return;
                 }

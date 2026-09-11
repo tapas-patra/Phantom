@@ -246,7 +246,9 @@ struct AnyCodable: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let dict = try? container.decode([String: AnyCodable].self) {
-            valueBox = dict
+            // Lowercase dict keys so body field reads are case-insensitive (L3 hardening).
+            // The phone sends camelCase today, but this protects against any casing drift.
+            valueBox = Dictionary(uniqueKeysWithValues: dict.map { ($0.key.lowercased(), $0.value) })
         } else if let string = try? container.decode(String.self) {
             valueBox = string
         } else if let number = try? container.decode(Double.self) {
@@ -274,7 +276,7 @@ struct AnyCodable: Codable {
     }
 
     func value(_ key: String) -> Any? {
-        if let dict = valueBox as? [String: AnyCodable], let entry = dict[key] {
+        if let dict = valueBox as? [String: AnyCodable], let entry = dict[key.lowercased()] {
             return entry.valueBox
         }
         return nil

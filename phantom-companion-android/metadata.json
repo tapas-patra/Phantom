@@ -1,0 +1,7 @@
+{
+  "name": "Phantom Companion",
+  "description": "Android companion remote control for Phantom desktop client with real-time relay, screen capture triggers, and streamed answers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

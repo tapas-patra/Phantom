@@ -63,7 +63,13 @@ final class CompanionCommandHost {
             let requestId = frame.string("requestId") ?? frame.id ?? UUID().uuidString
             await chatSend(requestId: requestId, text: text)
         case "chat.cancel":
-            // Just flag + cancel; the turn-finished handler emits chat.cancelled (C4).
+            // Only cancel when the cancel targets the in-flight request. A stale cancel
+            // arriving after a new request started must not kill the newer turn (H2).
+            let cancelRequestId = frame.string("requestId")
+            if let cancelRequestId, let currentRequestId, cancelRequestId != currentRequestId {
+                // Stale cancel for a different request — ignore.
+                return
+            }
             pendingCancel = true
             store?.cancelCurrentRequest()
         case "chat.new_topic":
@@ -94,16 +100,21 @@ final class CompanionCommandHost {
         currentRequestId = requestId
         pendingCancel = false
         if await !store.companionHasActiveLock() {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
         }
         guard visionSupported() else {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "vision_unsupported", message: "Current model does not support vision.")
             return
         }
         do {
             let data = try ScreenshotCapture.captureDisplay(id: displayId)
             sendCaptureStarted(requestId: requestId, displayId: displayId ?? "")
+            store.companionIsCapturing = true
+            defer { store.companionIsCapturing = false }
+            sendCaptureCompleted(requestId: requestId, from: data)
             while store.attachedScreenshots.count >= PhantomStore.maxAttachedScreenshots {
                 store.attachedScreenshots.removeFirst()
             }
@@ -123,8 +134,10 @@ final class CompanionCommandHost {
             }
             store.send()
         } catch ScreenshotError.permissionDenied {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "capture_permission_missing", message: "Screen Recording permission missing.")
         } catch {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "capture_failed", message: "Headless capture failed.")
         }
     }
@@ -134,16 +147,21 @@ final class CompanionCommandHost {
         currentRequestId = requestId
         pendingCancel = false
         if await !store.companionHasActiveLock() {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
         }
         guard visionSupported() else {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "vision_unsupported", message: "Current model does not support vision.")
             return
         }
         do {
             let data = try ScreenshotCapture.captureDisplay(id: displayId)
             sendCaptureStarted(requestId: requestId, displayId: displayId ?? "")
+            store.companionIsCapturing = true
+            defer { store.companionIsCapturing = false }
+            sendCaptureCompleted(requestId: requestId, from: data)
             while store.attachedScreenshots.count >= PhantomStore.maxAttachedScreenshots {
                 store.attachedScreenshots.removeFirst()
             }
@@ -164,8 +182,10 @@ final class CompanionCommandHost {
                 publishSnapshotSync()
             }
         } catch ScreenshotError.permissionDenied {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "capture_permission_missing", message: "Screen Recording permission missing.")
         } catch {
+            store.companionHasError = true
             sendCaptureFailed(requestId: requestId, code: "capture_failed", message: "Headless capture failed.")
         }
     }
@@ -175,10 +195,12 @@ final class CompanionCommandHost {
         currentRequestId = requestId
         pendingCancel = false
         if await !store.companionHasActiveLock() {
+            store.companionHasError = true
             sendChatFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
         }
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.companionHasError = true
             sendChatFailed(requestId: requestId, code: "chat_failed", message: "Empty message.")
             return
         }
@@ -200,8 +222,10 @@ final class CompanionCommandHost {
         if pendingCancel {
             sendChatCancelled(requestId: requestId)
         } else if succeeded {
+            store?.companionHasError = false // clear transient error on success (H1)
             sendChatCompleted(requestId: requestId)
         } else {
+            store?.companionHasError = true // surface error status until next success (H1)
             sendChatFailed(requestId: requestId, code: "chat_failed", message: "Chat request failed.")
         }
         pendingCancel = false
@@ -231,12 +255,31 @@ final class CompanionCommandHost {
         if !store.companionEnabled { return "offline" }
         if store.companionRelayState != .connected { return "connecting" }
         if !store.companionHasActiveLockSync { return "idle" }
+        if store.companionHasError { return "error" } // surface last capture/chat failure until next success (H1)
+        if store.companionIsCapturing { return "capturing" }
         if store.isSending { return "thinking" }
         return "ready"
     }
 
     func sendCaptureStarted(requestId: String, displayId: String) {
         sendEnvelope(type: "capture.started", body: ["requestId": requestId, "displayId": displayId])
+    }
+
+    /// Sends the capture.completed frame with the JPEG thumbnail so the phone can render
+    /// the screenshot preview in the chat turn (spec §5.2). Previously macOS skipped this
+    /// frame entirely, so the phone never received the captured image (C2).
+    func sendCaptureCompleted(requestId: String, from data: Data) {
+        let payload = ScreenshotCapture.captureCompletedPayload(from: data)
+        let width = payload?.width ?? 0
+        let height = payload?.height ?? 0
+        let thumb = payload?.thumbnailJpegBase64
+        var body: [String: Any] = [
+            "requestId": requestId,
+            "width": width,
+            "height": height
+        ]
+        if let thumb { body["thumbnailJpegBase64"] = thumb }
+        sendEnvelope(type: "capture.completed", body: body)
     }
 
     func sendCaptureFailed(requestId: String, code: String, message: String) {

@@ -21,7 +21,14 @@ public sealed class CompanionRelayHost
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(20);
     private const int MaxFrameBytes = 64 * 1024;
     private const int MaxCaptureCompletedFrameBytes = 128 * 1024; // spec §5: capture.completed thumbnail up to 80 KB decoded
-    private const int MaxAssemblyBytes = 128 * 1024;
+    // Reassembly buffer must accommodate the largest allowed frame (capture.completed),
+    // so it is sized to the capture.completed limit, not the 64 KB default (M2).
+    private const int MaxAssemblyBytes = MaxCaptureCompletedFrameBytes;
+    // spec §5: the capture.completed thumbnail itself may be up to 80 KB DECODED. The
+    // frame-size check above only bounds the whole frame; a peer could still ship an
+    // 85 KB-decoded thumbnail (~113 KB base64) that fits the 128 KB frame cap. Enforce
+    // the decoded limit explicitly (M1).
+    private const int MaxThumbnailDecodedBytes = 80 * 1024;
     private const int CaptureRatePerMinute = 10;
     private const int ChatSendRatePerMinute = 30;
     private const int MaxSnapshotTurns = 20;
@@ -272,6 +279,43 @@ public sealed class CompanionRelayHost
         return null;
     }
 
+    /// <summary>
+    /// Returns true when a capture.completed frame's body.thumbnailJpegBase64 decodes to
+    /// more than MaxThumbnailDecodedBytes (spec §5: thumbnail up to 80 KB decoded). Used to
+    /// enforce the decoded-size limit that the whole-frame size check cannot (M1).
+    /// </summary>
+    private static bool ThumbnailExceedsLimit(byte[] frame)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(frame);
+            if (!doc.RootElement.TryGetProperty("body", out var bodyEl) || bodyEl.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+            if (!bodyEl.TryGetProperty("thumbnailJpegBase64", out var thumbEl)
+                || thumbEl.ValueKind != JsonValueKind.String)
+            {
+                return false; // no thumbnail (attach-only capture) — nothing to check
+            }
+            var base64 = thumbEl.GetString();
+            if (string.IsNullOrEmpty(base64)) return false;
+            // base64 decodes to ~3/4 of its length; an exact byte count is cheapest and
+            // avoids allocating the decoded bytes just to measure them.
+            var decodedLen = (base64!.Length * 3) / 4;
+            // Account for base64 padding so the estimate is conservative.
+            if (base64.EndsWith("==", StringComparison.Ordinal)) decodedLen -= 2;
+            else if (base64.EndsWith("=", StringComparison.Ordinal)) decodedLen -= 1;
+            return decodedLen > MaxThumbnailDecodedBytes;
+        }
+        catch
+        {
+            // Malformed body — let the downstream snapshot/hello handling reject it; do not
+            // block the frame here on a parse error.
+            return false;
+        }
+    }
+
     private async Task HandleFrameAsync(Room room, string role, WebSocket socket, byte[] frame, CancellationToken cancellationToken)
     {
         RelayEnvelope? envelope;
@@ -291,6 +335,23 @@ public sealed class CompanionRelayHost
             return;
         }
 
+        // spec §5.1: the envelope top level MUST carry pairingId and role. Previously these
+        // were only checked when non-empty, so a frame omitting them passed validation (M3).
+        // relay.ping / relay.pong are keepalives and are exempt — the server's own ping is
+        // {v,type,ts} with no pairingId/role, and clients send minimal pings too (spec §5).
+        if (string.IsNullOrWhiteSpace(envelope.PairingId)
+            && envelope.Type is not ("relay.ping" or "relay.pong"))
+        {
+            await SendRelayErrorAsync(socket, "malformed_frame", "Envelope missing pairingId.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(envelope.Role)
+            && envelope.Type is not ("relay.ping" or "relay.pong"))
+        {
+            await SendRelayErrorAsync(socket, "malformed_frame", "Envelope missing role.");
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(envelope.PairingId)
             && !string.Equals(envelope.PairingId, room.PairingId, StringComparison.Ordinal))
         {
@@ -302,6 +363,15 @@ public sealed class CompanionRelayHost
             && !string.Equals(envelope.Role, role, StringComparison.Ordinal))
         {
             await SendRelayErrorAsync(socket, "role_mismatch", "Envelope role does not match connection.");
+            return;
+        }
+
+        // spec §5: capture.completed thumbnail may be up to 80 KB DECODED. The frame-size
+        // check above only bounds the whole frame; enforce the decoded thumbnail limit here
+        // so a peer cannot ship an oversized image that fits the 128 KB frame cap (M1).
+        if (envelope.Type == "capture.completed" && ThumbnailExceedsLimit(frame))
+        {
+            await SendRelayErrorAsync(socket, "payload_too_large", "capture.completed thumbnail exceeds 80 KB decoded limit.");
             return;
         }
 

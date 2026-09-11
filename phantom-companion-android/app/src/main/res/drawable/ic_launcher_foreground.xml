@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Center 66dp safe zone is from x=21..87, y=21..87, center is (54,54) -->
+    <!-- Phantom Companion Ghost / Shield Remote Silhouette -->
+    <path
+        android:pathData="M54,26 C40.75,26 30,36.75 30,50 L30,76 L36,70 L42,76 L48,70 L54,76 L60,70 L66,76 L72,70 L78,76 L78,50 C78,36.75 67.25,26 54,26 Z"
+        android:fillColor="#315CF5" />
+    <!-- Eyes -->
+    <path
+        android:pathData="M44,46 A4.5,5.5 0 1,1 44,45.99 Z"
+        android:fillColor="#EDF3FB" />
+    <path
+        android:pathData="M64,46 A4.5,5.5 0 1,1 64,45.99 Z"
+        android:fillColor="#EDF3FB" />
+    <!-- Pupils looking sharp -->
+    <path
+        android:pathData="M45.5,46 A2,2.5 0 1,1 45.5,45.99 Z"
+        android:fillColor="#08111E" />
+    <path
+        android:pathData="M65.5,46 A2,2.5 0 1,1 65.5,45.99 Z"
+        android:fillColor="#08111E" />
+    <!-- Radio / Relay signal arcs above -->
+    <path
+        android:pathData="M44,22 C47.2,19.8 50.5,18.8 54,18.8 C57.5,18.8 60.8,19.8 64,22"
+        android:strokeColor="#72D9B4"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+</vector>

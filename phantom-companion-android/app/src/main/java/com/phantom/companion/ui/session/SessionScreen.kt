@@ -139,13 +139,19 @@ fun SessionScreen(
     val speechSession = remember(context) {
         PhoneSpeechSession(
             context = context,
+            cloud = PhoneSpeechSession.CloudSpeech(
+                isPreferred = { viewModel.prefersCloudSpeech() },
+                transcribe = { pcm -> viewModel.transcribeCloudSpeech(pcm) }
+            ),
             onPartial = { viewModel.applyPhoneDictation(it, isFinal = false) },
             onFinal = { viewModel.applyPhoneDictation(it, isFinal = true) },
-            onError = { viewModel.setMicListening(false) }
+            onError = { viewModel.surfaceSpeechError(it) },
+            onNativeFallback = { viewModel.onNativeSpeechFallback() },
+            onUtterance = { viewModel.applyPhoneDictation(it, isFinal = true, keepListening = true) }
         )
     }
     DisposableEffect(speechSession) {
-        onDispose { speechSession.stop() }
+        onDispose { speechSession.release() }
     }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -358,8 +364,8 @@ fun SessionScreen(
                         onClick = {
                             if (usePhoneMicrophone) {
                                 if (isMicListening) {
-                                    speechSession.stop()
-                                    viewModel.setMicListening(false)
+                                    val flushing = speechSession.stop()
+                                    if (!flushing) viewModel.setMicListening(false)
                                 } else {
                                     micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
@@ -651,7 +657,7 @@ fun SessionScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Use this phone’s microphone instead of the desktop microphone.",
+                        text = "Use this phone’s microphone instead of the desktop microphone. Premium accounts try Phantom cloud speech first, then on-device recognition if that fails.",
                         color = PhantomMuted,
                         fontSize = 14.sp
                     )

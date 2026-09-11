@@ -4,6 +4,7 @@ import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.data.remote.PhantomApi
 import com.phantom.companion.data.remote.RelayClient
 import com.phantom.companion.data.remote.SocketConnectionState
+import com.phantom.companion.data.remote.SpeechTranscriptionClient
 import com.phantom.companion.data.remote.TerminalRelayEvent
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
@@ -31,7 +32,8 @@ import java.util.TimeZone
 class SessionRepository(
     private val relayClient: RelayClient,
     private val sessionStore: SessionStore,
-    private val api: PhantomApi
+    private val api: PhantomApi,
+    private val speechTranscriptionClient: SpeechTranscriptionClient
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -118,6 +120,13 @@ class SessionRepository(
     fun clearError() {
         _sessionError.value = null
     }
+
+    fun reportSessionError(message: String) {
+        _sessionError.value = message
+    }
+
+    suspend fun transcribeSpeech(pcm16: ByteArray): String =
+        speechTranscriptionClient.transcribePcm16(pcm16)
 
     private fun processIncomingFrame(frame: RelayEnvelope) {
         val body = frame.body

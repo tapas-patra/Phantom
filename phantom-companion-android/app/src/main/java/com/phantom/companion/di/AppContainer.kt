@@ -6,6 +6,7 @@ import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.data.remote.NetworkClient
 import com.phantom.companion.data.remote.PhantomApi
 import com.phantom.companion.data.remote.RelayClient
+import com.phantom.companion.data.remote.SpeechTranscriptionClient
 import com.phantom.companion.data.repo.AuthRepository
 import com.phantom.companion.data.repo.PairingRepository
 import com.phantom.companion.data.repo.SessionRepository
@@ -40,7 +41,11 @@ class AppContainer(private val context: Context) {
         PairingRepository(api, sessionStore, deviceIdentityStore)
     }
 
+    val speechTranscriptionClient: SpeechTranscriptionClient by lazy {
+        SpeechTranscriptionClient(networkClient.okHttpClient, networkClient.baseUrl, networkClient.json)
+    }
+
     val sessionRepository: SessionRepository by lazy {
-        SessionRepository(relayClient, sessionStore, api)
+        SessionRepository(relayClient, sessionStore, api, speechTranscriptionClient)
     }
 }

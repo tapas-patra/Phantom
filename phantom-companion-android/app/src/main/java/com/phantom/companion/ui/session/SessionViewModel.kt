@@ -5,9 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.data.local.mergePhoneDictation
+import com.phantom.companion.data.local.nextPhoneDictation
 import com.phantom.companion.data.remote.SocketConnectionState
 import com.phantom.companion.data.repo.PairingRepository
 import com.phantom.companion.data.repo.SessionRepository
+import com.phantom.companion.data.speech.prefersManagedCloudSpeech
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
@@ -123,23 +125,33 @@ class SessionViewModel(
         _isMicListening.value = true
     }
 
-    fun applyPhoneDictation(text: String, isFinal: Boolean) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) {
-            if (isFinal) {
-                phoneDictationPrefix = null
-                _isMicListening.value = false
-            }
-            return
-        }
-        if (!isFinal && !_isMicListening.value) return
-        val prefix = phoneDictationPrefix ?: _inputText.value.trimEnd()
-        if (phoneDictationPrefix == null) phoneDictationPrefix = prefix
-        _inputText.value = mergePhoneDictation(prefix, trimmed)
-        if (isFinal) {
-            phoneDictationPrefix = null
-            _isMicListening.value = false
-        }
+    fun onNativeSpeechFallback() {
+        phoneDictationPrefix = _inputText.value.trimEnd()
+    }
+
+    fun prefersCloudSpeech(): Boolean =
+        prefersManagedCloudSpeech(startupSnapshot.value?.accessTier)
+
+    suspend fun transcribeCloudSpeech(pcm16: ByteArray): String =
+        sessionRepository.transcribeSpeech(pcm16)
+
+    fun surfaceSpeechError(message: String) {
+        _isMicListening.value = false
+        sessionRepository.reportSessionError(message)
+    }
+
+    fun applyPhoneDictation(text: String, isFinal: Boolean, keepListening: Boolean = false) {
+        val next = nextPhoneDictation(
+            currentText = _inputText.value,
+            prefix = phoneDictationPrefix,
+            isListening = _isMicListening.value,
+            hypothesis = text,
+            isFinal = isFinal,
+            keepListening = keepListening
+        )
+        phoneDictationPrefix = next.prefix
+        _inputText.value = next.text
+        _isMicListening.value = next.listening
     }
 
     fun startDesktopVoice() = sessionRepository.startDesktopVoice()

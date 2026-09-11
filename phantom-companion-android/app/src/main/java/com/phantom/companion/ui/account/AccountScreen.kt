@@ -226,7 +226,7 @@ fun AccountScreen(
 
             AccountCard(title = "Voice input", icon = Icons.Default.Mic) {
                 Text(
-                    text = "When enabled, the mic button on the session screen uses this phone instead of the desktop microphone.",
+                    text = "When enabled, the mic button on the session screen uses this phone instead of the desktop microphone. Premium accounts try Phantom cloud speech first, then Android recognition if that fails.",
                     fontSize = 13.sp,
                     color = PhantomMuted
                 )

@@ -6,6 +6,7 @@ import com.phantom.companion.domain.model.DisplayInfo
 import com.phantom.companion.domain.model.Pairing
 import com.phantom.companion.domain.model.RelayBody
 import com.phantom.companion.domain.model.RelayEnvelope
+import com.phantom.companion.domain.model.SpeechTranscriptionResponse
 import com.phantom.companion.domain.model.StartupSnapshot
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -199,5 +200,14 @@ class SerializationTest {
         assertEquals(null, decoded.id)
         assertEquals(null, decoded.pairingId)
         assertEquals(null, decoded.body)
+    }
+
+    @Test
+    fun testSpeechTranscriptionResponseParsing() {
+        val rawJson = """{"text":"hello world","providerId":"groq","modelId":"whisper-large-v3"}"""
+        val decoded = json.decodeFromString<SpeechTranscriptionResponse>(rawJson)
+        assertEquals("hello world", decoded.text)
+        assertEquals("groq", decoded.providerId)
+        assertEquals("whisper-large-v3", decoded.modelId)
     }
 }

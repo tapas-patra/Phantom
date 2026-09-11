@@ -69,6 +69,13 @@ data class MessageResponse(
 )
 
 @Serializable
+data class SpeechTranscriptionResponse(
+    val text: String = "",
+    val providerId: String = "",
+    val modelId: String = ""
+)
+
+@Serializable
 data class WalletSnapshot(
     val proAvailableCredits: Double = 0.0,
     val premiumAvailableCredits: Double = 0.0,

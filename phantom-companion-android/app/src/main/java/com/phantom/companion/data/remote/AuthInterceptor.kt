@@ -17,14 +17,18 @@ class AuthInterceptor(
                 path.endsWith("api/desktop/auth/login") ||
                 path.endsWith("api/desktop/auth/forgot-password")
 
+        val isMultipart = originalRequest.body?.contentType()?.type.equals("multipart", ignoreCase = true)
         val builder = originalRequest.newBuilder()
-            .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .header("X-Phantom-Correlation-Id", UUID.randomUUID().toString())
             .header("X-Phantom-Operation-Id", UUID.randomUUID().toString())
             // CRITICAL AUTH RULE: Never send Origin or X-Phantom-CSRF
             .removeHeader("Origin")
             .removeHeader("X-Phantom-CSRF")
+
+        if (!isMultipart) {
+            builder.header("Content-Type", "application/json")
+        }
 
         if (!isPublicRoute) {
             val token = sessionStore.getAccessToken()

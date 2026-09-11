@@ -264,6 +264,10 @@ final class PhantomStore: ObservableObject {
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
     private var voiceDispatchTask: Task<Void, Never>?
+    private var pendingVoiceAutoSend = false
+    private var sawVoiceTranscriptAfterStop = false
+    private var voiceAutoSendDeadline: Date?
+    private var voiceAutoSendFallback: Date?
     private var pendingVoiceTurnId: String?
     private var lastAutoSentVoiceText = ""
 
@@ -1182,15 +1186,23 @@ final class PhantomStore: ObservableObject {
 
         if speechInput.isListening {
             let wasCloud = speechInput.isCloudMode
+            if autoSendAfterVoiceStop {
+                pendingVoiceAutoSend = true
+                sawVoiceTranscriptAfterStop = false
+                voiceAutoSendDeadline = Date().addingTimeInterval(5)
+                voiceAutoSendFallback = Date().addingTimeInterval(wasCloud ? 2 : 0.6)
+                voiceStatus = wasCloud
+                    ? "Finishing cloud transcription…"
+                    : "Sending automatically…"
+            } else {
+                pendingVoiceAutoSend = false
+                voiceAutoSendDeadline = nil
+                voiceAutoSendFallback = nil
+            }
             speechInput.stop()
             isListening = false
             if autoSendAfterVoiceStop {
-                if wasCloud {
-                    // Cloud transcription finishes asynchronously; final transcript schedules send.
-                    voiceStatus = "Finishing cloud transcription…"
-                } else {
-                    scheduleVoiceDispatch()
-                }
+                scheduleVoiceDispatch()
             }
         } else {
             configureSpeechRuntime()
@@ -1201,6 +1213,10 @@ final class PhantomStore: ObservableObject {
             preserveVoiceEdits = false
             pendingVoiceTurnId = UUID().uuidString
             lastAutoSentVoiceText = ""
+            pendingVoiceAutoSend = false
+            sawVoiceTranscriptAfterStop = false
+            voiceAutoSendDeadline = nil
+            voiceAutoSendFallback = nil
             voiceDispatchTask?.cancel()
             Task {
                 await speechInput.start()
@@ -2149,7 +2165,6 @@ final class PhantomStore: ObservableObject {
     private func configureSpeechInput() {
         speechInput.onTranscript = { [weak self] transcript, isFinal in
             guard let self else { return }
-            self.voiceDispatchTask?.cancel()
             let merged = Self.mergeTranscript(
                 current: self.prompt,
                 lastRendered: self.lastVoiceRenderedPrompt,
@@ -2172,7 +2187,14 @@ final class PhantomStore: ObservableObject {
                 style: self.interviewDeliveryStyle,
                 fields: ["transcript_length_bucket": Self.lengthBucket(merged.text.count)]
             )
-            if isFinal, self.autoSendAfterVoiceStop { self.scheduleVoiceDispatch() }
+            if self.speechInput.isListening {
+                self.voiceDispatchTask?.cancel()
+                return
+            }
+            if self.pendingVoiceAutoSend || (isFinal && self.autoSendAfterVoiceStop) {
+                self.sawVoiceTranscriptAfterStop = true
+                self.scheduleVoiceDispatch()
+            }
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
@@ -2184,15 +2206,50 @@ final class PhantomStore: ObservableObject {
     private func scheduleVoiceDispatch() {
         voiceDispatchTask?.cancel()
         let expected = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !expected.isEmpty else { return }
-        voiceDispatchTask = Task {
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled,
-                  self.prompt.trimmingCharacters(in: .whitespacesAndNewlines) == expected else { return }
+        if expected.isEmpty {
+            guard pendingVoiceAutoSend, let deadline = voiceAutoSendDeadline, Date() < deadline else {
+                pendingVoiceAutoSend = false
+                voiceAutoSendDeadline = nil
+                voiceAutoSendFallback = nil
+                return
+            }
+            voiceDispatchTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.scheduleVoiceDispatch()
+            }
+            return
+        }
+        if !sawVoiceTranscriptAfterStop, let fallback = voiceAutoSendFallback, Date() < fallback {
+            voiceDispatchTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.scheduleVoiceDispatch()
+            }
+            return
+        }
+        voiceDispatchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            let current = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard current == expected else {
+                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
+                return
+            }
+            guard !self.speechInput.isListening else {
+                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
+                return
+            }
             guard expected != self.lastAutoSentVoiceText else {
+                self.pendingVoiceAutoSend = false
+                self.voiceAutoSendDeadline = nil
+                self.voiceAutoSendFallback = nil
                 Diagnostics.event("request_dispatched", level: "Debug", sessionId: self.copilotSessionId, turnId: self.pendingVoiceTurnId ?? UUID().uuidString, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
                 return
             }
+            self.pendingVoiceAutoSend = false
+            self.voiceAutoSendDeadline = nil
+            self.voiceAutoSendFallback = nil
             self.lastAutoSentVoiceText = expected
             self.send()
         }

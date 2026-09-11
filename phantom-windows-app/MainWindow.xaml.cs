@@ -4242,7 +4242,7 @@ namespace SecureOverlay
                 list.Add(new CompanionAttachmentDto
                 {
                     Index = i,
-                    ThumbnailJpegBase64 = HeadlessScreenCapture.BuildThumbnailJpegBase64(_attachedScreenshots[i].Image, longEdge: 160)
+                    ThumbnailJpegBase64 = HeadlessScreenCapture.BuildThumbnailJpegBase64(_attachedScreenshots[i].Image, longEdge: 480)
                 });
             }
             return list;
@@ -4542,6 +4542,9 @@ namespace SecureOverlay
                     }
                     else
                     {
+                        // Snapshot must not still report `capturing` or the phone
+                        // stays on the spinner and cannot take a second shot.
+                        _isCompanionCapturing = false;
                         _ = _companionOrchestrator?.OnCaptureCompleted(requestId);
                     }
                 }

@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,12 +59,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -72,6 +76,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.phantom.companion.data.local.PhoneSpeechSession
 import com.phantom.companion.data.remote.SocketConnectionState
 import com.phantom.companion.domain.model.ChatTurn
@@ -124,17 +130,17 @@ fun SessionScreen(
     val usePhoneMicrophone by viewModel.usePhoneMicrophone.collectAsState()
     val isMicListening by viewModel.isMicListening.collectAsState()
 
+    var screenshotPreviewIndex by remember { mutableStateOf<Int?>(null) }
+    var chatPreviewJpeg by remember { mutableStateOf<String?>(null) }
+
     val listState = rememberLazyListState()
     val relayLive = connectionState is SocketConnectionState.Connected
 
     val speechSession = remember(context) {
         PhoneSpeechSession(
             context = context,
-            onPartial = { viewModel.appendDictatedText(it) },
-            onFinal = {
-                viewModel.appendDictatedText(it)
-                viewModel.setMicListening(false)
-            },
+            onPartial = { viewModel.applyPhoneDictation(it, isFinal = false) },
+            onFinal = { viewModel.applyPhoneDictation(it, isFinal = true) },
             onError = { viewModel.setMicListening(false) }
         )
     }
@@ -145,7 +151,7 @@ fun SessionScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            viewModel.setMicListening(true)
+            viewModel.beginPhoneDictation()
             speechSession.start()
         }
     }
@@ -284,7 +290,8 @@ fun SessionScreen(
                     PendingAttachmentTray(
                         attachments = pendingAttachments,
                         onRemove = viewModel::onRemoveAttachment,
-                        onClear = viewModel::onClearAttachments
+                        onClear = viewModel::onClearAttachments,
+                        onOpen = { screenshotPreviewIndex = it }
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -313,7 +320,7 @@ fun SessionScreen(
                 // Follow-up message composer
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Bottom
                 ) {
                     OutlinedTextField(
                         value = inputText,
@@ -327,8 +334,11 @@ fun SessionScreen(
                         },
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 52.dp, max = 140.dp)
                             .testTag("input_follow_up"),
-                        singleLine = true,
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 5,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { viewModel.onSendFollowUpClicked() }),
                         shape = RoundedCornerShape(12.dp),
@@ -562,7 +572,10 @@ fun SessionScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     items(transcript) { turn ->
-                        ChatTurnBubble(turn = turn)
+                        ChatTurnBubble(
+                            turn = turn,
+                            onThumbnailClick = { jpeg -> chatPreviewJpeg = jpeg }
+                        )
                     }
                 }
             }
@@ -681,13 +694,34 @@ fun SessionScreen(
             }
         )
     }
+
+    val trayPreviewIndex = screenshotPreviewIndex
+    if (trayPreviewIndex != null && trayPreviewIndex in pendingAttachments.indices) {
+        ScreenshotPreviewDialog(
+            jpegBase64 = pendingAttachments[trayPreviewIndex].thumbnailJpegBase64,
+            title = "Screenshot ${trayPreviewIndex + 1} of ${pendingAttachments.size}",
+            onClose = { screenshotPreviewIndex = null },
+            onRemove = {
+                viewModel.onRemoveAttachment(trayPreviewIndex)
+                screenshotPreviewIndex = null
+            }
+        )
+    }
+    chatPreviewJpeg?.let { jpeg ->
+        ScreenshotPreviewDialog(
+            jpegBase64 = jpeg,
+            title = "Screenshot",
+            onClose = { chatPreviewJpeg = null }
+        )
+    }
 }
 
 @Composable
 private fun PendingAttachmentTray(
     attachments: List<PendingAttachment>,
     onRemove: (Int) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onOpen: (Int) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -719,11 +753,14 @@ private fun PendingAttachmentTray(
                         .clip(RoundedCornerShape(10.dp))
                         .background(PhantomSurface)
                         .border(1.dp, PhantomLine, RoundedCornerShape(10.dp))
+                        .clickable { onOpen(attachment.index) }
+                        .testTag("attachment_thumb_${attachment.index}")
                 ) {
                     if (bitmap != null) {
                         Image(
                             bitmap = bitmap,
                             contentDescription = "Attached screenshot ${attachment.index + 1}",
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -761,7 +798,90 @@ private fun decodeJpegBase64(value: String?): androidx.compose.ui.graphics.Image
 }
 
 @Composable
-fun ChatTurnBubble(turn: ChatTurn) {
+private fun ScreenshotPreviewDialog(
+    jpegBase64: String?,
+    title: String,
+    onClose: () -> Unit,
+    onRemove: (() -> Unit)? = null
+) {
+    val bitmap = remember(jpegBase64) { decodeJpegBase64(jpegBase64) }
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .testTag("screenshot_preview")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (onRemove != null) {
+                        TextButton(
+                            onClick = onRemove,
+                            modifier = Modifier.testTag("button_preview_remove")
+                        ) {
+                            Text("Remove", color = PhantomDanger)
+                        }
+                    }
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.testTag("button_preview_close")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close screenshot preview",
+                            tint = Color.White
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = title,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                    } else {
+                        Text("Preview unavailable", color = PhantomMuted)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChatTurnBubble(
+    turn: ChatTurn,
+    onThumbnailClick: (String) -> Unit = {}
+) {
     val isUser = turn.role == "user"
 
     Row(
@@ -796,10 +916,12 @@ fun ChatTurnBubble(turn: ChatTurn) {
                     Image(
                         bitmap = bitmap,
                         contentDescription = "Screen capture thumbnail",
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 160.dp)
                             .clip(RoundedCornerShape(8.dp))
+                            .clickable { onThumbnailClick(turn.thumbnailBase64!!) }
                             .padding(bottom = 10.dp)
                     )
                 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.phantom.companion.data.local.SessionStore
+import com.phantom.companion.data.local.mergePhoneDictation
 import com.phantom.companion.data.remote.SocketConnectionState
 import com.phantom.companion.data.repo.PairingRepository
 import com.phantom.companion.data.repo.SessionRepository
@@ -60,6 +61,10 @@ class SessionViewModel(
     private val _isMicListening = MutableStateFlow(false)
     val isMicListening: StateFlow<Boolean> = _isMicListening.asStateFlow()
 
+    // Text already in the composer when phone STT started. Partial/final hypotheses
+    // replace the live tail instead of appending, which is how Android reports them.
+    private var phoneDictationPrefix: String? = null
+
     private val _navigationEvent = MutableSharedFlow<SessionNavigationEvent>()
     val navigationEvent: SharedFlow<SessionNavigationEvent> = _navigationEvent.asSharedFlow()
 
@@ -80,7 +85,8 @@ class SessionViewModel(
         }
         viewModelScope.launch {
             sessionRepository.voiceTranscript.collect { text ->
-                _inputText.value = if (_inputText.value.isBlank()) text else "${_inputText.value} $text"
+                if (sessionStore.usePhoneMicrophone.value) return@collect
+                _inputText.value = mergePhoneDictation(_inputText.value, text)
             }
         }
     }
@@ -103,6 +109,7 @@ class SessionViewModel(
         val text = _inputText.value.trim()
         if (text.isNotEmpty()) {
             sessionRepository.sendFollowUp(text)
+            phoneDictationPrefix = null
             _inputText.value = ""
         }
     }
@@ -111,10 +118,28 @@ class SessionViewModel(
         _isMicListening.value = listening
     }
 
-    fun appendDictatedText(text: String) {
+    fun beginPhoneDictation() {
+        phoneDictationPrefix = _inputText.value.trimEnd()
+        _isMicListening.value = true
+    }
+
+    fun applyPhoneDictation(text: String, isFinal: Boolean) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        _inputText.value = if (_inputText.value.isBlank()) trimmed else "${_inputText.value.trim()} $trimmed"
+        if (trimmed.isEmpty()) {
+            if (isFinal) {
+                phoneDictationPrefix = null
+                _isMicListening.value = false
+            }
+            return
+        }
+        if (!isFinal && !_isMicListening.value) return
+        val prefix = phoneDictationPrefix ?: _inputText.value.trimEnd()
+        if (phoneDictationPrefix == null) phoneDictationPrefix = prefix
+        _inputText.value = mergePhoneDictation(prefix, trimmed)
+        if (isFinal) {
+            phoneDictationPrefix = null
+            _isMicListening.value = false
+        }
     }
 
     fun startDesktopVoice() = sessionRepository.startDesktopVoice()
@@ -132,6 +157,7 @@ class SessionViewModel(
         sessionStore.setUsePhoneMicrophone(enabled)
         sessionRepository.stopDesktopVoice()
         if (!enabled) {
+            phoneDictationPrefix = null
             _isMicListening.value = false
         }
     }

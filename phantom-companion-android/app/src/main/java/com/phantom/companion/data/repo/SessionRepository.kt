@@ -349,8 +349,17 @@ class SessionRepository(
 
     private fun applyPendingAttachments(count: Int?, attachments: List<PendingAttachment>?) {
         if (attachments != null) {
+            val current = _pendingAttachments.value
             _pendingAttachments.value = attachments.take(MAX_ATTACHMENTS).mapIndexed { i, item ->
-                item.copy(index = i)
+                val existing = current.getOrNull(i)?.thumbnailJpegBase64
+                val incoming = item.thumbnailJpegBase64
+                val thumb = when {
+                    incoming.isNullOrBlank() -> existing
+                    existing.isNullOrBlank() -> incoming
+                    incoming.length >= existing.length -> incoming
+                    else -> existing
+                }
+                item.copy(index = i, thumbnailJpegBase64 = thumb)
             }
             return
         }

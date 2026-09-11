@@ -1161,7 +1161,7 @@ final class PhantomStore: ObservableObject {
     func companionAttachmentPayloads() -> [[String: Any]] {
         attachedScreenshots.enumerated().map { index, data in
             var item: [String: Any] = ["index": index]
-            if let thumb = ScreenshotCapture.captureCompletedPayload(from: data, maxEdge: 160)?.thumbnailJpegBase64 {
+            if let thumb = ScreenshotCapture.captureCompletedPayload(from: data, maxEdge: 480)?.thumbnailJpegBase64 {
                 item["thumbnailJpegBase64"] = thumb
             }
             return item

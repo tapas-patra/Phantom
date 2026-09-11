@@ -46,7 +46,7 @@ class PhoneSpeechSession(
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
-                if (text.isNotBlank()) onFinal(text)
+                onFinal(text)
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -78,4 +78,18 @@ class PhoneSpeechSession(
         }
         recognizer = null
     }
+}
+
+/**
+ * Android speech partials are cumulative hypotheses for the current utterance, not
+ * incremental deltas. The committed field prefix stays fixed for one listen session;
+ * each hypothesis replaces the live tail so "hello" then "hello world" does not become
+ * "hello hello world".
+ */
+fun mergePhoneDictation(prefix: String, hypothesis: String): String {
+    val head = prefix.trimEnd()
+    val spoken = hypothesis.trim()
+    if (spoken.isEmpty()) return head
+    if (head.isEmpty()) return spoken
+    return "$head $spoken"
 }

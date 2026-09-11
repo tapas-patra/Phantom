@@ -125,6 +125,7 @@ class RelayClient(
     val selectedDisplayId: StateFlow<String> = _selectedDisplayId.asStateFlow()
 
     private val _lastInboundAt = MutableStateFlow(System.currentTimeMillis())
+    private var captureInFlight = false
 
     fun connect(pairingId: String) {
         currentPairingId = pairingId
@@ -143,6 +144,7 @@ class RelayClient(
         currentWebSocket = null
         _connectionState.value = SocketConnectionState.Disconnected
         _desktopPresence.value = DesktopPresenceState.OFFLINE
+        captureInFlight = false
     }
 
     private suspend fun connectWithBackoff(pairingId: String) {
@@ -401,7 +403,7 @@ class RelayClient(
                 body?.status?.takeIf { it.isNotBlank() }?.let {
                     peerLeftJob?.cancel()
                     peerLeftJob = null
-                    _desktopPresence.value = parsePresenceState(it)
+                    _desktopPresence.value = parsePresenceState(it, allowCapturing = captureInFlight)
                 }
                 applyRuntimeFields(body)
                 body?.displays?.let { displays ->
@@ -422,7 +424,7 @@ class RelayClient(
                 if (!snapStatus.isNullOrBlank()) {
                     peerLeftJob?.cancel()
                     peerLeftJob = null
-                    _desktopPresence.value = parsePresenceState(snapStatus)
+                    _desktopPresence.value = parsePresenceState(snapStatus, allowCapturing = captureInFlight)
                 }
                 applyRuntimeFields(body)
                 body?.displays?.let { _displays.value = it }
@@ -431,12 +433,15 @@ class RelayClient(
                 }
             }
             "capture.started" -> {
+                captureInFlight = true
                 _desktopPresence.value = DesktopPresenceState.CAPTURING
             }
             "capture.completed" -> {
+                captureInFlight = false
                 _desktopPresence.value = DesktopPresenceState.READY
             }
             "capture.failed" -> {
+                captureInFlight = false
                 _desktopPresence.value = DesktopPresenceState.ERROR
             }
             "chat.started" -> {
@@ -475,12 +480,15 @@ class RelayClient(
         }
     }
 
-    private fun parsePresenceState(status: String?): DesktopPresenceState {
+    private fun parsePresenceState(status: String?, allowCapturing: Boolean = true): DesktopPresenceState {
         return when (status?.lowercase()) {
             "ready" -> DesktopPresenceState.READY
             "idle" -> DesktopPresenceState.IDLE
             "connecting" -> DesktopPresenceState.CONNECTING
-            "capturing" -> DesktopPresenceState.CAPTURING
+            // A snapshot taken while the desktop still had its capture flag set can
+            // freeze the phone on Capturing. Ignore stale capturing unless we have
+            // a capture in flight.
+            "capturing" -> if (allowCapturing) DesktopPresenceState.CAPTURING else DesktopPresenceState.READY
             "thinking" -> DesktopPresenceState.THINKING
             "error" -> DesktopPresenceState.ERROR
             else -> DesktopPresenceState.OFFLINE
@@ -489,6 +497,7 @@ class RelayClient(
 
     fun sendCaptureAsk(displayId: String = "", prompt: String = "Please analyze this screenshot.") {
         val pairingId = currentPairingId ?: return
+        captureInFlight = true
         val resolvedDisplay = displayId.ifEmpty { _selectedDisplayId.value }
         sendFrame(
             type = "capture.ask",
@@ -499,6 +508,7 @@ class RelayClient(
 
     fun sendCaptureFull(displayId: String = "", attachOnly: Boolean = true) {
         val pairingId = currentPairingId ?: return
+        captureInFlight = true
         val resolvedDisplay = displayId.ifEmpty { _selectedDisplayId.value }
         sendFrame(
             type = "capture.full",

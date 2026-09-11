@@ -208,7 +208,9 @@ final class CompanionCommandHost {
                 }
                 store.send()
             } else {
-                // Attach-only: no chat turn. Publish a snapshot so the phone sees state.
+                // Snapshot must not still report `capturing` or the phone stays
+                // on the spinner and cannot take a second shot.
+                store.companionIsCapturing = false
                 publishSnapshotSync()
             }
         } catch ScreenshotError.permissionDenied {

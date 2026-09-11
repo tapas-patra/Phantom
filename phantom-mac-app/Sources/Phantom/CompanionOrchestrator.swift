@@ -53,7 +53,17 @@ final class CompanionOrchestrator {
             store?.selectedModelSupportsVision ?? false
         }
         relay.stateHandler = { [weak self] state in
-            self?.state = state
+            guard let self else { return }
+            self.state = state
+            self.store?.companionRelayState = state
+            if state == .connected {
+                // Proactively announce the desktop so the phone sees presence + snapshot
+                // immediately, without waiting for a session.hello from the phone.
+                Task { [weak host] in
+                    await host?.sendDesktopHello()
+                    await host?.publishSnapshot()
+                }
+            }
         }
         relay.start()
         self.relay = relay

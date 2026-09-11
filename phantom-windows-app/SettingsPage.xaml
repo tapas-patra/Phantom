@@ -945,6 +945,8 @@
                                 </StackPanel>
                                 <TextBlock x:Name="CompanionPairingCodeText" FontFamily="Consolas" FontSize="20"
                                            Foreground="#00FF00" Margin="0,0,0,6" Visibility="Collapsed"/>
+                                <Image x:Name="CompanionQrImage" Width="180" Height="180" Margin="0,0,0,6"
+                                       Visibility="Collapsed" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                                 <TextBlock x:Name="CompanionQrPayloadText" FontFamily="Consolas" FontSize="10"
                                            Foreground="#AAAAAA" Margin="0,0,0,6" TextWrapping="Wrap" Visibility="Collapsed"/>
                                 <TextBlock x:Name="CompanionStatusText" Text="Not paired"

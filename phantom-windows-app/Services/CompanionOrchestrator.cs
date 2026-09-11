@@ -100,8 +100,30 @@ namespace SecureOverlay.Services
             _host = new CompanionCommandHost(_relay, _statusProvider, _snapshotProvider);
 
             WireCommandHost(_host);
+            _host.RelayStateChanged += OnRelayStateChanged;
             _host.Start();
             Log.WriteLine($"Companion orchestrator started for pairing {pairingId}");
+        }
+
+        private void OnRelayStateChanged(CompanionRelayState state)
+        {
+            if (state != CompanionRelayState.Connected) return;
+            // Proactively announce the desktop so the phone sees presence + snapshot
+            // immediately, without waiting for a session.hello from the phone.
+            var host = _host;
+            if (host == null) return;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await host.SendDesktopHelloAsync();
+                    await host.PublishSnapshotAsync();
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Companion initial announce failed: {ex.Message}");
+                }
+            });
         }
 
         public async Task StopAsync()
@@ -109,6 +131,7 @@ namespace SecureOverlay.Services
             _enabled = false;
             if (_host != null)
             {
+                try { _host.RelayStateChanged -= OnRelayStateChanged; } catch { }
                 try { await _host.StopAsync(); } catch { }
                 _host = null;
             }

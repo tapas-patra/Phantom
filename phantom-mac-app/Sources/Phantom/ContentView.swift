@@ -761,6 +761,14 @@ private struct SettingsView: View {
                             Text(store.companionPairingCode)
                                 .font(.system(size: 28, weight: .semibold, design: .monospaced))
                                 .foregroundColor(PhantomColors.amber)
+                            if let qr = QrCodeGenerator.image(from: store.companionPairingQrPayload) {
+                                Image(nsImage: qr)
+                                    .interpolation(.none)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 180, height: 180)
+                                    .accessibilityLabel("Companion pairing QR code")
+                            }
                             Text(store.companionPairingQrPayload)
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(PhantomColors.muted)

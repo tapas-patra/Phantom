@@ -330,6 +330,7 @@ final class PhantomStore: ObservableObject {
     @Published var companionPairingQrPayload: String = ""
     @Published var companionStatusText: String = "Not paired"
     @Published var companionRelayState: CompanionRelayState = .disconnected
+    private var companionDiscoveryTask: Task<Void, Never>?
 
     func startCompanionPairing() {
         guard let session, !session.accessToken.isEmpty else {
@@ -344,10 +345,50 @@ final class PhantomStore: ObservableObject {
                 let result = try await backend.startPairing(accessToken: session.accessToken, deviceLabel: label, appVersion: version)
                 self.companionPairingCode = result.code
                 self.companionPairingQrPayload = result.qrPayload
-                self.companionStatusText = "Pairing code ready. Open the phone app and enter the code."
+                self.companionStatusText = "Pairing code ready. Open the phone app and scan the QR or enter the code."
+                self.startCompanionDiscoveryPolling(accessToken: session.accessToken, codeExpiresAt: result.expiresAtUtc)
             } catch {
                 self.companionStatusText = "Update / backend not ready."
                 print("[companion] pairing failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Polls `listPairings` until the phone completes the pairing (a pairing whose
+    /// desktop platform matches this device appears), then stores the pairing id,
+    /// enables Companion Mode, and reconciles the relay. Stops when the code expires.
+    private func startCompanionDiscoveryPolling(accessToken: String, codeExpiresAt: Date) {
+        companionDiscoveryTask?.cancel()
+        companionDiscoveryTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                if Date() >= codeExpiresAt {
+                    await MainActor.run {
+                        if self.companionPairingId.isEmpty {
+                            self.companionStatusText = "Pairing code expired. Generate a new code."
+                        }
+                    }
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                do {
+                    let list = try await self.backend.listPairings(accessToken: accessToken)
+                    let active = list.pairings.first(where: { $0.desktopPlatform == "macos" })
+                    if let pairing = active {
+                        await MainActor.run {
+                            self.companionPairingId = pairing.pairingId
+                            self.companionPairingCode = ""
+                            self.companionPairingQrPayload = ""
+                            self.companionEnabled = true
+                            self.companionStatusText = "Paired. Connecting to relay…"
+                            self.reconcileCompanion()
+                        }
+                        return
+                    }
+                } catch {
+                    print("[companion] discovery poll failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -357,6 +398,8 @@ final class PhantomStore: ObservableObject {
             companionStatusText = "Sign in to unpair."
             return
         }
+        companionDiscoveryTask?.cancel()
+        companionDiscoveryTask = nil
         let pairingId = companionPairingId
         Task { [weak self] in
             guard let self else { return }

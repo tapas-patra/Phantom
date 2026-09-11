@@ -271,13 +271,13 @@ namespace SecureOverlay.Services
             }));
         }
 
-        public async Task SendVoiceTranscriptAsync(string text)
+        public async Task SendVoiceTranscriptAsync(string text, bool isFinal = true, bool sent = false)
         {
             await _client.SendRawAsync(JsonSerializer.Serialize(new
             {
                 v = 1, id = Guid.NewGuid().ToString("N"), type = "voice.transcript",
                 ts = DateTime.UtcNow, pairingId = _client.PairingId, role = "desktop",
-                body = new { text }
+                body = new { text, isFinal, sent }
             }, WireJsonOptions));
         }
 

@@ -106,6 +106,7 @@ final class PhantomStore: ObservableObject {
     var companionDeltaHandler: ((String) -> Void)?
     var companionTurnFinishedHandler: ((Bool) -> Void)?
     var companionSessionStartedHandler: (() -> Void)?
+    var companionVoiceTranscriptHandler: ((String, Bool, Bool) -> Void)?
     // Companion capture/error status flags (spec §5.2: status may be `capturing` or
     // `error`). Set/cleared by CompanionCommandHost around headless capture and on
     // turn outcome; read by desktopStatus() for desktop.hello / session.snapshot (H1).
@@ -1248,6 +1249,7 @@ final class PhantomStore: ObservableObject {
         }
 
         prompt = ""
+        companionVoiceTranscriptHandler?("", true, true)
         let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
         let model = selectedModelId
@@ -2160,6 +2162,7 @@ final class PhantomStore: ObservableObject {
             self.preserveVoiceEdits = merged.preservingEdits
             self.previousVoiceTranscript = transcript
             self.lastVoiceRenderedPrompt = merged.text
+            self.companionVoiceTranscriptHandler?(merged.text, isFinal, false)
             Diagnostics.event(
                 isFinal ? "transcript_finalized" : "transcript_partial_received",
                 level: isFinal ? "Information" : "Debug",

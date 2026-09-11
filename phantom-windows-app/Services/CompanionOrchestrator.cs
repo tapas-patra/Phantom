@@ -253,11 +253,11 @@ namespace SecureOverlay.Services
             return host.PublishSnapshotAsync();
         }
 
-        public Task SendVoiceTranscriptAsync(string text)
+        public Task SendVoiceTranscriptAsync(string text, bool isFinal = true, bool sent = false)
         {
             var host = _host;
             if (host == null || !_enabled) return Task.CompletedTask;
-            return host.SendVoiceTranscriptAsync(text);
+            return host.SendVoiceTranscriptAsync(text, isFinal, sent);
         }
 
         public Task SendCaptureStartedAsync(string requestId, string? displayId)

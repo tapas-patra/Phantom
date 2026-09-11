@@ -20,6 +20,9 @@ final class CompanionCommandHost {
     init(store: PhantomStore, relay: CompanionRelayClient) {
         self.store = store
         self.relay = relay
+        store.companionVoiceTranscriptHandler = { [weak self] text, isFinal, sent in
+            self?.sendVoiceTranscript(text: text, isFinal: isFinal, sent: sent)
+        }
         relay.frameHandler = { [weak self] frame in
             Task { await self?.handle(frame: frame) }
         }
@@ -30,6 +33,7 @@ final class CompanionCommandHost {
 
     func detach() {
         relay.frameHandler = nil
+        store?.companionVoiceTranscriptHandler = nil
     }
 
     private func handle(frame: CompanionRelayFrame) async {
@@ -340,8 +344,8 @@ final class CompanionCommandHost {
         sendEnvelope(type: "chat.cancelled", body: ["requestId": requestId])
     }
 
-    func sendVoiceTranscript(text: String) {
-        sendEnvelope(type: "voice.transcript", body: ["text": text])
+    func sendVoiceTranscript(text: String, isFinal: Bool = true, sent: Bool = false) {
+        sendEnvelope(type: "voice.transcript", body: ["text": text, "isFinal": isFinal, "sent": sent])
     }
 
     func publishSnapshot() async {

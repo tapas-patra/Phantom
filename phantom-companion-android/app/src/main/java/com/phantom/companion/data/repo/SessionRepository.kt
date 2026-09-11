@@ -17,9 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -28,6 +30,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+
+data class DesktopVoiceUpdate(
+    val text: String,
+    val sent: Boolean = false
+)
 
 class SessionRepository(
     private val relayClient: RelayClient,
@@ -42,6 +49,7 @@ class SessionRepository(
         // "desktop didn't respond" error (step 1 fix for silent follow-up hangs).
         const val RESPONSE_TIMEOUT_MS = 30_000L
         const val MAX_ATTACHMENTS = 3
+        const val NOTICE_DISMISS_MS = 2_000L
     }
 
     val connectionState: StateFlow<SocketConnectionState> = relayClient.connectionState
@@ -54,7 +62,12 @@ class SessionRepository(
     val displays: StateFlow<List<DisplayInfo>> = relayClient.displays
     val selectedDisplayId: StateFlow<String> = relayClient.selectedDisplayId
     val terminalEvents: SharedFlow<TerminalRelayEvent> = relayClient.terminalEvents
-    val voiceTranscript: SharedFlow<String> = relayClient.voiceTranscript
+    private val _desktopVoice = MutableSharedFlow<DesktopVoiceUpdate>(
+        replay = 1,
+        extraBufferCapacity = 32,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val desktopVoice: SharedFlow<DesktopVoiceUpdate> = _desktopVoice.asSharedFlow()
 
     private val _transcript = MutableStateFlow<List<ChatTurn>>(emptyList())
     val transcript: StateFlow<List<ChatTurn>> = _transcript.asStateFlow()
@@ -64,6 +77,7 @@ class SessionRepository(
 
     private val _sessionError = MutableStateFlow<String?>(null)
     val sessionError: StateFlow<String?> = _sessionError.asStateFlow()
+    private var errorDismissJob: Job? = null
 
     // Response-timeout watchdog (step 1 fix for "I send a follow-up and see no answer").
     // When the phone sends a capture.ask / chat.send, we record the time and start a
@@ -78,8 +92,10 @@ class SessionRepository(
         watchdogJob = scope.launch {
             delay(RESPONSE_TIMEOUT_MS)
             if (pendingRequestAt != 0L) {
-                _sessionError.value =
+                relayClient.markRequestIdle()
+                setSessionError(
                     "Desktop didn't respond. Make sure Phantom is running on your computer with Companion Mode enabled, then try again."
+                )
             }
         }
     }
@@ -114,15 +130,27 @@ class SessionRepository(
         clearResponseWatchdog()
         _transcript.value = emptyList()
         _pendingAttachments.value = emptyList()
-        _sessionError.value = null
+        clearError()
     }
 
     fun clearError() {
+        errorDismissJob?.cancel()
         _sessionError.value = null
     }
 
     fun reportSessionError(message: String) {
+        setSessionError(message)
+    }
+
+    private fun setSessionError(message: String) {
         _sessionError.value = message
+        errorDismissJob?.cancel()
+        errorDismissJob = scope.launch {
+            delay(NOTICE_DISMISS_MS)
+            if (_sessionError.value == message) {
+                _sessionError.value = null
+            }
+        }
     }
 
     suspend fun transcribeSpeech(pcm16: ByteArray): String =
@@ -137,9 +165,10 @@ class SessionRepository(
             }
             "capture.started" -> {
                 clearResponseWatchdog()
-                _sessionError.value = null
+                clearError()
             }
             "capture.completed" -> {
+                clearResponseWatchdog()
                 body?.thumbnailJpegBase64?.takeIf { it.isNotBlank() }?.let { thumb ->
                     val current = _pendingAttachments.value
                     if (current.size < MAX_ATTACHMENTS) {
@@ -153,11 +182,11 @@ class SessionRepository(
             "capture.failed" -> {
                 clearResponseWatchdog()
                 val message = mapErrorCode(body?.code, body?.message)
-                _sessionError.value = message
+                setSessionError(message)
             }
             "chat.started" -> {
                 clearResponseWatchdog()
-                _sessionError.value = null
+                clearError()
                 val current = _transcript.value.toMutableList()
                 val last = current.lastOrNull()
                 if (last == null || last.role != "assistant" || !last.isStreaming) {
@@ -220,7 +249,7 @@ class SessionRepository(
                     )
                     _transcript.value = current
                 } else {
-                    _sessionError.value = errorMsg
+                    setSessionError(errorMsg)
                 }
             }
             "chat.cancelled" -> {
@@ -235,20 +264,28 @@ class SessionRepository(
                     _transcript.value = current
                 }
             }
+            "voice.transcript" -> {
+                _desktopVoice.tryEmit(
+                    DesktopVoiceUpdate(
+                        text = body?.text.orEmpty(),
+                        sent = body?.sent == true
+                    )
+                )
+            }
             "relay.error" -> {
                 val mapped = mapErrorCode(body?.code, body?.message)
-                _sessionError.value = mapped
+                setSessionError(mapped)
             }
         }
     }
 
     fun captureAndAsk(displayId: String = "", prompt: String = "Please analyze this screenshot.") {
         if (!isVisionSupported.value) {
-            _sessionError.value = "This model cannot read screens."
+            setSessionError("This model cannot read screens.")
             return
         }
         if (_pendingAttachments.value.size >= MAX_ATTACHMENTS) {
-            _sessionError.value = "You can attach up to 3 screenshots."
+            setSessionError("You can attach up to 3 screenshots.")
             return
         }
 
@@ -265,11 +302,11 @@ class SessionRepository(
 
     fun captureOnly(displayId: String = "") {
         if (!isVisionSupported.value) {
-            _sessionError.value = "This model cannot read screens."
+            setSessionError("This model cannot read screens.")
             return
         }
         if (_pendingAttachments.value.size >= MAX_ATTACHMENTS) {
-            _sessionError.value = "You can attach up to 3 screenshots."
+            setSessionError("You can attach up to 3 screenshots.")
             return
         }
         startResponseWatchdog()
@@ -299,7 +336,7 @@ class SessionRepository(
         relayClient.sendNewTopic()
         _transcript.value = emptyList()
         _pendingAttachments.value = emptyList()
-        _sessionError.value = null
+        clearError()
     }
 
     fun selectDisplay(displayId: String) {

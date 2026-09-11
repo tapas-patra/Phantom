@@ -5,6 +5,7 @@ import com.phantom.companion.BuildConfig
 import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
+import com.phantom.companion.domain.model.mapDesktopPresence
 import com.phantom.companion.domain.model.ErrorBody
 import com.phantom.companion.domain.model.ProviderOption
 import com.phantom.companion.domain.model.RelayBody
@@ -126,6 +127,7 @@ class RelayClient(
 
     private val _lastInboundAt = MutableStateFlow(System.currentTimeMillis())
     private var captureInFlight = false
+    private var chatInFlight = false
 
     fun connect(pairingId: String) {
         currentPairingId = pairingId
@@ -145,6 +147,17 @@ class RelayClient(
         _connectionState.value = SocketConnectionState.Disconnected
         _desktopPresence.value = DesktopPresenceState.OFFLINE
         captureInFlight = false
+        chatInFlight = false
+    }
+
+    fun markRequestIdle() {
+        captureInFlight = false
+        chatInFlight = false
+        if (_desktopPresence.value == DesktopPresenceState.THINKING ||
+            _desktopPresence.value == DesktopPresenceState.CAPTURING
+        ) {
+            _desktopPresence.value = DesktopPresenceState.READY
+        }
     }
 
     private suspend fun connectWithBackoff(pairingId: String) {
@@ -403,7 +416,11 @@ class RelayClient(
                 body?.status?.takeIf { it.isNotBlank() }?.let {
                     peerLeftJob?.cancel()
                     peerLeftJob = null
-                    _desktopPresence.value = parsePresenceState(it, allowCapturing = captureInFlight)
+                    _desktopPresence.value = mapDesktopPresence(
+                        it,
+                        allowCapturing = captureInFlight,
+                        allowThinking = chatInFlight
+                    )
                 }
                 applyRuntimeFields(body)
                 body?.displays?.let { displays ->
@@ -424,7 +441,11 @@ class RelayClient(
                 if (!snapStatus.isNullOrBlank()) {
                     peerLeftJob?.cancel()
                     peerLeftJob = null
-                    _desktopPresence.value = parsePresenceState(snapStatus, allowCapturing = captureInFlight)
+                    _desktopPresence.value = mapDesktopPresence(
+                        snapStatus,
+                        allowCapturing = captureInFlight,
+                        allowThinking = chatInFlight
+                    )
                 }
                 applyRuntimeFields(body)
                 body?.displays?.let { _displays.value = it }
@@ -438,19 +459,24 @@ class RelayClient(
             }
             "capture.completed" -> {
                 captureInFlight = false
-                _desktopPresence.value = DesktopPresenceState.READY
+                if (!chatInFlight) {
+                    _desktopPresence.value = DesktopPresenceState.READY
+                }
             }
             "capture.failed" -> {
                 captureInFlight = false
                 _desktopPresence.value = DesktopPresenceState.ERROR
             }
             "chat.started" -> {
+                chatInFlight = true
                 _desktopPresence.value = DesktopPresenceState.THINKING
             }
             "chat.completed", "chat.cancelled" -> {
+                chatInFlight = false
                 _desktopPresence.value = DesktopPresenceState.READY
             }
             "chat.failed" -> {
+                chatInFlight = false
                 _desktopPresence.value = DesktopPresenceState.ERROR
             }
             "voice.transcript" -> {
@@ -480,24 +506,10 @@ class RelayClient(
         }
     }
 
-    private fun parsePresenceState(status: String?, allowCapturing: Boolean = true): DesktopPresenceState {
-        return when (status?.lowercase()) {
-            "ready" -> DesktopPresenceState.READY
-            "idle" -> DesktopPresenceState.IDLE
-            "connecting" -> DesktopPresenceState.CONNECTING
-            // A snapshot taken while the desktop still had its capture flag set can
-            // freeze the phone on Capturing. Ignore stale capturing unless we have
-            // a capture in flight.
-            "capturing" -> if (allowCapturing) DesktopPresenceState.CAPTURING else DesktopPresenceState.READY
-            "thinking" -> DesktopPresenceState.THINKING
-            "error" -> DesktopPresenceState.ERROR
-            else -> DesktopPresenceState.OFFLINE
-        }
-    }
-
     fun sendCaptureAsk(displayId: String = "", prompt: String = "Please analyze this screenshot.") {
         val pairingId = currentPairingId ?: return
         captureInFlight = true
+        chatInFlight = true
         val resolvedDisplay = displayId.ifEmpty { _selectedDisplayId.value }
         sendFrame(
             type = "capture.ask",
@@ -509,6 +521,7 @@ class RelayClient(
     fun sendCaptureFull(displayId: String = "", attachOnly: Boolean = true) {
         val pairingId = currentPairingId ?: return
         captureInFlight = true
+        if (attachOnly) chatInFlight = false
         val resolvedDisplay = displayId.ifEmpty { _selectedDisplayId.value }
         sendFrame(
             type = "capture.full",
@@ -519,6 +532,7 @@ class RelayClient(
 
     fun sendChatText(text: String) {
         val pairingId = currentPairingId ?: return
+        chatInFlight = true
         sendFrame(
             type = "chat.send",
             pairingId = pairingId,

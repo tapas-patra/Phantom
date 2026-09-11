@@ -4,9 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.phantom.companion.data.local.SessionStore
-import com.phantom.companion.data.local.mergePhoneDictation
 import com.phantom.companion.data.local.nextPhoneDictation
 import com.phantom.companion.data.remote.SocketConnectionState
+import com.phantom.companion.data.repo.DesktopVoiceUpdate
 import com.phantom.companion.data.repo.PairingRepository
 import com.phantom.companion.data.repo.SessionRepository
 import com.phantom.companion.data.speech.prefersManagedCloudSpeech
@@ -14,6 +14,7 @@ import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
 import com.phantom.companion.domain.model.StartupSnapshot
+import com.phantom.companion.domain.model.resolveFollowUpText
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -86,9 +87,9 @@ class SessionViewModel(
             }
         }
         viewModelScope.launch {
-            sessionRepository.voiceTranscript.collect { text ->
+            sessionRepository.desktopVoice.collect { update ->
                 if (sessionStore.usePhoneMicrophone.value) return@collect
-                _inputText.value = mergePhoneDictation(_inputText.value, text)
+                applyDesktopVoiceComposer(update)
             }
         }
     }
@@ -97,23 +98,15 @@ class SessionViewModel(
         _inputText.value = text
     }
 
-    fun onCaptureAndAskClicked() {
-        val displayId = selectedDisplayId.value
-        sessionRepository.captureAndAsk(displayId = displayId)
-    }
-
-    fun onCaptureOnlyClicked() {
-        val displayId = selectedDisplayId.value
-        sessionRepository.captureOnly(displayId = displayId)
+    fun onCaptureClicked() {
+        sessionRepository.captureOnly(displayId = selectedDisplayId.value)
     }
 
     fun onSendFollowUpClicked() {
-        val text = _inputText.value.trim()
-        if (text.isNotEmpty()) {
-            sessionRepository.sendFollowUp(text)
-            phoneDictationPrefix = null
-            _inputText.value = ""
-        }
+        val text = resolveFollowUpText(_inputText.value, pendingAttachments.value.size) ?: return
+        sessionRepository.sendFollowUp(text)
+        phoneDictationPrefix = null
+        _inputText.value = ""
     }
 
     fun setMicListening(listening: Boolean) {
@@ -154,8 +147,22 @@ class SessionViewModel(
         _isMicListening.value = next.listening
     }
 
-    fun startDesktopVoice() = sessionRepository.startDesktopVoice()
+    fun startDesktopVoice() {
+        phoneDictationPrefix = _inputText.value.trimEnd()
+        sessionRepository.startDesktopVoice()
+    }
+
     fun stopDesktopVoice() = sessionRepository.stopDesktopVoice()
+
+    private fun applyDesktopVoiceComposer(update: DesktopVoiceUpdate) {
+        if (update.sent) {
+            phoneDictationPrefix = null
+            _inputText.value = ""
+            _isMicListening.value = false
+            return
+        }
+        _inputText.value = update.text
+    }
 
     fun showVoiceSettings() {
         _showVoiceSettings.value = true

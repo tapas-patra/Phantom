@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CameraAlt
@@ -99,6 +100,7 @@ import com.phantom.companion.ui.theme.PhantomPrimary
 import com.phantom.companion.ui.theme.PhantomSurface
 import com.phantom.companion.ui.theme.PhantomSurfaceHigh
 import com.phantom.companion.ui.theme.PhantomText
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,6 +134,8 @@ fun SessionScreen(
 
     var screenshotPreviewIndex by remember { mutableStateOf<Int?>(null) }
     var chatPreviewJpeg by remember { mutableStateOf<String?>(null) }
+    var toastMessage by remember { mutableStateOf<String?>(null) }
+    var toastIsError by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val relayLive = connectionState is SocketConnectionState.Connected
@@ -187,6 +191,40 @@ fun SessionScreen(
                 is SessionNavigationEvent.NavigateToAccount -> onNavigateToAccount()
                 is SessionNavigationEvent.NavigateToPair -> onNavigateToPair()
             }
+        }
+    }
+
+    LaunchedEffect(sessionError) {
+        val msg = sessionError
+        if (!msg.isNullOrEmpty()) {
+            toastMessage = msg
+            toastIsError = true
+        }
+    }
+    LaunchedEffect(companionApiReady) {
+        if (companionApiReady == false) {
+            toastMessage = "Desktop companion service is not enabled on this backend yet."
+            toastIsError = false
+        }
+    }
+    LaunchedEffect(isVisionSupported) {
+        if (!isVisionSupported) {
+            toastMessage = "This model cannot read screens."
+            toastIsError = false
+        }
+    }
+    LaunchedEffect(pendingAttachments.size) {
+        if (pendingAttachments.size >= 3) {
+            toastMessage = "You can attach up to 3 screenshots. Remove one to capture again."
+            toastIsError = false
+        }
+    }
+    LaunchedEffect(toastMessage) {
+        val msg = toastMessage ?: return@LaunchedEffect
+        delay(2_000)
+        if (toastMessage == msg) {
+            toastMessage = null
+            if (sessionError == msg) viewModel.clearError()
         }
     }
 
@@ -302,28 +340,6 @@ fun SessionScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                PhantomPrimaryButton(
-                    text = if (desktopPresence == DesktopPresenceState.CAPTURING) "Capturing…" else "Capture & Ask",
-                    onClick = viewModel::onCaptureAndAskClicked,
-                    enabled = canCapture,
-                    isLoading = desktopPresence == DesktopPresenceState.CAPTURING,
-                    icon = Icons.Default.CameraAlt,
-                    testTag = "button_capture_and_ask"
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                PhantomSecondaryButton(
-                    text = "Capture only",
-                    onClick = viewModel::onCaptureOnlyClicked,
-                    enabled = canCapture,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "button_capture_only"
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Follow-up message composer
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Bottom
@@ -361,6 +377,50 @@ fun SessionScreen(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     IconButton(
+                        onClick = viewModel::showNewTopicDialog,
+                        enabled = activePairing != null && relayLive,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(PhantomSurface)
+                            .testTag("button_new_topic")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.NoteAdd,
+                            contentDescription = "New topic",
+                            tint = PhantomText
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val canSend = (inputText.isNotBlank() || pendingAttachments.isNotEmpty()) &&
+                        desktopPresence != DesktopPresenceState.THINKING &&
+                        activePairing != null &&
+                        relayLive
+                val canMic = activePairing != null && (usePhoneMicrophone || relayLive)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SessionActionButton(
+                        icon = Icons.Default.CameraAlt,
+                        contentDescription = if (desktopPresence == DesktopPresenceState.CAPTURING) {
+                            "Capturing"
+                        } else {
+                            "Capture screenshot"
+                        },
+                        onClick = viewModel::onCaptureClicked,
+                        enabled = canCapture,
+                        isLoading = desktopPresence == DesktopPresenceState.CAPTURING,
+                        testTag = "button_capture_only",
+                        modifier = Modifier.weight(1f)
+                    )
+                    SessionActionButton(
+                        icon = if (isMicListening) Icons.Default.MicOff else Icons.Default.Mic,
+                        contentDescription = if (isMicListening) "Stop listening" else "Start voice input",
                         onClick = {
                             if (usePhoneMicrophone) {
                                 if (isMicListening) {
@@ -377,97 +437,32 @@ fun SessionScreen(
                                 viewModel.setMicListening(true)
                             }
                         },
-                        enabled = activePairing != null && (usePhoneMicrophone || relayLive),
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isMicListening) PhantomDanger else PhantomSurface)
-                            .testTag("button_mic")
-                    ) {
-                        Icon(
-                            imageVector = if (isMicListening) Icons.Default.MicOff else Icons.Default.Mic,
-                            contentDescription = if (isMicListening) "Stop listening" else "Start voice input",
-                            tint = if (isMicListening) Color.White else PhantomText
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    val canSend = inputText.isNotBlank() &&
-                            desktopPresence != DesktopPresenceState.THINKING &&
-                            activePairing != null &&
-                            relayLive
-
-                    IconButton(
+                        enabled = canMic,
+                        highlighted = isMicListening,
+                        highlightColor = PhantomDanger,
+                        testTag = "button_mic",
+                        modifier = Modifier.weight(1f)
+                    )
+                    SessionActionButton(
+                        icon = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
                         onClick = viewModel::onSendFollowUpClicked,
                         enabled = canSend,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (canSend) PhantomPrimary else PhantomSurface)
-                            .testTag("button_send_follow_up")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            tint = if (canSend) Color.White else PhantomMuted
-                        )
-                    }
-                }
-
-                // New topic link button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    TextButton(
-                        onClick = viewModel::showNewTopicDialog,
-                        modifier = Modifier.testTag("button_new_topic")
-                    ) {
-                        Text(
-                            text = "New topic",
-                            fontSize = 13.sp,
-                            color = PhantomMuted
-                        )
-                    }
+                        highlighted = canSend,
+                        highlightColor = PhantomPrimary,
+                        testTag = "button_send_follow_up",
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Notice banners
-            if (companionApiReady == false) {
-                WarningBanner(
-                    message = "Desktop companion service is not enabled on this backend yet.",
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            if (!sessionError.isNullOrEmpty()) {
-                ErrorBanner(
-                    message = sessionError!!,
-                    modifier = Modifier.padding(16.dp),
-                    onDismiss = viewModel::clearError
-                )
-            }
-
-            if (!isVisionSupported) {
-                WarningBanner(
-                    message = "This model cannot read screens.",
-                    modifier = Modifier.padding(16.dp)
-                )
-            } else if (pendingAttachments.size >= 3) {
-                WarningBanner(
-                    message = "You can attach up to 3 screenshots. Remove one to capture again.",
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            // Chat Transcript
+            Column(modifier = Modifier.fillMaxSize()) {
             if (transcript.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -554,7 +549,7 @@ fun SessionScreen(
                             )
                         } else {
                             Text(
-                                text = "Desktop is ready. Tap Capture & Ask.",
+                                text = "Desktop is ready. Capture a screen or send a follow-up.",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = PhantomText
@@ -582,6 +577,21 @@ fun SessionScreen(
                             turn = turn,
                             onThumbnailClick = { jpeg -> chatPreviewJpeg = jpeg }
                         )
+                    }
+                }
+            }
+            }
+
+            toastMessage?.let { message ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp)
+                ) {
+                    if (toastIsError) {
+                        ErrorBanner(message = message)
+                    } else {
+                        WarningBanner(message = message)
                     }
                 }
             }
@@ -719,6 +729,56 @@ fun SessionScreen(
             title = "Screenshot",
             onClose = { chatPreviewJpeg = null }
         )
+    }
+}
+
+@Composable
+private fun SessionActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    testTag: String,
+    modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
+    highlightColor: Color = PhantomPrimary,
+    isLoading: Boolean = false
+) {
+    val active = enabled && !isLoading
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                when {
+                    isLoading || highlighted -> highlightColor
+                    active -> PhantomSurface
+                    else -> PhantomSurface.copy(alpha = 0.55f)
+                }
+            )
+            .border(1.dp, PhantomLine, RoundedCornerShape(14.dp))
+            .clickable(enabled = active, onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                color = Color.White,
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = when {
+                    highlighted -> Color.White
+                    active -> PhantomText
+                    else -> PhantomMuted
+                },
+                modifier = Modifier.size(26.dp)
+            )
+        }
     }
 }
 

@@ -92,6 +92,7 @@ namespace SecureOverlay
         private LiveRequestTrace? _activeRequestTrace;
 
         private bool _autoSendAfterVoice = false;
+        private string _voiceCommittedText = "";
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
         private bool _isChatSectionCollapsed = false;
         private const double ExpandedWindowMinHeight = 220;
@@ -2411,6 +2412,8 @@ namespace SecureOverlay
             _lastRetryableQuestion = message;
             AddToChat($"**You:** {message}", false);
             InputTextBox.Text = "";
+            _voiceCommittedText = "";
+            SendCompanionVoiceComposer("", isFinal: true, sent: true);
 
             StatusText.Text = "Understanding…";
             StatusIndicator.Fill = Brushes.Yellow;
@@ -3579,6 +3582,7 @@ namespace SecureOverlay
                     cloudSpeech == null ? null : cloudSpeech.ProbeReachabilityAsync);
                 
                 _voiceService.SpeechRecognized += OnSpeechRecognized;
+                _voiceService.SpeechHypothesis += OnSpeechHypothesis;
                 _voiceService.StatusChanged += OnVoiceStatusChanged;
                 
                 Log.WriteLine("Starting async initialization...");
@@ -3633,6 +3637,16 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════");
         }
 
+        private void OnSpeechHypothesis(object? sender, string text)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var shown = CombineVoiceText(_voiceCommittedText, text);
+                InputTextBox.Text = shown;
+                SendCompanionVoiceComposer(shown, isFinal: false);
+            });
+        }
+
         private void OnSpeechRecognized(object? sender, string text)
         {
             Dispatcher.Invoke(() =>
@@ -3648,22 +3662,10 @@ namespace SecureOverlay
                 }
                 
                 this.Activate();
-                
-                if (InputTextBox.Text == "Ask me anything..." || string.IsNullOrWhiteSpace(InputTextBox.Text))
-                {
-                    InputTextBox.Text = text;
-                    Log.WriteLine("  Text placed in empty input box");
-                }
-                else
-                {
-                    InputTextBox.Text += " " + text;
-                    Log.WriteLine("  Text appended to existing input");
-                }
 
-                if (_companionOrchestrator != null && _companionOrchestrator.IsEnabled)
-                {
-                    _ = _companionOrchestrator.SendVoiceTranscriptAsync(text);
-                }
+                _voiceCommittedText = CombineVoiceText(_voiceCommittedText, text);
+                InputTextBox.Text = _voiceCommittedText;
+                SendCompanionVoiceComposer(_voiceCommittedText, isFinal: true);
                 
                 FocusInput();
                 
@@ -3682,6 +3684,22 @@ namespace SecureOverlay
                 Log.WriteLine("✓ Text populated.");
                 Log.WriteLine("─────────────────────────────────────────────────────");
             });
+        }
+
+        private static string CombineVoiceText(string committed, string spoken)
+        {
+            var head = (committed ?? string.Empty).TrimEnd();
+            var tail = (spoken ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(tail)) return head;
+            if (string.IsNullOrEmpty(head)) return tail;
+            if (head == tail || head.EndsWith(" " + tail, StringComparison.Ordinal)) return head;
+            return head + " " + tail;
+        }
+
+        private void SendCompanionVoiceComposer(string text, bool isFinal, bool sent = false)
+        {
+            if (_companionOrchestrator == null || !_companionOrchestrator.IsEnabled) return;
+            _ = _companionOrchestrator.SendVoiceTranscriptAsync(text, isFinal, sent);
         }
 
         private void OnVoiceStatusChanged(object? sender, string status)
@@ -3794,6 +3812,9 @@ namespace SecureOverlay
                 {
                     InputTextBox.Text = "";
                 }
+                _voiceCommittedText = string.IsNullOrWhiteSpace(InputTextBox.Text)
+                    ? ""
+                    : InputTextBox.Text.TrimEnd();
                 
                 _autoSendAfterVoice = false;
                 

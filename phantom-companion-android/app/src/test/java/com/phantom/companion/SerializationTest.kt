@@ -210,4 +210,22 @@ class SerializationTest {
         assertEquals("groq", decoded.providerId)
         assertEquals("whisper-large-v3", decoded.modelId)
     }
+
+    @Test
+    fun testVoiceTranscriptBodyParsing() {
+        val rawJson = """
+            {
+              "v": 1,
+              "type": "voice.transcript",
+              "pairingId": "pair_111",
+              "role": "desktop",
+              "body": { "text": "hello from desktop", "isFinal": false, "sent": false }
+            }
+        """.trimIndent()
+        val decoded = json.decodeFromString<RelayEnvelope>(rawJson)
+        assertEquals("voice.transcript", decoded.type)
+        assertEquals("hello from desktop", decoded.body?.text)
+        assertEquals(false, decoded.body?.isFinal)
+        assertEquals(false, decoded.body?.sent)
+    }
 }

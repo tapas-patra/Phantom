@@ -216,8 +216,10 @@ data class RelayBody(
     val attachOnly: Boolean? = null,
     // capture.ask (phone → desktop)
     val prompt: String? = null,
-    // chat.send / chat.delta (phone ↔ desktop)
+    // chat.send / chat.delta / voice.transcript (phone ↔ desktop)
     val text: String? = null,
+    val isFinal: Boolean? = null,
+    val sent: Boolean? = null,
     // chat.cancel / capture.* / chat.* (request correlation)
     val requestId: String? = null,
     // chat.started

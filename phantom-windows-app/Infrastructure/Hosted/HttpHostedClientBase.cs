@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -84,7 +85,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
+                    throw new HostedServiceException(FormatFailedRequest(relativePath, response.StatusCode, body));
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);
@@ -147,7 +148,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
+                    throw new HostedServiceException(FormatFailedRequest(relativePath, response.StatusCode, body));
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);
@@ -172,6 +173,14 @@ namespace SecureOverlay.Infrastructure.Hosted
                     $"Hosted request failed for {relativePath}. Verify backend reachability and configuration.",
                     ex);
             }
+        }
+
+        private static string FormatFailedRequest(string relativePath, HttpStatusCode statusCode, string? body)
+        {
+            var detail = string.IsNullOrWhiteSpace(body)
+                ? string.Empty
+                : " " + (body.Length > 300 ? body[..300] : body);
+            return $"Hosted request failed ({(int)statusCode}) for {relativePath}.{detail}";
         }
 
         private static void AddCorrelationHeaders(HttpRequestMessage request)
@@ -218,7 +227,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new HostedServiceException($"Hosted request failed ({(int)response.StatusCode}) for {relativePath}.");
+                    throw new HostedServiceException(FormatFailedRequest(relativePath, response.StatusCode, body));
                 }
 
                 var result = JsonConvert.DeserializeObject<TResponse>(body);

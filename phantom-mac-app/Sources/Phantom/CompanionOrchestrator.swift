@@ -88,8 +88,24 @@ final class CompanionOrchestrator {
         // so we don't hammer a dead/invalid ticket (M18).
         if code == "pairing_revoked" || code == "replaced" || code == "server_shutdown" {
             print("[companion] terminal relay error '\(code)' — stopping companion mode.")
+            store?.companionPairingId = ""
+            store?.companionEnabled = false
+            store?.companionStatusText = "Unpaired."
             Task { await stop() }
         }
+    }
+
+    func notifyDesktopOriginatedChatStarted(requestId: String) {
+        commandHost?.sendChatStarted(requestId: requestId, turnId: requestId)
+        Task { await commandHost?.publishSnapshot() }
+    }
+
+    func notifyDesktopOriginatedDelta(_ text: String, requestId: String) {
+        commandHost?.sendChatDelta(requestId: requestId, text: text)
+    }
+
+    func notifyDesktopOriginatedTurnFinished(requestId: String, succeeded: Bool) {
+        commandHost?.completeDesktopOriginatedTurn(requestId: requestId, succeeded: succeeded)
     }
 
     func stop() async {

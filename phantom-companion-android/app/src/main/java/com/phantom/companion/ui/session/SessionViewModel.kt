@@ -44,12 +44,19 @@ class SessionViewModel(
     val activePairing = sessionStore.activePairing
     val companionApiReady = sessionStore.companionApiReady
     val startupSnapshot: StateFlow<StartupSnapshot?> = sessionStore.startupSnapshot
+    val usePhoneMicrophone: StateFlow<Boolean> = sessionStore.usePhoneMicrophone
 
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
 
     private val _showNewTopicConfirmDialog = MutableStateFlow(false)
     val showNewTopicConfirmDialog: StateFlow<Boolean> = _showNewTopicConfirmDialog.asStateFlow()
+
+    private val _showVoiceSettings = MutableStateFlow(false)
+    val showVoiceSettings: StateFlow<Boolean> = _showVoiceSettings.asStateFlow()
+
+    private val _isMicListening = MutableStateFlow(false)
+    val isMicListening: StateFlow<Boolean> = _isMicListening.asStateFlow()
 
     private val _navigationEvent = MutableSharedFlow<SessionNavigationEvent>()
     val navigationEvent: SharedFlow<SessionNavigationEvent> = _navigationEvent.asSharedFlow()
@@ -64,9 +71,14 @@ class SessionViewModel(
         // Terminal relay errors (pairing revoked / replaced / server shutdown / not authorized)
         // mean the current pairing is dead — send the user back to the pair screen (H1).
         viewModelScope.launch {
-            sessionRepository.terminalEvents.collect { event ->
+            sessionRepository.terminalEvents.collect {
                 sessionRepository.stopSession()
                 _navigationEvent.emit(SessionNavigationEvent.NavigateToPair)
+            }
+        }
+        viewModelScope.launch {
+            sessionRepository.voiceTranscript.collect { text ->
+                _inputText.value = if (_inputText.value.isBlank()) text else "${_inputText.value} $text"
             }
         }
     }
@@ -85,15 +97,40 @@ class SessionViewModel(
         sessionRepository.captureOnly(displayId = displayId)
     }
 
-    fun onStopClicked() {
-        sessionRepository.stopGeneration()
-    }
-
     fun onSendFollowUpClicked() {
         val text = _inputText.value.trim()
         if (text.isNotEmpty()) {
             sessionRepository.sendFollowUp(text)
             _inputText.value = ""
+        }
+    }
+
+    fun setMicListening(listening: Boolean) {
+        _isMicListening.value = listening
+    }
+
+    fun appendDictatedText(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        _inputText.value = if (_inputText.value.isBlank()) trimmed else "${_inputText.value.trim()} $trimmed"
+    }
+
+    fun startDesktopVoice() = sessionRepository.startDesktopVoice()
+    fun stopDesktopVoice() = sessionRepository.stopDesktopVoice()
+
+    fun showVoiceSettings() {
+        _showVoiceSettings.value = true
+    }
+
+    fun dismissVoiceSettings() {
+        _showVoiceSettings.value = false
+    }
+
+    fun setUsePhoneMicrophone(enabled: Boolean) {
+        sessionStore.setUsePhoneMicrophone(enabled)
+        sessionRepository.stopDesktopVoice()
+        if (!enabled) {
+            _isMicListening.value = false
         }
     }
 

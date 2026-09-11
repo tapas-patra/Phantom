@@ -35,6 +35,7 @@ namespace SecureOverlay.Services
         public bool IsEnabled => _enabled;
         public string? ActivePairingId => _activePairingId;
         public CompanionRelayState RelayState => _host?.RelayState ?? CompanionRelayState.Disconnected;
+        public event Action? PairingBecameInvalid;
 
         public CompanionOrchestrator(
             IHostedCompanionClient companionClient,
@@ -132,23 +133,23 @@ namespace SecureOverlay.Services
 
         private void OnRelayStateChanged(CompanionRelayState state)
         {
-            if (state != CompanionRelayState.Connected) return;
-            // Proactively announce the desktop so the phone sees presence + snapshot
-            // immediately, without waiting for a session.hello from the phone.
-            var host = _host;
-            if (host == null) return;
-            _ = Task.Run(async () =>
+            if (state == CompanionRelayState.Connected)
             {
-                try
+                var host = _host;
+                if (host == null) return;
+                _ = Task.Run(async () =>
                 {
-                    await host.SendDesktopHelloAsync();
-                    await host.PublishSnapshotAsync();
-                }
-                catch (Exception ex)
-                {
-                    Log.WriteLine($"Companion initial announce failed: {ex.Message}");
-                }
-            });
+                    try
+                    {
+                        await host.SendDesktopHelloAsync();
+                        await host.PublishSnapshotAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.WriteLine($"Companion initial announce failed: {ex.Message}");
+                    }
+                });
+            }
         }
 
         private void OnRelayError(string code, string message)
@@ -160,6 +161,7 @@ namespace SecureOverlay.Services
                 || string.Equals(code, "server_shutdown", StringComparison.Ordinal))
             {
                 Log.WriteLine($"Companion relay terminal error '{code}' — stopping companion mode.");
+                PairingBecameInvalid?.Invoke();
                 _ = StopAsync();
             }
         }
@@ -210,6 +212,7 @@ namespace SecureOverlay.Services
             if (host == null || !_enabled) return;
             if (string.IsNullOrEmpty(requestId)) return;
             _ = host.SendChatStartedAsync(requestId, turnId);
+            _ = host.PublishSnapshotAsync();
         }
 
         /// <summary>Notify the phone that a chat turn was cancelled and publish a snapshot.</summary>
@@ -224,12 +227,37 @@ namespace SecureOverlay.Services
             return host.PublishSnapshotAsync();
         }
 
-        /// <summary>Publish a session snapshot without emitting a chat.* frame.</summary>
+        /// <summary>Push current desktop.hello + session.snapshot immediately (lock start, etc.).</summary>
+        public Task AnnounceReadyAsync()
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    await host.SendDesktopHelloAsync();
+                    await host.PublishSnapshotAsync();
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Companion announce failed: {ex.Message}");
+                }
+            });
+        }
+
         public Task PublishSnapshotAsync()
         {
             var host = _host;
             if (host == null || !_enabled) return Task.CompletedTask;
             return host.PublishSnapshotAsync();
+        }
+
+        public Task SendVoiceTranscriptAsync(string text)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return host.SendVoiceTranscriptAsync(text);
         }
 
         public Task SendCaptureStartedAsync(string requestId, string? displayId)
@@ -288,6 +316,8 @@ namespace SecureOverlay.Services
             host.OnChatCancel = requestId => _target.ChatCancel(requestId);
             host.OnChatNewTopic = () => _target.ChatNewTopic();
             host.OnDisplaySelect = displayId => _target.DisplaySelect(displayId);
+            host.OnVoiceStart = () => _target.VoiceStart();
+            host.OnVoiceStop = () => _target.VoiceStop();
         }
 
         public async ValueTask DisposeAsync()
@@ -310,5 +340,7 @@ namespace SecureOverlay.Services
         void ChatCancel(string? requestId);
         void ChatNewTopic();
         void DisplaySelect(string? displayId);
+        void VoiceStart();
+        void VoiceStop();
     }
 }

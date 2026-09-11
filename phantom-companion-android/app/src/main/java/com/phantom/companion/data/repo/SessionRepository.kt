@@ -47,6 +47,7 @@ class SessionRepository(
     val displays: StateFlow<List<DisplayInfo>> = relayClient.displays
     val selectedDisplayId: StateFlow<String> = relayClient.selectedDisplayId
     val terminalEvents: SharedFlow<TerminalRelayEvent> = relayClient.terminalEvents
+    val voiceTranscript: SharedFlow<String> = relayClient.voiceTranscript
 
     private val _transcript = MutableStateFlow<List<ChatTurn>>(emptyList())
     val transcript: StateFlow<List<ChatTurn>> = _transcript.asStateFlow()
@@ -89,23 +90,17 @@ class SessionRepository(
         }
     }
 
-    private var hydrated = false
-
     fun startSession(pairingId: String) {
+        // Always start from a blank transcript. Desktop is authoritative; a reconnect
+        // after the desktop quit/reopened must not resurrect the previous phone chat.
+        clearTranscript()
         relayClient.connect(pairingId)
-        // Hydrate the last published snapshot once per session start (L2). Reconnects inside
-        // RelayClient do not re-fetch; the desktop republishes session.snapshot on hello anyway.
-        if (!hydrated) {
-            hydrated = true
-            scope.launch { hydrateCurrentSession() }
-        }
     }
 
     fun stopSession() {
         clearResponseWatchdog()
         relayClient.disconnect()
         _currentPendingThumbnail.value = null
-        hydrated = false
     }
 
     fun clearTranscript() {
@@ -119,37 +114,11 @@ class SessionRepository(
         _sessionError.value = null
     }
 
-    private suspend fun hydrateCurrentSession() {
-        try {
-            val response = api.currentSessionRaw()
-            if (response.isSuccessful) {
-                val snapshot = response.body()
-                if (snapshot != null && snapshot.turns.isNotEmpty()) {
-                    _transcript.value = snapshot.turns
-                }
-            } else if (response.code() != 404) {
-                // 404 just means "no active desktop session" — not an error. Anything else
-                // (401/5xx) is surfaced so the user knows the backend is unhealthy (M2).
-                _sessionError.value = "Could not reach Phantom backend (HTTP ${response.code()})."
-            }
-        } catch (e: HttpException) {
-            _sessionError.value = "Could not reach Phantom backend."
-        } catch (e: Exception) {
-            // Network blip: leave existing transcript intact; relay will republish snapshot.
-        }
-    }
-
     private fun processIncomingFrame(frame: RelayEnvelope) {
         val body = frame.body
         when (frame.type) {
             "session.snapshot" -> {
-                // Hydrate the transcript from the desktop's last published snapshot (C2).
-                // Only adopt when the snapshot carries turns, so we never wipe a live stream
-                // with an empty in-flight snapshot.
-                val turns = body?.turns
-                if (turns != null && turns.isNotEmpty()) {
-                    _transcript.value = turns
-                }
+                applySnapshotTurns(body?.turns)
             }
             "capture.started" -> {
                 clearResponseWatchdog()
@@ -168,29 +137,41 @@ class SessionRepository(
             "chat.started" -> {
                 clearResponseWatchdog()
                 _sessionError.value = null
-                // Create an initial streaming assistant turn
                 val current = _transcript.value.toMutableList()
-                current.add(
-                    ChatTurn(
-                        role = "assistant",
-                        text = "",
-                        atUtc = currentIsoTimestamp(),
-                        isStreaming = true
+                val last = current.lastOrNull()
+                if (last == null || last.role != "assistant" || !last.isStreaming) {
+                    current.add(
+                        ChatTurn(
+                            role = "assistant",
+                            text = "",
+                            atUtc = currentIsoTimestamp(),
+                            isStreaming = true
+                        )
                     )
-                )
-                _transcript.value = current
+                    _transcript.value = current
+                }
             }
             "chat.delta" -> {
                 val delta = body?.text.orEmpty()
+                if (delta.isEmpty()) return
                 val current = _transcript.value.toMutableList()
-                if (current.isNotEmpty() && current.last().role == "assistant") {
+                if (current.isEmpty() || current.last().role != "assistant") {
+                    current.add(
+                        ChatTurn(
+                            role = "assistant",
+                            text = delta,
+                            atUtc = currentIsoTimestamp(),
+                            isStreaming = true
+                        )
+                    )
+                } else {
                     val last = current.last()
                     current[current.lastIndex] = last.copy(
                         text = last.text + delta,
                         isStreaming = true
                     )
-                    _transcript.value = current
                 }
+                _transcript.value = current
             }
             "chat.completed" -> {
                 clearResponseWatchdog()
@@ -295,11 +276,43 @@ class SessionRepository(
         relayClient.sendSelectDisplay(displayId)
     }
 
+    fun startDesktopVoice() {
+        relayClient.sendVoiceStart()
+    }
+
+    fun stopDesktopVoice() {
+        relayClient.sendVoiceStop()
+    }
+
+    private fun applySnapshotTurns(turns: List<ChatTurn>?) {
+        if (turns == null) return
+        val current = _transcript.value
+        if (current.any { it.isStreaming }) return
+
+        val normalized = turns.filter { it.role == "user" || it.role == "assistant" }
+        if (normalized.isEmpty()) {
+            // Keep a just-sent local user turn so an empty announce cannot hide the query.
+            if (current.lastOrNull()?.role == "user") return
+            _transcript.value = emptyList()
+            return
+        }
+
+        val lastLocal = current.lastOrNull()
+        val merged = if (lastLocal != null && lastLocal.role == "user" &&
+            normalized.none { it.role == "user" && it.text == lastLocal.text }
+        ) {
+            normalized + lastLocal
+        } else {
+            normalized
+        }
+        _transcript.value = merged
+    }
+
     private fun mapErrorCode(code: String?, fallbackMessage: String?): String {
         return when (code) {
             "desktop_offline" -> "Waiting for desktop…"
             "not_paired" -> "Pairing required."
-            "lock_missing" -> "Start the interview in Phantom on your computer first."
+            "lock_missing" -> "Could not start the interview from the phone. Check Phantom on your computer and try again."
             "vision_unsupported" -> "This model cannot read screens."
             "capture_permission_missing" -> "Capture failed. Check desktop screen-recording permission."
             "rate_limited" -> "Too many attempts. Wait a few seconds."

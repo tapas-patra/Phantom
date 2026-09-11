@@ -30,6 +30,7 @@ class AccountViewModel(
     val startupSnapshot: StateFlow<StartupSnapshot?> = sessionStore.startupSnapshot
     val activePairing: StateFlow<Pairing?> = sessionStore.activePairing
     val companionApiReady: StateFlow<Boolean?> = sessionStore.companionApiReady
+    val usePhoneMicrophone: StateFlow<Boolean> = sessionStore.usePhoneMicrophone
 
     private val _isUnpairing = MutableStateFlow(false)
     val isUnpairing: StateFlow<Boolean> = _isUnpairing.asStateFlow()
@@ -76,6 +77,10 @@ class AccountViewModel(
         viewModelScope.launch {
             _navigationEvent.emit(AccountNavigationEvent.NavigateToPair)
         }
+    }
+
+    fun setUsePhoneMicrophone(enabled: Boolean) {
+        sessionStore.setUsePhoneMicrophone(enabled)
     }
 
     companion object {

@@ -48,6 +48,8 @@ namespace SecureOverlay.Services
         public Action<string?>? OnChatCancel { get; set; }
         public Action? OnChatNewTopic { get; set; }
         public Action<string?>? OnDisplaySelect { get; set; }
+        public Action? OnVoiceStart { get; set; }
+        public Action? OnVoiceStop { get; set; }
 
         public CompanionRelayState RelayState { get; private set; } = CompanionRelayState.Disconnected;
         public event Action<CompanionRelayState>? RelayStateChanged;
@@ -92,6 +94,7 @@ namespace SecureOverlay.Services
             {
                 case "session.hello":
                     _ = SendDesktopHelloAsync();
+                    _ = PublishSnapshotAsync();
                     break;
                 case "capture.full":
                     var fullDisplayId = frame.ReadString("displayId");
@@ -116,6 +119,12 @@ namespace SecureOverlay.Services
                 case "display.select":
                     var displayId = frame.ReadString("displayId");
                     OnDisplaySelect?.Invoke(displayId);
+                    break;
+                case "voice.start":
+                    OnVoiceStart?.Invoke();
+                    break;
+                case "voice.stop":
+                    OnVoiceStop?.Invoke();
                     break;
             }
         }
@@ -245,6 +254,16 @@ namespace SecureOverlay.Services
                 ts = DateTime.UtcNow, pairingId = _client.PairingId, role = "desktop",
                 body = new { requestId }
             }));
+        }
+
+        public async Task SendVoiceTranscriptAsync(string text)
+        {
+            await _client.SendRawAsync(JsonSerializer.Serialize(new
+            {
+                v = 1, id = Guid.NewGuid().ToString("N"), type = "voice.transcript",
+                ts = DateTime.UtcNow, pairingId = _client.PairingId, role = "desktop",
+                body = new { text }
+            }, WireJsonOptions));
         }
 
         public async Task PublishSnapshotAsync()

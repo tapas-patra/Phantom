@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -243,5 +244,62 @@ fun WarningBanner(
                 modifier = Modifier.weight(1f)
             )
         }
+    }
+}
+
+@Composable
+fun MarkdownText(
+    markdown: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    val html = remember(markdown) { markdownToHtml(markdown) }
+    val androidColor = android.graphics.Color.argb(
+        (color.alpha * 255).toInt(),
+        (color.red * 255).toInt(),
+        (color.green * 255).toInt(),
+        (color.blue * 255).toInt()
+    )
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = modifier.fillMaxWidth(),
+        factory = { ctx ->
+            android.widget.TextView(ctx).apply {
+                textSize = 14f
+                setLineSpacing(0f, 1.2f)
+                setTextIsSelectable(true)
+                setHorizontallyScrolling(false)
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+        },
+        update = { tv ->
+            tv.setTextColor(androidColor)
+            tv.text = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_LEGACY)
+        }
+    )
+}
+
+internal fun markdownToHtml(source: String): String {
+    val escaped = source
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    val placeholders = mutableListOf<String>()
+    val withCode = escaped.replace(Regex("```[a-zA-Z]*\\n([\\s\\S]*?)```")) { match ->
+        placeholders.add("<pre>${match.groupValues[1].trim().replace("\n", "<br>")}</pre>")
+        "\u0000CODE${placeholders.lastIndex}\u0000"
+    }
+    val withInline = withCode
+        .replace(Regex("`([^`]+)`"), "<code>$1</code>")
+        .replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
+        .replace(Regex("(?m)^### (.+)$"), "<h4>$1</h4>")
+        .replace(Regex("(?m)^## (.+)$"), "<h3>$1</h3>")
+        .replace(Regex("(?m)^# (.+)$"), "<h2>$1</h2>")
+        .replace(Regex("(?m)^[-*] (.+)$"), "• $1")
+        .replace("\n", "<br>")
+    return withInline.replace(Regex("\u0000CODE(\\d+)\u0000")) { match ->
+        placeholders[match.groupValues[1].toInt()]
     }
 }

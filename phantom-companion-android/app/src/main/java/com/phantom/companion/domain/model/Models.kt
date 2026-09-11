@@ -223,7 +223,10 @@ data class RelayEnvelope(
     val ts: String? = null,
     val pairingId: String? = null,
     val role: String? = null,
-    val body: RelayBody? = null
+    val body: RelayBody? = null,
+    // relay.error from the backend puts code/message at the envelope top level
+    val code: String? = null,
+    val message: String? = null
 )
 
 enum class DesktopPresenceState(val label: String) {

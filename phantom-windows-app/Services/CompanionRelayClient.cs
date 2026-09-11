@@ -19,8 +19,8 @@ namespace SecureOverlay.Services
     public sealed class CompanionRelayClient : IAsyncDisposable
     {
         private const string SubProtocol = "phantom.companion.v1";
-        private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(45);
-        private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(90);
+        private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(15);
         private const int MaxAssemblyBytes = 128 * 1024;
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -138,6 +138,17 @@ namespace SecureOverlay.Services
                 catch (Exception ex)
                 {
                     Log.WriteLine($"CompanionRelayClient connection error: {ex.Message}");
+                    if (IsTerminalPairingFailure(ex.Message))
+                    {
+                        FrameReceived?.Invoke(new CompanionRelayFrame
+                        {
+                            V = 1,
+                            Type = "relay.error",
+                            Code = "pairing_revoked",
+                            Message = ex.Message
+                        });
+                        break;
+                    }
                 }
                 finally
                 {
@@ -229,6 +240,20 @@ namespace SecureOverlay.Services
 
                     if (frame != null)
                     {
+                        if (string.Equals(frame.Type, "relay.ping", StringComparison.Ordinal))
+                        {
+                            var pongPayload = JsonSerializer.SerializeToUtf8Bytes(new
+                            {
+                                v = 1, type = "relay.pong", ts = DateTime.UtcNow,
+                                pairingId = PairingId, role = Role
+                            });
+                            try
+                            {
+                                await socket.SendAsync(pongPayload, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+                            }
+                            catch { }
+                            continue;
+                        }
                         FrameReceived?.Invoke(frame);
                     }
                 }
@@ -241,6 +266,15 @@ namespace SecureOverlay.Services
         }
 
         private void EmitState(CompanionRelayState state) => StateChanged?.Invoke(state);
+
+        private static bool IsTerminalPairingFailure(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return false;
+            return message.Contains("revoked", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("not authorized", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("Pairing not found", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("no longer available", StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     public enum CompanionRelayState { Connecting, Connected, Disconnected }

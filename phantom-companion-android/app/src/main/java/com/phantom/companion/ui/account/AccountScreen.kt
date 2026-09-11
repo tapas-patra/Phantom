@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Warning
@@ -29,6 +30,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -72,6 +75,7 @@ fun AccountScreen(
     val startupSnapshot by viewModel.startupSnapshot.collectAsState()
     val activePairing by viewModel.activePairing.collectAsState()
     val companionApiReady by viewModel.companionApiReady.collectAsState()
+    val usePhoneMicrophone by viewModel.usePhoneMicrophone.collectAsState()
     val isUnpairing by viewModel.isUnpairing.collectAsState()
     val isSigningOut by viewModel.isSigningOut.collectAsState()
     val showUnpairConfirmDialog by viewModel.showUnpairConfirmDialog.collectAsState()
@@ -191,6 +195,34 @@ fun AccountScreen(
                         text = "Pair desktop",
                         onClick = viewModel::navigateToPair,
                         testTag = "button_account_pair"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            AccountCard(title = "Voice input", icon = Icons.Default.Mic) {
+                Text(
+                    text = "When enabled, the mic button on the session screen uses this phone instead of the desktop microphone.",
+                    fontSize = 13.sp,
+                    color = PhantomMuted
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Use phone microphone",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = PhantomText
+                    )
+                    Switch(
+                        checked = usePhoneMicrophone,
+                        onCheckedChange = viewModel::setUsePhoneMicrophone,
+                        colors = SwitchDefaults.colors(checkedTrackColor = PhantomPrimary)
                     )
                 }
             }

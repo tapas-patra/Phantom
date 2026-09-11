@@ -75,7 +75,7 @@ class RelayClient(
     private val socketHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS) // infinite for websocket
-        .pingInterval(20, TimeUnit.SECONDS) // protocol-level ping every 20s
+        .pingInterval(15, TimeUnit.SECONDS) // protocol-level ping every 15s
         .build()
 
     private var currentWebSocket: WebSocket? = null
@@ -94,6 +94,12 @@ class RelayClient(
 
     private val _terminalEvents = MutableSharedFlow<TerminalRelayEvent>(extraBufferCapacity = 8)
     val terminalEvents: SharedFlow<TerminalRelayEvent> = _terminalEvents.asSharedFlow()
+
+    private val _voiceTranscript = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val voiceTranscript: SharedFlow<String> = _voiceTranscript.asSharedFlow()
+
+    private var peerLeftJob: Job? = null
+    private var appPingJob: Job? = null
 
     private val _desktopPresence = MutableStateFlow(DesktopPresenceState.OFFLINE)
     val desktopPresence: StateFlow<DesktopPresenceState> = _desktopPresence.asStateFlow()
@@ -328,19 +334,25 @@ class RelayClient(
     }
 
     private suspend fun monitorLiveness() {
-        // Server drops idle phone sockets after ~45s of no inbound application frames
-        // (CompanionRelayHost.ReceiveTimeout). We answer relay.ping with relay.pong (C1) so
-        // the server sees inbound traffic and resets its timer. This local check only trips
-        // if the server stops sending pings entirely (real network death).
+        appPingJob?.cancel()
+        appPingJob = scope.launch {
+            while (scope.isActive && currentWebSocket != null && !isIntentionallyClosed) {
+                delay(15_000)
+                val pairingId = currentPairingId ?: break
+                sendFrame(type = "relay.ping", pairingId = pairingId, body = null)
+            }
+        }
         while (scope.isActive && currentWebSocket != null && !isIntentionallyClosed) {
             delay(5000)
             val elapsedSinceInbound = System.currentTimeMillis() - _lastInboundAt.value
-            if (elapsedSinceInbound > 45000) {
+            if (elapsedSinceInbound > 90_000) {
                 currentWebSocket?.cancel()
                 currentWebSocket = null
                 break
             }
         }
+        appPingJob?.cancel()
+        appPingJob = null
     }
 
     private fun handleIncomingMessage(text: String, pairingId: String) {
@@ -356,21 +368,34 @@ class RelayClient(
 
         when (frame.type) {
             "relay.ping" -> {
-                // Answer with relay.pong so the server's 45s receive timeout resets (C1).
                 sendFrame(type = "relay.pong", pairingId = pairingId, body = null)
             }
             "relay.peer_joined" -> {
                 if (frame.role == "desktop") {
+                    peerLeftJob?.cancel()
+                    peerLeftJob = null
                     _desktopPresence.value = DesktopPresenceState.READY
                 }
             }
             "relay.peer_left" -> {
                 if (frame.role == "desktop") {
-                    _desktopPresence.value = DesktopPresenceState.OFFLINE
+                    // Desktop reconnects with a fresh ticket; keep the last live status
+                    // briefly so a ticket refresh does not flash "Desktop offline".
+                    peerLeftJob?.cancel()
+                    peerLeftJob = scope.launch {
+                        delay(2_000)
+                        if (_connectionState.value is SocketConnectionState.Connected) {
+                            _desktopPresence.value = DesktopPresenceState.OFFLINE
+                        }
+                    }
                 }
             }
             "desktop.hello", "desktop.status" -> {
-                _desktopPresence.value = parsePresenceState(body?.status)
+                body?.status?.takeIf { it.isNotBlank() }?.let {
+                    peerLeftJob?.cancel()
+                    peerLeftJob = null
+                    _desktopPresence.value = parsePresenceState(it)
+                }
                 body?.model?.let { _currentModel.value = it }
                 body?.vision?.let { _isVisionSupported.value = it }
                 body?.displays?.let { displays ->
@@ -387,7 +412,12 @@ class RelayClient(
             "session.snapshot" -> {
                 // Snapshot turns are processed by SessionRepository; here we sync
                 // presence/model/vision/displays/selectedDisplayId from the same body (C2).
-                _desktopPresence.value = parsePresenceState(body?.desktopStatus ?: body?.status)
+                val snapStatus = body?.desktopStatus ?: body?.status
+                if (!snapStatus.isNullOrBlank()) {
+                    peerLeftJob?.cancel()
+                    peerLeftJob = null
+                    _desktopPresence.value = parsePresenceState(snapStatus)
+                }
                 body?.model?.let { _currentModel.value = it }
                 body?.vision?.let { _isVisionSupported.value = it }
                 body?.displays?.let { _displays.value = it }
@@ -413,8 +443,13 @@ class RelayClient(
             "chat.failed" -> {
                 _desktopPresence.value = DesktopPresenceState.ERROR
             }
+            "voice.transcript" -> {
+                body?.text?.takeIf { it.isNotBlank() }?.let {
+                    _voiceTranscript.tryEmit(it)
+                }
+            }
             "relay.error" -> {
-                val code = body?.code
+                val code = frame.code ?: body?.code
                 when (code) {
                     "pairing_revoked" -> {
                         sessionStore.savePairing(null)
@@ -502,6 +537,16 @@ class RelayClient(
             pairingId = pairingId,
             body = RelayBody(displayId = displayId)
         )
+    }
+
+    fun sendVoiceStart() {
+        val pairingId = currentPairingId ?: return
+        sendFrame(type = "voice.start", pairingId = pairingId, body = null)
+    }
+
+    fun sendVoiceStop() {
+        val pairingId = currentPairingId ?: return
+        sendFrame(type = "voice.stop", pairingId = pairingId, body = null)
     }
 
     private fun sendFrame(

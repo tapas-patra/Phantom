@@ -103,11 +103,13 @@ final class PhantomStore: ObservableObject {
     var companionRequestId: String?
     var companionDeltaHandler: ((String) -> Void)?
     var companionTurnFinishedHandler: ((Bool) -> Void)?
+    var companionSessionStartedHandler: (() -> Void)?
     // Companion capture/error status flags (spec §5.2: status may be `capturing` or
     // `error`). Set/cleared by CompanionCommandHost around headless capture and on
     // turn outcome; read by desktopStatus() for desktop.hello / session.snapshot (H1).
     @Published var companionIsCapturing: Bool = false
     @Published var companionHasError: Bool = false
+    @Published var companionInterviewActive: Bool = false
     // True while companion mode has hidden the overlay (spec §8.2). Driven by the
     // orchestrator via setCompanionOverlayHidden(); PhantomMain observes this to
     // order out / restore the window without activating the app.
@@ -1265,6 +1267,8 @@ final class PhantomStore: ObservableObject {
                 }
                 lastInterviewActivityAt = Date()
                 startHeartbeat()
+                companionInterviewActive = true
+                companionSessionStartedHandler?()
                 try await runtime.metering.trackQuestion(text)
                 await runtime.track(
                     category: "chat",
@@ -1278,6 +1282,10 @@ final class PhantomStore: ObservableObject {
                 reply = pendingReply
                 messages.append(pendingReply)
                 ConversationStore.save(messages)
+                if companionDeltaHandler == nil, companionEnabled {
+                    companionRequestId = requestId
+                    companion?.notifyDesktopOriginatedChatStarted(requestId: requestId)
+                }
                 status = "Understanding…"
 
                 if isPremiumAccount, hostedKnowledgeBase?.canUseInInterview != true {
@@ -1556,10 +1564,15 @@ final class PhantomStore: ObservableObject {
             // Notify the companion relay that the turn finished and clear the per-turn hooks.
             let succeeded = companionTurnSucceeded
             let handler = companionTurnFinishedHandler
+            let desktopRequestId = companionRequestId
             companionDeltaHandler = nil
             companionTurnFinishedHandler = nil
             companionRequestId = nil
-            handler?(succeeded)
+            if let handler {
+                handler(succeeded)
+            } else if companionEnabled, let desktopRequestId {
+                companion?.notifyDesktopOriginatedTurnFinished(requestId: desktopRequestId, succeeded: succeeded)
+            }
         }
     }
 
@@ -1805,8 +1818,11 @@ final class PhantomStore: ObservableObject {
     private func append(_ delta: String, to replyId: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == replyId }) else { return }
         messages[index].content += delta
-        // Forward the stream chunk to the companion relay (phone) as chat.delta.
-        companionDeltaHandler?(delta)
+        if let handler = companionDeltaHandler {
+            handler(delta)
+        } else if companionEnabled, let requestId = companionRequestId {
+            companion?.notifyDesktopOriginatedDelta(delta, requestId: requestId)
+        }
         if !firstChunkRecorded {
             firstChunkRecorded = true
             let latency = Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000)
@@ -1903,11 +1919,10 @@ final class PhantomStore: ObservableObject {
         heartbeatTask = nil
         sessionStatusTask?.cancel()
         sessionStatusTask = nil
-        await finishInterview(auth: session, account: account)
         if !preserveConversationOnTermination {
             ConversationStore.clear()
-            // Real quit (not restart): drop the hosted pairing so the phone stops
-            // auto-reconnecting to a desktop that is no longer running.
+            // Real quit (not restart): drop the hosted pairing immediately so the phone
+            // leaves the session without waiting for interview finalize.
             if let session, !companionPairingId.isEmpty {
                 await revokeCompanionPairing(accessToken: session.accessToken, pairingId: companionPairingId)
             } else {
@@ -1916,6 +1931,7 @@ final class PhantomStore: ObservableObject {
         } else {
             await companion?.stop()
         }
+        await finishInterview(auth: session, account: account)
     }
 
     func restartApp() {

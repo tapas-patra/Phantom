@@ -49,6 +49,9 @@ class SessionStore(private val context: Context) {
     private val _companionApiReady = MutableStateFlow<Boolean?>(null)
     val companionApiReady: StateFlow<Boolean?> = _companionApiReady.asStateFlow()
 
+    private val _usePhoneMicrophone = MutableStateFlow(false)
+    val usePhoneMicrophone: StateFlow<Boolean> = _usePhoneMicrophone.asStateFlow()
+
     private val _startupSnapshot = MutableStateFlow<StartupSnapshot?>(null)
     val startupSnapshot: StateFlow<StartupSnapshot?> = _startupSnapshot.asStateFlow()
 
@@ -87,6 +90,7 @@ class SessionStore(private val context: Context) {
                 // Ignore
             }
         }
+        _usePhoneMicrophone.value = prefs.getBoolean(KEY_PHONE_MIC, false)
     }
 
     @Synchronized
@@ -157,6 +161,16 @@ class SessionStore(private val context: Context) {
     }
 
     @Synchronized
+    fun setUsePhoneMicrophone(enabled: Boolean) {
+        _usePhoneMicrophone.value = enabled
+        try {
+            prefs.edit().putBoolean(KEY_PHONE_MIC, enabled).commit()
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+
+    @Synchronized
     fun clearSession() {
         _sessionState.value = null
         _activePairing.value = null
@@ -193,6 +207,7 @@ class SessionStore(private val context: Context) {
         private const val KEY_AUTH_SESSION = "auth_session"
         private const val KEY_PAIRING = "current_pairing"
         private const val KEY_STARTUP = "startup_snapshot"
+        private const val KEY_PHONE_MIC = "use_phone_microphone"
 
         fun parseIsoDate(isoString: String): Long? {
             val formats = arrayOf(

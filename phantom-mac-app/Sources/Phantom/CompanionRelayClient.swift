@@ -8,8 +8,8 @@ import Foundation
 @MainActor
 final class CompanionRelayClient {
     private static let subprotocol = "phantom.companion.v1"
-    private static let receiveTimeout: TimeInterval = 45
-    private static let pingInterval: TimeInterval = 20
+    private static let receiveTimeout: TimeInterval = 90
+    private static let pingInterval: TimeInterval = 15
     private static let backoff: [TimeInterval] = [1, 2, 4, 8, 15]
 
     private let ticketProvider: () async throws -> CompanionRelayTicket
@@ -81,6 +81,16 @@ final class CompanionRelayClient {
                 ticket = try await self.ticketProvider()
             } catch {
                 print("[companion] relay ticket fetch failed: \(error.localizedDescription)")
+                if Self.isTerminalPairingFailure(error.localizedDescription) {
+                    self.stopped = true
+                    var errorFrame = CompanionRelayFrame()
+                    errorFrame.type = "relay.error"
+                    errorFrame.code = "pairing_revoked"
+                    errorFrame.message = error.localizedDescription
+                    self.frameHandler?(errorFrame)
+                    self.updateState(.disconnected)
+                    return
+                }
                 if !self.stopped { self.scheduleReconnect() }
                 return
             }
@@ -123,8 +133,9 @@ final class CompanionRelayClient {
             guard let self else { return }
             while !Task.isCancelled, !self.stopped {
                 try? await Task.sleep(nanoseconds: UInt64(Self.pingInterval * 1_000_000_000))
-                guard let task = self.task, task.state == .running else { break }
-                task.sendPing { _ in }
+                guard !self.stopped, self.task != nil else { break }
+                let ts = ISO8601DateFormatter().string(from: Date())
+                self.sendRaw("{\"v\":1,\"type\":\"relay.ping\",\"ts\":\"\(ts)\",\"pairingId\":\"\(self.pairingId)\",\"role\":\"\(self.role)\"}")
             }
         }
     }
@@ -207,6 +218,14 @@ final class CompanionRelayClient {
     private func updateState(_ newState: CompanionRelayState) {
         state = newState
         stateHandler?(newState)
+    }
+
+    private static func isTerminalPairingFailure(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return text.contains("revoked")
+            || text.contains("not authorized")
+            || text.contains("pairing not found")
+            || text.contains("no longer available")
     }
 }
 

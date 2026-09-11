@@ -233,6 +233,7 @@ namespace SecureOverlay
                 ProvideCompanionSnapshot,
                 new MainWindowCompanionTarget(this),
                 SetCompanionOverlayHidden);
+            _companionOrchestrator.PairingBecameInvalid += OnCompanionPairingBecameInvalid;
 
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
@@ -2350,6 +2351,7 @@ namespace SecureOverlay
                 RefreshAccountSnapshot();
                 UpdateCreditIndicator();
                 UpdateSessionStatus();
+                _ = _companionOrchestrator?.AnnounceReadyAsync();
             }
 
             _creditMeteringService.TrackUsageSource(DetermineUsageSourceForCurrentRuntime(_settings.SelectedAI), _settings.SelectedAI);
@@ -2442,10 +2444,15 @@ namespace SecureOverlay
             var companionOutcome = CompanionTurnOutcome.Pending;
             string? companionErrorCode = null;
             string? companionErrorMessage = null;
-            // Announce chat.started to the phone for companion-driven turns (H8).
-            if (!string.IsNullOrEmpty(_companionActiveRequestId))
+            // Announce chat.started to the phone for every companion-connected turn,
+            // including questions typed on the desktop so the phone stays live.
+            if (_companionOrchestrator?.IsEnabled == true)
             {
-                _companionOrchestrator?.OnChatStarted(_companionActiveRequestId, requestTrace.CorrelationId);
+                if (string.IsNullOrEmpty(_companionActiveRequestId))
+                {
+                    _companionActiveRequestId = requestTrace.CorrelationId;
+                }
+                _companionOrchestrator.OnChatStarted(_companionActiveRequestId, requestTrace.CorrelationId);
             }
 
             try
@@ -3123,6 +3130,7 @@ namespace SecureOverlay
                 ["session_id"] = session.SessionId,
                 ["expires_at"] = lockResult.LockExpiresAtUtc?.ToString("O") ?? string.Empty
             });
+            _ = _companionOrchestrator?.AnnounceReadyAsync();
         }
 
         private void InterviewLockHeartbeatTimer_Tick(object? sender, EventArgs e)
@@ -3651,6 +3659,11 @@ namespace SecureOverlay
                 {
                     InputTextBox.Text += " " + text;
                     Log.WriteLine("  Text appended to existing input");
+                }
+
+                if (_companionOrchestrator != null && _companionOrchestrator.IsEnabled)
+                {
+                    _ = _companionOrchestrator.SendVoiceTranscriptAsync(text);
                 }
                 
                 FocusInput();
@@ -4193,6 +4206,10 @@ namespace SecureOverlay
                 {
                     foreach (var turn in history.TakeLast(20))
                     {
+                        if (string.Equals(turn.Role, "system", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
                         turns.Add(new CompanionTurnDto
                         {
                             Role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user",
@@ -4290,9 +4307,7 @@ namespace SecureOverlay
         }
 
         /// <summary>
-        /// True when the desktop holds an active interview lock. Companion capture/ask
-        /// must refuse with lock_missing when there is no lock, and must NOT auto-start
-        /// a new interview (spec §7.4, §9).
+        /// True when the desktop holds an active interview lock.
         /// </summary>
         private bool CompanionHasActiveLock()
         {
@@ -4309,6 +4324,68 @@ namespace SecureOverlay
             }
         }
 
+        /// <summary>
+        /// Starts or resumes the interview from a phone command so the first message
+        /// does not require a prior desktop tap.
+        /// </summary>
+        private bool TryEnsureCompanionInterview()
+        {
+            if (CompanionHasActiveLock()) return true;
+            if (IsInterviewStartBlocked() && !CanContinueRestrictedInterview()) return false;
+            try
+            {
+                var activation = _creditMeteringService.EnsureInterviewSession();
+                if (!activation.Allowed || activation.Session == null) return false;
+                ActivateInterviewLock(activation.Session);
+                RecordInterviewActivity("session_active");
+                RefreshAccountSnapshot();
+                UpdateCreditIndicator();
+                UpdateSessionStatus();
+                _ = _companionOrchestrator?.AnnounceReadyAsync();
+                return CompanionHasActiveLock() || activation.Session != null;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Companion auto-start interview failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void OnCompanionPairingBecameInvalid()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_settings == null) return;
+                _settings.CompanionPairingId = string.Empty;
+                _settings.CompanionEnabled = false;
+                SettingsManager.Save(_settings);
+                _settingsPage?.RefreshSettings();
+                Log.WriteLine("Companion pairing cleared — phone unpaired or pairing revoked.");
+            }));
+        }
+
+        private void CompanionVoiceStart()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_voiceService != null && !_voiceService.IsListening())
+                {
+                    VoiceButton_Click(this, new RoutedEventArgs());
+                }
+            }));
+        }
+
+        private void CompanionVoiceStop()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_voiceService != null && _voiceService.IsListening())
+                {
+                    VoiceButton_Click(this, new RoutedEventArgs());
+                }
+            }));
+        }
+
         private void CompanionCaptureAsk(string requestId, string? displayId, string? prompt)
         {
             Dispatcher.BeginInvoke(new Action(async () =>
@@ -4320,10 +4397,10 @@ namespace SecureOverlay
                     await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
                     return;
                 }
-                if (!CompanionHasActiveLock())
+                if (!CompanionHasActiveLock() && !TryEnsureCompanionInterview())
                 {
                     _companionHasError = true;
-                    await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
+                    await SendCompanionCaptureFailed(requestId, "lock_missing", "Could not start an interview session from the phone.");
                     return;
                 }
 
@@ -4368,10 +4445,10 @@ namespace SecureOverlay
                     await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
                     return;
                 }
-                if (!CompanionHasActiveLock())
+                if (!CompanionHasActiveLock() && !TryEnsureCompanionInterview())
                 {
                     _companionHasError = true;
-                    await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
+                    await SendCompanionCaptureFailed(requestId, "lock_missing", "Could not start an interview session from the phone.");
                     return;
                 }
 
@@ -4417,10 +4494,10 @@ namespace SecureOverlay
             Dispatcher.BeginInvoke(new Action(async () =>
             {
                 _companionActiveRequestId = requestId;
-                if (!CompanionHasActiveLock())
+                if (!CompanionHasActiveLock() && !TryEnsureCompanionInterview())
                 {
                     _companionHasError = true;
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "lock_missing", "No active interview lock.");
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "lock_missing", "Could not start an interview session from the phone.");
                     return;
                 }
                 if (string.IsNullOrWhiteSpace(text))
@@ -4497,6 +4574,8 @@ namespace SecureOverlay
             public void ChatCancel(string? requestId) => _owner.CompanionChatCancel(requestId);
             public void ChatNewTopic() => _owner.CompanionChatNewTopic();
             public void DisplaySelect(string? displayId) => _owner.CompanionDisplaySelect(displayId);
+            public void VoiceStart() => _owner.CompanionVoiceStart();
+            public void VoiceStop() => _owner.CompanionVoiceStop();
         }
 
         private void ApplySelectedContextPackToConversation(ContextPack selectedPack, bool resetConversation)
@@ -6198,6 +6277,10 @@ namespace SecureOverlay
                 // ✅ CRITICAL: Only clear cache if NOT restarting
                 if (!_isRestarting)
                 {
+                    // Revoke first so the phone leaves the session immediately instead of
+                    // waiting through interview finalize / lock release.
+                    RevokeCompanionPairingOnShutdown();
+
                     Log.WriteLine("Normal close detected - clearing conversation cache...");
                     SettingsManager.ClearConversationCache();
                     Log.WriteLine("  ✓ Conversation cache cleared");
@@ -6239,11 +6322,6 @@ namespace SecureOverlay
                     }
 
                     _interviewLockService.MarkLockReleased();
-
-                    // Closing the desktop must revoke the companion pairing so the phone
-                    // stops auto-reconnecting. Unpair on the phone already DELETEs; this
-                    // covers the case where the user just quits Phantom.
-                    RevokeCompanionPairingOnShutdown();
                 }
                 else
                 {

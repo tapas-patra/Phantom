@@ -17,8 +17,8 @@ namespace Phantom.WindowsApp.Backend.Services;
 public sealed class CompanionRelayHost
 {
     private const string SubProtocol = "phantom.companion.v1";
-    private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(45);
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private const int MaxFrameBytes = 64 * 1024;
     private const int MaxCaptureCompletedFrameBytes = 128 * 1024; // spec §5: capture.completed thumbnail up to 80 KB decoded
     // Reassembly buffer must accommodate the largest allowed frame (capture.completed),
@@ -375,6 +375,12 @@ public sealed class CompanionRelayHost
             return;
         }
 
+        if (envelope.Type is "relay.ping" or "relay.pong")
+        {
+            // Hop-by-hop keepalive. Receiving the frame already reset the timeout.
+            return;
+        }
+
         if (role == "desktop")
         {
             if (envelope.Type == "session.snapshot")
@@ -399,11 +405,9 @@ public sealed class CompanionRelayHost
                 await SendRelayErrorAsync(socket, "rate_limited", "Capture rate limit exceeded.");
                 return;
             }
-            if (!await PairingDesktopHoldsLockAsync(room))
-            {
-                await SendRelayErrorAsync(socket, "lock_missing", "Desktop does not hold an active interview lock.");
-                return;
-            }
+            // Do not gate capture on an existing interview lock. The desktop starts
+            // the interview on the first phone capture/chat so the phone can begin
+            // a live session without a prior desktop tap.
             _audit.Record(room.UserId ?? string.Empty, room.PairingId, "capture_requested", "phone");
         }
         else if (envelope.Type == "chat.send")
@@ -506,7 +510,11 @@ public sealed class CompanionRelayHost
         {
             lock (_gate)
             {
-                if (role == "desktop" && ReferenceEquals(_desktop, socket)) _desktop = null;
+                if (role == "desktop" && ReferenceEquals(_desktop, socket))
+                {
+                    _desktop = null;
+                    Snapshot = null;
+                }
                 else if (role == "phone" && ReferenceEquals(_phone, socket)) _phone = null;
             }
         }

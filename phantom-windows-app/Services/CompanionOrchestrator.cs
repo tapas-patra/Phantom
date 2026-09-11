@@ -318,6 +318,7 @@ namespace SecureOverlay.Services
             host.OnDisplaySelect = displayId => _target.DisplaySelect(displayId);
             host.OnVoiceStart = () => _target.VoiceStart();
             host.OnVoiceStop = () => _target.VoiceStop();
+            host.OnVoiceTranscript = (text, sent) => _target.VoiceTranscript(text, sent);
             host.OnRuntimeSelect = (provider, model) => _target.RuntimeSelect(provider, model);
             host.OnCaptureRemove = index => _target.CaptureRemove(index);
             host.OnCaptureClear = () => _target.CaptureClear();
@@ -345,6 +346,7 @@ namespace SecureOverlay.Services
         void DisplaySelect(string? displayId);
         void VoiceStart();
         void VoiceStop();
+        void VoiceTranscript(string text, bool sent);
         void RuntimeSelect(string? provider, string? model);
         void CaptureRemove(int index);
         void CaptureClear();

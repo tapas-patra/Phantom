@@ -2,6 +2,14 @@ package com.phantom.companion.domain.model
 
 const val DEFAULT_SCREEN_PROMPT = "Please analyze this screenshot."
 
+fun shouldPublishComposer(current: String, lastPublished: String): Boolean =
+    current != lastPublished
+
+fun shouldApplyRemoteComposer(current: String, incoming: String, sent: Boolean): Boolean {
+    if (sent) return current.isNotEmpty()
+    return current != incoming
+}
+
 fun resolveFollowUpText(
     input: String,
     attachmentCount: Int,

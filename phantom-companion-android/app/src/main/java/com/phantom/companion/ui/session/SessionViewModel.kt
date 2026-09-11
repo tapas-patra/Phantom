@@ -15,6 +15,10 @@ import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
 import com.phantom.companion.domain.model.StartupSnapshot
 import com.phantom.companion.domain.model.resolveFollowUpText
+import com.phantom.companion.domain.model.shouldApplyRemoteComposer
+import com.phantom.companion.domain.model.shouldPublishComposer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -67,6 +71,9 @@ class SessionViewModel(
     // Text already in the composer when phone STT started. Partial/final hypotheses
     // replace the live tail instead of appending, which is how Android reports them.
     private var phoneDictationPrefix: String? = null
+    private var applyingRemoteComposer = false
+    private var lastPublishedComposer = ""
+    private var composerSyncJob: Job? = null
 
     private val _navigationEvent = MutableSharedFlow<SessionNavigationEvent>()
     val navigationEvent: SharedFlow<SessionNavigationEvent> = _navigationEvent.asSharedFlow()
@@ -88,7 +95,6 @@ class SessionViewModel(
         }
         viewModelScope.launch {
             sessionRepository.desktopVoice.collect { update ->
-                if (sessionStore.usePhoneMicrophone.value) return@collect
                 applyDesktopVoiceComposer(update)
             }
         }
@@ -96,6 +102,7 @@ class SessionViewModel(
 
     fun onInputTextChanged(text: String) {
         _inputText.value = text
+        scheduleComposerSync()
     }
 
     fun onCaptureClicked() {
@@ -105,8 +112,11 @@ class SessionViewModel(
     fun onSendFollowUpClicked() {
         val text = resolveFollowUpText(_inputText.value, pendingAttachments.value.size) ?: return
         sessionRepository.sendFollowUp(text)
+        applyingRemoteComposer = true
         phoneDictationPrefix = null
         _inputText.value = ""
+        lastPublishedComposer = ""
+        applyingRemoteComposer = false
     }
 
     fun setMicListening(listening: Boolean) {
@@ -145,6 +155,7 @@ class SessionViewModel(
         phoneDictationPrefix = next.prefix
         _inputText.value = next.text
         _isMicListening.value = next.listening
+        scheduleComposerSync(immediate = isFinal)
     }
 
     fun startDesktopVoice() {
@@ -155,13 +166,42 @@ class SessionViewModel(
     fun stopDesktopVoice() = sessionRepository.stopDesktopVoice()
 
     private fun applyDesktopVoiceComposer(update: DesktopVoiceUpdate) {
+        if (!shouldApplyRemoteComposer(_inputText.value, update.text, update.sent)) {
+            lastPublishedComposer = if (update.sent) "" else update.text
+            return
+        }
+        applyingRemoteComposer = true
         if (update.sent) {
             phoneDictationPrefix = null
             _inputText.value = ""
             _isMicListening.value = false
+            lastPublishedComposer = ""
+        } else {
+            _inputText.value = update.text
+            phoneDictationPrefix = update.text.trimEnd()
+            lastPublishedComposer = update.text
+        }
+        applyingRemoteComposer = false
+    }
+
+    private fun scheduleComposerSync(immediate: Boolean = false) {
+        if (applyingRemoteComposer) return
+        composerSyncJob?.cancel()
+        val publish = {
+            val current = _inputText.value
+            if (shouldPublishComposer(current, lastPublishedComposer)) {
+                lastPublishedComposer = current
+                sessionRepository.syncComposer(current)
+            }
+        }
+        if (immediate) {
+            publish()
             return
         }
-        _inputText.value = update.text
+        composerSyncJob = viewModelScope.launch {
+            delay(COMPOSER_SYNC_DEBOUNCE_MS)
+            if (!applyingRemoteComposer) publish()
+        }
     }
 
     fun showVoiceSettings() {
@@ -242,10 +282,13 @@ class SessionViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        composerSyncJob?.cancel()
         sessionRepository.stopSession()
     }
 
     companion object {
+        private const val COMPOSER_SYNC_DEBOUNCE_MS = 180L
+
         fun provideFactory(
             sessionRepository: SessionRepository,
             sessionStore: SessionStore,

@@ -99,6 +99,11 @@ final class CompanionCommandHost {
             if store?.isListening == true {
                 store?.toggleVoiceInput()
             }
+        case "voice.transcript":
+            store?.applyCompanionComposer(
+                text: frame.string("text") ?? "",
+                sent: frame.bool("sent") ?? false
+            )
         case "runtime.select":
             applyRuntimeSelect(provider: frame.string("provider"), model: frame.string("model"))
         case "capture.remove":

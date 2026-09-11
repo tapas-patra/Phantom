@@ -52,7 +52,12 @@ final class PhantomStore: ObservableObject {
             if oldValue != selectedModelId { announceCompanionRuntime() }
         }
     }
-    @Published var prompt = ""
+    @Published var prompt = "" {
+        didSet {
+            guard !applyingCompanionComposer else { return }
+            scheduleCompanionComposerMirror()
+        }
+    }
     @Published var messages: [ChatMessage] = []
     @Published var isSending = false
     @Published var copilotMode: CopilotMode {
@@ -264,6 +269,9 @@ final class PhantomStore: ObservableObject {
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
     private var voiceDispatchTask: Task<Void, Never>?
+    private var composerMirrorTask: Task<Void, Never>?
+    private var applyingCompanionComposer = false
+    private var lastMirroredComposer = ""
     private var pendingVoiceAutoSend = false
     private var sawVoiceTranscriptAfterStop = false
     private var voiceAutoSendDeadline: Date?
@@ -1264,7 +1272,10 @@ final class PhantomStore: ObservableObject {
             }
         }
 
+        applyingCompanionComposer = true
         prompt = ""
+        applyingCompanionComposer = false
+        lastMirroredComposer = ""
         companionVoiceTranscriptHandler?("", true, true)
         let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
@@ -2177,6 +2188,7 @@ final class PhantomStore: ObservableObject {
             self.preserveVoiceEdits = merged.preservingEdits
             self.previousVoiceTranscript = transcript
             self.lastVoiceRenderedPrompt = merged.text
+            self.lastMirroredComposer = merged.text
             self.companionVoiceTranscriptHandler?(merged.text, isFinal, false)
             Diagnostics.event(
                 isFinal ? "transcript_finalized" : "transcript_partial_received",
@@ -2200,6 +2212,49 @@ final class PhantomStore: ObservableObject {
             guard let self else { return }
             self.voiceStatus = state
             self.isListening = self.speechInput.isListening
+        }
+    }
+
+    func applyCompanionComposer(text: String, sent: Bool) {
+        applyingCompanionComposer = true
+        defer { applyingCompanionComposer = false }
+        if sent {
+            prompt = ""
+            lastMirroredComposer = ""
+            voicePromptPrefix = ""
+            previousVoiceTranscript = ""
+            lastVoiceRenderedPrompt = ""
+            preserveVoiceEdits = false
+            return
+        }
+        guard prompt != text else {
+            lastMirroredComposer = text
+            return
+        }
+        prompt = text
+        lastMirroredComposer = text
+        lastVoiceRenderedPrompt = text
+        previousVoiceTranscript = ""
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        voicePromptPrefix = trimmed.isEmpty ? "" : trimmed + " "
+        preserveVoiceEdits = true
+    }
+
+    private func scheduleCompanionComposerMirror() {
+        guard companionVoiceTranscriptHandler != nil else { return }
+        composerMirrorTask?.cancel()
+        composerMirrorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard !self.applyingCompanionComposer else { return }
+            let text = self.prompt
+            guard text != self.lastMirroredComposer else { return }
+            self.lastMirroredComposer = text
+            if !self.speechInput.isListening {
+                self.preserveVoiceEdits = true
+                self.lastVoiceRenderedPrompt = text
+            }
+            self.companionVoiceTranscriptHandler?(text, true, false)
         }
     }
 

@@ -228,4 +228,23 @@ class SerializationTest {
         assertEquals(false, decoded.body?.isFinal)
         assertEquals(false, decoded.body?.sent)
     }
+
+    @Test
+    fun testPhoneComposerEditUsesVoiceTranscript() {
+        val rawJson = """
+            {
+              "v": 1,
+              "type": "voice.transcript",
+              "pairingId": "pair_111",
+              "role": "phone",
+              "body": { "text": "edited on phone", "isFinal": true, "sent": false }
+            }
+        """.trimIndent()
+        val decoded = json.decodeFromString<RelayEnvelope>(rawJson)
+        assertEquals("voice.transcript", decoded.type)
+        assertEquals("phone", decoded.role)
+        assertEquals("edited on phone", decoded.body?.text)
+        assertEquals(true, decoded.body?.isFinal)
+        assertEquals(false, decoded.body?.sent)
+    }
 }

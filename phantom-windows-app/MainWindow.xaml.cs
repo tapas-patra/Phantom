@@ -97,6 +97,9 @@ namespace SecureOverlay
         private DateTime _voiceAutoSendDeadlineUtc;
         private DateTime _voiceAutoSendFallbackUtc;
         private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
+        private System.Windows.Threading.DispatcherTimer? _companionComposerSyncTimer;
+        private bool _applyingCompanionComposer;
+        private string _lastCompanionComposerSent = "\u0001";
         private bool _isChatSectionCollapsed = false;
         private const double ExpandedWindowMinHeight = 220;
         private const double CollapsedWindowMinHeight = 88;
@@ -365,6 +368,8 @@ namespace SecureOverlay
                 
                 InputBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(112, 255, 255, 255));
             };
+
+            InputTextBox.TextChanged += InputTextBox_TextChanged;
 
             // ═══════════════════════════════════════════════════════════════
             // Rebuild chat UI from restored conversation
@@ -3708,7 +3713,90 @@ namespace SecureOverlay
         private void SendCompanionVoiceComposer(string text, bool isFinal, bool sent = false)
         {
             if (_companionOrchestrator == null || !_companionOrchestrator.IsEnabled) return;
+            _lastCompanionComposerSent = sent ? "" : (text ?? "");
             _ = _companionOrchestrator.SendVoiceTranscriptAsync(text, isFinal, sent);
+        }
+
+        private string CompanionComposerText()
+        {
+            var text = InputTextBox.Text ?? "";
+            if (text == "Ask me anything..."
+                || text == "Interview start is blocked for this account state.")
+            {
+                return "";
+            }
+            return text;
+        }
+
+        private void InputTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            if (_applyingCompanionComposer) return;
+            if (_voiceService?.IsListening() != true)
+            {
+                _voiceCommittedText = CompanionComposerText().TrimEnd();
+            }
+            ScheduleCompanionComposerSync();
+        }
+
+        private void ScheduleCompanionComposerSync()
+        {
+            if (_companionOrchestrator == null || !_companionOrchestrator.IsEnabled) return;
+            if (_companionComposerSyncTimer == null)
+            {
+                _companionComposerSyncTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(180)
+                };
+                _companionComposerSyncTimer.Tick += (_, _) =>
+                {
+                    _companionComposerSyncTimer?.Stop();
+                    var text = CompanionComposerText();
+                    if (text == _lastCompanionComposerSent) return;
+                    SendCompanionVoiceComposer(text, isFinal: true);
+                };
+            }
+            _companionComposerSyncTimer.Stop();
+            _companionComposerSyncTimer.Start();
+        }
+
+        private void CompanionVoiceTranscript(string text, bool sent)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _applyingCompanionComposer = true;
+                try
+                {
+                    if (sent)
+                    {
+                        InputTextBox.Text = "";
+                        _voiceCommittedText = "";
+                        _lastCompanionComposerSent = "";
+                        return;
+                    }
+
+                    var incoming = text ?? "";
+                    if (CompanionComposerText() == incoming)
+                    {
+                        _lastCompanionComposerSent = incoming;
+                        return;
+                    }
+
+                    InputTextBox.Text = incoming;
+                    InputTextBox.Foreground = string.IsNullOrEmpty(incoming)
+                        ? new SolidColorBrush(Color.FromArgb(150, 255, 255, 255))
+                        : Brushes.White;
+                    if (string.IsNullOrEmpty(incoming) && !InputTextBox.IsFocused)
+                    {
+                        InputTextBox.Text = "Ask me anything...";
+                    }
+                    _voiceCommittedText = incoming.TrimEnd();
+                    _lastCompanionComposerSent = incoming;
+                }
+                finally
+                {
+                    _applyingCompanionComposer = false;
+                }
+            }));
         }
 
         private void OnVoiceStatusChanged(object? sender, string status)
@@ -4739,6 +4827,7 @@ namespace SecureOverlay
             public void DisplaySelect(string? displayId) => _owner.CompanionDisplaySelect(displayId);
             public void VoiceStart() => _owner.CompanionVoiceStart();
             public void VoiceStop() => _owner.CompanionVoiceStop();
+            public void VoiceTranscript(string text, bool sent) => _owner.CompanionVoiceTranscript(text, sent);
             public void RuntimeSelect(string? provider, string? model) => _owner.CompanionRuntimeSelect(provider, model);
             public void CaptureRemove(int index) => _owner.CompanionCaptureRemove(index);
             public void CaptureClear() => _owner.CompanionCaptureClear();
@@ -6549,6 +6638,12 @@ namespace SecureOverlay
                     Log.WriteLine("  ✓ Stream timer stopped");
                 }
                 
+                if (_companionComposerSyncTimer != null)
+                {
+                    _companionComposerSyncTimer.Stop();
+                    _companionComposerSyncTimer = null;
+                }
+
                 if (_voiceCompletionTimer != null)
                 {
                     Log.WriteLine("Stopping voice completion timer...");

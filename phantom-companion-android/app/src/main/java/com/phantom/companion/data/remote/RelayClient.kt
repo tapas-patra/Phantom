@@ -568,6 +568,15 @@ class RelayClient(
         )
     }
 
+    fun sendVoiceTranscript(text: String, isFinal: Boolean = true, sent: Boolean = false) {
+        val pairingId = currentPairingId ?: return
+        sendFrame(
+            type = "voice.transcript",
+            pairingId = pairingId,
+            body = RelayBody(text = text, isFinal = isFinal, sent = sent)
+        )
+    }
+
     fun sendVoiceStart() {
         val pairingId = currentPairingId ?: return
         sendFrame(type = "voice.start", pairingId = pairingId, body = null)

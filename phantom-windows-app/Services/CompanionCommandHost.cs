@@ -50,6 +50,7 @@ namespace SecureOverlay.Services
         public Action<string?>? OnDisplaySelect { get; set; }
         public Action? OnVoiceStart { get; set; }
         public Action? OnVoiceStop { get; set; }
+        public Action<string, bool>? OnVoiceTranscript { get; set; }
         public Action<string?, string?>? OnRuntimeSelect { get; set; }
         public Action<int>? OnCaptureRemove { get; set; }
         public Action? OnCaptureClear { get; set; }
@@ -128,6 +129,11 @@ namespace SecureOverlay.Services
                     break;
                 case "voice.stop":
                     OnVoiceStop?.Invoke();
+                    break;
+                case "voice.transcript":
+                    OnVoiceTranscript?.Invoke(
+                        frame.ReadString("text") ?? string.Empty,
+                        frame.ReadBool("sent") ?? false);
                     break;
                 case "runtime.select":
                     OnRuntimeSelect?.Invoke(frame.ReadString("provider"), frame.ReadString("model"));

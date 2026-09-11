@@ -361,6 +361,10 @@ class SessionRepository(
         relayClient.sendCaptureClear()
     }
 
+    fun syncComposer(text: String) {
+        relayClient.sendVoiceTranscript(text = text, isFinal = true, sent = false)
+    }
+
     fun startDesktopVoice() {
         relayClient.sendVoiceStart()
     }

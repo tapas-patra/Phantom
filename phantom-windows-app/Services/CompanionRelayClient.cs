@@ -4,19 +4,28 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Services
 {
     /// <summary>
     /// WebSocket relay client for Companion Mode. Connects to the hosted relay with a
-    /// short-lived ticket, sends/receases JSON envelopes, and reconnects with a capped
-    /// backoff. All inbound frames are surfaced via <see cref="FrameReceived"/>; the
+    /// short-lived ticket, sends/receives JSON envelopes, and reconnects with a capped
+    /// backoff. A fresh ticket is fetched from <see cref="_ticketProvider"/> on every
+    /// connect attempt (spec §9) so reconnects after a drop do not fail on a consumed
+    /// ticket. All inbound frames are surfaced via <see cref="FrameReceived"/>; the
     /// caller (CompanionCommandHost) decides how to react.
     /// </summary>
     public sealed class CompanionRelayClient : IAsyncDisposable
     {
         private const string SubProtocol = "phantom.companion.v1";
         private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(45);
+        private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(20);
+        private const int MaxAssemblyBytes = 128 * 1024;
+        private static readonly JsonSerializerOptions JsonOptions = new()
+        {
+            PropertyNameCaseInsensitive = true
+        };
         private static readonly TimeSpan[] Backoff =
         {
             TimeSpan.FromSeconds(1),
@@ -26,8 +35,7 @@ namespace SecureOverlay.Services
             TimeSpan.FromSeconds(15)
         };
 
-        private readonly string _relayUrl;
-        private readonly string _ticket;
+        private readonly Func<CancellationToken, Task<CompanionRelayTicketDto>> _ticketProvider;
         private ClientWebSocket? _socket;
         private CancellationTokenSource _cts = new();
         private Task? _loopTask;
@@ -40,10 +48,9 @@ namespace SecureOverlay.Services
         public event Action<CompanionRelayFrame>? FrameReceived;
         public event Action<CompanionRelayState>? StateChanged;
 
-        public CompanionRelayClient(string relayUrl, string ticket, string pairingId, string role)
+        public CompanionRelayClient(Func<CancellationToken, Task<CompanionRelayTicketDto>> ticketProvider, string pairingId, string role)
         {
-            _relayUrl = relayUrl;
-            _ticket = ticket;
+            _ticketProvider = ticketProvider;
             PairingId = pairingId;
             Role = role;
         }
@@ -98,11 +105,25 @@ namespace SecureOverlay.Services
                 EmitState(CompanionRelayState.Connecting);
                 try
                 {
+                    // Fetch a fresh ticket on every connect (spec §9). A ticket is
+                    // single-use and consumed by the backend on upgrade, so reusing a
+                    // stored ticket would permanently break reconnects.
+                    CompanionRelayTicketDto ticket;
+                    try
+                    {
+                        ticket = await _ticketProvider(cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.WriteLine($"CompanionRelayClient ticket fetch failed: {ex.Message}");
+                        throw;
+                    }
+
                     using var socket = new ClientWebSocket();
                     socket.Options.AddSubProtocol(SubProtocol);
-                    var uriBuilder = new UriBuilder(_relayUrl)
+                    var uriBuilder = new UriBuilder(ticket.RelayUrl)
                     {
-                        Query = $"ticket={Uri.EscapeDataString(_ticket)}"
+                        Query = $"ticket={Uri.EscapeDataString(ticket.Ticket)}"
                     };
                     await socket.ConnectAsync(uriBuilder.Uri, cancellationToken);
                     _socket = socket;
@@ -133,44 +154,89 @@ namespace SecureOverlay.Services
 
         private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken)
         {
-            var buffer = new byte[64 * 1024];
+            var buffer = new byte[MaxAssemblyBytes];
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(ReceiveTimeout);
 
-            while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+            // Outbound ping every 20s (spec §5: client may ping; server drops after 45s silence).
+            var ping = Task.Run(async () =>
             {
-                cts.CancelAfter(ReceiveTimeout);
-                WebSocketReceiveResult result;
-                using var ms = new System.IO.MemoryStream();
-                do
-                {
-                    result = await socket.ReceiveAsync(buffer, cts.Token);
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "client closing", CancellationToken.None);
-                        return;
-                    }
-                    ms.Write(buffer, 0, result.Count);
-                }
-                while (!result.EndOfMessage);
-
-                if (ms.Length == 0) continue;
-
-                CompanionRelayFrame? frame;
                 try
                 {
-                    frame = JsonSerializer.Deserialize<CompanionRelayFrame>(ms.ToArray());
+                    while (!cts.IsCancellationRequested && socket.State == WebSocketState.Open)
+                    {
+                        await Task.Delay(PingInterval, cts.Token);
+                        if (socket.State == WebSocketState.Open)
+                        {
+                            var pingPayload = JsonSerializer.SerializeToUtf8Bytes(new
+                            {
+                                v = 1, type = "relay.ping", ts = DateTime.UtcNow
+                            });
+                            await socket.SendAsync(pingPayload, WebSocketMessageType.Text, endOfMessage: true, cts.Token);
+                        }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Log.WriteLine($"CompanionRelayClient failed to parse frame: {ex.Message}");
-                    continue;
-                }
+                catch { }
+            }, cts.Token);
 
-                if (frame != null)
+            try
+            {
+                while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
                 {
-                    FrameReceived?.Invoke(frame);
+                    // 45s receive timeout — drop silent sockets.
+                    cts.CancelAfter(ReceiveTimeout);
+                    WebSocketReceiveResult result;
+                    using var ms = new System.IO.MemoryStream();
+                    var tooLarge = false;
+                    do
+                    {
+                        result = await socket.ReceiveAsync(buffer, cts.Token);
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "client closing", CancellationToken.None);
+                            return;
+                        }
+                        ms.Write(buffer, 0, result.Count);
+                        if (ms.Length > MaxAssemblyBytes)
+                        {
+                            tooLarge = true;
+                            while (!result.EndOfMessage)
+                            {
+                                result = await socket.ReceiveAsync(buffer, cts.Token);
+                            }
+                            break;
+                        }
+                    }
+                    while (!result.EndOfMessage);
+
+                    if (tooLarge)
+                    {
+                        Log.WriteLine("CompanionRelayClient: inbound frame exceeded size limit; ignored.");
+                        continue;
+                    }
+
+                    if (ms.Length == 0) continue;
+
+                    CompanionRelayFrame? frame;
+                    try
+                    {
+                        frame = JsonSerializer.Deserialize<CompanionRelayFrame>(ms.ToArray(), JsonOptions);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.WriteLine($"CompanionRelayClient failed to parse frame: {ex.Message}");
+                        continue;
+                    }
+
+                    if (frame != null)
+                    {
+                        FrameReceived?.Invoke(frame);
+                    }
                 }
+            }
+            finally
+            {
+                cts.Cancel();
+                try { await ping; } catch { }
             }
         }
 
@@ -178,6 +244,10 @@ namespace SecureOverlay.Services
     }
 
     public enum CompanionRelayState { Connecting, Connected, Disconnected }
+
+    /// <summary>Outcome of a companion-driven chat turn, used to emit the correct
+    /// chat.* frame from the SendMessage finally block (C5).</summary>
+    public enum CompanionTurnOutcome { Pending, Succeeded, Cancelled, Failed }
 
     public sealed class CompanionRelayFrame
     {
@@ -187,8 +257,13 @@ namespace SecureOverlay.Services
         public DateTime? Ts { get; set; }
         public string? PairingId { get; set; }
         public string? Role { get; set; }
+        // Top-level fields used by relay.error (code/message are sent at the envelope top
+        // level, not under body). Bound via case-insensitive deserialization.
+        public string? Code { get; set; }
+        public string? Message { get; set; }
         public JsonElement? Body { get; set; }
 
+        // Reads a string field from the envelope BODY (where phone→desktop commands live).
         public string? ReadString(string key)
             => Body.HasValue && Body.Value.ValueKind == JsonValueKind.Object
                 && Body.Value.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.String

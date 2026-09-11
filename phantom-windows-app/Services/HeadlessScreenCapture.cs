@@ -68,7 +68,8 @@ namespace SecureOverlay.Services
 
         /// <summary>
         /// Builds a small JPEG thumbnail (long edge ~480) for capture.completed frames.
-        /// Returns null if encoding fails. Caller must enforce the 80 KB decoded cap.
+        /// Returns null if encoding fails. The decoded JPEG is capped at 80 KB by
+        /// stepping the quality down (spec §5).
         /// </summary>
         public static string? BuildThumbnailJpegBase64(BitmapImage image, int longEdge = 480)
         {
@@ -79,15 +80,31 @@ namespace SecureOverlay.Services
                 if (width == 0 || height == 0) return null;
 
                 var scale = Math.Min(1.0, (double)longEdge / Math.Max(width, height));
-                var targetWidth = Math.Max(1, (int)(width * scale));
-                var targetHeight = Math.Max(1, (int)(height * scale));
-
-                var encoder = new JpegBitmapEncoder { QualityLevel = 70 };
                 var transformed = new TransformedBitmap(image, new ScaleTransform(scale, scale));
-                encoder.Frames.Add(BitmapFrame.Create(transformed));
-                using var memory = new MemoryStream();
-                encoder.Save(memory);
-                return Convert.ToBase64String(memory.ToArray());
+
+                // Step quality down until the decoded JPEG is <= 80 KB (spec §5).
+                const int maxDecodedBytes = 80 * 1024;
+                var qualities = new[] { 70, 55, 40, 25, 15 };
+                foreach (var quality in qualities)
+                {
+                    var encoder = new JpegBitmapEncoder { QualityLevel = quality };
+                    encoder.Frames.Add(BitmapFrame.Create(transformed));
+                    using var memory = new MemoryStream();
+                    encoder.Save(memory);
+                    var bytes = memory.ToArray();
+                    if (bytes.Length <= maxDecodedBytes)
+                    {
+                        return Convert.ToBase64String(bytes);
+                    }
+                }
+
+                // Last resort: smallest quality still too big — return it anyway (the
+                // relay will reject with payload_too_large if it exceeds the cap).
+                using var fallback = new MemoryStream();
+                var lastEncoder = new JpegBitmapEncoder { QualityLevel = 15 };
+                lastEncoder.Frames.Add(BitmapFrame.Create(transformed));
+                lastEncoder.Save(fallback);
+                return Convert.ToBase64String(fallback.ToArray());
             }
             catch (Exception ex)
             {
@@ -103,10 +120,12 @@ namespace SecureOverlay.Services
             for (var i = 0; i < screens.Length; i++)
             {
                 var screen = screens[i];
+                var friendly = string.IsNullOrWhiteSpace(screen.DeviceName) ? $"Display {i + 1}"
+                    : screen.DeviceName.Replace(@"\\.\DISPLAY", "Display ");
                 list.Add(new CompanionDisplayDto
                 {
                     Id = i.ToString(),
-                    Name = screen.DeviceName,
+                    Name = screen.Primary ? $"{friendly} (Primary)" : friendly,
                     IsDefault = screen.Primary
                 });
             }

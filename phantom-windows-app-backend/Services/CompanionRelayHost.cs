@@ -20,10 +20,17 @@ public sealed class CompanionRelayHost
     private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(20);
     private const int MaxFrameBytes = 64 * 1024;
+    private const int MaxCaptureCompletedFrameBytes = 128 * 1024; // spec §5: capture.completed thumbnail up to 80 KB decoded
+    private const int MaxAssemblyBytes = 128 * 1024;
     private const int CaptureRatePerMinute = 10;
     private const int ChatSendRatePerMinute = 30;
     private const int MaxSnapshotTurns = 20;
     private static readonly TimeSpan RateWindow = TimeSpan.FromMinutes(1);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private readonly CompanionRelayTicketService _tickets;
     private readonly CompanionPairingRepository _pairings;
@@ -64,6 +71,21 @@ public sealed class CompanionRelayHost
         room.SendRelayErrorToBoth(code, "Pairing closed.");
         room.DesktopSocket.Abort();
         room.PhoneSocket.Abort();
+    }
+
+    /// <summary>
+    /// Gracefully closes every room on process shutdown (spec §6.4). Sends a relay.error
+    /// to both peers before aborting so clients can surface a clean disconnect.
+    /// </summary>
+    public void Shutdown()
+    {
+        foreach (var pair in _rooms)
+        {
+            pair.Value.SendRelayErrorToBoth("server_shutdown", "Relay is shutting down.");
+            pair.Value.DesktopSocket.Abort();
+            pair.Value.PhoneSocket.Abort();
+        }
+        _rooms.Clear();
     }
 
     public async Task AcceptAsync(HttpContext httpContext)
@@ -189,19 +211,40 @@ public sealed class CompanionRelayHost
                 }
                 else
                 {
+                    // Multi-fragment reassembly with a hard cap to prevent unbounded
+                    // memory growth from a malicious peer (spec §5 max frame, C9).
                     using var ms = new System.IO.MemoryStream();
                     ms.Write(buffer, 0, result.Count);
+                    var tooLarge = ms.Length > MaxAssemblyBytes;
                     while (!result.EndOfMessage)
                     {
                         result = await socket.ReceiveAsync(buffer, cts.Token);
                         ms.Write(buffer, 0, result.Count);
+                        if (ms.Length > MaxAssemblyBytes)
+                        {
+                            tooLarge = true;
+                            while (!result.EndOfMessage)
+                            {
+                                result = await socket.ReceiveAsync(buffer, cts.Token);
+                            }
+                            break;
+                        }
+                    }
+                    if (tooLarge)
+                    {
+                        await SendRelayErrorAsync(socket, "payload_too_large", "Frame exceeds size limit.");
+                        continue;
                     }
                     frame = ms.ToArray();
                 }
 
-                if (frame.Length > MaxFrameBytes)
+                // Per-type size enforcement after we know the envelope type (M12):
+                // capture.completed may carry an up-to-80 KB thumbnail (base64-encoded).
+                string? frameType = PeekFrameType(frame);
+                var limit = frameType == "capture.completed" ? MaxCaptureCompletedFrameBytes : MaxFrameBytes;
+                if (frame.Length > limit)
                 {
-                    await SendRelayErrorAsync(socket, "payload_too_large", "Frame exceeds 64 KB limit.");
+                    await SendRelayErrorAsync(socket, "payload_too_large", "Frame exceeds size limit.");
                     continue;
                 }
 
@@ -215,12 +258,26 @@ public sealed class CompanionRelayHost
         }
     }
 
+    private static string? PeekFrameType(byte[] frame)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(frame);
+            if (doc.RootElement.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
+            {
+                return typeEl.GetString();
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private async Task HandleFrameAsync(Room room, string role, WebSocket socket, byte[] frame, CancellationToken cancellationToken)
     {
         RelayEnvelope? envelope;
         try
         {
-            envelope = JsonSerializer.Deserialize<RelayEnvelope>(frame);
+            envelope = JsonSerializer.Deserialize<RelayEnvelope>(frame, JsonOptions);
         }
         catch
         {
@@ -345,6 +402,8 @@ public sealed class CompanionRelayHost
         private readonly object _gate = new();
         private WebSocket? _desktop;
         private WebSocket? _phone;
+        private readonly SemaphoreSlim _desktopSendLock = new(1, 1);
+        private readonly SemaphoreSlim _phoneSendLock = new(1, 1);
         private readonly List<DateTime> _captureSlots = new();
         private readonly List<DateTime> _chatSlots = new();
 
@@ -359,6 +418,7 @@ public sealed class CompanionRelayHost
         public string? UserId { get; }
         public string? DesktopDeviceId { get; }
         public CompanionSessionSnapshotDto? Snapshot { get; private set; }
+        public string? LastHello { get; private set; }
 
         public PeerSocket DesktopSocket => new(_desktop);
         public PeerSocket PhoneSocket => new(_phone);
@@ -385,19 +445,46 @@ public sealed class CompanionRelayHost
         {
             try
             {
-                var snapshot = JsonSerializer.Deserialize<CompanionSessionSnapshotDto>(frame);
+                // Desktops send the snapshot nested under `body` (spec §5.2). Unwrap it
+                // before deserializing so /sessions/current returns real data (H3).
+                CompanionSessionSnapshotDto? snapshot;
+                using (var doc = JsonDocument.Parse(frame))
+                {
+                    if (doc.RootElement.TryGetProperty("body", out var bodyEl) && bodyEl.ValueKind == JsonValueKind.Object)
+                    {
+                        snapshot = JsonSerializer.Deserialize<CompanionSessionSnapshotDto>(bodyEl.GetRawText(), JsonOptions);
+                    }
+                    else
+                    {
+                        snapshot = JsonSerializer.Deserialize<CompanionSessionSnapshotDto>(frame, JsonOptions);
+                    }
+                }
                 if (snapshot == null) return;
                 snapshot.PairingId = PairingId;
+                // Keep the LAST 20 turns, not the first 20 (spec §4.6).
                 if (snapshot.Turns.Count > MaxSnapshotTurns)
                 {
-                    snapshot.Turns = snapshot.Turns.Take(MaxSnapshotTurns).ToList();
+                    snapshot.Turns = snapshot.Turns
+                        .Skip(snapshot.Turns.Count - MaxSnapshotTurns)
+                        .ToList();
                 }
                 lock (_gate) { Snapshot = snapshot; }
             }
             catch { }
         }
 
-        public void UpdateHello(byte[] frame) { lock (_gate) { } }
+        public void UpdateHello(byte[] frame)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(frame);
+                if (doc.RootElement.TryGetProperty("body", out var bodyEl) && bodyEl.ValueKind == JsonValueKind.Object)
+                {
+                    lock (_gate) { LastHello = bodyEl.GetRawText(); }
+                }
+            }
+            catch { }
+        }
 
         public bool TryConsumeCaptureSlot()
         {
@@ -421,24 +508,24 @@ public sealed class CompanionRelayHost
 
         public void NotifyPeerJoined(string role)
         {
-            var peer = role == "desktop" ? PhoneSocket : DesktopSocket;
-            _ = SendToAsync(peer, BuildRelayEvent("relay.peer_joined", role));
+            var peerRole = role == "desktop" ? "phone" : "desktop";
+            _ = SendToRoleAsync(peerRole, BuildRelayEvent("relay.peer_joined", role), CancellationToken.None);
         }
 
         public void NotifyPeerLeft(string role)
         {
-            var peer = role == "desktop" ? PhoneSocket : DesktopSocket;
-            _ = SendToAsync(peer, BuildRelayEvent("relay.peer_left", role));
+            var peerRole = role == "desktop" ? "phone" : "desktop";
+            _ = SendToRoleAsync(peerRole, BuildRelayEvent("relay.peer_left", role), CancellationToken.None);
         }
 
         public async Task SendToDesktopAsync(byte[] frame, CancellationToken cancellationToken)
         {
-            await SendToAsync(DesktopSocket, frame, cancellationToken);
+            await SendToRoleAsync("desktop", frame, cancellationToken);
         }
 
         public async Task SendToPhoneAsync(byte[] frame, CancellationToken cancellationToken)
         {
-            await SendToAsync(PhoneSocket, frame, cancellationToken);
+            await SendToRoleAsync("phone", frame, cancellationToken);
         }
 
         public void SendRelayErrorToBoth(string code, string message)
@@ -451,15 +538,35 @@ public sealed class CompanionRelayHost
                 message,
                 ts = DateTime.UtcNow
             });
-            _ = SendToAsync(DesktopSocket, payload);
-            _ = SendToAsync(PhoneSocket, payload);
+            _ = SendToRoleAsync("desktop", payload, CancellationToken.None);
+            _ = SendToRoleAsync("phone", payload, CancellationToken.None);
         }
 
-        private static async Task SendToAsync(PeerSocket peer, byte[] frame, CancellationToken cancellationToken = default)
+        // Per-socket send serialization. ASP.NET Core WebSocket sends are not documented
+        // thread-safe; the heartbeat task, frame forwarding, and relay.error sends can
+        // otherwise interleave on the same socket (H6).
+        private async Task SendToRoleAsync(string role, byte[] frame, CancellationToken cancellationToken)
         {
-            if (!peer.IsOpen()) return;
-            try { await peer.SendAsync(frame, cancellationToken); }
+            var gate = role == "desktop" ? _desktopSendLock : _phoneSendLock;
+            WebSocket? socket;
+            lock (_gate)
+            {
+                socket = role == "desktop" ? _desktop : _phone;
+            }
+            if (socket == null || socket.State != WebSocketState.Open) return;
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                if (socket.State == WebSocketState.Open)
+                {
+                    await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+                }
+            }
             catch { }
+            finally
+            {
+                gate.Release();
+            }
         }
 
         private static byte[] BuildRelayEvent(string type, string role)
@@ -480,7 +587,5 @@ public sealed class CompanionRelayHost
         public PeerSocket(WebSocket? socket) { _socket = socket; }
         public bool IsOpen() => _socket != null && _socket.State == WebSocketState.Open;
         public void Abort() { try { _socket?.Abort(); } catch { } }
-        public Task SendAsync(byte[] frame, CancellationToken cancellationToken)
-            => _socket!.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
     }
 }

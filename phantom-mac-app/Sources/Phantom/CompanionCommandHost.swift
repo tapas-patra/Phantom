@@ -8,8 +8,14 @@ final class CompanionCommandHost {
     private weak var store: PhantomStore?
     private let relay: CompanionRelayClient
     private var currentRequestId: String?
+    // True when a chat.cancel was received for the in-flight turn. The turn-finished
+    // handler emits chat.cancelled (not chat.failed) when this is set (C4).
+    private var pendingCancel = false
 
     var visionSupported: () -> Bool = { true }
+    /// Called with the relay.error code when a terminal error (pairing_revoked /
+    /// replaced / server_shutdown) arrives, so the orchestrator can stop reconnecting (M18).
+    var onTerminalRelayError: ((String) -> Void)?
 
     init(store: PhantomStore, relay: CompanionRelayClient) {
         self.store = store
@@ -31,17 +37,24 @@ final class CompanionCommandHost {
         case "relay.ping", "relay.peer_joined", "relay.peer_left":
             return
         case "relay.error":
-            if let code = frame.string("code") {
+            // relay.error sends code/message at the envelope top level (M18).
+            let code = frame.code ?? frame.string("code") ?? ""
+            if let message = frame.message, !message.isEmpty {
+                print("[companion] relay error: \(code) \(message)")
+            } else {
                 print("[companion] relay error: \(code)")
+            }
+            if code == "pairing_revoked" || code == "replaced" || code == "server_shutdown" {
+                onTerminalRelayError?(code)
             }
             return
         case "capture.full":
-            let displayId = frame.string("displayId")
+            let displayId = resolveDisplayId(frame.string("displayId"))
             let attachOnly = frame.bool("attachOnly") ?? false
             let requestId = frame.string("requestId") ?? frame.id ?? UUID().uuidString
             await captureFull(requestId: requestId, displayId: displayId, attachOnly: attachOnly)
         case "capture.ask":
-            let displayId = frame.string("displayId")
+            let displayId = resolveDisplayId(frame.string("displayId"))
             let prompt = frame.string("prompt")
             let requestId = frame.string("requestId") ?? frame.id ?? UUID().uuidString
             await captureAsk(requestId: requestId, displayId: displayId, prompt: prompt)
@@ -50,12 +63,12 @@ final class CompanionCommandHost {
             let requestId = frame.string("requestId") ?? frame.id ?? UUID().uuidString
             await chatSend(requestId: requestId, text: text)
         case "chat.cancel":
+            // Just flag + cancel; the turn-finished handler emits chat.cancelled (C4).
+            pendingCancel = true
             store?.cancelCurrentRequest()
-            if let requestId = frame.string("requestId") {
-                sendChatCancelled(requestId: requestId)
-            }
         case "chat.new_topic":
-            store?.startNewTopic()
+            // Lightweight topic reset that does NOT release the interview lock (C10).
+            store?.startNewTopicCompanion()
             await publishSnapshot()
         case "display.select":
             if let displayId = frame.string("displayId") {
@@ -66,11 +79,20 @@ final class CompanionCommandHost {
         }
     }
 
+    /// Resolves a phone-supplied displayId, falling back to the last display.select
+    /// choice (spec §5.1, M12).
+    private func resolveDisplayId(_ displayId: String?) -> String? {
+        if let displayId, !displayId.isEmpty { return displayId }
+        let selected = store?.companionSelectedDisplayId ?? ""
+        return selected.isEmpty ? nil : selected
+    }
+
     // MARK: - Inbound command handlers
 
     private func captureAsk(requestId: String, displayId: String?, prompt: String?) async {
         guard let store else { return }
         currentRequestId = requestId
+        pendingCancel = false
         if await !store.companionHasActiveLock() {
             sendCaptureFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
@@ -92,16 +114,12 @@ final class CompanionCommandHost {
                 store.prompt = "Please analyze this screenshot."
             }
             store.companionRequestId = requestId
+            sendChatStarted(requestId: requestId, turnId: requestId)
             store.companionDeltaHandler = { [weak self] delta in
                 self?.sendChatDelta(requestId: requestId, text: delta)
             }
             store.companionTurnFinishedHandler = { [weak self] succeeded in
-                if succeeded {
-                    self?.sendChatCompleted(requestId: requestId)
-                } else {
-                    self?.sendChatFailed(requestId: requestId, code: "chat_failed", message: "Chat request failed.")
-                }
-                self?.publishSnapshotSync()
+                self?.finishTurn(requestId: requestId, succeeded: succeeded)
             }
             store.send()
         } catch ScreenshotError.permissionDenied {
@@ -114,6 +132,7 @@ final class CompanionCommandHost {
     private func captureFull(requestId: String, displayId: String?, attachOnly: Bool) async {
         guard let store else { return }
         currentRequestId = requestId
+        pendingCancel = false
         if await !store.companionHasActiveLock() {
             sendCaptureFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
@@ -132,18 +151,17 @@ final class CompanionCommandHost {
             if !attachOnly {
                 store.prompt = "Please analyze this screenshot."
                 store.companionRequestId = requestId
+                sendChatStarted(requestId: requestId, turnId: requestId)
                 store.companionDeltaHandler = { [weak self] delta in
                     self?.sendChatDelta(requestId: requestId, text: delta)
                 }
                 store.companionTurnFinishedHandler = { [weak self] succeeded in
-                    if succeeded {
-                        self?.sendChatCompleted(requestId: requestId)
-                    } else {
-                        self?.sendChatFailed(requestId: requestId, code: "chat_failed", message: "Chat request failed.")
-                    }
-                    self?.publishSnapshotSync()
+                    self?.finishTurn(requestId: requestId, succeeded: succeeded)
                 }
                 store.send()
+            } else {
+                // Attach-only: no chat turn. Publish a snapshot so the phone sees state.
+                publishSnapshotSync()
             }
         } catch ScreenshotError.permissionDenied {
             sendCaptureFailed(requestId: requestId, code: "capture_permission_missing", message: "Screen Recording permission missing.")
@@ -155,24 +173,39 @@ final class CompanionCommandHost {
     private func chatSend(requestId: String, text: String) async {
         guard let store else { return }
         currentRequestId = requestId
+        pendingCancel = false
         if await !store.companionHasActiveLock() {
             sendChatFailed(requestId: requestId, code: "lock_missing", message: "Desktop does not hold an active interview lock.")
             return
         }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sendChatFailed(requestId: requestId, code: "chat_failed", message: "Empty message.")
+            return
+        }
         store.prompt = text
         store.companionRequestId = requestId
+        sendChatStarted(requestId: requestId, turnId: requestId)
         store.companionDeltaHandler = { [weak self] delta in
             self?.sendChatDelta(requestId: requestId, text: delta)
         }
         store.companionTurnFinishedHandler = { [weak self] succeeded in
-            if succeeded {
-                self?.sendChatCompleted(requestId: requestId)
-            } else {
-                self?.sendChatFailed(requestId: requestId, code: "chat_failed", message: "Chat request failed.")
-            }
-            self?.publishSnapshotSync()
+            self?.finishTurn(requestId: requestId, succeeded: succeeded)
         }
         store.send()
+    }
+
+    /// Turn-finished hook shared by all chat-bearing commands. Emits the correct
+    /// chat.* frame based on outcome and the pendingCancel flag (C4), then publishes a snapshot.
+    private func finishTurn(requestId: String, succeeded: Bool) {
+        if pendingCancel {
+            sendChatCancelled(requestId: requestId)
+        } else if succeeded {
+            sendChatCompleted(requestId: requestId)
+        } else {
+            sendChatFailed(requestId: requestId, code: "chat_failed", message: "Chat request failed.")
+        }
+        pendingCancel = false
+        publishSnapshotSync()
     }
 
     // MARK: - Outbound frames
@@ -182,7 +215,7 @@ final class CompanionCommandHost {
         let displays = ScreenshotCapture.listDisplays().map { CompanionDisplay(id: $0.id, name: $0.name, isDefault: $0.isDefault) }
         let lockExpiry = await store.companionLockExpiresAt()
         let body: [String: Any] = [
-            "status": store.isSending ? "thinking" : "ready",
+            "status": desktopStatus(),
             "model": store.selectedModelId,
             "provider": store.selectedProviderId,
             "vision": visionSupported(),
@@ -192,12 +225,26 @@ final class CompanionCommandHost {
         sendEnvelope(type: "desktop.hello", body: body)
     }
 
+    /// Desktop status mapping (spec §5.2): offline | connecting | idle | ready | capturing | thinking | error (M17).
+    private func desktopStatus() -> String {
+        guard let store else { return "offline" }
+        if !store.companionEnabled { return "offline" }
+        if store.companionRelayState != .connected { return "connecting" }
+        if !store.companionHasActiveLockSync { return "idle" }
+        if store.isSending { return "thinking" }
+        return "ready"
+    }
+
     func sendCaptureStarted(requestId: String, displayId: String) {
         sendEnvelope(type: "capture.started", body: ["requestId": requestId, "displayId": displayId])
     }
 
     func sendCaptureFailed(requestId: String, code: String, message: String) {
         sendEnvelope(type: "capture.failed", body: ["requestId": requestId, "code": code, "message": message])
+    }
+
+    func sendChatStarted(requestId: String, turnId: String) {
+        sendEnvelope(type: "chat.started", body: ["requestId": requestId, "turnId": turnId])
     }
 
     func sendChatDelta(requestId: String, text: String) {
@@ -224,9 +271,9 @@ final class CompanionCommandHost {
         guard let store else { return }
         let turns = store.messages.suffix(20).map { CompanionTurn(role: $0.role, text: $0.content, atUtc: $0.createdAtUtc ?? Date()) }
         let displays = ScreenshotCapture.listDisplays().map { CompanionDisplay(id: $0.id, name: $0.name, isDefault: $0.isDefault) }
+        // session.snapshot body omits pairingId (spec §5.2: same shape as /sessions/current minus pairingId) (M11).
         let body: [String: Any] = [
-            "pairingId": relay.pairingId,
-            "desktopStatus": store.isSending ? "thinking" : "ready",
+            "desktopStatus": desktopStatus(),
             "provider": store.selectedProviderId,
             "model": store.selectedModelId,
             "vision": visionSupported(),

@@ -45,13 +45,22 @@ ON CONFLICT(ticket_hash) DO UPDATE SET
         command.ExecuteNonQuery();
     }
 
-    public void MarkConsumed(string ticketHash, DateTime consumedAtUtc)
+    public int MarkConsumed(string ticketHash, DateTime consumedAtUtc)
     {
         using var connection = _store.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "UPDATE companion_relay_tickets SET consumed_at_utc = @consumedAtUtc WHERE ticket_hash = @ticketHash AND consumed_at_utc IS NULL;";
         command.Parameters.AddWithValue("ticketHash", ticketHash);
         command.Parameters.AddWithValue("consumedAtUtc", consumedAtUtc);
+        return command.ExecuteNonQuery();
+    }
+
+    public void DeleteExpired()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM companion_relay_tickets WHERE expires_at_utc < @now;";
+        command.Parameters.AddWithValue("now", DateTime.UtcNow);
         command.ExecuteNonQuery();
     }
 

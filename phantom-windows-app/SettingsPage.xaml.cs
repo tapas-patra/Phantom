@@ -2522,6 +2522,9 @@ namespace SecureOverlay
                 CompanionQrImage.Visibility = Visibility.Collapsed;
                 CompanionQrPayloadText.Visibility = Visibility.Collapsed;
                 CompanionStatusText.Text = "Unpaired.";
+                // Persist immediately so the unpaired state survives a settings Cancel,
+                // and so MainWindow's reconcile-on-close stops the relay (H8).
+                SettingsManager.Save(_settings);
             }
             catch (Exception ex)
             {

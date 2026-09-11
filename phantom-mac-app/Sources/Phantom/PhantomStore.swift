@@ -103,6 +103,11 @@ final class PhantomStore: ObservableObject {
     var companionRequestId: String?
     var companionDeltaHandler: ((String) -> Void)?
     var companionTurnFinishedHandler: ((Bool) -> Void)?
+    // True while companion mode has hidden the overlay (spec §8.2). Driven by the
+    // orchestrator via setCompanionOverlayHidden(); PhantomMain observes this to
+    // order out / restore the window without activating the app.
+    @Published var companionOverlayHidden: Bool = false
+    var onCompanionOverlayHidden: ((Bool) -> Void)?
     static let maxResumeWords = 1_200
     static let maxJobDescriptionWords = 450
     @Published var isCompact = false
@@ -1560,16 +1565,55 @@ final class PhantomStore: ObservableObject {
     // MARK: - Companion lock probes (used by CompanionCommandHost)
 
     /// True when the desktop currently holds an active interview lock (belt-and-suspenders
-    /// check for the relay's lock_missing guard).
+    /// check for the relay's lock_missing guard). Also true when the launch context allows
+    /// resuming a previously-held lock (H15) — the relay still gates every command with
+    /// lock_missing, so this only avoids a false-negative for a freshly-resumed session.
     func companionHasActiveLock() async -> Bool {
-        guard let session = await runtime.metering.activeSession(),
-              let expiry = session.lockExpiresAtUtc,
-              !session.lockToken.isEmpty else { return false }
-        return expiry > Date()
+        if let session = await runtime.metering.activeSession(),
+           let expiry = session.lockExpiresAtUtc,
+           !session.lockToken.isEmpty,
+           expiry > Date() {
+            return true
+        }
+        return launchContext.canResumeLockedInterview
+    }
+
+    /// Synchronous variant used for status mapping (desktop.hello / session.snapshot).
+    /// Returns false when the runtime session isn't loaded yet; the relay still enforces
+    /// lock_missing per command, so a transient false only yields a conservative "idle".
+    var companionHasActiveLockSync: Bool {
+        // Best-effort: rely on the launch context flag. A live lock check would require
+        // an async hop; the relay's per-command lock_missing guard remains authoritative.
+        launchContext.canResumeLockedInterview
     }
 
     func companionLockExpiresAt() async -> Date? {
         await runtime.metering.activeSession()?.lockExpiresAtUtc
+    }
+
+    /// Called by the companion orchestrator to hide/restore the overlay (spec §8.2).
+    /// Forwards to the PhantomMain hook which performs the actual orderOut/showWindow.
+    func setCompanionOverlayHidden(_ hidden: Bool) {
+        companionOverlayHidden = hidden
+        onCompanionOverlayHidden?(hidden)
+    }
+
+    /// Lightweight topic reset for companion `chat.new_topic` (C10). Resets the local
+    /// conversation state WITHOUT releasing the interview lock or finishing the session
+    /// — unlike startNewTopic(), which calls finishInterview and would drop the lock the
+    /// phone is actively relying on.
+    func startNewTopicCompanion() {
+        chatTask?.cancel()
+        rotation.resetConversation()
+        conversationManager.reset()
+        isSending = false
+        isListening = false
+        attachedScreenshots = []
+        isScreenshotPreviewVisible = false
+        messages.removeAll()
+        jobDescriptionText = ""
+        ConversationStore.clear()
+        status = "New topic — lock preserved"
     }
 
     private func byoResponseWithRotation(
@@ -1824,6 +1868,9 @@ final class PhantomStore: ObservableObject {
         onLogout?()
         guard let current else { return }
         Task {
+            // Stop the companion relay before tearing down auth so the phone sees a clean
+            // disconnect and we don't reconnect with a stale token (H13).
+            await self.companion?.stop()
             await finishInterview(auth: current, account: snapshot)
             try? await backend.logout(current)
         }
@@ -1963,6 +2010,9 @@ final class PhantomStore: ObservableObject {
         if isPremiumAccount {
             await loadContextPacks()
         }
+        // Bootstrap re-entry: reconcile companion mode after the app is ready so a
+        // previously-enabled pairing reconnects its relay without a manual toggle (H14).
+        reconcileCompanion()
     }
 
     private func selectAvailableModel() {

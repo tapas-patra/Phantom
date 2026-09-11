@@ -12,7 +12,8 @@ namespace SecureOverlay.Services
     /// Owns the Companion Mode lifecycle on the desktop: fetches a relay ticket, opens the
     /// relay socket, wires inbound frames to the provided command target, and forwards
     /// assistant deltas / turn completions back to the phone. The owner (MainWindow) supplies
-    /// the access token, pairing id, status/snapshot providers, and the command target.
+    /// the access token, pairing id, status/snapshot providers, the command target, and an
+    /// overlay hide/show callback.
     /// </summary>
     public sealed class CompanionOrchestrator : IAsyncDisposable
     {
@@ -22,12 +23,14 @@ namespace SecureOverlay.Services
         private readonly Func<CompanionDesktopStatus> _statusProvider;
         private readonly Func<CompanionSessionSnapshotDto> _snapshotProvider;
         private readonly ICompanionCommandTarget _target;
+        private readonly Action<bool> _setOverlayHidden;
 
         private CompanionRelayClient? _relay;
         private CompanionCommandHost? _host;
         private string? _activePairingId;
         private bool _enabled;
         private bool _disposed;
+        private bool _overlayHiddenByCompanion;
 
         public bool IsEnabled => _enabled;
         public string? ActivePairingId => _activePairingId;
@@ -39,7 +42,8 @@ namespace SecureOverlay.Services
             Func<string> deviceLabelProvider,
             Func<CompanionDesktopStatus> statusProvider,
             Func<CompanionSessionSnapshotDto> snapshotProvider,
-            ICompanionCommandTarget target)
+            ICompanionCommandTarget target,
+            Action<bool> setOverlayHidden)
         {
             _companionClient = companionClient;
             _accessTokenProvider = accessTokenProvider;
@@ -47,6 +51,7 @@ namespace SecureOverlay.Services
             _statusProvider = statusProvider;
             _snapshotProvider = snapshotProvider;
             _target = target;
+            _setOverlayHidden = setOverlayHidden;
         }
 
         /// <summary>
@@ -63,10 +68,9 @@ namespace SecureOverlay.Services
                 return;
             }
 
-            _enabled = true;
-
             // If already running for the same pairing, nothing to do.
-            if (_relay != null && _host != null && string.Equals(_activePairingId, pairingId, StringComparison.Ordinal))
+            if (_relay != null && _host != null && _enabled
+                && string.Equals(_activePairingId, pairingId, StringComparison.Ordinal))
             {
                 return;
             }
@@ -81,27 +85,48 @@ namespace SecureOverlay.Services
                 return;
             }
 
-            CompanionRelayTicketDto ticket;
-            try
+            // Ticket provider fetches a fresh ticket on every connect (spec §9).
+            Func<CancellationToken, Task<CompanionRelayTicketDto>> ticketProvider = _ =>
             {
-                ticket = _companionClient.CreateRelayTicket(new CompanionRelayTicketRequestDto
+                var token = _accessTokenProvider();
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    throw new InvalidOperationException("No access token for relay ticket.");
+                }
+                return Task.FromResult(_companionClient.CreateRelayTicket(new CompanionRelayTicketRequestDto
                 {
                     PairingId = pairingId!,
                     Role = "desktop"
-                }, accessToken);
+                }, token));
+            };
+
+            // Validate the first ticket fetch before flipping enabled / hiding overlay.
+            try
+            {
+                _ = ticketProvider(CancellationToken.None);
             }
             catch (Exception ex)
             {
-                Log.WriteLine($"Companion orchestrator: relay ticket request failed: {ex.Message}");
+                Log.WriteLine($"Companion orchestrator: initial relay ticket request failed: {ex.Message}");
                 return;
             }
 
-            _relay = new CompanionRelayClient(ticket.RelayUrl, ticket.Ticket, pairingId!, "desktop");
+            _enabled = true;
+            _relay = new CompanionRelayClient(ticketProvider, pairingId!, "desktop");
             _host = new CompanionCommandHost(_relay, _statusProvider, _snapshotProvider);
 
             WireCommandHost(_host);
             _host.RelayStateChanged += OnRelayStateChanged;
+            _host.RelayError += OnRelayError;
             _host.Start();
+
+            // Hide the overlay via the same path as the Ctrl+Alt+` hide shortcut (spec §7.4).
+            if (!_overlayHiddenByCompanion)
+            {
+                _overlayHiddenByCompanion = true;
+                try { _setOverlayHidden(true); } catch (Exception ex) { Log.WriteLine($"Companion overlay hide failed: {ex.Message}"); }
+            }
+
             Log.WriteLine($"Companion orchestrator started for pairing {pairingId}");
         }
 
@@ -126,12 +151,27 @@ namespace SecureOverlay.Services
             });
         }
 
+        private void OnRelayError(string code, string message)
+        {
+            // pairing_revoked / replaced / server_shutdown are terminal for this session —
+            // stop reconnecting so we don't hammer a dead/invalid ticket (M18).
+            if (string.Equals(code, "pairing_revoked", StringComparison.Ordinal)
+                || string.Equals(code, "replaced", StringComparison.Ordinal)
+                || string.Equals(code, "server_shutdown", StringComparison.Ordinal))
+            {
+                Log.WriteLine($"Companion relay terminal error '{code}' — stopping companion mode.");
+                _ = StopAsync();
+            }
+        }
+
         public async Task StopAsync()
         {
+            var wasEnabled = _enabled;
             _enabled = false;
             if (_host != null)
             {
                 try { _host.RelayStateChanged -= OnRelayStateChanged; } catch { }
+                try { _host.RelayError -= OnRelayError; } catch { }
                 try { await _host.StopAsync(); } catch { }
                 _host = null;
             }
@@ -141,6 +181,16 @@ namespace SecureOverlay.Services
                 _relay = null;
             }
             _activePairingId = null;
+
+            // Restore the overlay only if companion hid it.
+            if (_overlayHiddenByCompanion)
+            {
+                _overlayHiddenByCompanion = false;
+                if (wasEnabled)
+                {
+                    try { _setOverlayHidden(false); } catch (Exception ex) { Log.WriteLine($"Companion overlay restore failed: {ex.Message}"); }
+                }
+            }
         }
 
         /// <summary>Forward an assistant stream delta to the phone as chat.delta.</summary>
@@ -154,11 +204,53 @@ namespace SecureOverlay.Services
         }
 
         /// <summary>Notify the phone that a chat turn started.</summary>
-        public void OnChatStarted(string requestId, string turnId)
+        public void OnChatStarted(string? requestId, string turnId)
         {
             var host = _host;
             if (host == null || !_enabled) return;
+            if (string.IsNullOrEmpty(requestId)) return;
             _ = host.SendChatStartedAsync(requestId, turnId);
+        }
+
+        /// <summary>Notify the phone that a chat turn was cancelled and publish a snapshot.</summary>
+        public Task OnTurnCancelled(string? requestId)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            if (!string.IsNullOrEmpty(requestId))
+            {
+                _ = host.SendChatCancelledAsync(requestId!);
+            }
+            return host.PublishSnapshotAsync();
+        }
+
+        /// <summary>Publish a session snapshot without emitting a chat.* frame.</summary>
+        public Task PublishSnapshotAsync()
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return host.PublishSnapshotAsync();
+        }
+
+        public Task SendCaptureStartedAsync(string requestId, string? displayId)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return host.SendCaptureStartedAsync(requestId, displayId);
+        }
+
+        public Task SendCaptureCompletedAsync(string requestId, int width, int height, string? thumbnailJpegBase64)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return host.SendCaptureCompletedAsync(requestId, width, height, thumbnailJpegBase64);
+        }
+
+        public Task SendCaptureFailedAsync(string requestId, string code, string message)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
+            return host.SendCaptureFailedAsync(requestId, code, message);
         }
 
         /// <summary>Notify the phone that a chat turn completed and publish a snapshot.</summary>
@@ -174,6 +266,14 @@ namespace SecureOverlay.Services
             {
                 _ = host.SendChatCompletedAsync(requestId!);
             }
+            return host.PublishSnapshotAsync();
+        }
+
+        /// <summary>Notify the phone that a capture lifecycle event completed and publish a snapshot.</summary>
+        public Task OnCaptureCompleted(string? requestId)
+        {
+            var host = _host;
+            if (host == null || !_enabled) return Task.CompletedTask;
             return host.PublishSnapshotAsync();
         }
 

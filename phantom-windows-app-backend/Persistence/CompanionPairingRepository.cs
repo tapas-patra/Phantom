@@ -34,14 +34,23 @@ public sealed class CompanionPairingRepository
     public CompanionPairingRecord? FindActiveByDesktopDevice(string desktopDeviceId)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
+        return FindActiveByDesktopDevice(desktopDeviceId, connection, transaction: null, forUpdate: false);
+    }
+
+    public CompanionPairingRecord? FindActiveByDesktopDevice(
+        string desktopDeviceId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $@"
 SELECT * FROM companion_pairings
 WHERE desktop_device_id = @desktopDeviceId
   AND revoked_at_utc IS NULL
   AND companion_device_id <> ''
 ORDER BY created_at_utc DESC
-LIMIT 1;";
+LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("desktopDeviceId", desktopDeviceId);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;

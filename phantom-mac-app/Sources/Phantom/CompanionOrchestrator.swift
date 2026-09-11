@@ -2,7 +2,8 @@ import Foundation
 
 /// Owns the Companion Mode lifecycle on macOS: fetches a relay ticket, opens the relay
 /// socket, wires inbound frames to PhantomStore via CompanionCommandHost, and exposes
-/// the current relay state for the settings UI.
+/// the current relay state for the settings UI. Hides the overlay while companion mode
+/// is active (spec §8.2) via the store's overlay-hide hook.
 @MainActor
 final class CompanionOrchestrator {
     private let backend: BackendClient
@@ -10,6 +11,7 @@ final class CompanionOrchestrator {
     private var relay: CompanionRelayClient?
     private var commandHost: CompanionCommandHost?
     private var activePairingId: String?
+    private var accessToken: String?
     private(set) var enabled = false
     private(set) var state: CompanionRelayState = .disconnected
 
@@ -27,30 +29,37 @@ final class CompanionOrchestrator {
         }
         guard let pairingId, let accessToken else { return }
         if enabled, let activePairingId, activePairingId == pairingId, relay != nil {
-            self.enabled = true
             return
         }
         await stop()
-        self.enabled = true
         activePairingId = pairingId
+        self.accessToken = accessToken
 
-        let ticket: CompanionRelayTicket
+        // Ticket provider fetches a fresh ticket on every connect (spec §9).
+        let backend = self.backend
+        let token = accessToken
+        let ticketProvider: () async throws -> CompanionRelayTicket = {
+            try await backend.createRelayTicket(accessToken: token, pairingId: pairingId, role: "desktop")
+        }
+
+        // Validate the first ticket fetch before flipping enabled / hiding overlay (M19).
         do {
-            ticket = try await backend.createRelayTicket(accessToken: accessToken, pairingId: pairingId, role: "desktop")
+            _ = try await ticketProvider()
         } catch {
             print("[companion] relay ticket request failed: \(error.localizedDescription)")
+            self.accessToken = nil
+            activePairingId = nil
             return
         }
 
-        guard let url = URL(string: ticket.relayUrl) else {
-            print("[companion] bad relay url: \(ticket.relayUrl)")
-            return
-        }
-        let relay = CompanionRelayClient(relayUrl: url, ticket: ticket.ticket, pairingId: pairingId, role: "desktop")
+        let relay = CompanionRelayClient(ticketProvider: ticketProvider, pairingId: pairingId, role: "desktop")
         guard let store else { return }
         let host = CompanionCommandHost(store: store, relay: relay)
         host.visionSupported = { [weak store] in
             store?.selectedModelSupportsVision ?? false
+        }
+        host.onTerminalRelayError = { [weak self] code in
+            self?.handleTerminalRelayError(code: code)
         }
         relay.stateHandler = { [weak self] state in
             guard let self else { return }
@@ -68,7 +77,19 @@ final class CompanionOrchestrator {
         relay.start()
         self.relay = relay
         self.commandHost = host
+        self.enabled = true
+        // Hide the overlay via the existing hide path (spec §8.2). Must not activate Phantom.
+        store.setCompanionOverlayHidden(true)
         print("[companion] started for pairing \(pairingId)")
+    }
+
+    private func handleTerminalRelayError(code: String) {
+        // pairing_revoked / replaced / server_shutdown are terminal — stop reconnecting
+        // so we don't hammer a dead/invalid ticket (M18).
+        if code == "pairing_revoked" || code == "replaced" || code == "server_shutdown" {
+            print("[companion] terminal relay error '\(code)' — stopping companion mode.")
+            Task { await stop() }
+        }
     }
 
     func stop() async {
@@ -78,6 +99,9 @@ final class CompanionOrchestrator {
         relay = nil
         commandHost = nil
         activePairingId = nil
+        accessToken = nil
         state = .disconnected
+        // Restore the overlay only if companion hid it.
+        store?.setCompanionOverlayHidden(false)
     }
 }

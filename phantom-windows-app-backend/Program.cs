@@ -324,6 +324,14 @@ app.Lifetime.ApplicationStarted.Register(() => lifecycleLogger.LogInformation(
 app.Lifetime.ApplicationStopping.Register(() => lifecycleLogger.LogInformation(
     "service_stopping service={Service} component={Component} event={Event}",
     "phantom-windows-app-backend", "lifecycle", "service_stopping"));
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    try { app.Services.GetRequiredService<CompanionRelayHost>().Shutdown(); }
+    catch (Exception ex)
+    {
+        lifecycleLogger.LogWarning(ex, "companion relay shutdown failed");
+    }
+});
 
 using (var scope = app.Services.CreateScope())
 {
@@ -390,6 +398,19 @@ app.UseExceptionHandler(exceptionApp =>
     {
         var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Phantom.Error");
+        if (exception is BackendConflictException conflictException)
+        {
+            context.Response.StatusCode = StatusCodes.Status409Conflict;
+            logger.LogWarning(
+                "request_error_handled service={Service} component={Component} event={Event} correlation_id={CorrelationId} operation_id={OperationId} method={Method} status_class={StatusClass} error_code={ErrorCode} outcome={Outcome}",
+                "phantom-windows-app-backend", "http", "request_error_handled",
+                context.Request.Headers["X-Phantom-Correlation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Headers["X-Phantom-Operation-Id"].FirstOrDefault() ?? string.Empty,
+                context.Request.Method, "4xx", conflictException.Code, "error");
+            await context.Response.WriteAsJsonAsync(new { error = conflictException.Message });
+            return;
+        }
+
         if (exception is BackendValidationException validationException)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -1063,8 +1084,12 @@ app.MapPost("/api/desktop/ai/chat", async (
     HttpContext httpContext,
     DesktopAiChatRequestDto request,
     ManagedAiService managedAi,
+    DesktopSessionService desktopSessions,
+    CompanionPairingService companionPairings,
     CancellationToken cancellationToken) =>
 {
+    var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    RejectCompanionDevice(companionPairings, session);
     var account = managedAi.RequireManagedAccountFromAccessToken(ResolveUserAuthorization(httpContext.Request));
     await managedAi.StreamChatAsync(httpContext.Response, account, request, cancellationToken);
 }).RequireRateLimiting("desktop-api");
@@ -1422,9 +1447,11 @@ app.MapPost("/api/desktop/locks/acquire", (
     HttpContext httpContext,
     DeviceLockAcquireRequestDto request,
     DesktopSessionService desktopSessions,
-    LockService locks) =>
+    LockService locks,
+    CompanionPairingService companionPairings) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    RejectCompanionDevice(companionPairings, session);
     return Results.Ok(locks.Acquire(request, session));
 }).RequireRateLimiting("desktop-api");
 
@@ -1432,9 +1459,11 @@ app.MapPost("/api/desktop/locks/heartbeat", (
     HttpContext httpContext,
     DeviceLockHeartbeatRequestDto request,
     DesktopSessionService desktopSessions,
-    LockService locks) =>
+    LockService locks,
+    CompanionPairingService companionPairings) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    RejectCompanionDevice(companionPairings, session);
     return Results.Ok(locks.Heartbeat(request, session));
 }).RequireRateLimiting("desktop-api");
 
@@ -1442,9 +1471,11 @@ app.MapPost("/api/desktop/locks/release", (
     HttpContext httpContext,
     DeviceLockReleaseRequestDto request,
     DesktopSessionService desktopSessions,
-    LockService locks) =>
+    LockService locks,
+    CompanionPairingService companionPairings) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
+    RejectCompanionDevice(companionPairings, session);
     return Results.Ok(locks.Release(request, session));
 }).RequireRateLimiting("desktop-api");
 
@@ -1456,7 +1487,8 @@ app.MapPost("/api/companion/pairings/start", (
     CompanionPairingService pairings) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
-    return Results.Ok(pairings.Start(session, request));
+    RejectCompanionDevice(pairings, session);
+    return Results.Ok(pairings.Start(session, request, httpContext));
 }).RequireRateLimiting("desktop-api");
 
 app.MapPost("/api/companion/pairings/complete", (
@@ -1495,7 +1527,7 @@ app.MapPost("/api/companion/relay-ticket", (
     CompanionRelayTicketService tickets) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
-    return Results.Ok(tickets.Issue(session, request));
+    return Results.Ok(tickets.Issue(session, request, httpContext));
 }).RequireRateLimiting("desktop-api");
 
 app.MapGet("/api/companion/sessions/current", (
@@ -1504,13 +1536,7 @@ app.MapGet("/api/companion/sessions/current", (
     CompanionPairingService pairings) =>
 {
     var session = desktopSessions.RequireSession(httpContext.Request.Headers.Authorization.ToString());
-    var list = pairings.List(session);
-    var active = list.Pairings.FirstOrDefault();
-    if (active == null)
-    {
-        return Results.NotFound(new { error = "No active companion session." });
-    }
-    var snapshot = pairings.GetCurrentSnapshot(active.PairingId);
+    var snapshot = pairings.GetCurrentSnapshotForDevice(session);
     if (snapshot == null)
     {
         return Results.NotFound(new { error = "No active companion session." });
@@ -1897,6 +1923,17 @@ static string ResolveUserAuthorization(HttpRequest request) =>
     RequestTokenResolver.GetAuthorizationHeader(
         request,
         request.Cookies.TryGetValue(BrowserSessionCookieService.UserAccessCookie, out var cookieToken) ? cookieToken : null);
+
+// Companion (phone) sessions must never call desktop-only routes (locks, managed AI
+// chat, pairings/start). A device registered as a companion on any active pairing is
+// rejected here (spec §4.7 / §2 invariants).
+static void RejectCompanionDevice(CompanionPairingService pairings, DesktopSessionRecord session)
+{
+    if (pairings.IsCompanionDevice(session.DeviceInstallId))
+    {
+        throw new BackendValidationException("Companion devices are not authorized for this route.", "companion_device_blocked");
+    }
+}
 
 static bool IsValidOpaqueId(string? value) => value is { Length: >= 8 and <= 128 }
     && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');

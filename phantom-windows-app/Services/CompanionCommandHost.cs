@@ -41,6 +41,7 @@ namespace SecureOverlay.Services
 
         public CompanionRelayState RelayState { get; private set; } = CompanionRelayState.Disconnected;
         public event Action<CompanionRelayState>? RelayStateChanged;
+        public event Action<string, string>? RelayError;
 
         public void Start()
         {
@@ -68,7 +69,10 @@ namespace SecureOverlay.Services
             }
             if (frame.Type == "relay.error")
             {
-                Log.WriteLine($"Companion relay error: {frame.ReadString("code")} {frame.ReadString("message")}");
+                var code = frame.Code ?? frame.ReadString("code") ?? string.Empty;
+                var message = frame.Message ?? frame.ReadString("message") ?? string.Empty;
+                Log.WriteLine($"Companion relay error: {code} {message}");
+                RelayError?.Invoke(code, message);
                 return;
             }
 

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Phantom.WindowsApp.Backend.Contracts;
 using Phantom.WindowsApp.Backend.Domain;
 using Phantom.WindowsApp.Backend.Infrastructure;
@@ -26,7 +27,7 @@ public sealed class CompanionRelayTicketService
         _tokens = tokens;
     }
 
-    public CompanionRelayTicketDto Issue(DesktopSessionRecord session, CompanionRelayTicketRequestDto request)
+    public CompanionRelayTicketDto Issue(DesktopSessionRecord session, CompanionRelayTicketRequestDto request, HttpContext? httpContext = null)
     {
         var role = NormalizeRole(request.Role);
         var pairing = _pairings.FindById(request.PairingId)
@@ -76,13 +77,15 @@ public sealed class CompanionRelayTicketService
         {
             Ticket = ticket,
             ExpiresAtUtc = expiresAt,
-            RelayUrl = ResolveRelayUrl()
+            RelayUrl = ResolveRelayUrl(httpContext)
         };
     }
 
     /// <summary>
-    /// Validates and consumes a relay ticket presented over the WebSocket upgrade query string.
-    /// Returns the ticket record on success; throws BackendValidationException otherwise.
+    /// Validates and atomically consumes a relay ticket presented over the WebSocket
+    /// upgrade query string. The conditional UPDATE (consumed_at_utc IS NULL) is the
+    /// single source of truth for single-use admission: if it affects zero rows the
+    /// ticket was already consumed by a concurrent upgrade (spec §4.5 / §5).
     /// </summary>
     public CompanionRelayTicketRecord Consume(string? ticket)
     {
@@ -100,27 +103,48 @@ public sealed class CompanionRelayTicketService
             throw new BackendValidationException("Relay ticket has expired.", "ticket_expired");
         }
 
-        if (record.ConsumedAtUtc.HasValue)
+        // Atomic single-use consume. A zero row count means another upgrade already
+        // consumed it (or it was consumed between our read and update) — reject.
+        var affected = _tickets.MarkConsumed(ticketHash, DateTime.UtcNow);
+        if (affected == 0)
         {
             throw new BackendValidationException("Relay ticket already used.", "ticket_consumed");
         }
 
-        _tickets.MarkConsumed(ticketHash, DateTime.UtcNow);
         return record;
     }
 
-    private string ResolveRelayUrl()
+    private string ResolveRelayUrl(HttpContext? httpContext)
     {
-        var baseHost = ResolvePublicApiBaseUrl();
-        return $"{baseHost}/api/companion/relay";
+        var baseHost = ResolvePublicApiBaseUrl(httpContext);
+        // WebSocket scheme: https → wss, http → ws (spec §4.5 requires wss://).
+        var wsScheme = baseHost.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss://"
+            : baseHost.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "ws://"
+            : "wss://";
+        var host = baseHost.Substring(baseHost.IndexOf("://", StringComparison.Ordinal) + 3);
+        return $"{wsScheme}{host}/api/companion/relay";
     }
 
-    private string ResolvePublicApiBaseUrl()
+    private string ResolvePublicApiBaseUrl(HttpContext? httpContext)
     {
-        if (Uri.TryCreate(_options.PublicApiBaseUrl, UriKind.Absolute, out var configured) && !string.IsNullOrWhiteSpace(_options.PublicApiBaseUrl))
+        if (Uri.TryCreate(_options.PublicApiBaseUrl, UriKind.Absolute, out var configured)
+            && !string.IsNullOrWhiteSpace(_options.PublicApiBaseUrl))
         {
             return configured.ToString().TrimEnd('/');
         }
+
+        if (httpContext != null)
+        {
+            var host = httpContext.Request.Host.Host;
+            if (!string.IsNullOrWhiteSpace(host))
+            {
+                var scheme = httpContext.Request.IsHttps || httpContext.Request.Headers.TryGetValue("X-Forwarded-Proto", out var forwarded)
+                    ? "https"
+                    : httpContext.Request.Scheme;
+                return $"{scheme}://{host}";
+            }
+        }
+
         return "https://phantom-ai-windows-app-backend.onrender.com";
     }
 

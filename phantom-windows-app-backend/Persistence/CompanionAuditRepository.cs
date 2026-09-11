@@ -29,4 +29,13 @@ INSERT INTO companion_audit_events (
         command.Parameters.AddWithValue("createdAtUtc", DateTime.UtcNow);
         command.ExecuteNonQuery();
     }
+
+    public void DeleteOlderThan(TimeSpan age)
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM companion_audit_events WHERE created_at_utc < @cutoff;";
+        command.Parameters.AddWithValue("cutoff", DateTime.UtcNow - age);
+        command.ExecuteNonQuery();
+    }
 }

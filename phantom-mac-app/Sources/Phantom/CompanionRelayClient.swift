@@ -2,31 +2,36 @@ import Foundation
 
 /// WebSocket relay client for Companion Mode on macOS. Connects to the hosted relay with a
 /// short-lived ticket using URLSessionWebSocketTask, sends/receives JSON envelopes, and
-/// reconnects with a capped backoff. Inbound frames are surfaced via `frameHandler`.
+/// reconnects with a capped backoff. A fresh ticket is fetched from `ticketProvider` on
+/// every connect attempt (spec §9) so reconnects after a drop do not fail on a consumed
+/// ticket. Inbound frames are surfaced via `frameHandler`.
 @MainActor
 final class CompanionRelayClient {
     private static let subprotocol = "phantom.companion.v1"
     private static let receiveTimeout: TimeInterval = 45
+    private static let pingInterval: TimeInterval = 20
     private static let backoff: [TimeInterval] = [1, 2, 4, 8, 15]
 
-    private let relayUrl: URL
-    private let ticket: String
+    private let ticketProvider: () async throws -> CompanionRelayTicket
+    let pairingId: String
+    private let role: String
+    // Reuse a single URLSession across reconnects to avoid leaking sessions (M15).
+    private let session = URLSession(configuration: .default)
     private var task: URLSessionWebSocketTask?
     private var pingTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
     private var backoffIndex = 0
     private var stopped = false
+    private var lastReceivedAt = Date()
 
-    let pairingId: String
-    let role: String
     private(set) var state: CompanionRelayState = .disconnected
 
     var frameHandler: ((CompanionRelayFrame) -> Void)?
     var stateHandler: ((CompanionRelayState) -> Void)?
 
-    init(relayUrl: URL, ticket: String, pairingId: String, role: String) {
-        self.relayUrl = relayUrl
-        self.ticket = ticket
+    init(ticketProvider: @escaping () async throws -> CompanionRelayTicket, pairingId: String, role: String) {
+        self.ticketProvider = ticketProvider
         self.pairingId = pairingId
         self.role = role
     }
@@ -40,8 +45,10 @@ final class CompanionRelayClient {
         stopped = true
         pingTask?.cancel()
         receiveTask?.cancel()
+        watchdogTask?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        session.invalidateAndCancel()
         updateState(.disconnected)
     }
 
@@ -49,7 +56,7 @@ final class CompanionRelayClient {
         guard let task, task.state == .running else { return }
         do {
             let data = try JSONEncoder().encode(frame)
-            task.send(.data(data)) { [weak self] error in
+            task.send(.data(data)) { error in
                 if let error {
                     print("[companion] relay send error: \(error.localizedDescription)")
                 }
@@ -67,24 +74,47 @@ final class CompanionRelayClient {
     private func connect() {
         guard !stopped else { return }
         updateState(.connecting)
-        var components = URLComponents(url: relayUrl, resolvingAgainstBaseURL: false)
+        Task { [weak self] in
+            guard let self else { return }
+            let ticket: CompanionRelayTicket
+            do {
+                ticket = try await self.ticketProvider()
+            } catch {
+                print("[companion] relay ticket fetch failed: \(error.localizedDescription)")
+                if !self.stopped { self.scheduleReconnect() }
+                return
+            }
+            guard !self.stopped else { return }
+            self.openSocket(with: ticket)
+        }
+    }
+
+    private func openSocket(with ticket: CompanionRelayTicket) {
+        guard let url = URL(string: ticket.relayUrl) else {
+            print("[companion] bad relay url: \(ticket.relayUrl)")
+            updateState(.disconnected)
+            scheduleReconnect()
+            return
+        }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var queryItems = components?.queryItems ?? []
-        queryItems.append(URLQueryItem(name: "ticket", value: ticket))
+        queryItems.append(URLQueryItem(name: "ticket", value: ticket.ticket))
         components?.queryItems = queryItems
-        guard let url = components?.url else {
+        guard let ticketedUrl = components?.url else {
             print("[companion] bad relay url")
             updateState(.disconnected)
             scheduleReconnect()
             return
         }
-        let session = URLSession(configuration: .default)
-        let wsTask = session.webSocketTask(with: url, protocols: [Self.subprotocol])
+        let wsTask = session.webSocketTask(with: ticketedUrl, protocols: [Self.subprotocol])
         task = wsTask
         wsTask.resume()
         backoffIndex = 0
-        updateState(.connected)
+        lastReceivedAt = Date()
+        // Stay `.connecting` until the first frame confirms the handshake (M14).
         startPing()
         startReceive()
+        startWatchdog()
     }
 
     private func startPing() {
@@ -92,7 +122,7 @@ final class CompanionRelayClient {
         pingTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled, !self.stopped {
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(Self.pingInterval * 1_000_000_000))
                 guard let task = self.task, task.state == .running else { break }
                 task.sendPing { _ in }
             }
@@ -103,10 +133,16 @@ final class CompanionRelayClient {
         receiveTask?.cancel()
         receiveTask = Task { [weak self] in
             guard let self else { return }
+            var handshakeConfirmed = false
             while !Task.isCancelled, !self.stopped {
                 guard let task = self.task, task.state == .running else { break }
                 do {
                     let message = try await task.receive()
+                    self.lastReceivedAt = Date()
+                    if !handshakeConfirmed {
+                        handshakeConfirmed = true
+                        self.updateState(.connected)
+                    }
                     switch message {
                     case .data(let data):
                         self.handle(data: data)
@@ -124,6 +160,25 @@ final class CompanionRelayClient {
             if !self.stopped {
                 self.updateState(.disconnected)
                 self.scheduleReconnect()
+            }
+        }
+    }
+
+    // Watchdog: if no frame (or ping) is received within 45s, the socket is dead —
+    // cancel it so the receive loop exits and we reconnect (M13).
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, !self.stopped {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if self.stopped { break }
+                if Date().timeIntervalSince(self.lastReceivedAt) >= Self.receiveTimeout {
+                    if let task = self.task, task.state == .running {
+                        task.cancel(with: .abnormalClosure, reason: "receive timeout".data(using: .utf8))
+                    }
+                    break
+                }
             }
         }
     }
@@ -161,9 +216,15 @@ struct CompanionRelayFrame: Codable {
     var v: Int = 1
     var id: String?
     var type: String?
-    var ts: Date?
+    // `ts` is kept as a String so an unexpected date format from the relay never breaks
+    // frame decoding (the client does not interpret `ts`). (C2)
+    var ts: String?
     var pairingId: String?
     var role: String?
+    // Top-level fields used by relay.error (code/message are sent at the envelope top
+    // level, not under body). (M18)
+    var code: String?
+    var message: String?
     var body: AnyCodable?
 
     func string(_ key: String) -> String? {

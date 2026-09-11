@@ -145,6 +145,7 @@ namespace SecureOverlay
         private readonly HostedRuntimeOptions _hostedRuntimeOptions;
         private CompanionOrchestrator? _companionOrchestrator;
         private string? _companionActiveRequestId;
+        private bool _companionOverlayHidden;
         private System.Windows.Threading.DispatcherTimer? _interviewLockHeartbeatTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionStatusTimer;
         private System.Windows.Threading.DispatcherTimer? _sessionInactivityTimer;
@@ -225,7 +226,8 @@ namespace SecureOverlay
                 () => Environment.MachineName ?? "Windows PC",
                 ProvideCompanionStatus,
                 ProvideCompanionSnapshot,
-                new MainWindowCompanionTarget(this));
+                new MainWindowCompanionTarget(this),
+                SetCompanionOverlayHidden);
 
             _usageReconciliationService = new LocalUsageReconciliationService(
                 usageReconciliationRepository,
@@ -443,6 +445,16 @@ namespace SecureOverlay
                         Log.WriteLine("No cached conversation - showing welcome message");
                         await RefreshChatSurfaceAsync();
                     }
+                }
+
+                // Reconcile Companion Mode with persisted settings on startup so a
+                // restart reconnects the relay without requiring the user to open
+                // Settings and save again (H10).
+                if (_companionOrchestrator != null && _settings != null
+                    && _settings.CompanionEnabled && !string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+                {
+                    Log.WriteLine("Reconciling Companion Mode on startup.");
+                    _ = _companionOrchestrator.ReconcileAsync(true, _settings.CompanionPairingId);
                 }
             };
 
@@ -884,6 +896,7 @@ namespace SecureOverlay
                 });
                 _usageReconciliationService.FlushPendingInBackground();
                 _interviewLockService.MarkLockReleased();
+                StopCompanionRelay();
                 _interviewLockHeartbeatTimer?.Stop();
                 _interviewLockHeartbeatTimer = null;
                 _lastInterviewActivityUtc = null;
@@ -2266,6 +2279,7 @@ namespace SecureOverlay
             {
                 Log.WriteLine("Hosted desktop auth session is no longer valid - prompting re-login before metering");
                 _authSessionRepository.Clear();
+                StopCompanionRelay();
                 StatusText.Text = "⚠️ Session expired";
                 StatusIndicator.Fill = Brushes.Orange;
                 AddToChat("⚠️ **Desktop session expired**\n\nPlease sign in again to continue.", false);
@@ -2417,6 +2431,18 @@ namespace SecureOverlay
             
             var startTime = DateTime.Now;
 
+            // Companion turn outcome tracking. The finally block emits the correct
+            // chat.* frame (completed/cancelled/failed) based on this, instead of
+            // always emitting chat.completed (C5).
+            var companionOutcome = CompanionTurnOutcome.Pending;
+            string? companionErrorCode = null;
+            string? companionErrorMessage = null;
+            // Announce chat.started to the phone for companion-driven turns (H8).
+            if (!string.IsNullOrEmpty(_companionActiveRequestId))
+            {
+                _companionOrchestrator?.OnChatStarted(_companionActiveRequestId, requestTrace.CorrelationId);
+            }
+
             try
             {
                 Action<string> onChunk = (chunk) =>
@@ -2508,6 +2534,7 @@ namespace SecureOverlay
                 var elapsed = (DateTime.Now - startTime).TotalSeconds;
                 if (error == "Cancelled")
                 {
+                    companionOutcome = CompanionTurnOutcome.Cancelled;
                     requestTrace.Complete(0, "cancelled");
                     TrackLiveCopilotAsync("turn_cancelled", requestTrace, new Dictionary<string, string> { ["outcome"] = "cancelled" });
                     Log.WriteLine("✗ Request was cancelled");
@@ -2522,6 +2549,9 @@ namespace SecureOverlay
                 }
                 else if (!string.IsNullOrEmpty(error))
                 {
+                    companionOutcome = CompanionTurnOutcome.Failed;
+                    companionErrorCode = "provider_error";
+                    companionErrorMessage = error;
                     requestTrace.Complete(0, "error");
                     TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string> { ["outcome"] = "error", ["error_code"] = "provider_error" });
                     Log.WriteLine($"✗ AI Error: {error}");
@@ -2536,6 +2566,7 @@ namespace SecureOverlay
                         _authSessionRepository.Clear();
                         _creditMeteringService.AbandonActiveSession();
                         _interviewLockService.MarkLockReleased();
+                        StopCompanionRelay();
                         RefreshAccountSnapshot();
                         UpdateCreditIndicator();
                         UpdateSessionStatus();
@@ -2564,6 +2595,7 @@ namespace SecureOverlay
                 }
                 else
                 {
+                    companionOutcome = CompanionTurnOutcome.Succeeded;
                     requestTrace.Complete(response.Length, "success");
                     TrackLiveCopilotAsync("answer_completed", requestTrace, new Dictionary<string, string>
                     {
@@ -2632,6 +2664,7 @@ namespace SecureOverlay
             }
             catch (OperationCanceledException)
             {
+                companionOutcome = CompanionTurnOutcome.Cancelled;
                 requestTrace.Complete(0, "cancelled");
                 Log.WriteLine("✗ Request cancelled (exception)");
                 
@@ -2650,6 +2683,9 @@ namespace SecureOverlay
             }
             catch (Exception ex)
             {
+                companionOutcome = CompanionTurnOutcome.Failed;
+                companionErrorCode = "internal_error";
+                companionErrorMessage = ex.Message;
                 requestTrace.Complete(0, "error");
                 Log.WriteLine($"✗ Live request failed: {ex.GetType().Name}");
                 
@@ -2692,15 +2728,35 @@ namespace SecureOverlay
                     _activeRequestTrace = null;
                 }
 
-                // Publish a companion session snapshot after each completed/cancelled turn.
+                // Publish a companion session snapshot after each completed/cancelled turn,
+                // and emit the correct chat.* frame based on the turn outcome (C5).
                 if (_companionOrchestrator != null)
                 {
-                    _ = _companionOrchestrator.OnTurnCompleted(_companionActiveRequestId, succeeded: true);
+                    var reqId = _companionActiveRequestId;
+                    switch (companionOutcome)
+                    {
+                        case CompanionTurnOutcome.Succeeded:
+                            _ = _companionOrchestrator.OnTurnCompleted(reqId, succeeded: true);
+                            break;
+                        case CompanionTurnOutcome.Cancelled:
+                            _ = _companionOrchestrator.OnTurnCancelled(reqId);
+                            break;
+                        case CompanionTurnOutcome.Failed:
+                            _ = _companionOrchestrator.OnTurnCompleted(reqId, succeeded: false, companionErrorCode ?? "internal_error", companionErrorMessage ?? "Request failed.");
+                            break;
+                        default:
+                            _ = _companionOrchestrator.PublishSnapshotAsync();
+                            break;
+                    }
                     _companionActiveRequestId = null;
                 }
 
                 RestoreChatInputForRetry();
-                FocusInput();
+                // Do not steal foreground focus while the overlay is hidden for Companion Mode (M22).
+                if (!_companionOverlayHidden)
+                {
+                    FocusInput();
+                }
             }
         }
 
@@ -4072,8 +4128,31 @@ namespace SecureOverlay
             var displays = HeadlessScreenCapture.ListDisplays();
             var activeSession = _creditMeteringService?.GetActiveSession();
             var lockExpiry = activeSession?.LockExpiresAtUtc;
-            var status = "ready";
-            if (_isProcessingRequest) status = "thinking";
+
+            // Status mapping (spec §5.2): offline | connecting | idle | ready | capturing | thinking | error
+            string status;
+            var relayState = _companionOrchestrator?.RelayState ?? CompanionRelayState.Disconnected;
+            if (_companionOrchestrator == null || !_companionOrchestrator.IsEnabled)
+            {
+                status = "offline";
+            }
+            else if (relayState != CompanionRelayState.Connected)
+            {
+                status = "connecting";
+            }
+            else if (activeSession == null || (lockExpiry.HasValue && lockExpiry.Value <= DateTime.UtcNow))
+            {
+                status = "idle";
+            }
+            else if (_isProcessingRequest)
+            {
+                status = "thinking";
+            }
+            else
+            {
+                status = "ready";
+            }
+
             return new CompanionDesktopStatus
             {
                 Status = status,
@@ -4123,6 +4202,62 @@ namespace SecureOverlay
             };
         }
 
+        /// <summary>
+        /// Hides/shows the overlay for Companion Mode using the same path as the
+        /// Ctrl+Alt+` hide shortcut. Tracks the hidden state so SendMessage can avoid
+        /// stealing foreground focus while the overlay is hidden (spec §7.4).
+        /// </summary>
+        private void SetCompanionOverlayHidden(bool hidden)
+        {
+            _companionOverlayHidden = hidden;
+            if (hidden)
+            {
+                if (!_isHidden)
+                {
+                    ToggleVisibility();
+                }
+            }
+            else
+            {
+                if (_isHidden)
+                {
+                    ToggleVisibility();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Stops the companion relay (fire-and-forget) and restores the overlay. Called
+        /// on sign-out, lock release, and shutdown so the phone stops seeing a live
+        /// desktop that no longer holds a lock (spec §9).
+        /// </summary>
+        private void StopCompanionRelay()
+        {
+            if (_companionOrchestrator == null) return;
+            try { _ = _companionOrchestrator.StopAsync(); }
+            catch (Exception ex) { Log.WriteLine($"Companion relay stop failed: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// True when the desktop holds an active interview lock. Companion capture/ask
+        /// must refuse with lock_missing when there is no lock, and must NOT auto-start
+        /// a new interview (spec §7.4, §9).
+        /// </summary>
+        private bool CompanionHasActiveLock()
+        {
+            try
+            {
+                var session = _creditMeteringService?.GetActiveSession();
+                return session != null
+                    && session.LockExpiresAtUtc.HasValue
+                    && session.LockExpiresAtUtc.Value > DateTime.UtcNow;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private void CompanionCaptureAsk(string requestId, string? displayId, string? prompt)
         {
             Dispatcher.BeginInvoke(new Action(async () =>
@@ -4130,14 +4265,20 @@ namespace SecureOverlay
                 _companionActiveRequestId = requestId;
                 if (!CurrentModelSupportsVision())
                 {
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "vision_unsupported", "Current model does not support vision.");
+                    await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
+                    return;
+                }
+                if (!CompanionHasActiveLock())
+                {
+                    await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
                     return;
                 }
 
-                var image = HeadlessScreenCapture.CaptureDisplay(displayId);
+                await SendCompanionCaptureStarted(requestId, displayId);
+                var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
                 if (image == null)
                 {
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "capture_permission_missing", "Headless capture failed.");
+                    await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
                     return;
                 }
 
@@ -4146,6 +4287,8 @@ namespace SecureOverlay
                     _attachedScreenshots.RemoveAt(0);
                 }
                 _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                await SendCompanionCaptureCompleted(requestId, image);
+
                 var question = string.IsNullOrWhiteSpace(prompt) ? "Please analyze this screenshot." : prompt!;
                 InputTextBox.Text = question;
                 await SendMessage(captureQuestion: false);
@@ -4154,29 +4297,44 @@ namespace SecureOverlay
 
         private void CompanionCaptureFull(string requestId, string? displayId, bool attachOnly)
         {
-            Dispatcher.BeginInvoke(new Action(() =>
+            Dispatcher.BeginInvoke(new Action(async () =>
             {
                 _companionActiveRequestId = requestId;
                 if (!CurrentModelSupportsVision())
                 {
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "vision_unsupported", "Current model does not support vision.");
+                    await SendCompanionCaptureFailed(requestId, "vision_unsupported", "Current model does not support vision.");
                     return;
                 }
-                var image = HeadlessScreenCapture.CaptureDisplay(displayId);
+                if (!CompanionHasActiveLock())
+                {
+                    await SendCompanionCaptureFailed(requestId, "lock_missing", "No active interview lock.");
+                    return;
+                }
+
+                await SendCompanionCaptureStarted(requestId, displayId);
+                var image = HeadlessScreenCapture.CaptureDisplay(ResolveCompanionDisplayId(displayId));
                 if (image == null)
                 {
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "capture_permission_missing", "Headless capture failed.");
+                    await SendCompanionCaptureFailed(requestId, "capture_permission_missing", "Headless capture failed.");
                     return;
                 }
+
                 while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
                 {
                     _attachedScreenshots.RemoveAt(0);
                 }
                 _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                await SendCompanionCaptureCompleted(requestId, image);
+
                 if (!attachOnly)
                 {
                     InputTextBox.Text = "Please analyze this screenshot.";
-                    _ = SendMessage(captureQuestion: false);
+                    await SendMessage(captureQuestion: false);
+                }
+                else
+                {
+                    // Attach-only: no chat turn. Just publish a snapshot so the phone sees state.
+                    _ = _companionOrchestrator?.OnCaptureCompleted(requestId);
                 }
             }));
         }
@@ -4186,6 +4344,16 @@ namespace SecureOverlay
             Dispatcher.BeginInvoke(new Action(async () =>
             {
                 _companionActiveRequestId = requestId;
+                if (!CompanionHasActiveLock())
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "lock_missing", "No active interview lock.");
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "chat_failed", "Empty message.");
+                    return;
+                }
                 InputTextBox.Text = text;
                 await SendMessage(captureQuestion: false);
             }));
@@ -4195,11 +4363,9 @@ namespace SecureOverlay
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                // Just cancel the in-flight request; the SendMessage finally block
+                // emits the chat.cancelled frame based on the turn outcome.
                 _currentRequestCancellation?.Cancel();
-                if (!string.IsNullOrEmpty(requestId))
-                {
-                    _ = _companionOrchestrator?.OnTurnCompleted(requestId, succeeded: false, "cancelled", "Cancelled.");
-                }
             }));
         }
 
@@ -4221,6 +4387,29 @@ namespace SecureOverlay
                 SettingsManager.Save(_settings);
             }));
         }
+
+        /// <summary>Resolves a phone-supplied displayId, falling back to the last
+        /// display.select choice, then the primary screen (spec §5.1).</summary>
+        private string? ResolveCompanionDisplayId(string? displayId)
+        {
+            if (!string.IsNullOrWhiteSpace(displayId)) return displayId;
+            var selected = _settings?.CompanionSelectedDisplayId;
+            return string.IsNullOrWhiteSpace(selected) ? null : selected;
+        }
+
+        private Task SendCompanionCaptureStarted(string requestId, string? displayId)
+            => _companionOrchestrator?.SendCaptureStartedAsync(requestId, displayId) ?? Task.CompletedTask;
+
+        private Task SendCompanionCaptureCompleted(string requestId, System.Windows.Media.Imaging.BitmapImage image)
+        {
+            var thumbnail = HeadlessScreenCapture.BuildThumbnailJpegBase64(image);
+            var width = (int)image.PixelWidth;
+            var height = (int)image.PixelHeight;
+            return _companionOrchestrator?.SendCaptureCompletedAsync(requestId, width, height, thumbnail) ?? Task.CompletedTask;
+        }
+
+        private Task SendCompanionCaptureFailed(string requestId, string code, string message)
+            => _companionOrchestrator?.SendCaptureFailedAsync(requestId, code, message) ?? Task.CompletedTask;
 
         private sealed class MainWindowCompanionTarget : ICompanionCommandTarget
         {
@@ -5986,6 +6175,9 @@ namespace SecureOverlay
                 _interviewLockHeartbeatTimer = null;
                 _sessionStatusTimer?.Stop();
                 _sessionStatusTimer = null;
+
+                // Drop the companion relay on shutdown so the backend room cleans up (H9).
+                StopCompanionRelay();
                 
                 Log.WriteLine("Clearing job description on app close...");
                 _contextPackService.ClearSelectedPack(clearResume: false, clearJobDescription: true);

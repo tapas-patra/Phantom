@@ -15,8 +15,17 @@ public sealed class CompanionPairingCodeRepository
     public CompanionPairingCodeRecord? FindByHash(string codeHash)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM companion_pairing_codes WHERE code_hash = @codeHash LIMIT 1;";
+        return FindByHash(codeHash, connection, transaction: null, forUpdate: false);
+    }
+
+    public CompanionPairingCodeRecord? FindByHash(
+        string codeHash,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        bool forUpdate)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = $"SELECT * FROM companion_pairing_codes WHERE code_hash = @codeHash LIMIT 1{(forUpdate ? " FOR UPDATE" : string.Empty)};";
         command.Parameters.AddWithValue("codeHash", codeHash);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -51,11 +60,16 @@ ON CONFLICT(code_hash) DO UPDATE SET
     public void MarkConsumed(string codeHash, DateTime consumedAtUtc)
     {
         using var connection = _store.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE companion_pairing_codes SET consumed_at_utc = @consumedAtUtc WHERE code_hash = @codeHash;";
+        MarkConsumed(codeHash, consumedAtUtc, connection, transaction: null);
+    }
+
+    public int MarkConsumed(string codeHash, DateTime consumedAtUtc, NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = "UPDATE companion_pairing_codes SET consumed_at_utc = @consumedAtUtc WHERE code_hash = @codeHash AND consumed_at_utc IS NULL;";
         command.Parameters.AddWithValue("codeHash", codeHash);
         command.Parameters.AddWithValue("consumedAtUtc", consumedAtUtc);
-        command.ExecuteNonQuery();
+        return command.ExecuteNonQuery();
     }
 
     public void DeleteUnusedForDevice(string desktopDeviceId)
@@ -65,6 +79,22 @@ ON CONFLICT(code_hash) DO UPDATE SET
         command.CommandText = "DELETE FROM companion_pairing_codes WHERE desktop_device_id = @desktopDeviceId AND consumed_at_utc IS NULL;";
         command.Parameters.AddWithValue("desktopDeviceId", desktopDeviceId);
         command.ExecuteNonQuery();
+    }
+
+    public void DeleteExpired()
+    {
+        using var connection = _store.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM companion_pairing_codes WHERE expires_at_utc < @now;";
+        command.Parameters.AddWithValue("now", DateTime.UtcNow);
+        command.ExecuteNonQuery();
+    }
+
+    private static NpgsqlCommand CreateCommand(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
     }
 
     private static CompanionPairingCodeRecord Map(NpgsqlDataReader reader)

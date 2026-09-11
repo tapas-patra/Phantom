@@ -138,6 +138,45 @@ class SerializationTest {
     }
 
     @Test
+    fun testSnapshotProvidersAndAttachments() {
+        val rawJson = """
+            {
+              "v": 1,
+              "id": "env_003",
+              "type": "session.snapshot",
+              "ts": "2026-03-31T12:00:00Z",
+              "pairingId": "pair_111",
+              "role": "desktop",
+              "body": {
+                "desktopStatus": "ready",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "vision": true,
+                "attachmentCount": 1,
+                "attachments": [
+                  { "index": 0, "thumbnailJpegBase64": "abc" }
+                ],
+                "providers": [
+                  {
+                    "id": "openai",
+                    "name": "OpenAI",
+                    "models": [{ "id": "gpt-4o", "name": "GPT-4o", "vision": true }]
+                  }
+                ],
+                "turns": []
+              }
+            }
+        """.trimIndent()
+
+        val decoded = json.decodeFromString<RelayEnvelope>(rawJson)
+        assertEquals("openai", decoded.body?.provider)
+        assertEquals("gpt-4o", decoded.body?.model)
+        assertEquals(1, decoded.body?.attachmentCount)
+        assertEquals("abc", decoded.body?.attachments?.firstOrNull()?.thumbnailJpegBase64)
+        assertEquals(true, decoded.body?.providers?.firstOrNull()?.models?.firstOrNull()?.vision)
+    }
+
+    @Test
     fun testIsoDateParsing() {
         val isoZ = "2026-03-31T12:00:00Z"
         val timestampZ = SessionStore.parseIsoDate(isoZ)

@@ -50,6 +50,9 @@ namespace SecureOverlay.Services
         public Action<string?>? OnDisplaySelect { get; set; }
         public Action? OnVoiceStart { get; set; }
         public Action? OnVoiceStop { get; set; }
+        public Action<string?, string?>? OnRuntimeSelect { get; set; }
+        public Action<int>? OnCaptureRemove { get; set; }
+        public Action? OnCaptureClear { get; set; }
 
         public CompanionRelayState RelayState { get; private set; } = CompanionRelayState.Disconnected;
         public event Action<CompanionRelayState>? RelayStateChanged;
@@ -126,6 +129,15 @@ namespace SecureOverlay.Services
                 case "voice.stop":
                     OnVoiceStop?.Invoke();
                     break;
+                case "runtime.select":
+                    OnRuntimeSelect?.Invoke(frame.ReadString("provider"), frame.ReadString("model"));
+                    break;
+                case "capture.remove":
+                    OnCaptureRemove?.Invoke(frame.ReadInt("index") ?? -1);
+                    break;
+                case "capture.clear":
+                    OnCaptureClear?.Invoke();
+                    break;
             }
         }
 
@@ -147,7 +159,10 @@ namespace SecureOverlay.Services
                     provider = status.Provider,
                     vision = status.Vision,
                     displays = status.Displays ?? new List<CompanionDisplayDto>(),
-                    lockExpiresAtUtc = status.LockExpiresAtUtc
+                    lockExpiresAtUtc = status.LockExpiresAtUtc,
+                    attachmentCount = status.AttachmentCount,
+                    attachments = status.Attachments ?? new List<CompanionAttachmentDto>(),
+                    providers = status.Providers ?? new List<CompanionProviderOptionDto>()
                 }
             };
             await _client.SendRawAsync(JsonSerializer.Serialize(envelope, WireJsonOptions));
@@ -285,7 +300,10 @@ namespace SecureOverlay.Services
                     vision = snapshot.Vision,
                     displays = snapshot.Displays ?? new List<CompanionDisplayDto>(),
                     selectedDisplayId = snapshot.SelectedDisplayId,
-                    turns = snapshot.Turns ?? new List<CompanionTurnDto>()
+                    turns = snapshot.Turns ?? new List<CompanionTurnDto>(),
+                    attachmentCount = snapshot.AttachmentCount,
+                    attachments = snapshot.Attachments ?? new List<CompanionAttachmentDto>(),
+                    providers = snapshot.Providers ?? new List<CompanionProviderOptionDto>()
                 }
             };
             await _client.SendRawAsync(JsonSerializer.Serialize(envelope, WireJsonOptions));
@@ -300,5 +318,8 @@ namespace SecureOverlay.Services
         public bool Vision { get; set; }
         public List<CompanionDisplayDto> Displays { get; set; } = new();
         public DateTime? LockExpiresAtUtc { get; set; }
+        public int AttachmentCount { get; set; }
+        public List<CompanionAttachmentDto> Attachments { get; set; } = new();
+        public List<CompanionProviderOptionDto> Providers { get; set; } = new();
     }
 }

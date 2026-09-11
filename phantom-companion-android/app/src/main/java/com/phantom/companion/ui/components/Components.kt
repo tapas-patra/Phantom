@@ -3,6 +3,7 @@ package com.phantom.companion.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -16,11 +17,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phantom.companion.domain.model.DesktopPresenceState
+import com.phantom.companion.domain.model.ProviderOption
 import com.phantom.companion.ui.theme.PhantomAccent
 import com.phantom.companion.ui.theme.PhantomBackground
 import com.phantom.companion.ui.theme.PhantomDanger
@@ -301,5 +313,115 @@ internal fun markdownToHtml(source: String): String {
         .replace("\n", "<br>")
     return withInline.replace(Regex("\u0000CODE(\\d+)\u0000")) { match ->
         placeholders[match.groupValues[1].toInt()]
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProviderModelPickers(
+    providers: List<ProviderOption>,
+    selectedProviderId: String,
+    selectedModelId: String,
+    onSelect: (providerId: String, modelId: String) -> Unit,
+    enabled: Boolean = true
+) {
+    if (providers.isEmpty()) {
+        Text(
+            text = "Waiting for the desktop catalog…",
+            fontSize = 13.sp,
+            color = PhantomMuted
+        )
+        return
+    }
+
+    val provider = providers.firstOrNull { it.id.equals(selectedProviderId, ignoreCase = true) }
+        ?: providers.first()
+    val models = provider.models
+    val selectedModel = models.firstOrNull { it.id.equals(selectedModelId, ignoreCase = true) }
+        ?: models.firstOrNull()
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        PhantomDropdown(
+            label = "Provider",
+            selectedId = provider.id,
+            selectedLabel = provider.name.ifBlank { provider.id },
+            options = providers.map { it.id to it.name.ifBlank { it.id } },
+            enabled = enabled,
+            testTag = "dropdown_provider",
+            onSelect = { providerId ->
+                val next = providers.firstOrNull { it.id == providerId } ?: return@PhantomDropdown
+                val keep = next.models.firstOrNull { it.id.equals(selectedModelId, ignoreCase = true) }
+                val modelId = keep?.id ?: next.models.firstOrNull()?.id ?: ""
+                if (modelId.isNotEmpty()) onSelect(next.id, modelId)
+            }
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        PhantomDropdown(
+            label = "Model",
+            selectedId = selectedModel?.id.orEmpty(),
+            selectedLabel = selectedModel?.name?.ifBlank { selectedModel.id } ?: selectedModelId.ifBlank { "Select model" },
+            options = models.map { it.id to it.name.ifBlank { it.id } },
+            enabled = enabled && models.isNotEmpty(),
+            testTag = "dropdown_model",
+            onSelect = { modelId ->
+                onSelect(provider.id, modelId)
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PhantomDropdown(
+    label: String,
+    selectedId: String,
+    selectedLabel: String,
+    options: List<Pair<String, String>>,
+    onSelect: (String) -> Unit,
+    enabled: Boolean = true,
+    testTag: String = "dropdown"
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = !expanded },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        OutlinedTextField(
+            value = selectedLabel.ifBlank { selectedId },
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(type = MenuAnchorType.PrimaryNotEditable, enabled = enabled)
+                .testTag(testTag),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = PhantomText,
+                unfocusedTextColor = PhantomText,
+                focusedContainerColor = PhantomSurface,
+                unfocusedContainerColor = PhantomSurface,
+                focusedBorderColor = PhantomPrimary,
+                unfocusedBorderColor = PhantomLine,
+                focusedLabelColor = PhantomMuted,
+                unfocusedLabelColor = PhantomMuted
+            )
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { (id, name) ->
+                DropdownMenuItem(
+                    text = { Text(name.ifBlank { id }) },
+                    onClick = {
+                        expanded = false
+                        if (id != selectedId) onSelect(id)
+                    }
+                )
+            }
+        }
     }
 }

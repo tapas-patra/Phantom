@@ -161,6 +161,26 @@ data class ChatTurn(
 )
 
 @Serializable
+data class ProviderOption(
+    val id: String = "",
+    val name: String = "",
+    val models: List<ModelOption> = emptyList()
+)
+
+@Serializable
+data class ModelOption(
+    val id: String = "",
+    val name: String = "",
+    val vision: Boolean = false
+)
+
+@Serializable
+data class PendingAttachment(
+    val index: Int = 0,
+    val thumbnailJpegBase64: String? = null
+)
+
+@Serializable
 data class CompanionSessionSnapshot(
     val pairingId: String = "",
     val desktopStatus: String = "ready",
@@ -206,6 +226,10 @@ data class RelayBody(
     val lockExpiresAtUtc: String? = null,
     val selectedDisplayId: String? = null,
     val turns: List<ChatTurn>? = null,
+    val attachmentCount: Int? = null,
+    val attachments: List<PendingAttachment>? = null,
+    val providers: List<ProviderOption>? = null,
+    val index: Int? = null,
     // capture.completed
     val width: Int? = null,
     val height: Int? = null,

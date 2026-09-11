@@ -34,11 +34,13 @@ class SessionViewModel(
     val connectionError: StateFlow<String?> = sessionRepository.connectionError
     val desktopPresence: StateFlow<DesktopPresenceState> = sessionRepository.desktopPresence
     val currentModel: StateFlow<String?> = sessionRepository.currentModel
+    val currentProvider: StateFlow<String?> = sessionRepository.currentProvider
+    val providers = sessionRepository.providers
     val isVisionSupported: StateFlow<Boolean> = sessionRepository.isVisionSupported
     val displays: StateFlow<List<DisplayInfo>> = sessionRepository.displays
     val selectedDisplayId: StateFlow<String> = sessionRepository.selectedDisplayId
     val transcript: StateFlow<List<ChatTurn>> = sessionRepository.transcript
-    val currentPendingThumbnail: StateFlow<String?> = sessionRepository.currentPendingThumbnail
+    val pendingAttachments = sessionRepository.pendingAttachments
     val sessionError: StateFlow<String?> = sessionRepository.sessionError
 
     val activePairing = sessionStore.activePairing
@@ -136,6 +138,18 @@ class SessionViewModel(
 
     fun onSelectDisplay(displayId: String) {
         sessionRepository.selectDisplay(displayId)
+    }
+
+    fun onSelectRuntime(provider: String, model: String) {
+        sessionRepository.selectRuntime(provider, model)
+    }
+
+    fun onRemoveAttachment(index: Int) {
+        sessionRepository.removePendingAttachment(index)
+    }
+
+    fun onClearAttachments() {
+        sessionRepository.clearPendingAttachments()
     }
 
     fun showNewTopicDialog() {

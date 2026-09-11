@@ -104,7 +104,7 @@ enum ScreenshotCapture {
     /// captured PNG `Data`. The thumbnail is downscaled to a max edge of 512px and JPEG-
     /// encoded at decreasing quality until it fits the contract's 80 KB decoded limit
     /// (spec §5.2). Returns nil if the input cannot be decoded (C2).
-    static func captureCompletedPayload(from data: Data) -> (width: Int, height: Int, thumbnailJpegBase64: String?)? {
+    static func captureCompletedPayload(from data: Data, maxEdge: CGFloat = 512) -> (width: Int, height: Int, thumbnailJpegBase64: String?)? {
         guard let image = NSImage(data: data),
               let tiff = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff) else {
@@ -113,7 +113,6 @@ enum ScreenshotCapture {
         let width = bitmap.pixelsWide
         let height = bitmap.pixelsHigh
 
-        let maxEdge: CGFloat = 512
         let scale = min(1, maxEdge / CGFloat(max(width, height)))
         let thumbW = max(1, Int(CGFloat(width) * scale))
         let thumbH = max(1, Int(CGFloat(height) * scale))

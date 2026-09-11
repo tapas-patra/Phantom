@@ -323,16 +323,21 @@ The relay:
 | `chat.cancel` | `requestId?` | Existing cancel |
 | `chat.new_topic` | — | Existing new-topic / clear-context |
 | `display.select` | `displayId` | Remember for later captures |
+| `runtime.select` | `provider`, `model` | Apply the same provider/model the desktop title bar uses, then announce `desktop.hello` + `session.snapshot` |
+| `capture.remove` | `index` | Remove one pending screenshot; do not rotate others |
+| `capture.clear` | — | Remove all pending screenshots |
 
 If there is no active interview lock held by **this desktop device**, desktop replies `capture.failed` / `chat.failed` with `code: "lock_missing"` and does not capture. The relay may also send `relay.error` `lock_missing` as a belt-and-suspenders check by reading `interview_locks`.
+
+Capture is capped at **3** pending screenshots. A fourth `capture.full` / `capture.ask` fails with `code: "attachment_limit"` instead of dropping the oldest image.
 
 ### 5.2 Desktop → phone (relay forwards)
 
 | `type` | Body |
 | --- | --- |
-| `desktop.hello` | `status`, `model`, `provider`, `vision`, `displays[]`, `lockExpiresAtUtc` |
+| `desktop.hello` | `status`, `model`, `provider`, `vision`, `displays[]`, `lockExpiresAtUtc`, `attachmentCount`, `attachments[]?`, `providers[]` |
 | `desktop.status` | subset |
-| `session.snapshot` | same shape as `/sessions/current` minus `pairingId`; relay caches it |
+| `session.snapshot` | same shape as `/sessions/current` minus `pairingId`; relay caches it. Additive: `attachmentCount`, `attachments[]`, `providers[]` |
 | `capture.started` | `requestId`, `displayId` |
 | `capture.completed` | `requestId`, `width`, `height`, `thumbnailJpegBase64?` |
 | `capture.failed` | `requestId`, `code`, `message` |
@@ -346,9 +351,13 @@ If there is no active interview lock held by **this desktop device**, desktop re
 
 `displays[]`: `{ "id": "0", "name": "Built-in Retina", "isDefault": true }`
 
+`providers[]`: `{ "id": "groq", "name": "Groq", "models": [{ "id": "compound", "name": "Compound", "vision": false }] }`
+
+`attachments[]`: `{ "index": 0, "thumbnailJpegBase64": "..." }` — small JPEG thumbs for the phone tray (max 3). Phone may also append a thumb from live `capture.completed` before the next snapshot.
+
 Failure `code` values the phone already special-cases:
 
-`desktop_offline`, `not_paired`, `lock_missing`, `vision_unsupported`, `capture_permission_missing`, `rate_limited`, `pairing_revoked`, `account_locked`
+`desktop_offline`, `not_paired`, `lock_missing`, `vision_unsupported`, `attachment_limit`, `capture_permission_missing`, `rate_limited`, `pairing_revoked`, `account_locked`
 
 ### 5.3 Relay → both
 

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.phantom.companion.BuildConfig
 import com.phantom.companion.ui.components.PhantomPrimaryButton
 import com.phantom.companion.ui.components.PhantomSecondaryButton
+import com.phantom.companion.ui.components.ProviderModelPickers
 import com.phantom.companion.ui.theme.PhantomBackground
 import com.phantom.companion.ui.theme.PhantomDanger
 import com.phantom.companion.ui.theme.PhantomLine
@@ -76,6 +78,9 @@ fun AccountScreen(
     val activePairing by viewModel.activePairing.collectAsState()
     val companionApiReady by viewModel.companionApiReady.collectAsState()
     val usePhoneMicrophone by viewModel.usePhoneMicrophone.collectAsState()
+    val currentProvider by viewModel.currentProvider.collectAsState()
+    val currentModel by viewModel.currentModel.collectAsState()
+    val providers by viewModel.providers.collectAsState()
     val isUnpairing by viewModel.isUnpairing.collectAsState()
     val isSigningOut by viewModel.isSigningOut.collectAsState()
     val showUnpairConfirmDialog by viewModel.showUnpairConfirmDialog.collectAsState()
@@ -197,6 +202,24 @@ fun AccountScreen(
                         testTag = "button_account_pair"
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            AccountCard(title = "Model", icon = Icons.Default.Memory) {
+                Text(
+                    text = "Changes apply on this phone and the paired desktop.",
+                    fontSize = 13.sp,
+                    color = PhantomMuted
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                ProviderModelPickers(
+                    providers = providers,
+                    selectedProviderId = currentProvider.orEmpty(),
+                    selectedModelId = currentModel.orEmpty(),
+                    onSelect = viewModel::selectRuntime,
+                    enabled = activePairing != null
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))

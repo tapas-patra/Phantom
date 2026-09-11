@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.data.repo.AuthRepository
 import com.phantom.companion.data.repo.PairingRepository
+import com.phantom.companion.data.repo.SessionRepository
 import com.phantom.companion.domain.model.Pairing
+import com.phantom.companion.domain.model.ProviderOption
 import com.phantom.companion.domain.model.StartupSnapshot
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,13 +26,17 @@ sealed class AccountNavigationEvent {
 class AccountViewModel(
     private val authRepository: AuthRepository,
     private val pairingRepository: PairingRepository,
-    private val sessionStore: SessionStore
+    private val sessionStore: SessionStore,
+    private val sessionRepository: SessionRepository
 ) : ViewModel() {
 
     val startupSnapshot: StateFlow<StartupSnapshot?> = sessionStore.startupSnapshot
     val activePairing: StateFlow<Pairing?> = sessionStore.activePairing
     val companionApiReady: StateFlow<Boolean?> = sessionStore.companionApiReady
     val usePhoneMicrophone: StateFlow<Boolean> = sessionStore.usePhoneMicrophone
+    val currentModel = sessionRepository.currentModel
+    val currentProvider = sessionRepository.currentProvider
+    val providers: StateFlow<List<ProviderOption>> = sessionRepository.providers
 
     private val _isUnpairing = MutableStateFlow(false)
     val isUnpairing: StateFlow<Boolean> = _isUnpairing.asStateFlow()
@@ -83,16 +89,21 @@ class AccountViewModel(
         sessionStore.setUsePhoneMicrophone(enabled)
     }
 
+    fun selectRuntime(provider: String, model: String) {
+        sessionRepository.selectRuntime(provider, model)
+    }
+
     companion object {
         fun provideFactory(
             authRepository: AuthRepository,
             pairingRepository: PairingRepository,
-            sessionStore: SessionStore
+            sessionStore: SessionStore,
+            sessionRepository: SessionRepository
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return AccountViewModel(authRepository, pairingRepository, sessionStore) as T
+                    return AccountViewModel(authRepository, pairingRepository, sessionStore, sessionRepository) as T
                 }
             }
     }

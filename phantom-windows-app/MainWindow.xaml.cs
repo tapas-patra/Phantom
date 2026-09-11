@@ -1792,8 +1792,7 @@ namespace SecureOverlay
             Log.WriteLine($"  {_settings.SelectedAI} keys: {keyCount} total, {availableKeys} available");
 
             var allowedProviders = GetAvailableProvidersForCurrentTier();
-            if (allowedProviders.Length > 0
-                && !allowedProviders.Contains(_settings.SelectedAI, StringComparer.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(_settings.SelectedAI) && allowedProviders.Length > 0)
             {
                 _settings.SelectedAI = allowedProviders[0];
                 SettingsManager.Save(_settings);
@@ -1801,11 +1800,11 @@ namespace SecureOverlay
 
             var selectedProvider = _settings.SelectedAI;
             
-            // ✅ FIX: Get the CORRECT model from settings (not hardcoded default)
+            // Keep the user's model. Do not snap to catalog[0] (that made phone
+            // sends rewrite the title bar to groq/compound).
             var currentModel = rotationManager.GetCurrentModel(selectedProvider);
             var allowedModels = GetConfiguredModelsForProvider(selectedProvider);
-            if (allowedModels.Length > 0
-                && !allowedModels.Contains(currentModel, StringComparer.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(currentModel) && allowedModels.Length > 0)
             {
                 currentModel = allowedModels[0];
                 AIModelRegistry.SetModelForProvider(_settings, selectedProvider, currentModel);
@@ -4142,8 +4141,18 @@ namespace SecureOverlay
 
         private CompanionDesktopStatus ProvideCompanionStatus()
         {
-            var provider = _currentAI?.GetProviderName() ?? _settings.SelectedAI ?? string.Empty;
-            var model = _rotationManager?.GetCurrentModel(_settings.SelectedAI ?? string.Empty) ?? string.Empty;
+            string provider;
+            string model;
+            if (ShouldShowByoSelectors())
+            {
+                provider = _settings.SelectedAI ?? string.Empty;
+                model = AIModelRegistry.GetCurrentModelForProvider(_settings, provider) ?? string.Empty;
+            }
+            else
+            {
+                provider = GetCurrentRuntimeProviderId();
+                model = GetCurrentRuntimeModelId();
+            }
             var vision = CurrentModelSupportsVision();
             var displays = HeadlessScreenCapture.ListDisplays();
             var activeSession = _creditMeteringService?.GetActiveSession();
@@ -4191,8 +4200,52 @@ namespace SecureOverlay
                 Model = model,
                 Vision = vision,
                 Displays = displays,
-                LockExpiresAtUtc = lockExpiry
+                LockExpiresAtUtc = lockExpiry,
+                AttachmentCount = _attachedScreenshots.Count,
+                Attachments = BuildCompanionAttachments(),
+                Providers = BuildCompanionProviderCatalog()
             };
+        }
+
+        private List<CompanionProviderOptionDto> BuildCompanionProviderCatalog()
+        {
+            var catalog = new List<CompanionProviderOptionDto>();
+            var byo = HasByoEntitlement();
+            foreach (var providerId in GetAvailableProvidersForCurrentTier())
+            {
+                var provider = ProviderModelCatalogCache.GetProvider(_settings, providerId, byo: byo)
+                    ?? ProviderModelCatalogCache.GetProvider(_settings, providerId);
+                var models = (provider?.Models ?? new List<ManagedAiModelOptionDto>())
+                    .Where(item => !string.IsNullOrWhiteSpace(item.ModelId))
+                    .Select(item => new CompanionModelOptionDto
+                    {
+                        Id = item.ModelId,
+                        Name = string.IsNullOrWhiteSpace(item.DisplayName) ? item.ModelId : item.DisplayName,
+                        Vision = item.SupportsVision
+                    })
+                    .ToList();
+                catalog.Add(new CompanionProviderOptionDto
+                {
+                    Id = providerId,
+                    Name = string.IsNullOrWhiteSpace(provider?.Label) ? providerId : provider.Label,
+                    Models = models
+                });
+            }
+            return catalog;
+        }
+
+        private List<CompanionAttachmentDto> BuildCompanionAttachments()
+        {
+            var list = new List<CompanionAttachmentDto>();
+            for (var i = 0; i < _attachedScreenshots.Count; i++)
+            {
+                list.Add(new CompanionAttachmentDto
+                {
+                    Index = i,
+                    ThumbnailJpegBase64 = HeadlessScreenCapture.BuildThumbnailJpegBase64(_attachedScreenshots[i].Image, longEdge: 160)
+                });
+            }
+            return list;
         }
 
         private CompanionSessionSnapshotDto ProvideCompanionSnapshot()
@@ -4233,7 +4286,10 @@ namespace SecureOverlay
                 Vision = status.Vision,
                 Displays = status.Displays,
                 SelectedDisplayId = _settings.CompanionSelectedDisplayId ?? string.Empty,
-                Turns = turns
+                Turns = turns,
+                AttachmentCount = _attachedScreenshots.Count,
+                Attachments = BuildCompanionAttachments(),
+                Providers = BuildCompanionProviderCatalog()
             };
         }
 
@@ -4404,6 +4460,13 @@ namespace SecureOverlay
                     return;
                 }
 
+                if (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                {
+                    _companionHasError = true;
+                    await SendCompanionCaptureFailed(requestId, "attachment_limit", "You can attach up to 3 screenshots.");
+                    return;
+                }
+
                 await SendCompanionCaptureStarted(requestId, displayId);
                 _isCompanionCapturing = true;
                 try
@@ -4416,11 +4479,8 @@ namespace SecureOverlay
                         return;
                     }
 
-                    while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
-                    {
-                        _attachedScreenshots.RemoveAt(0);
-                    }
                     _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                    UpdateScreenshotButtonChrome();
                     await SendCompanionCaptureCompleted(requestId, image);
 
                     var question = string.IsNullOrWhiteSpace(prompt) ? "Please analyze this screenshot." : prompt!;
@@ -4452,6 +4512,13 @@ namespace SecureOverlay
                     return;
                 }
 
+                if (_attachedScreenshots.Count >= MaxAttachedScreenshots)
+                {
+                    _companionHasError = true;
+                    await SendCompanionCaptureFailed(requestId, "attachment_limit", "You can attach up to 3 screenshots.");
+                    return;
+                }
+
                 await SendCompanionCaptureStarted(requestId, displayId);
                 _isCompanionCapturing = true;
                 try
@@ -4464,11 +4531,8 @@ namespace SecureOverlay
                         return;
                     }
 
-                    while (_attachedScreenshots.Count >= MaxAttachedScreenshots)
-                    {
-                        _attachedScreenshots.RemoveAt(0);
-                    }
                     _attachedScreenshots.Add(new AttachedScreenshotItem { Image = image });
+                    UpdateScreenshotButtonChrome();
                     await SendCompanionCaptureCompleted(requestId, image);
 
                     if (!attachOnly)
@@ -4478,7 +4542,6 @@ namespace SecureOverlay
                     }
                     else
                     {
-                        // Attach-only: no chat turn. Just publish a snapshot so the phone sees state.
                         _ = _companionOrchestrator?.OnCaptureCompleted(requestId);
                     }
                 }
@@ -4511,6 +4574,45 @@ namespace SecureOverlay
             }));
         }
 
+        private void CompanionRuntimeSelect(string? provider, string? model)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!string.IsNullOrWhiteSpace(provider)
+                    && !string.Equals(provider, _settings.SelectedAI, StringComparison.OrdinalIgnoreCase))
+                {
+                    ChangeProvider(provider);
+                }
+                if (!string.IsNullOrWhiteSpace(model))
+                {
+                    var current = AIModelRegistry.GetCurrentModelForProvider(_settings, _settings.SelectedAI);
+                    if (!string.Equals(model, current, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ChangeModel(model);
+                    }
+                }
+                _ = _companionOrchestrator?.AnnounceReadyAsync();
+            }));
+        }
+
+        private void CompanionCaptureRemove(int index)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                RemoveAttachedScreenshotAt(index);
+                _ = _companionOrchestrator?.OnCaptureCompleted(null);
+            }));
+        }
+
+        private void CompanionCaptureClear()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                ClearAttachedScreenshot();
+                _ = _companionOrchestrator?.OnCaptureCompleted(null);
+            }));
+        }
+
         private void CompanionChatCancel(string? requestId)
         {
             Dispatcher.BeginInvoke(new Action(() =>
@@ -4527,6 +4629,10 @@ namespace SecureOverlay
             {
                 try { _conversationManager?.StartNewTopic(); }
                 catch (Exception ex) { Log.WriteLine($"Companion new topic failed: {ex.Message}"); }
+                while (_attachedScreenshots.Count > 0)
+                {
+                    RemoveAttachedScreenshotAt(0);
+                }
                 _ = _companionOrchestrator?.OnTurnCompleted(null, succeeded: true);
             }));
         }
@@ -4576,6 +4682,9 @@ namespace SecureOverlay
             public void DisplaySelect(string? displayId) => _owner.CompanionDisplaySelect(displayId);
             public void VoiceStart() => _owner.CompanionVoiceStart();
             public void VoiceStop() => _owner.CompanionVoiceStop();
+            public void RuntimeSelect(string? provider, string? model) => _owner.CompanionRuntimeSelect(provider, model);
+            public void CaptureRemove(int index) => _owner.CompanionCaptureRemove(index);
+            public void CaptureClear() => _owner.CompanionCaptureClear();
         }
 
         private void ApplySelectedContextPackToConversation(ContextPack selectedPack, bool resetConversation)
@@ -6074,6 +6183,7 @@ namespace SecureOverlay
             
             Log.WriteLine($"✓ Provider changed to {newProvider}");
             Log.WriteLine("═══════════════════════════════════════════════════════");
+            _ = _companionOrchestrator?.AnnounceReadyAsync();
         }
 
 
@@ -6122,6 +6232,7 @@ namespace SecureOverlay
             Log.WriteLine($"✓ Model changed to {newModel}");
             DebugCurrentModel();
             Log.WriteLine("═══════════════════════════════════════════════════════");
+            _ = _companionOrchestrator?.AnnounceReadyAsync();
         }
 
         private void ResetCurrentStreamingAttempt()

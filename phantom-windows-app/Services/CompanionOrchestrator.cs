@@ -318,6 +318,9 @@ namespace SecureOverlay.Services
             host.OnDisplaySelect = displayId => _target.DisplaySelect(displayId);
             host.OnVoiceStart = () => _target.VoiceStart();
             host.OnVoiceStop = () => _target.VoiceStop();
+            host.OnRuntimeSelect = (provider, model) => _target.RuntimeSelect(provider, model);
+            host.OnCaptureRemove = index => _target.CaptureRemove(index);
+            host.OnCaptureClear = () => _target.CaptureClear();
         }
 
         public async ValueTask DisposeAsync()
@@ -342,5 +345,8 @@ namespace SecureOverlay.Services
         void DisplaySelect(string? displayId);
         void VoiceStart();
         void VoiceStop();
+        void RuntimeSelect(string? provider, string? model);
+        void CaptureRemove(int index);
+        void CaptureClear();
     }
 }

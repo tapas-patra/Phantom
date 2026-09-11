@@ -95,6 +95,11 @@ final class CompanionOrchestrator {
         }
     }
 
+    func announceReady() async {
+        await commandHost?.sendDesktopHello()
+        await commandHost?.publishSnapshot()
+    }
+
     func notifyDesktopOriginatedChatStarted(requestId: String) {
         commandHost?.sendChatStarted(requestId: requestId, turnId: requestId)
         Task { await commandHost?.publishSnapshot() }

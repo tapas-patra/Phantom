@@ -8,6 +8,8 @@ import com.phantom.companion.data.remote.TerminalRelayEvent
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
+import com.phantom.companion.domain.model.PendingAttachment
+import com.phantom.companion.domain.model.ProviderOption
 import com.phantom.companion.domain.model.RelayEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,12 +39,15 @@ class SessionRepository(
         // How long to wait for a capture.started / chat.started before surfacing a
         // "desktop didn't respond" error (step 1 fix for silent follow-up hangs).
         const val RESPONSE_TIMEOUT_MS = 30_000L
+        const val MAX_ATTACHMENTS = 3
     }
 
     val connectionState: StateFlow<SocketConnectionState> = relayClient.connectionState
     val connectionError: StateFlow<String?> = relayClient.connectionError
     val desktopPresence: StateFlow<DesktopPresenceState> = relayClient.desktopPresence
     val currentModel: StateFlow<String?> = relayClient.currentModel
+    val currentProvider: StateFlow<String?> = relayClient.currentProvider
+    val providers: StateFlow<List<ProviderOption>> = relayClient.providers
     val isVisionSupported: StateFlow<Boolean> = relayClient.isVisionSupported
     val displays: StateFlow<List<DisplayInfo>> = relayClient.displays
     val selectedDisplayId: StateFlow<String> = relayClient.selectedDisplayId
@@ -52,8 +57,8 @@ class SessionRepository(
     private val _transcript = MutableStateFlow<List<ChatTurn>>(emptyList())
     val transcript: StateFlow<List<ChatTurn>> = _transcript.asStateFlow()
 
-    private val _currentPendingThumbnail = MutableStateFlow<String?>(null)
-    val currentPendingThumbnail: StateFlow<String?> = _currentPendingThumbnail.asStateFlow()
+    private val _pendingAttachments = MutableStateFlow<List<PendingAttachment>>(emptyList())
+    val pendingAttachments: StateFlow<List<PendingAttachment>> = _pendingAttachments.asStateFlow()
 
     private val _sessionError = MutableStateFlow<String?>(null)
     val sessionError: StateFlow<String?> = _sessionError.asStateFlow()
@@ -100,13 +105,13 @@ class SessionRepository(
     fun stopSession() {
         clearResponseWatchdog()
         relayClient.disconnect()
-        _currentPendingThumbnail.value = null
+        _pendingAttachments.value = emptyList()
     }
 
     fun clearTranscript() {
         clearResponseWatchdog()
         _transcript.value = emptyList()
-        _currentPendingThumbnail.value = null
+        _pendingAttachments.value = emptyList()
         _sessionError.value = null
     }
 
@@ -117,16 +122,23 @@ class SessionRepository(
     private fun processIncomingFrame(frame: RelayEnvelope) {
         val body = frame.body
         when (frame.type) {
-            "session.snapshot" -> {
+            "session.snapshot", "desktop.hello" -> {
                 applySnapshotTurns(body?.turns)
+                applyPendingAttachments(body?.attachmentCount, body?.attachments)
             }
             "capture.started" -> {
                 clearResponseWatchdog()
                 _sessionError.value = null
             }
             "capture.completed" -> {
-                body?.thumbnailJpegBase64?.let {
-                    _currentPendingThumbnail.value = it
+                body?.thumbnailJpegBase64?.takeIf { it.isNotBlank() }?.let { thumb ->
+                    val current = _pendingAttachments.value
+                    if (current.size < MAX_ATTACHMENTS) {
+                        _pendingAttachments.value = current + PendingAttachment(
+                            index = current.size,
+                            thumbnailJpegBase64 = thumb
+                        )
+                    }
                 }
             }
             "capture.failed" -> {
@@ -226,22 +238,31 @@ class SessionRepository(
             _sessionError.value = "This model cannot read screens."
             return
         }
+        if (_pendingAttachments.value.size >= MAX_ATTACHMENTS) {
+            _sessionError.value = "You can attach up to 3 screenshots."
+            return
+        }
 
-        // Add user turn to transcript with optional thumbnail
         val userTurn = ChatTurn(
             role = "user",
             text = prompt,
-            atUtc = currentIsoTimestamp(),
-            thumbnailBase64 = _currentPendingThumbnail.value
+            atUtc = currentIsoTimestamp()
         )
         _transcript.value = _transcript.value + userTurn
-        _currentPendingThumbnail.value = null
 
         startResponseWatchdog()
         relayClient.sendCaptureAsk(displayId = displayId, prompt = prompt)
     }
 
     fun captureOnly(displayId: String = "") {
+        if (!isVisionSupported.value) {
+            _sessionError.value = "This model cannot read screens."
+            return
+        }
+        if (_pendingAttachments.value.size >= MAX_ATTACHMENTS) {
+            _sessionError.value = "You can attach up to 3 screenshots."
+            return
+        }
         startResponseWatchdog()
         relayClient.sendCaptureFull(displayId = displayId, attachOnly = true)
     }
@@ -268,12 +289,30 @@ class SessionRepository(
     fun newTopic() {
         relayClient.sendNewTopic()
         _transcript.value = emptyList()
-        _currentPendingThumbnail.value = null
+        _pendingAttachments.value = emptyList()
         _sessionError.value = null
     }
 
     fun selectDisplay(displayId: String) {
         relayClient.sendSelectDisplay(displayId)
+    }
+
+    fun selectRuntime(provider: String, model: String) {
+        relayClient.sendRuntimeSelect(provider, model)
+    }
+
+    fun removePendingAttachment(index: Int) {
+        val current = _pendingAttachments.value
+        if (index !in current.indices) return
+        _pendingAttachments.value = current.filterIndexed { i, _ -> i != index }
+            .mapIndexed { i, item -> item.copy(index = i) }
+        relayClient.sendCaptureRemove(index)
+    }
+
+    fun clearPendingAttachments() {
+        if (_pendingAttachments.value.isEmpty()) return
+        _pendingAttachments.value = emptyList()
+        relayClient.sendCaptureClear()
     }
 
     fun startDesktopVoice() {
@@ -308,12 +347,25 @@ class SessionRepository(
         _transcript.value = merged
     }
 
+    private fun applyPendingAttachments(count: Int?, attachments: List<PendingAttachment>?) {
+        if (attachments != null) {
+            _pendingAttachments.value = attachments.take(MAX_ATTACHMENTS).mapIndexed { i, item ->
+                item.copy(index = i)
+            }
+            return
+        }
+        if (count == 0) {
+            _pendingAttachments.value = emptyList()
+        }
+    }
+
     private fun mapErrorCode(code: String?, fallbackMessage: String?): String {
         return when (code) {
             "desktop_offline" -> "Waiting for desktop…"
             "not_paired" -> "Pairing required."
             "lock_missing" -> "Could not start the interview from the phone. Check Phantom on your computer and try again."
             "vision_unsupported" -> "This model cannot read screens."
+            "attachment_limit" -> "You can attach up to 3 screenshots."
             "capture_permission_missing" -> "Capture failed. Check desktop screen-recording permission."
             "rate_limited" -> "Too many attempts. Wait a few seconds."
             "pairing_revoked" -> "Pairing was revoked by desktop."

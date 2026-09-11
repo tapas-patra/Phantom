@@ -95,6 +95,16 @@ final class CompanionCommandHost {
             if store?.isListening == true {
                 store?.toggleVoiceInput()
             }
+        case "runtime.select":
+            applyRuntimeSelect(provider: frame.string("provider"), model: frame.string("model"))
+        case "capture.remove":
+            if let index = frame.int("index") {
+                store?.removeScreenshot(at: index)
+                publishSnapshotSync()
+            }
+        case "capture.clear":
+            store?.removeScreenshot(at: nil)
+            publishSnapshotSync()
         default:
             break
         }
@@ -108,6 +118,17 @@ final class CompanionCommandHost {
         return selected.isEmpty ? nil : selected
     }
 
+    private func applyRuntimeSelect(provider: String?, model: String?) {
+        guard let store else { return }
+        if let provider, !provider.isEmpty {
+            store.selectedProviderId = provider
+        }
+        if let model, !model.isEmpty {
+            store.selectedModelId = model
+        }
+        Task { await sendDesktopHello(); await publishSnapshot() }
+    }
+
     // MARK: - Inbound command handlers
 
     private func captureAsk(requestId: String, displayId: String?, prompt: String?) async {
@@ -119,15 +140,17 @@ final class CompanionCommandHost {
             sendCaptureFailed(requestId: requestId, code: "vision_unsupported", message: "Current model does not support vision.")
             return
         }
+        guard store.attachedScreenshots.count < PhantomStore.maxAttachedScreenshots else {
+            store.companionHasError = true
+            sendCaptureFailed(requestId: requestId, code: "attachment_limit", message: "You can attach up to 3 screenshots.")
+            return
+        }
         do {
             let data = try ScreenshotCapture.captureDisplay(id: displayId)
             sendCaptureStarted(requestId: requestId, displayId: displayId ?? "")
             store.companionIsCapturing = true
             defer { store.companionIsCapturing = false }
             sendCaptureCompleted(requestId: requestId, from: data)
-            while store.attachedScreenshots.count >= PhantomStore.maxAttachedScreenshots {
-                store.attachedScreenshots.removeFirst()
-            }
             store.attachedScreenshots.append(data)
             if let p = prompt, !p.isEmpty {
                 store.prompt = p
@@ -161,15 +184,17 @@ final class CompanionCommandHost {
             sendCaptureFailed(requestId: requestId, code: "vision_unsupported", message: "Current model does not support vision.")
             return
         }
+        guard store.attachedScreenshots.count < PhantomStore.maxAttachedScreenshots else {
+            store.companionHasError = true
+            sendCaptureFailed(requestId: requestId, code: "attachment_limit", message: "You can attach up to 3 screenshots.")
+            return
+        }
         do {
             let data = try ScreenshotCapture.captureDisplay(id: displayId)
             sendCaptureStarted(requestId: requestId, displayId: displayId ?? "")
             store.companionIsCapturing = true
             defer { store.companionIsCapturing = false }
             sendCaptureCompleted(requestId: requestId, from: data)
-            while store.attachedScreenshots.count >= PhantomStore.maxAttachedScreenshots {
-                store.attachedScreenshots.removeFirst()
-            }
             store.attachedScreenshots.append(data)
             if !attachOnly {
                 store.prompt = "Please analyze this screenshot."
@@ -248,7 +273,10 @@ final class CompanionCommandHost {
             "provider": store.selectedProviderId,
             "vision": visionSupported(),
             "displays": displays.map { ["id": $0.id, "name": $0.name, "isDefault": $0.isDefault] },
-            "lockExpiresAtUtc": lockExpiry?.ISO8601Format() ?? ""
+            "lockExpiresAtUtc": lockExpiry?.ISO8601Format() ?? "",
+            "attachmentCount": store.attachedScreenshotCount,
+            "attachments": store.companionAttachmentPayloads(),
+            "providers": store.companionProviderCatalog()
         ]
         sendEnvelope(type: "desktop.hello", body: body)
     }
@@ -332,7 +360,10 @@ final class CompanionCommandHost {
             "vision": visionSupported(),
             "displays": displays.map { ["id": $0.id, "name": $0.name, "isDefault": $0.isDefault] },
             "selectedDisplayId": store.companionSelectedDisplayId,
-            "turns": turns.map { ["role": $0.role, "text": $0.text, "atUtc": $0.atUtc.ISO8601Format()] }
+            "turns": turns.map { ["role": $0.role, "text": $0.text, "atUtc": $0.atUtc.ISO8601Format()] },
+            "attachmentCount": store.attachedScreenshotCount,
+            "attachments": store.companionAttachmentPayloads(),
+            "providers": store.companionProviderCatalog()
         ]
         sendEnvelope(type: "session.snapshot", body: body)
     }

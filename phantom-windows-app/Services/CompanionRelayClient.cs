@@ -309,5 +309,17 @@ namespace SecureOverlay.Services
                 ? true
                 : (Body.HasValue && Body.Value.ValueKind == JsonValueKind.Object
                     && Body.Value.TryGetProperty(key, out var q) && q.ValueKind == JsonValueKind.False ? false : null);
+
+        public int? ReadInt(string key)
+        {
+            if (!Body.HasValue || Body.Value.ValueKind != JsonValueKind.Object) return null;
+            if (!Body.Value.TryGetProperty(key, out var p)) return null;
+            return p.ValueKind switch
+            {
+                JsonValueKind.Number when p.TryGetInt32(out var n) => n,
+                JsonValueKind.String when int.TryParse(p.GetString(), out var parsed) => parsed,
+                _ => null
+            };
+        }
     }
 }

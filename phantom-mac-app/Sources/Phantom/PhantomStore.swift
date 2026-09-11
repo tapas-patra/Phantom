@@ -39,6 +39,7 @@ final class PhantomStore: ObservableObject {
                 selectedModelId = provider.models.first?.modelId ?? ""
             }
             loadBYOKey()
+            if oldValue != selectedProviderId { announceCompanionRuntime() }
         }
     }
     @Published var selectedModelId = "" {
@@ -48,6 +49,7 @@ final class PhantomStore: ObservableObject {
                 UserDefaults.standard.set(selectedModelId, forKey: "chat.model.\(selectedProviderId.lowercased())")
             }
             if !attachedScreenshots.isEmpty, !selectedModelSupportsVision { removeScreenshot() }
+            if oldValue != selectedModelId { announceCompanionRuntime() }
         }
     }
     @Published var prompt = ""
@@ -1134,6 +1136,41 @@ final class PhantomStore: ObservableObject {
         status = attachedScreenshots.isEmpty
             ? "Screenshots removed"
             : "Screenshot removed • \(attachedScreenshots.count)/\(Self.maxAttachedScreenshots) remaining"
+        announceCompanionRuntime()
+    }
+
+    func companionProviderCatalog() -> [[String: Any]] {
+        let list = useBYOProvider && hasBYOEntitlement ? byoProviderChoices : providers
+        return list.map { provider in
+            let chatModels = provider.models.filter(\.eligibleForChat)
+            let models = chatModels.isEmpty ? provider.models : chatModels
+            return [
+                "id": provider.providerId,
+                "name": provider.label,
+                "models": models.map { model in
+                    [
+                        "id": model.modelId,
+                        "name": model.displayName,
+                        "vision": model.supportsVision
+                    ] as [String: Any]
+                }
+            ]
+        }
+    }
+
+    func companionAttachmentPayloads() -> [[String: Any]] {
+        attachedScreenshots.enumerated().map { index, data in
+            var item: [String: Any] = ["index": index]
+            if let thumb = ScreenshotCapture.captureCompletedPayload(from: data, maxEdge: 160)?.thumbnailJpegBase64 {
+                item["thumbnailJpegBase64"] = thumb
+            }
+            return item
+        }
+    }
+
+    func announceCompanionRuntime() {
+        guard companionEnabled else { return }
+        Task { await companion?.announceReady() }
     }
 
     func toggleVoiceInput() {
@@ -1205,12 +1242,8 @@ final class PhantomStore: ObservableObject {
         }
         if useBYOProvider {
             if rotation.keys(for: selectedProviderId).isEmpty {
-                if let configured = byoProviders.first(where: { !rotation.keys(for: $0.providerId).isEmpty }) {
-                    selectedProviderId = configured.providerId
-                } else {
-                    status = "Add a \(selectedProviderId.isEmpty ? "provider" : selectedProviderId) API key in Settings before sending."
-                    return
-                }
+                status = "Add a \(selectedProviderId.isEmpty ? "provider" : selectedProviderId) API key in Settings before sending."
+                return
             }
         }
 
@@ -1337,7 +1370,6 @@ final class PhantomStore: ObservableObject {
                                     onDelta: onDelta,
                                     onRetryCleanup: onRetryCleanup
                                 )
-                                self.selectedModelId = selected.model
                                 return selected.response
                             } catch {
                                 guard ProviderResiliencePolicy.canCrossLane(
@@ -1389,8 +1421,6 @@ final class PhantomStore: ObservableObject {
                             onDelta: onDelta,
                             onRetryCleanup: onRetryCleanup
                         )
-                        self.selectedProviderId = selected.provider
-                        self.selectedModelId = selected.model
                         return selected.response
                     }
                 }

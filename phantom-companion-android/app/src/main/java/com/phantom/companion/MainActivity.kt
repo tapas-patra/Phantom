@@ -235,7 +235,8 @@ class MainActivity : ComponentActivity() {
                     AccountViewModel(
                         appContainer.authRepository,
                         appContainer.pairingRepository,
-                        appContainer.sessionStore
+                        appContainer.sessionStore,
+                        appContainer.sessionRepository
                     )
                 }
                 AccountScreen(

@@ -20,10 +20,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
@@ -72,10 +76,12 @@ import com.phantom.companion.data.local.PhoneSpeechSession
 import com.phantom.companion.data.remote.SocketConnectionState
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
+import com.phantom.companion.domain.model.PendingAttachment
 import com.phantom.companion.ui.components.ErrorBanner
 import com.phantom.companion.ui.components.MarkdownText
 import com.phantom.companion.ui.components.PhantomPrimaryButton
 import com.phantom.companion.ui.components.PhantomSecondaryButton
+import com.phantom.companion.ui.components.ProviderModelPickers
 import com.phantom.companion.ui.components.StatusPill
 import com.phantom.companion.ui.components.WarningBanner
 import com.phantom.companion.ui.theme.PhantomAccent
@@ -102,9 +108,11 @@ fun SessionScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
     val currentModel by viewModel.currentModel.collectAsState()
+    val currentProvider by viewModel.currentProvider.collectAsState()
+    val providers by viewModel.providers.collectAsState()
     val isVisionSupported by viewModel.isVisionSupported.collectAsState()
     val transcript by viewModel.transcript.collectAsState()
-    val currentPendingThumbnail by viewModel.currentPendingThumbnail.collectAsState()
+    val pendingAttachments by viewModel.pendingAttachments.collectAsState()
     val sessionError by viewModel.sessionError.collectAsState()
     val activePairing by viewModel.activePairing.collectAsState()
     val companionApiReady by viewModel.companionApiReady.collectAsState()
@@ -177,6 +185,7 @@ fun SessionScreen(
                 color = PhantomSurfaceHigh,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .border(width = 1.dp, color = PhantomLine)
             ) {
                 Row(
@@ -209,10 +218,12 @@ fun SessionScreen(
                         val email = startupSnapshot?.email.orEmpty()
                         val truncatedEmail = if (email.length > 18) email.take(15) + "…" else email
                         val tier = startupSnapshot?.accessTier?.replaceFirstChar { it.uppercase() } ?: "Free"
-                        val model = currentModel ?: "Phantom AI"
+                        val providerLabel = currentProvider?.ifBlank { null }
+                        val modelLabel = currentModel?.ifBlank { null }
+                        val runtime = listOfNotNull(providerLabel, modelLabel).joinToString(" / ").ifBlank { "Phantom AI" }
 
                         Text(
-                            text = if (email.isNotEmpty()) "$truncatedEmail · $tier · $model" else model,
+                            text = if (email.isNotEmpty()) "$truncatedEmail · $tier · $runtime" else runtime,
                             fontSize = 12.sp,
                             color = PhantomMuted,
                             fontFamily = FontFamily.SansSerif,
@@ -229,7 +240,7 @@ fun SessionScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Voice settings",
+                            contentDescription = "Settings",
                             tint = PhantomMuted
                         )
                     }
@@ -255,16 +266,28 @@ fun SessionScreen(
                     .fillMaxWidth()
                     .background(PhantomSurfaceHigh)
                     .border(width = 1.dp, color = PhantomLine)
+                    .navigationBarsPadding()
                     .padding(16.dp)
                     .imePadding()
             ) {
                 val busy = desktopPresence == DesktopPresenceState.THINKING ||
                         desktopPresence == DesktopPresenceState.CAPTURING
+                val atAttachmentLimit = pendingAttachments.size >= 3
                 val canCapture = companionApiReady != false &&
                         activePairing != null &&
                         relayLive &&
                         isVisionSupported &&
-                        !busy
+                        !busy &&
+                        !atAttachmentLimit
+
+                if (pendingAttachments.isNotEmpty()) {
+                    PendingAttachmentTray(
+                        attachments = pendingAttachments,
+                        onRemove = viewModel::onRemoveAttachment,
+                        onClear = viewModel::onClearAttachments
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 PhantomPrimaryButton(
                     text = if (desktopPresence == DesktopPresenceState.CAPTURING) "Capturing…" else "Capture & Ask",
@@ -419,6 +442,11 @@ fun SessionScreen(
             if (!isVisionSupported) {
                 WarningBanner(
                     message = "This model cannot read screens.",
+                    modifier = Modifier.padding(16.dp)
+                )
+            } else if (pendingAttachments.size >= 3) {
+                WarningBanner(
+                    message = "You can attach up to 3 screenshots. Remove one to capture again.",
                     modifier = Modifier.padding(16.dp)
                 )
             }
@@ -586,7 +614,7 @@ fun SessionScreen(
             containerColor = PhantomSurface,
             title = {
                 Text(
-                    text = "Voice input",
+                    text = "Settings",
                     color = PhantomText,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold
@@ -594,6 +622,21 @@ fun SessionScreen(
             },
             text = {
                 Column {
+                    ProviderModelPickers(
+                        providers = providers,
+                        selectedProviderId = currentProvider.orEmpty(),
+                        selectedModelId = currentModel.orEmpty(),
+                        onSelect = viewModel::onSelectRuntime,
+                        enabled = relayLive && activePairing != null
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text(
+                        text = "Voice input",
+                        color = PhantomText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Use this phone’s microphone instead of the desktop microphone.",
                         color = PhantomMuted,
@@ -641,6 +684,83 @@ fun SessionScreen(
 }
 
 @Composable
+private fun PendingAttachmentTray(
+    attachments: List<PendingAttachment>,
+    onRemove: (Int) -> Unit,
+    onClear: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Screenshots ${attachments.size}/3",
+                fontSize = 12.sp,
+                color = PhantomMuted,
+                fontWeight = FontWeight.Medium
+            )
+            TextButton(
+                onClick = onClear,
+                modifier = Modifier.testTag("button_clear_attachments")
+            ) {
+                Text("Clear", fontSize = 12.sp, color = PhantomMuted)
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(attachments, key = { it.index }) { attachment ->
+                val bitmap = remember(attachment.thumbnailJpegBase64) {
+                    decodeJpegBase64(attachment.thumbnailJpegBase64)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(PhantomSurface)
+                        .border(1.dp, PhantomLine, RoundedCornerShape(10.dp))
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = "Attached screenshot ${attachment.index + 1}",
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    IconButton(
+                        onClick = { onRemove(attachment.index) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(24.dp)
+                            .testTag("button_remove_attachment_${attachment.index}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove screenshot",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(PhantomDanger.copy(alpha = 0.85f))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun decodeJpegBase64(value: String?): androidx.compose.ui.graphics.ImageBitmap? {
+    if (value.isNullOrBlank()) return null
+    return try {
+        val bytes = Base64.decode(value, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+@Composable
 fun ChatTurnBubble(turn: ChatTurn) {
     val isUser = turn.role == "user"
 
@@ -670,12 +790,7 @@ fun ChatTurnBubble(turn: ChatTurn) {
             // Optional thumbnail if captured with this turn
             if (!turn.thumbnailBase64.isNullOrEmpty()) {
                 val bitmap = remember(turn.thumbnailBase64) {
-                    try {
-                        val bytes = Base64.decode(turn.thumbnailBase64, Base64.DEFAULT)
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                    } catch (e: Exception) {
-                        null
-                    }
+                    decodeJpegBase64(turn.thumbnailBase64)
                 }
                 if (bitmap != null) {
                     Image(

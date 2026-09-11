@@ -6,6 +6,7 @@ import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.DisplayInfo
 import com.phantom.companion.domain.model.ErrorBody
+import com.phantom.companion.domain.model.ProviderOption
 import com.phantom.companion.domain.model.RelayBody
 import com.phantom.companion.domain.model.RelayEnvelope
 import kotlinx.coroutines.CancellationException
@@ -106,6 +107,12 @@ class RelayClient(
 
     private val _currentModel = MutableStateFlow<String?>(null)
     val currentModel: StateFlow<String?> = _currentModel.asStateFlow()
+
+    private val _currentProvider = MutableStateFlow<String?>(null)
+    val currentProvider: StateFlow<String?> = _currentProvider.asStateFlow()
+
+    private val _providers = MutableStateFlow<List<ProviderOption>>(emptyList())
+    val providers: StateFlow<List<ProviderOption>> = _providers.asStateFlow()
 
     private val _isVisionSupported = MutableStateFlow(true)
     val isVisionSupported: StateFlow<Boolean> = _isVisionSupported.asStateFlow()
@@ -396,8 +403,7 @@ class RelayClient(
                     peerLeftJob = null
                     _desktopPresence.value = parsePresenceState(it)
                 }
-                body?.model?.let { _currentModel.value = it }
-                body?.vision?.let { _isVisionSupported.value = it }
+                applyRuntimeFields(body)
                 body?.displays?.let { displays ->
                     _displays.value = displays
                     // Adopt the desktop's default display if the user hasn't chosen one (M4).
@@ -418,8 +424,7 @@ class RelayClient(
                     peerLeftJob = null
                     _desktopPresence.value = parsePresenceState(snapStatus)
                 }
-                body?.model?.let { _currentModel.value = it }
-                body?.vision?.let { _isVisionSupported.value = it }
+                applyRuntimeFields(body)
                 body?.displays?.let { _displays.value = it }
                 body?.selectedDisplayId?.let { snapSelected ->
                     if (snapSelected.isNotEmpty()) _selectedDisplayId.value = snapSelected
@@ -547,6 +552,45 @@ class RelayClient(
     fun sendVoiceStop() {
         val pairingId = currentPairingId ?: return
         sendFrame(type = "voice.stop", pairingId = pairingId, body = null)
+    }
+
+    fun sendRuntimeSelect(provider: String, model: String) {
+        val pairingId = currentPairingId ?: return
+        _currentProvider.value = provider
+        _currentModel.value = model
+        visionForSelection(provider, model)?.let { _isVisionSupported.value = it }
+        sendFrame(
+            type = "runtime.select",
+            pairingId = pairingId,
+            body = RelayBody(provider = provider, model = model)
+        )
+    }
+
+    fun sendCaptureRemove(index: Int) {
+        val pairingId = currentPairingId ?: return
+        sendFrame(
+            type = "capture.remove",
+            pairingId = pairingId,
+            body = RelayBody(index = index)
+        )
+    }
+
+    fun sendCaptureClear() {
+        val pairingId = currentPairingId ?: return
+        sendFrame(type = "capture.clear", pairingId = pairingId, body = null)
+    }
+
+    private fun applyRuntimeFields(body: RelayBody?) {
+        body?.provider?.let { _currentProvider.value = it }
+        body?.model?.let { _currentModel.value = it }
+        body?.vision?.let { _isVisionSupported.value = it }
+        body?.providers?.let { _providers.value = it }
+    }
+
+    private fun visionForSelection(providerId: String, modelId: String): Boolean? {
+        val provider = _providers.value.firstOrNull { it.id.equals(providerId, ignoreCase = true) }
+            ?: return null
+        return provider.models.firstOrNull { it.id.equals(modelId, ignoreCase = true) }?.vision
     }
 
     private fun sendFrame(

@@ -253,6 +253,13 @@ struct CompanionRelayFrame: Codable {
     func bool(_ key: String) -> Bool? {
         body?.value(key) as? Bool
     }
+
+    func int(_ key: String) -> Int? {
+        if let number = body?.value(key) as? Double { return Int(number) }
+        if let number = body?.value(key) as? Int { return number }
+        if let text = body?.value(key) as? String { return Int(text) }
+        return nil
+    }
 }
 
 /// Lightweight AnyCodable wrapper so the relay frame body can carry arbitrary JSON without

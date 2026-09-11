@@ -80,6 +80,9 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public List<CompanionDisplayDto> Displays { get; set; } = new();
         public string SelectedDisplayId { get; set; } = string.Empty;
         public List<CompanionTurnDto> Turns { get; set; } = new();
+        public int AttachmentCount { get; set; }
+        public List<CompanionAttachmentDto> Attachments { get; set; } = new();
+        public List<CompanionProviderOptionDto> Providers { get; set; } = new();
     }
 
     public sealed class CompanionDisplayDto
@@ -94,5 +97,25 @@ namespace SecureOverlay.Infrastructure.Hosted.Contracts
         public string Role { get; set; } = string.Empty;
         public string Text { get; set; } = string.Empty;
         public DateTime AtUtc { get; set; }
+    }
+
+    public sealed class CompanionProviderOptionDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public List<CompanionModelOptionDto> Models { get; set; } = new();
+    }
+
+    public sealed class CompanionModelOptionDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public bool Vision { get; set; }
+    }
+
+    public sealed class CompanionAttachmentDto
+    {
+        public int Index { get; set; }
+        public string? ThumbnailJpegBase64 { get; set; }
     }
 }

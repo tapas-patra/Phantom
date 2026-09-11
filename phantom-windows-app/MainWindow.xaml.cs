@@ -4257,6 +4257,39 @@ namespace SecureOverlay
         }
 
         /// <summary>
+        /// Revokes the hosted pairing then drops the relay. Used on a real app close
+        /// (not restart) so the phone cannot resurrect the pairing on the next launch.
+        /// </summary>
+        private void RevokeCompanionPairingOnShutdown()
+        {
+            try
+            {
+                var pairingId = _companionOrchestrator?.ActivePairingId;
+                if (string.IsNullOrWhiteSpace(pairingId))
+                {
+                    pairingId = _settings?.CompanionPairingId;
+                }
+                var token = _authSessionRepository.Load()?.AccessToken;
+                if (!string.IsNullOrWhiteSpace(pairingId) && !string.IsNullOrWhiteSpace(token))
+                {
+                    _hostedCompanionClient.RevokePairing(pairingId, token);
+                    Log.WriteLine($"Companion pairing revoked on shutdown: {pairingId}");
+                }
+                if (_settings != null)
+                {
+                    _settings.CompanionPairingId = string.Empty;
+                    _settings.CompanionEnabled = false;
+                    SettingsManager.Save(_settings);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Companion pairing revoke on shutdown failed: {ex.Message}");
+            }
+            StopCompanionRelay();
+        }
+
+        /// <summary>
         /// True when the desktop holds an active interview lock. Companion capture/ask
         /// must refuse with lock_missing when there is no lock, and must NOT auto-start
         /// a new interview (spec §7.4, §9).
@@ -6206,6 +6239,11 @@ namespace SecureOverlay
                     }
 
                     _interviewLockService.MarkLockReleased();
+
+                    // Closing the desktop must revoke the companion pairing so the phone
+                    // stops auto-reconnecting. Unpair on the phone already DELETEs; this
+                    // covers the case where the user just quits Phantom.
+                    RevokeCompanionPairingOnShutdown();
                 }
                 else
                 {

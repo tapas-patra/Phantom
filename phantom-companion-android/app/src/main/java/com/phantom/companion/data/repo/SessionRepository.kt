@@ -11,7 +11,9 @@ import com.phantom.companion.domain.model.DisplayInfo
 import com.phantom.companion.domain.model.RelayEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +33,12 @@ class SessionRepository(
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    private companion object {
+        // How long to wait for a capture.started / chat.started before surfacing a
+        // "desktop didn't respond" error (step 1 fix for silent follow-up hangs).
+        const val RESPONSE_TIMEOUT_MS = 30_000L
+    }
+
     val connectionState: StateFlow<SocketConnectionState> = relayClient.connectionState
     val connectionError: StateFlow<String?> = relayClient.connectionError
     val desktopPresence: StateFlow<DesktopPresenceState> = relayClient.desktopPresence
@@ -48,6 +56,30 @@ class SessionRepository(
 
     private val _sessionError = MutableStateFlow<String?>(null)
     val sessionError: StateFlow<String?> = _sessionError.asStateFlow()
+
+    // Response-timeout watchdog (step 1 fix for "I send a follow-up and see no answer").
+    // When the phone sends a capture.ask / chat.send, we record the time and start a
+    // watchdog. If no capture.started / chat.started arrives within RESPONSE_TIMEOUT,
+    // we surface a visible, actionable error instead of leaving the user staring at a
+    // silent "Thinking…" state with no feedback. Cleared on any started frame.
+    private var pendingRequestAt: Long = 0L
+    private var watchdogJob: Job? = null
+    private fun startResponseWatchdog() {
+        watchdogJob?.cancel()
+        pendingRequestAt = System.currentTimeMillis()
+        watchdogJob = scope.launch {
+            delay(RESPONSE_TIMEOUT_MS)
+            if (pendingRequestAt != 0L) {
+                _sessionError.value =
+                    "Desktop didn't respond. Make sure Phantom is running on your computer with Companion Mode enabled, then try again."
+            }
+        }
+    }
+    private fun clearResponseWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+        pendingRequestAt = 0L
+    }
 
     init {
         scope.launch {
@@ -70,12 +102,14 @@ class SessionRepository(
     }
 
     fun stopSession() {
+        clearResponseWatchdog()
         relayClient.disconnect()
         _currentPendingThumbnail.value = null
         hydrated = false
     }
 
     fun clearTranscript() {
+        clearResponseWatchdog()
         _transcript.value = emptyList()
         _currentPendingThumbnail.value = null
         _sessionError.value = null
@@ -118,6 +152,7 @@ class SessionRepository(
                 }
             }
             "capture.started" -> {
+                clearResponseWatchdog()
                 _sessionError.value = null
             }
             "capture.completed" -> {
@@ -126,10 +161,12 @@ class SessionRepository(
                 }
             }
             "capture.failed" -> {
+                clearResponseWatchdog()
                 val message = mapErrorCode(body?.code, body?.message)
                 _sessionError.value = message
             }
             "chat.started" -> {
+                clearResponseWatchdog()
                 _sessionError.value = null
                 // Create an initial streaming assistant turn
                 val current = _transcript.value.toMutableList()
@@ -156,14 +193,20 @@ class SessionRepository(
                 }
             }
             "chat.completed" -> {
+                clearResponseWatchdog()
                 val current = _transcript.value.toMutableList()
                 if (current.isNotEmpty() && current.last().role == "assistant") {
                     val last = current.last()
-                    current[current.lastIndex] = last.copy(isStreaming = false)
+                    // Graceful empty-turn fix: if the assistant turn ended with no text
+                    // (deltas lost / empty response), show a placeholder instead of an
+                    // invisible empty bubble (step 1 fix for "I don't see any answer").
+                    val finalText = if (last.text.isEmpty()) "(no response received)" else last.text
+                    current[current.lastIndex] = last.copy(text = finalText, isStreaming = false)
                     _transcript.value = current
                 }
             }
             "chat.failed" -> {
+                clearResponseWatchdog()
                 val current = _transcript.value.toMutableList()
                 val errorMsg = mapErrorCode(body?.code, body?.message)
                 if (current.isNotEmpty() && current.last().role == "assistant") {
@@ -179,6 +222,7 @@ class SessionRepository(
                 }
             }
             "chat.cancelled" -> {
+                clearResponseWatchdog()
                 val current = _transcript.value.toMutableList()
                 if (current.isNotEmpty() && current.last().role == "assistant") {
                     val last = current.last()
@@ -212,10 +256,12 @@ class SessionRepository(
         _transcript.value = _transcript.value + userTurn
         _currentPendingThumbnail.value = null
 
+        startResponseWatchdog()
         relayClient.sendCaptureAsk(displayId = displayId, prompt = prompt)
     }
 
     fun captureOnly(displayId: String = "") {
+        startResponseWatchdog()
         relayClient.sendCaptureFull(displayId = displayId, attachOnly = true)
     }
 
@@ -230,6 +276,7 @@ class SessionRepository(
         )
         _transcript.value = _transcript.value + userTurn
 
+        startResponseWatchdog()
         relayClient.sendChatText(trimmed)
     }
 

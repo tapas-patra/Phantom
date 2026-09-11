@@ -73,8 +73,13 @@ class PairingRepository(
                 sessionStore.setCompanionApiReady(true)
                 if (response.isSuccessful) {
                     val list = response.body()?.pairings.orEmpty()
+                    // Backend is the source of truth: an empty list means the pairing was
+                    // revoked (phone unpair or desktop shutdown). Never keep a stale local
+                    // pairing that would auto-reconnect on the next launch.
                     if (list.isNotEmpty()) {
                         sessionStore.savePairing(list.first())
+                    } else {
+                        sessionStore.savePairing(null)
                     }
                     list
                 } else {

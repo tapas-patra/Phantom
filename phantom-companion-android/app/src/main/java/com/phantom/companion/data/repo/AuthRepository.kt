@@ -114,8 +114,11 @@ class AuthRepository(
                 sessionStore.setCompanionApiReady(true)
                 if (response.isSuccessful) {
                     val body = response.body()
-                    if (body != null && body.pairings.isNotEmpty()) {
-                        sessionStore.savePairing(body.pairings.first())
+                    val list = body?.pairings.orEmpty()
+                    if (list.isNotEmpty()) {
+                        sessionStore.savePairing(list.first())
+                    } else {
+                        sessionStore.savePairing(null)
                     }
                 }
                 true

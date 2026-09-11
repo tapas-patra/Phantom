@@ -143,7 +143,9 @@ class SessionStore(private val context: Context) {
             } else {
                 editor.remove(KEY_PAIRING)
             }
-            editor.apply()
+            // commit() so an unpair survives an immediate process kill (apply() is async
+            // and was letting the old pairing come back on the next launch).
+            editor.commit()
         } catch (e: Exception) {
             // Ignore
         }

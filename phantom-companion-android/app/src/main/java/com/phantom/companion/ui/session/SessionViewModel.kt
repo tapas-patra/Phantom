@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.phantom.companion.data.local.SessionStore
 import com.phantom.companion.data.remote.SocketConnectionState
+import com.phantom.companion.data.repo.PairingRepository
 import com.phantom.companion.data.repo.SessionRepository
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
@@ -25,7 +26,8 @@ sealed class SessionNavigationEvent {
 
 class SessionViewModel(
     private val sessionRepository: SessionRepository,
-    private val sessionStore: SessionStore
+    private val sessionStore: SessionStore,
+    private val pairingRepository: PairingRepository
 ) : ViewModel() {
 
     val connectionState: StateFlow<SocketConnectionState> = sessionRepository.connectionState
@@ -124,8 +126,13 @@ class SessionViewModel(
 
     fun unpairAndNavigate() {
         viewModelScope.launch {
+            val pairingId = sessionStore.activePairing.value?.pairingId
             sessionRepository.stopSession()
-            sessionStore.savePairing(null)
+            if (!pairingId.isNullOrEmpty()) {
+                pairingRepository.unpair(pairingId)
+            } else {
+                sessionStore.savePairing(null)
+            }
             _navigationEvent.emit(SessionNavigationEvent.NavigateToPair)
         }
     }
@@ -145,12 +152,13 @@ class SessionViewModel(
     companion object {
         fun provideFactory(
             sessionRepository: SessionRepository,
-            sessionStore: SessionStore
+            sessionStore: SessionStore,
+            pairingRepository: PairingRepository
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return SessionViewModel(sessionRepository, sessionStore) as T
+                    return SessionViewModel(sessionRepository, sessionStore, pairingRepository) as T
                 }
             }
     }

@@ -113,7 +113,17 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     else -> {
-                        // Backend online / offline / degraded: current route handles it gracefully
+                        // Backend online / offline / degraded. If the hosted pairing was
+                        // revoked while this app was killed (desktop quit or unpair), the
+                        // probe just cleared local pairing — leave the session screen.
+                        if (appContainer.sessionStore.activePairing.value == null) {
+                            val current = navController.currentDestination?.route
+                            if (current == NavRoutes.SESSION) {
+                                navController.navigate(NavRoutes.PAIR) {
+                                    popUpTo(0) { inclusive = true }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -203,7 +213,11 @@ class MainActivity : ComponentActivity() {
 
             composable(NavRoutes.SESSION) {
                 val sessionViewModel: SessionViewModel = remember {
-                    SessionViewModel(appContainer.sessionRepository, appContainer.sessionStore)
+                    SessionViewModel(
+                        appContainer.sessionRepository,
+                        appContainer.sessionStore,
+                        appContainer.pairingRepository
+                    )
                 }
                 SessionScreen(
                     viewModel = sessionViewModel,

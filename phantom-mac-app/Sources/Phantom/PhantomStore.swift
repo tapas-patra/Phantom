@@ -420,18 +420,27 @@ final class PhantomStore: ObservableObject {
         let pairingId = companionPairingId
         Task { [weak self] in
             guard let self else { return }
-            do {
-                if !pairingId.isEmpty {
-                    try await backend.revokePairing(accessToken: session.accessToken, pairingId: pairingId)
-                }
-                self.companionPairingId = ""
-                self.companionEnabled = false
-                await self.companion?.stop()
-                self.companionStatusText = "Unpaired."
-            } catch {
-                self.companionStatusText = "Unpair failed. Try again."
-                print("[companion] unpair failed: \(error.localizedDescription)")
+            await self.revokeCompanionPairing(accessToken: session.accessToken, pairingId: pairingId)
+        }
+    }
+
+    /// Revokes the hosted pairing and stops the relay. Used by Unpair and by a real
+    /// app quit so the phone cannot auto-reconnect after the desktop is gone.
+    func revokeCompanionPairing(accessToken: String, pairingId: String) async {
+        do {
+            if !pairingId.isEmpty {
+                try await backend.revokePairing(accessToken: accessToken, pairingId: pairingId)
             }
+            companionPairingId = ""
+            companionEnabled = false
+            await companion?.stop()
+            companionStatusText = "Unpaired."
+        } catch {
+            companionPairingId = ""
+            companionEnabled = false
+            await companion?.stop()
+            companionStatusText = "Unpair failed. Try again."
+            print("[companion] unpair failed: \(error.localizedDescription)")
         }
     }
 
@@ -1895,7 +1904,18 @@ final class PhantomStore: ObservableObject {
         sessionStatusTask?.cancel()
         sessionStatusTask = nil
         await finishInterview(auth: session, account: account)
-        if !preserveConversationOnTermination { ConversationStore.clear() }
+        if !preserveConversationOnTermination {
+            ConversationStore.clear()
+            // Real quit (not restart): drop the hosted pairing so the phone stops
+            // auto-reconnecting to a desktop that is no longer running.
+            if let session, !companionPairingId.isEmpty {
+                await revokeCompanionPairing(accessToken: session.accessToken, pairingId: companionPairingId)
+            } else {
+                await companion?.stop()
+            }
+        } else {
+            await companion?.stop()
+        }
     }
 
     func restartApp() {

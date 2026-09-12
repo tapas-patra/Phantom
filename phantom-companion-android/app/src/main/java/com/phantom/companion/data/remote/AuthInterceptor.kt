@@ -17,7 +17,7 @@ class AuthInterceptor(
                 path.endsWith("api/desktop/auth/login") ||
                 path.endsWith("api/desktop/auth/forgot-password")
 
-        val isMultipart = originalRequest.body?.contentType()?.type.equals("multipart", ignoreCase = true)
+        val bodyContentType = originalRequest.body?.contentType()
         val builder = originalRequest.newBuilder()
             .header("Accept", "application/json")
             .header("X-Phantom-Correlation-Id", UUID.randomUUID().toString())
@@ -26,7 +26,8 @@ class AuthInterceptor(
             .removeHeader("Origin")
             .removeHeader("X-Phantom-CSRF")
 
-        if (!isMultipart) {
+        // Do not overwrite multipart (cloud speech WAV) or any body that already set a type.
+        if (bodyContentType == null) {
             builder.header("Content-Type", "application/json")
         }
 

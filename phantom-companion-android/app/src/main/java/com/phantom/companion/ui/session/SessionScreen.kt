@@ -84,6 +84,8 @@ import com.phantom.companion.data.remote.SocketConnectionState
 import com.phantom.companion.domain.model.ChatTurn
 import com.phantom.companion.domain.model.DesktopPresenceState
 import com.phantom.companion.domain.model.PendingAttachment
+import com.phantom.companion.domain.model.exposesProviderModelPickers
+import com.phantom.companion.domain.model.sessionRuntimeLabel
 import com.phantom.companion.ui.components.ErrorBanner
 import com.phantom.companion.ui.components.MarkdownText
 import com.phantom.companion.ui.components.PhantomPrimaryButton
@@ -268,9 +270,7 @@ fun SessionScreen(
                         val email = startupSnapshot?.email.orEmpty()
                         val truncatedEmail = if (email.length > 18) email.take(15) + "…" else email
                         val tier = startupSnapshot?.accessTier?.replaceFirstChar { it.uppercase() } ?: "Free"
-                        val providerLabel = currentProvider?.ifBlank { null }
-                        val modelLabel = currentModel?.ifBlank { null }
-                        val runtime = listOfNotNull(providerLabel, modelLabel).joinToString(" / ").ifBlank { "Phantom AI" }
+                        val runtime = sessionRuntimeLabel(startupSnapshot, currentProvider, currentModel)
 
                         Text(
                             text = if (email.isNotEmpty()) "$truncatedEmail · $tier · $runtime" else runtime,
@@ -651,14 +651,16 @@ fun SessionScreen(
             },
             text = {
                 Column {
-                    ProviderModelPickers(
-                        providers = providers,
-                        selectedProviderId = currentProvider.orEmpty(),
-                        selectedModelId = currentModel.orEmpty(),
-                        onSelect = viewModel::onSelectRuntime,
-                        enabled = relayLive && activePairing != null
-                    )
-                    Spacer(modifier = Modifier.height(20.dp))
+                    if (exposesProviderModelPickers(startupSnapshot)) {
+                        ProviderModelPickers(
+                            providers = providers,
+                            selectedProviderId = currentProvider.orEmpty(),
+                            selectedModelId = currentModel.orEmpty(),
+                            onSelect = viewModel::onSelectRuntime,
+                            enabled = relayLive && activePairing != null
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                    }
                     Text(
                         text = "Voice input",
                         color = PhantomText,

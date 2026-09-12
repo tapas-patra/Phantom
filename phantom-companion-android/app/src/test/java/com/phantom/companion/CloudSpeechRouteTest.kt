@@ -1,10 +1,13 @@
 package com.phantom.companion
 
 import com.phantom.companion.data.speech.CloudSpeechRoute
+import com.phantom.companion.data.speech.MIN_TRANSCRIBE_WAV_BYTES
+import com.phantom.companion.data.speech.SPEECH_SAMPLE_RATE
 import com.phantom.companion.data.speech.SpeechCaptureMode
 import com.phantom.companion.data.speech.buildWav
 import com.phantom.companion.data.speech.containsSpeech
 import com.phantom.companion.data.speech.prefersManagedCloudSpeech
+import com.phantom.companion.data.speech.resampleTo16kPcm
 import com.phantom.companion.data.speech.speechLanguageTag
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -100,11 +103,39 @@ class SpeechPcmTest {
     }
 
     @Test
-    fun languageTagIsIsoLike() {
-        assertEquals("en-US", speechLanguageTag(Locale.US))
+    fun languageTagIsIso6391() {
+        assertEquals("en", speechLanguageTag(Locale.US))
+        assertEquals("en", speechLanguageTag(Locale.UK))
+        assertEquals("hi", speechLanguageTag(Locale.forLanguageTag("hi-IN")))
         assertTrue(prefersManagedCloudSpeech("premium"))
         assertTrue(prefersManagedCloudSpeech("Premium"))
         assertFalse(prefersManagedCloudSpeech("pro"))
         assertFalse(prefersManagedCloudSpeech("free"))
+    }
+
+    @Test
+    fun resampleIsNoOpAt16k() {
+        val pcm = byteArrayOf(1, 2, 3, 4)
+        assertArrayEquals(pcm, resampleTo16kPcm(pcm, SPEECH_SAMPLE_RATE))
+    }
+
+    @Test
+    fun resampleHalvesSampleCountFrom32k() {
+        val pcm = ByteArray(16)
+        for (i in pcm.indices step 2) {
+            pcm[i] = i.toByte()
+            pcm[i + 1] = 0x10
+        }
+        val out = resampleTo16kPcm(pcm, 32_000)
+        assertEquals(8, out.size)
+        assertEquals(pcm[0], out[0])
+        assertEquals(pcm[1], out[1])
+    }
+
+    @Test
+    fun wavBelowBackendMinimumIsStillWellFormed() {
+        val wav = buildWav(byteArrayOf(1, 0))
+        assertTrue(wav.size < MIN_TRANSCRIBE_WAV_BYTES)
+        assertEquals("RIFF", wav.decodeToString(0, 4))
     }
 }

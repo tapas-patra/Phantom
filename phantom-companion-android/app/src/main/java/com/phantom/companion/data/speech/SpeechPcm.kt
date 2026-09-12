@@ -6,6 +6,9 @@ import java.util.Locale
 
 const val SPEECH_SAMPLE_RATE = 16_000
 const val SPEECH_CHANNELS: Short = 1
+const val SPEECH_CHUNK_SAMPLES = 64_000
+const val SPEECH_CHUNK_BYTES = SPEECH_CHUNK_SAMPLES * 2
+const val MIN_TRANSCRIBE_WAV_BYTES = 512
 
 fun buildWav(
     pcm: ByteArray,
@@ -45,10 +48,33 @@ fun containsSpeech(pcm: ByteArray): Boolean {
     return count > 0 && total / count >= 120
 }
 
+fun resampleTo16kPcm(pcm: ByteArray, sourceSampleRate: Int): ByteArray {
+    val usable = pcm.size - (pcm.size % 2)
+    if (usable < 2) return ByteArray(0)
+    if (sourceSampleRate == SPEECH_SAMPLE_RATE) {
+        return if (usable == pcm.size) pcm else pcm.copyOf(usable)
+    }
+    if (sourceSampleRate <= 0) return ByteArray(0)
+    val srcSamples = usable / 2
+    val ratio = sourceSampleRate.toDouble() / SPEECH_SAMPLE_RATE
+    val dstSamples = (srcSamples / ratio).toInt().coerceAtLeast(1)
+    val out = ByteArray(dstSamples * 2)
+    var position = 0.0
+    var index = 0
+    while (index < dstSamples) {
+        val srcIndex = position.toInt().coerceAtMost(srcSamples - 1)
+        val offset = srcIndex * 2
+        out[index * 2] = pcm[offset]
+        out[index * 2 + 1] = pcm[offset + 1]
+        position += ratio
+        index++
+    }
+    return out
+}
+
 fun speechLanguageTag(locale: Locale = Locale.getDefault()): String {
-    val raw = locale.toLanguageTag().take(12)
-    val filtered = raw.filter { it in 'A'..'Z' || it in 'a'..'z' || it == '-' }
-    return filtered.ifBlank { locale.language.filter { it in 'a'..'z' || it in 'A'..'Z' }.ifBlank { "en" } }
+    val lang = locale.language.filter { it in 'a'..'z' || it in 'A'..'Z' }.lowercase()
+    return lang.take(12).ifBlank { "en" }
 }
 
 fun prefersManagedCloudSpeech(accessTier: String?): Boolean =

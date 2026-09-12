@@ -13,9 +13,11 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import com.phantom.companion.data.speech.CloudSpeechRoute
+import com.phantom.companion.data.speech.SPEECH_CHUNK_BYTES
 import com.phantom.companion.data.speech.SPEECH_SAMPLE_RATE
 import com.phantom.companion.data.speech.SpeechCaptureMode
 import com.phantom.companion.data.speech.nativeSpeechRestartDelayMs
+import com.phantom.companion.data.speech.resampleTo16kPcm
 import com.phantom.companion.data.speech.shouldRestartNativeSpeech
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -141,48 +143,33 @@ class PhoneSpeechSession(
         Log.i(TAG, "speech_route_changed route=cloud")
         val chunks = Channel<PcmItem>(Channel.BUFFERED)
         recordJob = scope.launch(Dispatchers.IO) {
-            val minBuf = AudioRecord.getMinBufferSize(
-                SPEECH_SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            if (minBuf <= 0) {
+            val capture = openCloudCapture()
+            if (capture == null) {
                 chunks.close()
                 withContext(Dispatchers.Main) { failMicrophone() }
                 return@launch
             }
-            val rec = try {
-                AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    SPEECH_SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    max(minBuf, CHUNK_BYTES)
-                )
-            } catch (_: SecurityException) {
-                chunks.close()
-                withContext(Dispatchers.Main) { failMicrophone() }
-                return@launch
-            }
-            if (rec.state != AudioRecord.STATE_INITIALIZED) {
-                rec.release()
-                chunks.close()
-                withContext(Dispatchers.Main) { failMicrophone() }
-                return@launch
-            }
+            val rec = capture.recorder
             synchronized(recorderLock) { recorder = rec }
             var sentFinal = false
+            var captureFailed = false
             try {
                 rec.startRecording()
-                val frame = ByteArray(minBuf)
+                if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    throw IllegalStateException("AudioRecord did not enter recording state")
+                }
+                val frame = ByteArray(capture.frameBytes)
                 val accum = ByteArrayOutputStream()
                 while (isActive && shouldListen.get()) {
                     val n = rec.read(frame, 0, frame.size)
                     if (n > 0) {
-                        accum.write(frame, 0, n)
-                        if (accum.size() >= CHUNK_BYTES) {
-                            chunks.send(PcmItem(accum.toByteArray(), final = false))
-                            accum.reset()
+                        val pcm16k = resampleTo16kPcm(frame.copyOf(n), capture.sampleRate)
+                        if (pcm16k.isNotEmpty()) {
+                            accum.write(pcm16k)
+                            if (accum.size() >= SPEECH_CHUNK_BYTES) {
+                                chunks.send(PcmItem(accum.toByteArray(), final = false))
+                                accum.reset()
+                            }
                         }
                     } else if (n < 0) {
                         break
@@ -193,9 +180,10 @@ class PhoneSpeechSession(
             } catch (ex: CancellationException) {
                 throw ex
             } catch (ex: Exception) {
+                captureFailed = true
                 Log.w(TAG, "cloud capture failed", ex)
             } finally {
-                if (!sentFinal) {
+                if (!sentFinal && !captureFailed) {
                     try {
                         chunks.send(PcmItem(ByteArray(0), final = true))
                     } catch (_: Exception) {
@@ -210,6 +198,9 @@ class PhoneSpeechSession(
                 synchronized(recorderLock) {
                     if (recorder === rec) recorder = null
                 }
+            }
+            if (captureFailed) {
+                withContext(Dispatchers.Main) { failMicrophone() }
             }
         }
         drainJob = scope.launch(Dispatchers.IO) {
@@ -257,6 +248,10 @@ class PhoneSpeechSession(
             }
         }
         recordJob?.cancel()
+        try {
+            recordJob?.join()
+        } catch (_: Exception) {
+        }
         withContext(Dispatchers.Main) {
             flushingCloud = false
             if (stillListening) {
@@ -271,6 +266,45 @@ class PhoneSpeechSession(
                 onError("Cloud speech unavailable. Tap the mic to use on-device recognition.")
             }
         }
+    }
+
+    private fun openCloudCapture(): CloudCapture? {
+        val sources = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.UNPROCESSED,
+            MediaRecorder.AudioSource.DEFAULT
+        )
+        val rates = intArrayOf(SPEECH_SAMPLE_RATE, 44_100, 48_000, 8_000, 22_050)
+        for (source in sources) {
+            for (rate in rates) {
+                val minBuf = AudioRecord.getMinBufferSize(
+                    rate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                if (minBuf <= 0) continue
+                val rec = try {
+                    AudioRecord(
+                        source,
+                        rate,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        max(minBuf, minBuf * 2)
+                    )
+                } catch (_: SecurityException) {
+                    return null
+                } catch (_: Exception) {
+                    continue
+                }
+                if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                    Log.i(TAG, "cloud capture source=$source rate=$rate")
+                    return CloudCapture(rec, rate, max(minBuf, 2_048))
+                }
+                rec.release()
+            }
+        }
+        return null
     }
 
     private fun failMicrophone() {
@@ -406,10 +440,14 @@ class PhoneSpeechSession(
     }
 
     private data class PcmItem(val data: ByteArray, val final: Boolean)
+    private data class CloudCapture(
+        val recorder: AudioRecord,
+        val sampleRate: Int,
+        val frameBytes: Int
+    )
 
     private companion object {
         const val TAG = "PhantomSpeech"
-        const val CHUNK_BYTES = SPEECH_SAMPLE_RATE * 2 * 2
     }
 }
 

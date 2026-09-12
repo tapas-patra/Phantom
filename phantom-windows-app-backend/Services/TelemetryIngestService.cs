@@ -106,9 +106,17 @@ public sealed class TelemetryIngestService
         string Value(string key) => request.Attributes is { } attributes && attributes.TryGetValue(key, out var value)
             ? Safe(value)
             : string.Empty;
-        static string Safe(string value) => value.Length <= 160
-            && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_' or '.' or ':')
+        static string Safe(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > 160)
+            {
+                return string.Empty;
+            }
+
+            return value.All(character => char.IsLetterOrDigit(character)
+                    || character is '-' or '_' or '.' or ':' or '/' or '+' or '@')
                 ? value
                 : string.Empty;
+        }
     }
 }

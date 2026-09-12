@@ -29,7 +29,8 @@ namespace SecureOverlay.Services
             var modelCalls = 0;
             var protocolRetries = 0;
             PhantomControlFrameParser parser;
-            string firstResponse;
+            var firstResponse = string.Empty;
+            var fallbackBuffer = string.Empty;
 
             while (true)
             {
@@ -49,6 +50,7 @@ namespace SecureOverlay.Services
                             resetPublishedAttempt?.Invoke();
                         },
                         cancellationToken).ConfigureAwait(false);
+                    firstResponse = first.Response;
                     if (!string.IsNullOrEmpty(first.Error)) throw new InvalidOperationException(first.Error);
                     if (!parser.HasReceivedChunks && first.Response.Length > 0)
                     {
@@ -56,14 +58,41 @@ namespace SecureOverlay.Services
                         if (visible.Length > 0) publish(visible);
                     }
                     parser.Complete();
-                    firstResponse = first.Response;
                     break;
                 }
-                catch (PhantomProtocolException error) when (protocolRetries == 0)
+                catch (PhantomProtocolException error)
                 {
-                    protocolRetries++;
-                    protocolRejected?.Invoke(error.Code);
-                    resetPublishedAttempt?.Invoke();
+                    var candidate = parser.GetFallbackAnswerText();
+                    if (string.IsNullOrWhiteSpace(candidate))
+                    {
+                        candidate = PhantomControlFrameParser.ExtractBareAnswer(firstResponse);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                    {
+                        fallbackBuffer = candidate;
+                    }
+
+                    if (protocolRetries == 0)
+                    {
+                        protocolRetries++;
+                        protocolRejected?.Invoke(error.Code);
+                        resetPublishedAttempt?.Invoke();
+                        continue;
+                    }
+
+                    if (PhantomControlFrameParser.CanFallback(error.Code) && IsCompleteAnswer(fallbackBuffer))
+                    {
+                        protocolRejected?.Invoke("control_frame_fallback");
+                        var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
+                        decisionParsed?.Invoke(fallbackDecision, modelCalls);
+                        publish(fallbackBuffer);
+                        return new LiveCopilotResult(
+                            fallbackBuffer, fallbackDecision, modelCalls, protocolRetries, "not_requested",
+                            Array.Empty<RetrievedContextSnippet>());
+                    }
+
+                    throw;
                 }
             }
 
@@ -108,10 +137,6 @@ namespace SecureOverlay.Services
         }
 
         public static string ExtractBody(string response)
-        {
-            var marker = PhantomControlFrameParser.BodyDelimiter;
-            var index = response.IndexOf(marker, StringComparison.Ordinal);
-            return index < 0 ? string.Empty : response[(index + marker.Length)..];
-        }
+            => PhantomControlFrameParser.ExtractAnswerBody(response);
     }
 }

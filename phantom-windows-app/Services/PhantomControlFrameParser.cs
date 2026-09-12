@@ -12,7 +12,10 @@ namespace SecureOverlay.Services
     {
         public const string ProtocolLine = "PHANTOM_CONTROL_V1";
         public const string BodyDelimiter = "\nPHANTOM_BODY\n";
-        public const int MaxPrefixBytes = 4096;
+        public const int MaxPrefixBytes = 32_768;
+        private const int MaxRawPrefixBytes = 65_536;
+        private static readonly string[] ThinkOpenTags = ["<thinking>", "<think>"];
+        private static readonly string[] ThinkCloseTags = ["</thinking>", "</think>"];
 
         private static readonly HashSet<string> Actions = new(StringComparer.Ordinal) { "answer", "retrieve", "clarify" };
         private static readonly HashSet<string> QuestionTypes = new(StringComparer.Ordinal)
@@ -49,33 +52,33 @@ namespace SecureOverlay.Services
             if (_bodyStarted) return AcceptBody(chunk);
 
             _prefix.Append(chunk);
-            PrefixBytes = Encoding.UTF8.GetByteCount(_prefix.ToString());
+            var raw = _prefix.ToString();
+            if (Encoding.UTF8.GetByteCount(raw) > MaxRawPrefixBytes)
+            {
+                throw new PhantomProtocolException("control_prefix_oversized");
+            }
+
+            var buffered = Normalize(raw);
+            PrefixBytes = Encoding.UTF8.GetByteCount(buffered);
+            if (TryLocateFrame(buffered, out var json, out var rest))
+            {
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    throw new PhantomProtocolException("control_json_invalid");
+                }
+
+                Decision = ParseAndValidate(json);
+                _bodyStarted = true;
+                _prefix.Clear();
+                return AcceptBody(rest);
+            }
+
             if (PrefixBytes > MaxPrefixBytes)
             {
                 throw new PhantomProtocolException("control_prefix_oversized");
             }
 
-            var buffered = _prefix.ToString();
-            var delimiterIndex = buffered.IndexOf(BodyDelimiter, StringComparison.Ordinal);
-            if (delimiterIndex < 0) return string.Empty;
-
-            var header = buffered[..delimiterIndex];
-            var newline = header.IndexOf('\n');
-            if (newline <= 0 || !string.Equals(header[..newline], ProtocolLine, StringComparison.Ordinal))
-            {
-                throw new PhantomProtocolException("control_prefix_invalid");
-            }
-
-            var json = header[(newline + 1)..];
-            if (json.Contains('\n') || string.IsNullOrWhiteSpace(json))
-            {
-                throw new PhantomProtocolException("control_json_invalid");
-            }
-
-            Decision = ParseAndValidate(json);
-            _bodyStarted = true;
-            _prefix.Clear();
-            return AcceptBody(buffered[(delimiterIndex + BodyDelimiter.Length)..]);
+            return string.Empty;
         }
 
         public LiveTurnDecision Complete()
@@ -86,6 +89,117 @@ namespace SecureOverlay.Services
             if (decision.Action != LiveCopilotAction.Retrieve && !_bodyHasContent)
                 throw new PhantomProtocolException("answer_body_empty");
             return decision;
+        }
+
+        public static bool CanFallback(string code) => code is
+            "control_frame_incomplete" or "control_prefix_invalid" or "control_prefix_oversized"
+            or "control_json_invalid" or "answer_body_empty";
+
+        public static LiveTurnDecision FallbackAnswerDecision() => new(
+            LiveCopilotAction.Answer,
+            "unknown",
+            "general",
+            "universal_knowledge",
+            "none",
+            string.Empty,
+            string.Empty,
+            Array.Empty<string>(),
+            40,
+            false,
+            0.5);
+
+        public string GetFallbackAnswerText() => ExtractBareAnswer(_prefix.ToString());
+
+        public static string ExtractAnswerBody(string response)
+            => TryLocateFrame(Normalize(response), out _, out var rest) ? rest : string.Empty;
+
+        public static string ExtractBareAnswer(string response)
+        {
+            var text = Normalize(response);
+            if (TryLocateFrame(text, out _, out var rest))
+            {
+                return rest.Trim();
+            }
+
+            var protocolIndex = text.IndexOf(ProtocolLine, StringComparison.Ordinal);
+            if (protocolIndex >= 0)
+            {
+                return string.Empty;
+            }
+
+            return text.Trim();
+        }
+
+        public static string Normalize(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            return StripThink(text.Replace("\r\n", "\n").Replace('\r', '\n'));
+        }
+
+        private static bool TryLocateFrame(string buffered, out string json, out string rest)
+        {
+            json = string.Empty;
+            rest = string.Empty;
+            var protocolIndex = buffered.IndexOf(ProtocolLine, StringComparison.Ordinal);
+            if (protocolIndex < 0) return false;
+
+            var afterProtocol = protocolIndex + ProtocolLine.Length;
+            if (afterProtocol < buffered.Length && buffered[afterProtocol] == '\n')
+            {
+                afterProtocol++;
+            }
+
+            var bodyIndex = buffered.IndexOf(BodyDelimiter, afterProtocol, StringComparison.Ordinal);
+            if (bodyIndex < 0) return false;
+
+            json = buffered[afterProtocol..bodyIndex].Trim();
+            rest = buffered[(bodyIndex + BodyDelimiter.Length)..];
+            return true;
+        }
+
+        private static string StripThink(string text)
+        {
+            var value = text;
+            while (true)
+            {
+                var openIndex = IndexOfToken(value, ThinkOpenTags, 0, out var openToken);
+                if (openIndex < 0) return value;
+
+                var afterOpen = openIndex + openToken.Length;
+                var closeIndex = IndexOfToken(value, ThinkCloseTags, afterOpen, out var closeToken);
+                if (closeIndex >= 0)
+                {
+                    value = value.Remove(openIndex, closeIndex + closeToken.Length - openIndex);
+                    continue;
+                }
+
+                var protocolIndex = value.IndexOf(ProtocolLine, afterOpen, StringComparison.Ordinal);
+                if (protocolIndex >= 0)
+                {
+                    value = value.Remove(openIndex, protocolIndex - openIndex);
+                    continue;
+                }
+
+                return value[..openIndex];
+            }
+        }
+
+        private static int IndexOfToken(string text, string[] tokens, int start, out string token)
+        {
+            token = string.Empty;
+            var best = -1;
+            foreach (var candidate in tokens)
+            {
+                var index = text.IndexOf(candidate, start, StringComparison.OrdinalIgnoreCase);
+                if (index < 0) continue;
+                if (best < 0 || index < best || (index == best && candidate.Length > token.Length))
+                {
+                    best = index;
+                    token = candidate;
+                }
+            }
+
+            return best;
         }
 
         private string AcceptBody(string body)

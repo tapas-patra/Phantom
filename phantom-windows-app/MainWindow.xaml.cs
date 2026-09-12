@@ -2573,10 +2573,14 @@ namespace SecureOverlay
                 else if (!string.IsNullOrEmpty(error))
                 {
                     companionOutcome = CompanionTurnOutcome.Failed;
-                    companionErrorCode = "provider_error";
+                    companionErrorCode = ClassifyTurnError(error);
                     companionErrorMessage = error;
                     requestTrace.Complete(0, "error");
-                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string> { ["outcome"] = "error", ["error_code"] = "provider_error" });
+                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "error",
+                        ["error_code"] = companionErrorCode
+                    });
                     Log.WriteLine($"✗ AI Error: {error}");
 
                     var isDesktopAuthFailure =
@@ -4110,7 +4114,33 @@ namespace SecureOverlay
             fields["delivery_style"] = trace.DeliveryStyle;
             fields["execution_lane"] = trace.ExecutionLane;
             fields["usage_source"] = trace.UsageSource;
+            fields["provider"] = trace.Provider;
+            fields["model"] = trace.Model;
+            fields["elapsed_ms"] = ((int)trace.ElapsedMilliseconds).ToString();
             _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
+        }
+
+        private static string ClassifyTurnError(string error)
+        {
+            if (error.IndexOf("invalid live-response header", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("invalid response format", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "control_frame_incomplete";
+            }
+
+            if (error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "timeout";
+            }
+
+            if (error.IndexOf("429", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("rate limit", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "rate_limited";
+            }
+
+            return "provider_error";
         }
 
         // ═══════════════════════════════════════════════════════════════

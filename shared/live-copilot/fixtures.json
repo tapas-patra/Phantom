@@ -32,6 +32,24 @@
       "expectedAction": "clarify",
       "expectedBody": "Do you mean the service architecture or the migration process?",
       "maxNormalCalls": 1
+    },
+    {
+      "name": "preamble-thinking",
+      "chunks": [
+        "<think>hidden plan</think>\nPHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\nPHANTOM_BODY\nVisible answer."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Visible answer.",
+      "maxNormalCalls": 1
+    },
+    {
+      "name": "pretty-json-crlf",
+      "chunks": [
+        "noise\r\nPHANTOM_CONTROL_V1\r\n{\r\n  \"action\": \"answer\",\r\n  \"questionType\": \"technical\",\r\n  \"intent\": \"general\",\r\n  \"answerBasis\": \"universal_knowledge\",\r\n  \"entityType\": \"none\",\r\n  \"entityId\": \"\",\r\n  \"retrievalQuery\": \"\",\r\n  \"preferredDocumentIds\": [],\r\n  \"targetSeconds\": 40,\r\n  \"allowCode\": false,\r\n  \"confidence\": 0.91\r\n}\r\nPHANTOM_BODY\r\nPretty body."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Pretty body.",
+      "maxNormalCalls": 1
     }
   ],
   "invalid": [

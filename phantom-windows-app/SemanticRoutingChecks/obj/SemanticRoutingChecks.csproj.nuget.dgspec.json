@@ -10,7 +10,7 @@
         "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
         "projectName": "SemanticRoutingChecks",
         "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
-        "packagesPath": "/Users/tapaskumarpatra/.nuget/packages/",
+        "packagesPath": "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/f2be188128b9988031d83170b892db9e/nuget",
         "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
@@ -71,6 +71,9 @@
             }
           ],
           "frameworkReferences": {
+            "Microsoft.AspNetCore.App": {
+              "privateAssets": "none"
+            },
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }

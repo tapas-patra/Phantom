@@ -138,6 +138,28 @@ Equal("2", retrieveCalls.ToString(), "retrieve model calls");
 Equal("Grounded final answer.", retrieved.Answer, "retrieve final answer");
 Equal(retrieved.Answer, finalVisible, "retrieve visible body");
 
+var fallbackCalls = 0;
+var fallbackVisible = string.Empty;
+var fallbackRejected = new List<string>();
+const string fallbackRaw = "Optimistic locking detects a conflicting write without a control header.";
+var fallback = await new LiveCopilotOrchestrator().ExecuteAsync(
+    Array.Empty<string>(), Array.Empty<string>(),
+    (publish, _, _) =>
+    {
+        fallbackCalls++;
+        publish(fallbackRaw);
+        return Task.FromResult((fallbackRaw, string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Fallback fixture retrieved."),
+    (_, _) => throw new InvalidOperationException("Fallback fixture used a second call."),
+    chunk => fallbackVisible += chunk, null, CancellationToken.None,
+    code => fallbackRejected.Add(code));
+Equal("2", fallbackCalls.ToString(), "fallback model calls");
+Equal(fallbackRaw, fallback.Answer, "fallback answer");
+Equal(fallback.Answer, fallbackVisible, "fallback visible body");
+if (!fallbackRejected.Contains("control_frame_fallback"))
+    throw new InvalidOperationException("Fallback did not record control_frame_fallback.");
+
 foreach (var secret in fixtures.SensitiveSamples)
 {
     var allowlist = new[] { "question_length_bucket", "provider", "model", "answer_basis" };

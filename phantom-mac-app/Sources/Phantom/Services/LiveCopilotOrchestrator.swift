@@ -19,6 +19,7 @@ final class LiveCopilotOrchestrator {
         var protocolRetries = 0
         var parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
         var firstResponse = ""
+        var fallbackBuffer = ""
 
         while true {
             modelCalls += 1
@@ -45,11 +46,32 @@ final class LiveCopilotOrchestrator {
                 }
                 _ = try parser.complete()
                 break
-            } catch let error as PhantomProtocolError where protocolRetries == 0 {
-                protocolRejected?(error.code)
-                protocolRetries += 1
-                parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
-                resetPublishedAttempt()
+            } catch let error as PhantomProtocolError {
+                var candidate = parser.fallbackAnswerText()
+                if candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    candidate = PhantomControlFrameParser.extractBareAnswer(firstResponse)
+                }
+                if !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    fallbackBuffer = candidate
+                }
+                if protocolRetries == 0 {
+                    protocolRejected?(error.code)
+                    protocolRetries += 1
+                    parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    resetPublishedAttempt()
+                    continue
+                }
+                if PhantomControlFrameParser.canFallback(error.code), Self.isCompleteAnswer(fallbackBuffer) {
+                    protocolRejected?("control_frame_fallback")
+                    let fallbackDecision = PhantomControlFrameParser.fallbackAnswerDecision()
+                    decisionParsed?(fallbackDecision, modelCalls)
+                    publish(fallbackBuffer)
+                    return LiveCopilotResult(
+                        answer: fallbackBuffer, decision: fallbackDecision, modelCallCount: modelCalls,
+                        protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
+                    )
+                }
+                throw error
             }
         }
 
@@ -90,8 +112,7 @@ final class LiveCopilotOrchestrator {
     }
 
     static func extractBody(_ response: String) -> String {
-        guard let range = response.range(of: PhantomControlFrameParser.bodyDelimiter) else { return "" }
-        return String(response[range.upperBound...])
+        PhantomControlFrameParser.extractAnswerBody(response)
     }
 
     nonisolated static func isCompleteAnswer(_ response: String) -> Bool {

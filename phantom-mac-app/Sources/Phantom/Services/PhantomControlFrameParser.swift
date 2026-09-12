@@ -54,7 +54,10 @@ struct PhantomProtocolError: LocalizedError {
 final class PhantomControlFrameParser {
     static let protocolLine = "PHANTOM_CONTROL_V1"
     static let bodyDelimiter = "\nPHANTOM_BODY\n"
-    static let maxPrefixBytes = 4_096
+    static let maxPrefixBytes = 32_768
+    private static let maxRawPrefixBytes = 65_536
+    private static let thinkOpenTags = ["<thinking>", "<think>"]
+    private static let thinkCloseTags = ["</thinking>", "</think>"]
 
     private static let actions = Set(["answer", "retrieve", "clarify"])
     private static let questionTypes = Set([
@@ -85,21 +88,21 @@ final class PhantomControlFrameParser {
         hasReceivedChunks = true
         if bodyStarted { return acceptBody(chunk) }
         prefix += chunk
-        prefixBytes = prefix.lengthOfBytes(using: .utf8)
-        guard prefixBytes <= Self.maxPrefixBytes else { throw PhantomProtocolError(code: "control_prefix_oversized") }
-        guard let range = prefix.range(of: Self.bodyDelimiter) else { return "" }
-        let header = String(prefix[..<range.lowerBound])
-        guard let newline = header.firstIndex(of: "\n"),
-              String(header[..<newline]) == Self.protocolLine else {
-            throw PhantomProtocolError(code: "control_prefix_invalid")
+        let rawBytes = prefix.lengthOfBytes(using: .utf8)
+        guard rawBytes <= Self.maxRawPrefixBytes else { throw PhantomProtocolError(code: "control_prefix_oversized") }
+        let buffered = Self.normalize(prefix)
+        prefixBytes = buffered.lengthOfBytes(using: .utf8)
+        if let frame = Self.locateFrame(buffered) {
+            guard !frame.json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw PhantomProtocolError(code: "control_json_invalid")
+            }
+            decision = try Self.parse(frame.json, allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+            bodyStarted = true
+            prefix = ""
+            return acceptBody(frame.rest)
         }
-        let json = String(header[header.index(after: newline)...])
-        guard !json.isEmpty, !json.contains("\n") else { throw PhantomProtocolError(code: "control_json_invalid") }
-        decision = try Self.parse(json, allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
-        bodyStarted = true
-        let body = String(prefix[range.upperBound...])
-        prefix = ""
-        return acceptBody(body)
+        guard prefixBytes <= Self.maxPrefixBytes else { throw PhantomProtocolError(code: "control_prefix_oversized") }
+        return ""
     }
 
     func complete() throws -> LiveTurnDecision {
@@ -107,6 +110,83 @@ final class PhantomControlFrameParser {
         if decision.action == .retrieve, bodyHasContent { throw PhantomProtocolError(code: "retrieve_body_not_empty") }
         if decision.action != .retrieve, !bodyHasContent { throw PhantomProtocolError(code: "answer_body_empty") }
         return decision
+    }
+
+    static func canFallback(_ code: String) -> Bool {
+        [
+            "control_frame_incomplete", "control_prefix_invalid", "control_prefix_oversized",
+            "control_json_invalid", "answer_body_empty"
+        ].contains(code)
+    }
+
+    static func fallbackAnswerDecision() -> LiveTurnDecision {
+        LiveTurnDecision(
+            action: .answer, questionType: "unknown", intent: "general",
+            answerBasis: "universal_knowledge", entityType: "none", entityId: "",
+            retrievalQuery: "", preferredDocumentIds: [], targetSeconds: 40,
+            allowCode: false, confidence: 0.5
+        )
+    }
+
+    func fallbackAnswerText() -> String { Self.extractBareAnswer(prefix) }
+
+    static func extractAnswerBody(_ response: String) -> String {
+        let text = normalize(response)
+        return locateFrame(text)?.rest ?? ""
+    }
+
+    static func extractBareAnswer(_ response: String) -> String {
+        let text = normalize(response)
+        if let frame = locateFrame(text) { return frame.rest.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if text.contains(protocolLine) { return "" }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalize(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        return stripThink(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
+    }
+
+    private static func locateFrame(_ buffered: String) -> (json: String, rest: String)? {
+        guard let protocolRange = buffered.range(of: protocolLine) else { return nil }
+        var afterProtocol = protocolRange.upperBound
+        if afterProtocol < buffered.endIndex, buffered[afterProtocol] == "\n" {
+            afterProtocol = buffered.index(after: afterProtocol)
+        }
+        guard let bodyRange = buffered.range(of: bodyDelimiter, range: afterProtocol..<buffered.endIndex) else {
+            return nil
+        }
+        let json = String(buffered[afterProtocol..<bodyRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = String(buffered[bodyRange.upperBound...])
+        return (json, rest)
+    }
+
+    private static func stripThink(_ text: String) -> String {
+        var value = text
+        while true {
+            guard let open = firstToken(thinkOpenTags, in: value, from: value.startIndex) else { return value }
+            let afterOpen = value.index(open.range.lowerBound, offsetBy: open.token.count)
+            if let close = firstToken(thinkCloseTags, in: value, from: afterOpen) {
+                value.removeSubrange(open.range.lowerBound..<close.range.upperBound)
+                continue
+            }
+            if let protocolRange = value.range(of: protocolLine, range: afterOpen..<value.endIndex) {
+                value.removeSubrange(open.range.lowerBound..<protocolRange.lowerBound)
+                continue
+            }
+            return String(value[..<open.range.lowerBound])
+        }
+    }
+
+    private static func firstToken(_ tokens: [String], in text: String, from start: String.Index) -> (token: String, range: Range<String.Index>)? {
+        var best: (token: String, range: Range<String.Index>)?
+        for token in tokens {
+            guard let range = text.range(of: token, options: .caseInsensitive, range: start..<text.endIndex) else { continue }
+            if best == nil || range.lowerBound < best!.range.lowerBound || (range.lowerBound == best!.range.lowerBound && token.count > best!.token.count) {
+                best = (token, range)
+            }
+        }
+        return best
     }
 
     private func acceptBody(_ body: String) -> String {

@@ -16,8 +16,31 @@ concurrency:
   group: desktop-release
   cancel-in-progress: true
 
+env:
+  RELEASE_REPOSITORY: tapas-patra/phantom-release-repo
+  RELEASE_TAG: desktop-latest
+
+# Do not use actions/upload-artifact for these zips. Actions artifact storage is
+# quota-limited (and is what fails with "Artifact storage quota has been hit").
+# GitHub Release assets are a different store: 2 GiB per file, no total size or
+# bandwidth cap. Each job uploads its zip with gh, which is the same Releases
+# API as softprops/action-gh-release.
+
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure rolling GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
+              --title "Phantom Desktop (latest)" \
+              --notes "Automated unsigned desktop build from $GITHUB_SHA."
+
   windows:
+    needs: [prepare-release]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +59,14 @@ jobs:
       - name: Package Windows app
         shell: pwsh
         run: Compress-Archive -Path release/windows/* -DestinationPath Phantom-Windows-x64.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-release
-          path: Phantom-Windows-x64.zip
+      - name: Upload Windows zip to GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" Phantom-Windows-x64.zip --repo "$RELEASE_REPOSITORY" --clobber
 
   macos:
+    needs: [prepare-release]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -49,25 +74,18 @@ jobs:
         run: ./phantom-mac-app/Scripts/build-app.sh
       - name: Package macOS app
         run: ditto -c -k --sequesterRsrc --keepParent phantom-mac-app/dist/Phantom.app Phantom-macOS.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-release
-          path: Phantom-macOS.zip
+      - name: Upload macOS zip to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" Phantom-macOS.zip --repo "$RELEASE_REPOSITORY" --clobber
 
   publish:
     needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: release
-          merge-multiple: true
-      - name: Publish rolling desktop release
+      - name: Stamp release notes
         env:
           GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
-          RELEASE_REPOSITORY: tapas-patra/phantom-release-repo
-        run: |
-          gh release view desktop-latest --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create desktop-latest --repo "$RELEASE_REPOSITORY" --title "Phantom Desktop (latest)" --notes "Automated unsigned desktop build from $GITHUB_SHA."
-          gh release upload desktop-latest release/* --repo "$RELEASE_REPOSITORY" --clobber
-          gh release edit desktop-latest --repo "$RELEASE_REPOSITORY" --notes "Automated unsigned desktop build from $GITHUB_SHA."
+        run: >
+          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY"
+          --notes "Automated unsigned desktop build from $GITHUB_SHA."

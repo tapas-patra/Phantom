@@ -32,6 +32,55 @@ enum ScreenshotCapture {
         }
     }
 
+    /// Headless full-display capture for Companion Mode. Uses CGDisplayCreateImage + encode
+    /// and does NOT present AreaSelectionController or activate the app. Throws
+    /// `permissionDenied` if Screen Recording access is missing — Companion Mode must not
+    /// trigger the system permission prompt itself.
+    static func captureDisplay(id displayId: String?) throws -> Data {
+        guard CGPreflightScreenCaptureAccess() else { throw ScreenshotError.permissionDenied }
+        guard let displayID = resolveDisplayId(displayId),
+              let image = CGDisplayCreateImage(displayID) else {
+            throw ScreenshotError.captureFailed
+        }
+        return try encode(image)
+    }
+
+    /// Lists available displays for the desktop.hello frame. Id is the NSScreenNumber as a
+    /// string; isDefault marks the main screen.
+    static func listDisplays() -> [(id: String, name: String, isDefault: Bool)] {
+        NSScreen.screens.map { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let id = number.map { String($0.uint32Value) } ?? UUID().uuidString
+            let name = screen.localizedName
+            return (id: id, name: name, isDefault: screen == NSScreen.main)
+        }
+    }
+
+    private static func resolveDisplayId(_ displayId: String?) -> CGDirectDisplayID? {
+        guard let displayId, !displayId.isEmpty else {
+            return mainDisplayId()
+        }
+        for screen in NSScreen.screens {
+            if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+                if String(number.uint32Value) == displayId {
+                    return CGDirectDisplayID(number.uint32Value)
+                }
+            }
+        }
+        if let parsed = UInt32(displayId) {
+            return parsed
+        }
+        return mainDisplayId()
+    }
+
+    private static func mainDisplayId() -> CGDirectDisplayID? {
+        guard let main = NSScreen.main,
+              let number = main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
+        }
+        return CGDirectDisplayID(number.uint32Value)
+    }
+
     fileprivate static func encode(_ image: CGImage) throws -> Data {
         let maxEdge: CGFloat = 1_600
         let scale = min(1, maxEdge / CGFloat(max(image.width, image.height)))
@@ -49,6 +98,50 @@ enum ScreenshotCapture {
             throw ScreenshotError.encodingFailed
         }
         return png
+    }
+
+    /// Builds the `capture.completed` payload (width, height, JPEG thumbnail base64) from a
+    /// captured PNG `Data`. The thumbnail is downscaled to a max edge of 512px and JPEG-
+    /// encoded at decreasing quality until it fits the contract's 80 KB decoded limit
+    /// (spec §5.2). Returns nil if the input cannot be decoded (C2).
+    static func captureCompletedPayload(from data: Data, maxEdge: CGFloat = 512) -> (width: Int, height: Int, thumbnailJpegBase64: String?)? {
+        guard let image = NSImage(data: data),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else {
+            return nil
+        }
+        let width = bitmap.pixelsWide
+        let height = bitmap.pixelsHigh
+
+        let scale = min(1, maxEdge / CGFloat(max(width, height)))
+        let thumbW = max(1, Int(CGFloat(width) * scale))
+        let thumbH = max(1, Int(CGFloat(height) * scale))
+        let thumbSize = NSSize(width: thumbW, height: thumbH)
+        let thumbImage = NSImage(size: thumbSize)
+        thumbImage.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: thumbSize))
+        thumbImage.unlockFocus()
+
+        guard let thumbTiff = thumbImage.tiffRepresentation,
+              let thumbBitmap = NSBitmapImageRep(data: thumbTiff) else {
+            return (width, height, nil)
+        }
+
+        let maxBytes = 80 * 1024
+        var jpeg: Data?
+        for factor in [0.7, 0.6, 0.5, 0.4, 0.3, 0.2] {
+            if let candidate = thumbBitmap.representation(using: .jpeg, properties: [.compressionFactor: factor]),
+               candidate.count <= maxBytes {
+                jpeg = candidate
+                break
+            }
+        }
+        if jpeg == nil {
+            jpeg = thumbBitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.2])
+        }
+        let base64 = jpeg.flatMap { Data($0).base64EncodedString() }
+        return (width, height, base64)
     }
 }
 

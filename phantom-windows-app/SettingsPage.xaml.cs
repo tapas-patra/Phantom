@@ -11,8 +11,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using Microsoft.Win32;
+using QRCoder;
 using SecureOverlay.Application.Context;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Services;
@@ -34,6 +36,9 @@ namespace SecureOverlay
         private readonly AccountCacheSnapshot? _accountSnapshot;
         private readonly IAuthSessionRepository _authSessionRepository;
         private readonly IHostedAccountClient _hostedAccountClient;
+        private readonly IHostedCompanionClient _hostedCompanionClient;
+        private System.Threading.Timer? _companionDiscoveryTimer;
+        private DateTime _companionCodeExpiresAtUtc = DateTime.UtcNow;
         private bool _isUpdatingSlider = false;
         private bool _isInitializing = true;
         private bool _isUpdatingContextPackSelection;
@@ -62,6 +67,7 @@ namespace SecureOverlay
             _contextPackService = new LocalContextPackService(new SqliteContextPackRepository(store));
             _authSessionRepository = new SqliteAuthSessionRepository(store);
             _hostedAccountClient = HostedClientFactory.CreateAccountClient(HostedClientFactory.LoadOptions());
+            _hostedCompanionClient = HostedClientFactory.CreateCompanionClient(HostedClientFactory.LoadOptions());
 
             InitializeControls();
             LoadSettings();
@@ -275,7 +281,12 @@ namespace SecureOverlay
             BillingPriorityCheckBox.IsChecked = _settings.PreferByoCreditsFirst;
             
             UseFakeCursorCheckBox.IsChecked = _settings.UseFakeCursor;
-            
+
+            CompanionEnabledCheckBox.IsChecked = _settings.CompanionEnabled;
+            CompanionStatusText.Text = string.IsNullOrWhiteSpace(_settings.CompanionPairingId)
+                ? "Not paired"
+                : $"Paired: {_settings.CompanionPairingId}";
+
             _isUpdatingSlider = true;
             
             double displayValue = _settings.FakeCursorSize * 100;
@@ -1711,7 +1722,9 @@ namespace SecureOverlay
                 _settings.ClickThroughEnabled = ClickThroughCheckBox.IsChecked == true;
                 
                 _settings.UseFakeCursor = UseFakeCursorCheckBox.IsChecked == true;
-                
+
+                _settings.CompanionEnabled = CompanionEnabledCheckBox.IsChecked == true;
+
                 if (double.TryParse(FakeCursorSizeTextBox.Text, out double percentage))
                 {
                     _settings.FakeCursorSize = Math.Max(0.5, Math.Min(2.0, percentage / 100.0));
@@ -2334,6 +2347,189 @@ namespace SecureOverlay
             {
                 throw new InvalidOperationException(
                     $"{oversizedProvider.Name} can store at most {MaxKeysPerProvider} API keys for BYO accounts.");
+            }
+        }
+
+        private void CompanionShowCodeButton_Click(object sender, RoutedEventArgs e)
+        {
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                CompanionStatusText.Text = "Sign in to pair a phone.";
+                return;
+            }
+
+            try
+            {
+                var label = Environment.MachineName ?? "Windows PC";
+                var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+                var request = new CompanionPairingStartRequestDto
+                {
+                    DesktopDeviceLabel = label,
+                    DesktopPlatform = "windows",
+                    AppVersion = appVersion
+                };
+                var result = _hostedCompanionClient.StartPairing(request, session.AccessToken);
+                CompanionPairingCodeText.Text = result.Code;
+                CompanionPairingCodeText.Visibility = Visibility.Visible;
+                CompanionQrPayloadText.Text = result.QrPayload;
+                CompanionQrPayloadText.Visibility = Visibility.Visible;
+                RenderCompanionQr(result.QrPayload);
+                _companionCodeExpiresAtUtc = result.ExpiresAtUtc;
+                CompanionStatusText.Text = $"Pairing code ready (expires {result.ExpiresAtUtc:O}). Open the phone app and scan the QR or enter the code.";
+                StartCompanionDiscoveryPolling(session.AccessToken, result.ExpiresAtUtc);
+            }
+            catch (Exception ex)
+            {
+                CompanionStatusText.Text = "Update / backend not ready.";
+                Log.WriteLine($"Companion pairing start failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>Renders the companion pairing payload as a QR image into CompanionQrImage.</summary>
+        private void RenderCompanionQr(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                CompanionQrImage.Source = null;
+                CompanionQrImage.Visibility = Visibility.Collapsed;
+                return;
+            }
+            try
+            {
+                using var generator = new QRCodeGenerator();
+                using var qrData = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
+                var png = new PngByteQRCode(qrData).GetGraphic(20);
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.StreamSource = new MemoryStream(png);
+                image.EndInit();
+                image.Freeze();
+                CompanionQrImage.Source = image;
+                CompanionQrImage.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Companion QR render failed: {ex.Message}");
+                CompanionQrImage.Source = null;
+                CompanionQrImage.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>
+        /// Polls ListPairings until the phone completes the pairing (a pairing whose
+        /// desktop platform is windows appears), then stores the pairing id, enables
+        /// Companion Mode, and reconciles. Stops when the code expires.
+        /// </summary>
+        private void StartCompanionDiscoveryPolling(string accessToken, DateTime codeExpiresAtUtc)
+        {
+            _companionDiscoveryTimer?.Dispose();
+            _companionDiscoveryTimer = new System.Threading.Timer(_ =>
+            {
+                if (DateTime.UtcNow >= codeExpiresAtUtc)
+                {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+                        {
+                            CompanionStatusText.Text = "Pairing code expired. Generate a new code.";
+                        }
+                    }));
+                    StopCompanionDiscoveryPolling();
+                    return;
+                }
+                try
+                {
+                    var list = _hostedCompanionClient.ListPairings(accessToken);
+                    var active = list?.Pairings?.FirstOrDefault(p =>
+                        string.Equals(p.DesktopPlatform, "windows", StringComparison.OrdinalIgnoreCase));
+                    if (active != null)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            _settings.CompanionPairingId = active.PairingId;
+                            _settings.CompanionEnabled = true;
+                            CompanionPairingCodeText.Text = string.Empty;
+                            CompanionPairingCodeText.Visibility = Visibility.Collapsed;
+                            CompanionQrImage.Source = null;
+                            CompanionQrImage.Visibility = Visibility.Collapsed;
+                            CompanionQrPayloadText.Text = string.Empty;
+                            CompanionQrPayloadText.Visibility = Visibility.Collapsed;
+                            CompanionEnabledCheckBox.IsChecked = true;
+                            CompanionStatusText.Text = "Paired. Close settings to connect the relay.";
+                            SettingsManager.Save(_settings);
+                        }));
+                        StopCompanionDiscoveryPolling();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Companion discovery poll failed: {ex.Message}");
+                }
+            }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+        }
+
+        private void StopCompanionDiscoveryPolling()
+        {
+            _companionDiscoveryTimer?.Dispose();
+            _companionDiscoveryTimer = null;
+        }
+
+        private void CompanionUnpairButton_Click(object sender, RoutedEventArgs e)
+        {
+            var session = _authSessionRepository.Load();
+            if (session == null || string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                CompanionStatusText.Text = "Sign in to unpair.";
+                return;
+            }
+
+            StopCompanionDiscoveryPolling();
+
+            if (string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+            {
+                // Refresh pairings from backend in case the id was set on another device.
+                try
+                {
+                    var list = _hostedCompanionClient.ListPairings(session.AccessToken);
+                    var active = list?.Pairings?.FirstOrDefault(p => p.DesktopPlatform == "windows" || !string.IsNullOrWhiteSpace(p.PairingId));
+                    if (active != null)
+                    {
+                        _settings.CompanionPairingId = active.PairingId;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.WriteLine($"Companion list pairings failed: {ex.Message}");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(_settings.CompanionPairingId))
+            {
+                CompanionStatusText.Text = "Not paired.";
+                return;
+            }
+
+            try
+            {
+                _hostedCompanionClient.RevokePairing(_settings.CompanionPairingId, session.AccessToken);
+                _settings.CompanionPairingId = string.Empty;
+                _settings.CompanionEnabled = false;
+                CompanionEnabledCheckBox.IsChecked = false;
+                CompanionPairingCodeText.Visibility = Visibility.Collapsed;
+                CompanionQrImage.Source = null;
+                CompanionQrImage.Visibility = Visibility.Collapsed;
+                CompanionQrPayloadText.Visibility = Visibility.Collapsed;
+                CompanionStatusText.Text = "Unpaired.";
+                // Persist immediately so the unpaired state survives a settings Cancel,
+                // and so MainWindow's reconcile-on-close stops the relay (H8).
+                SettingsManager.Save(_settings);
+            }
+            catch (Exception ex)
+            {
+                CompanionStatusText.Text = "Unpair failed. Try again.";
+                Log.WriteLine($"Companion unpair failed: {ex.Message}");
             }
         }
     }

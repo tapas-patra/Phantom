@@ -32,7 +32,8 @@ public static class BackendSchemaMigrations
         new SchemaMigration("024_admin_action_audit", AdminActionAuditSql),
         new SchemaMigration("025_dashboard_email_verification", DashboardEmailVerificationSql),
         new SchemaMigration("026_download_and_feedback_analytics", DownloadAndFeedbackAnalyticsSql),
-        new SchemaMigration("027_managed_speech", ManagedSpeechSql)
+        new SchemaMigration("027_managed_speech", ManagedSpeechSql),
+        new SchemaMigration("028_companion_pairings", CompanionPairingsSql)
     };
 
     public static IReadOnlyList<SchemaMigration> DashboardProjectionOnly { get; } = new[]
@@ -1704,5 +1705,65 @@ CREATE TABLE IF NOT EXISTS feedback_submissions (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_submissions_status_created
     ON feedback_submissions(status, created_at_utc DESC);
+";
+
+    private const string CompanionPairingsSql = @"
+CREATE TABLE IF NOT EXISTS companion_pairings (
+    pairing_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES desktop_accounts(user_id),
+    desktop_device_id TEXT NOT NULL,
+    desktop_device_label TEXT NOT NULL DEFAULT '',
+    desktop_platform TEXT NOT NULL,
+    companion_device_id TEXT NOT NULL DEFAULT '',
+    companion_device_label TEXT NOT NULL DEFAULT '',
+    companion_platform TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    paired_at_utc TIMESTAMPTZ NULL,
+    revoked_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_companion_pairings_active_desktop
+    ON companion_pairings(desktop_device_id)
+    WHERE revoked_at_utc IS NULL AND companion_device_id <> '';
+
+CREATE INDEX IF NOT EXISTS idx_companion_pairings_user
+    ON companion_pairings(user_id, created_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS companion_pairing_codes (
+    code_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    desktop_device_id TEXT NOT NULL,
+    desktop_device_label TEXT NOT NULL DEFAULT '',
+    desktop_platform TEXT NOT NULL,
+    app_version TEXT NOT NULL DEFAULT '',
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_companion_pairing_codes_device
+    ON companion_pairing_codes(desktop_device_id, expires_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS companion_relay_tickets (
+    ticket_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    pairing_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    expires_at_utc TIMESTAMPTZ NOT NULL,
+    consumed_at_utc TIMESTAMPTZ NULL
+);
+
+CREATE TABLE IF NOT EXISTS companion_audit_events (
+    event_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    pairing_id TEXT NOT NULL DEFAULT '',
+    event_name TEXT NOT NULL,
+    actor_role TEXT NOT NULL DEFAULT '',
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_companion_audit_user
+    ON companion_audit_events(user_id, created_at_utc DESC);
 ";
 }

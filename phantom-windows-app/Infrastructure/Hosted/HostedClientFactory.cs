@@ -30,5 +30,10 @@ namespace SecureOverlay.Infrastructure.Hosted
         {
             return new HttpHostedLockClient(options);
         }
+
+        public static IHostedCompanionClient CreateCompanionClient(HostedRuntimeOptions options)
+        {
+            return new HttpHostedCompanionClient(options);
+        }
     }
 }

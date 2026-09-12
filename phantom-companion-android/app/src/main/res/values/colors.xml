@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="phantom_background">#FF08111E</color>
+    <color name="phantom_surface">#FF132235</color>
+    <color name="phantom_surface_high">#FF0F1B2A</color>
+    <color name="phantom_line">#FF263950</color>
+    <color name="phantom_text">#FFEDF3FB</color>
+    <color name="phantom_muted">#FF9BADC0</color>
+    <color name="phantom_primary">#FF315CF5</color>
+    <color name="phantom_primary_dark">#FF2448C9</color>
+    <color name="phantom_accent">#FFA995FF</color>
+    <color name="phantom_success">#FF72D9B4</color>
+    <color name="phantom_warning">#FFD8922D</color>
+    <color name="phantom_danger">#FFCE445C</color>
+</resources>

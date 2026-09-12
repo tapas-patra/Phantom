@@ -689,6 +689,47 @@ struct BackendClient {
         try await post("/api/desktop/usage/reconcile", body: payload, bearer: accessToken)
     }
 
+    // MARK: - Companion pairing + relay ticket
+
+    func startPairing(accessToken: String, deviceLabel: String, appVersion: String) async throws -> CompanionPairingStartResult {
+        struct Body: Encodable {
+            let desktopDeviceLabel: String
+            let desktopPlatform: String
+            let appVersion: String
+        }
+        return try await post(
+            "/api/companion/pairings/start",
+            body: Body(desktopDeviceLabel: deviceLabel, desktopPlatform: "macos", appVersion: appVersion),
+            bearer: accessToken
+        )
+    }
+
+    func listPairings(accessToken: String) async throws -> CompanionPairingsResponse {
+        var request = URLRequest(url: url("/api/companion/pairings"))
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func revokePairing(accessToken: String, pairingId: String) async throws {
+        struct RevokeResult: Decodable { let revoked: Bool }
+        var request = URLRequest(url: url("/api/companion/pairings/\(pairingId)"))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let _: RevokeResult = try await send(request)
+    }
+
+    func createRelayTicket(accessToken: String, pairingId: String, role: String) async throws -> CompanionRelayTicket {
+        struct Body: Encodable {
+            let pairingId: String
+            let role: String
+        }
+        return try await post(
+            "/api/companion/relay-ticket",
+            body: Body(pairingId: pairingId, role: role),
+            bearer: accessToken
+        )
+    }
+
     func ingestTelemetry(accessToken: String, event: PhantomTelemetryEvent) async throws {
         struct Body: Encodable {
             let eventId: String

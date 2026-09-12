@@ -36,6 +36,7 @@ namespace SecureOverlay.Services
         private bool _immediateCloudProbeConsumed;
 
         public event EventHandler<string>? SpeechRecognized;
+        public event EventHandler<string>? SpeechHypothesis;
         public event EventHandler<string>? StatusChanged;
 
         public VoiceInputService(
@@ -266,6 +267,14 @@ namespace SecureOverlay.Services
                     Log.WriteLine($"Speech transcription succeeded route={route} transcript_length_bucket={LengthBucket(text.Length)}");
                     SpeechRecognized?.Invoke(this, text);
                     StatusChanged?.Invoke(this, _fallbackStarted ? "Native fallback recognized" : "Native speech recognized");
+                }
+                else if (message.StartsWith("INTERIM:"))
+                {
+                    var text = message.Substring("INTERIM:".Length).Trim();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        SpeechHypothesis?.Invoke(this, text);
+                    }
                 }
                 else if (message.StartsWith("AUDIO:"))
                 {
@@ -675,6 +684,7 @@ window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Rea
                             } else {
                                 console.log('... Interim:', transcript);
                                 document.getElementById('status').textContent = '🎤 ... ' + transcript;
+                                window.chrome.webview.postMessage('INTERIM:' + transcript);
                             }
                         }
                     };

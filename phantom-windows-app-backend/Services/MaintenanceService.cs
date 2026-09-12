@@ -32,6 +32,9 @@ public sealed class MaintenanceService : BackgroundService
                 scope.ServiceProvider.GetRequiredService<LockRepository>().DeleteExpired();
                 scope.ServiceProvider.GetRequiredService<LoginAttemptRepository>()
                     .DeleteExpired(DateTime.UtcNow.AddDays(-2));
+                scope.ServiceProvider.GetRequiredService<CompanionRelayTicketRepository>().DeleteExpired();
+                scope.ServiceProvider.GetRequiredService<CompanionPairingCodeRepository>().DeleteExpired();
+                scope.ServiceProvider.GetRequiredService<CompanionAuditRepository>().DeleteOlderThan(TimeSpan.FromDays(90));
                 _metrics.RecordMaintenanceSucceeded();
             }
             catch (Exception ex)

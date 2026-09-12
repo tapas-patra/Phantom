@@ -102,6 +102,11 @@ namespace SecureOverlay.Services
         public bool DebugModeEnabled { get; set; } = false;
         public string DebugErrorSimulation { get; set; } = "None"; // "None", "429", "Timeout", "Random"
 
+        // Companion Mode (phone relay). Disabled by default; user enables after pairing.
+        public bool CompanionEnabled { get; set; } = false;
+        public string CompanionPairingId { get; set; } = string.Empty;
+        public string CompanionSelectedDisplayId { get; set; } = string.Empty;
+
         // Failed Keys Tracking
         public List<int> ChatGPT_Failed { get; set; } = new List<int>();
         public List<int> Claude_Failed { get; set; } = new List<int>();

@@ -39,6 +39,7 @@ final class PhantomStore: ObservableObject {
                 selectedModelId = provider.models.first?.modelId ?? ""
             }
             loadBYOKey()
+            if oldValue != selectedProviderId { announceCompanionRuntime() }
         }
     }
     @Published var selectedModelId = "" {
@@ -48,9 +49,15 @@ final class PhantomStore: ObservableObject {
                 UserDefaults.standard.set(selectedModelId, forKey: "chat.model.\(selectedProviderId.lowercased())")
             }
             if !attachedScreenshots.isEmpty, !selectedModelSupportsVision { removeScreenshot() }
+            if oldValue != selectedModelId { announceCompanionRuntime() }
         }
     }
-    @Published var prompt = ""
+    @Published var prompt = "" {
+        didSet {
+            guard !applyingCompanionComposer else { return }
+            scheduleCompanionComposerMirror()
+        }
+    }
     @Published var messages: [ChatMessage] = []
     @Published var isSending = false
     @Published var copilotMode: CopilotMode {
@@ -95,6 +102,27 @@ final class PhantomStore: ObservableObject {
     @Published var isScreenshotPreviewVisible = false
     @Published var isCapturingScreenshot = false
     static let maxAttachedScreenshots = 3
+
+    // Companion Mode hooks. Set by CompanionCommandHost so streamed deltas and turn
+    // completions are forwarded to the phone relay without the relay layer knowing about
+    // the chat pipeline internals.
+    @Published var companionSelectedDisplayId: String = ""
+    var companionRequestId: String?
+    var companionDeltaHandler: ((String) -> Void)?
+    var companionTurnFinishedHandler: ((Bool) -> Void)?
+    var companionSessionStartedHandler: (() -> Void)?
+    var companionVoiceTranscriptHandler: ((String, Bool, Bool) -> Void)?
+    // Companion capture/error status flags (spec §5.2: status may be `capturing` or
+    // `error`). Set/cleared by CompanionCommandHost around headless capture and on
+    // turn outcome; read by desktopStatus() for desktop.hello / session.snapshot (H1).
+    @Published var companionIsCapturing: Bool = false
+    @Published var companionHasError: Bool = false
+    @Published var companionInterviewActive: Bool = false
+    // True while companion mode has hidden the overlay (spec §8.2). Driven by the
+    // orchestrator via setCompanionOverlayHidden(); PhantomMain observes this to
+    // order out / restore the window without activating the app.
+    @Published var companionOverlayHidden: Bool = false
+    var onCompanionOverlayHidden: ((Bool) -> Void)?
     static let maxResumeWords = 1_200
     static let maxJobDescriptionWords = 450
     @Published var isCompact = false
@@ -241,6 +269,13 @@ final class PhantomStore: ObservableObject {
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
     private var voiceDispatchTask: Task<Void, Never>?
+    private var composerMirrorTask: Task<Void, Never>?
+    private var applyingCompanionComposer = false
+    private var lastMirroredComposer = ""
+    private var pendingVoiceAutoSend = false
+    private var sawVoiceTranscriptAfterStop = false
+    private var voiceAutoSendDeadline: Date?
+    private var voiceAutoSendFallback: Date?
     private var pendingVoiceTurnId: String?
     private var lastAutoSentVoiceText = ""
 
@@ -306,6 +341,134 @@ final class PhantomStore: ObservableObject {
         loadSpeechKeys()
         configureSpeechInput()
         scheduleContextWarmup()
+        companion = CompanionOrchestrator(backend: backend, store: self)
+        companionEnabled = defaults.bool(forKey: "companion.enabled")
+        companionPairingId = defaults.string(forKey: "companion.pairingId") ?? ""
+    }
+
+    private(set) var companion: CompanionOrchestrator? = nil
+    @Published var companionEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(companionEnabled, forKey: "companion.enabled")
+            if companionEnabled {
+                // Reset transient capture/error flags when companion mode is (re)enabled (H1).
+                companionIsCapturing = false
+                companionHasError = false
+            }
+        }
+    }
+    @Published var companionPairingId: String = "" {
+        didSet { UserDefaults.standard.set(companionPairingId, forKey: "companion.pairingId") }
+    }
+    @Published var companionPairingCode: String = ""
+    @Published var companionPairingQrPayload: String = ""
+    @Published var companionStatusText: String = "Not paired"
+    @Published var companionRelayState: CompanionRelayState = .disconnected
+    private var companionDiscoveryTask: Task<Void, Never>?
+
+    func startCompanionPairing() {
+        guard let session, !session.accessToken.isEmpty else {
+            companionStatusText = "Sign in to pair a phone."
+            return
+        }
+        let label = device.label
+        let version = AppVersion.current
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await backend.startPairing(accessToken: session.accessToken, deviceLabel: label, appVersion: version)
+                self.companionPairingCode = result.code
+                self.companionPairingQrPayload = result.qrPayload
+                self.companionStatusText = "Pairing code ready. Open the phone app and scan the QR or enter the code."
+                self.startCompanionDiscoveryPolling(accessToken: session.accessToken, codeExpiresAt: result.expiresAtUtc)
+            } catch {
+                self.companionStatusText = "Update / backend not ready."
+                print("[companion] pairing failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Polls `listPairings` until the phone completes the pairing (a pairing whose
+    /// desktop platform matches this device appears), then stores the pairing id,
+    /// enables Companion Mode, and reconciles the relay. Stops when the code expires.
+    private func startCompanionDiscoveryPolling(accessToken: String, codeExpiresAt: Date) {
+        companionDiscoveryTask?.cancel()
+        companionDiscoveryTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                if Date() >= codeExpiresAt {
+                    await MainActor.run {
+                        if self.companionPairingId.isEmpty {
+                            self.companionStatusText = "Pairing code expired. Generate a new code."
+                        }
+                    }
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                do {
+                    let list = try await self.backend.listPairings(accessToken: accessToken)
+                    let active = list.pairings.first(where: { $0.desktopPlatform == "macos" })
+                    if let pairing = active {
+                        await MainActor.run {
+                            self.companionPairingId = pairing.pairingId
+                            self.companionPairingCode = ""
+                            self.companionPairingQrPayload = ""
+                            self.companionEnabled = true
+                            self.companionStatusText = "Paired. Connecting to relay…"
+                            self.reconcileCompanion()
+                        }
+                        return
+                    }
+                } catch {
+                    print("[companion] discovery poll failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func unpairCompanion() {
+        guard let session, !session.accessToken.isEmpty else {
+            companionStatusText = "Sign in to unpair."
+            return
+        }
+        companionDiscoveryTask?.cancel()
+        companionDiscoveryTask = nil
+        let pairingId = companionPairingId
+        Task { [weak self] in
+            guard let self else { return }
+            await self.revokeCompanionPairing(accessToken: session.accessToken, pairingId: pairingId)
+        }
+    }
+
+    /// Revokes the hosted pairing and stops the relay. Used by Unpair and by a real
+    /// app quit so the phone cannot auto-reconnect after the desktop is gone.
+    func revokeCompanionPairing(accessToken: String, pairingId: String) async {
+        do {
+            if !pairingId.isEmpty {
+                try await backend.revokePairing(accessToken: accessToken, pairingId: pairingId)
+            }
+            companionPairingId = ""
+            companionEnabled = false
+            await companion?.stop()
+            companionStatusText = "Unpaired."
+        } catch {
+            companionPairingId = ""
+            companionEnabled = false
+            await companion?.stop()
+            companionStatusText = "Unpair failed. Try again."
+            print("[companion] unpair failed: \(error.localizedDescription)")
+        }
+    }
+
+    func reconcileCompanion() {
+        guard let session else { return }
+        let enabled = companionEnabled
+        let pairingId = companionPairingId
+        let token = session.accessToken
+        Task { [weak self] in
+            await self?.companion?.reconcile(enabled: enabled, pairingId: pairingId, accessToken: token)
+        }
     }
 
     var selectedProvider: ManagedProvider? {
@@ -564,6 +727,7 @@ final class PhantomStore: ObservableObject {
         refreshManagedCatalog()
         screen = .chat
         clickThrough = savedClickThrough
+        reconcileCompanion()
     }
 
     func cancelSettings() {
@@ -985,6 +1149,41 @@ final class PhantomStore: ObservableObject {
         status = attachedScreenshots.isEmpty
             ? "Screenshots removed"
             : "Screenshot removed • \(attachedScreenshots.count)/\(Self.maxAttachedScreenshots) remaining"
+        announceCompanionRuntime()
+    }
+
+    func companionProviderCatalog() -> [[String: Any]] {
+        let list = useBYOProvider && hasBYOEntitlement ? byoProviderChoices : providers
+        return list.map { provider in
+            let chatModels = provider.models.filter(\.eligibleForChat)
+            let models = chatModels.isEmpty ? provider.models : chatModels
+            return [
+                "id": provider.providerId,
+                "name": provider.label,
+                "models": models.map { model in
+                    [
+                        "id": model.modelId,
+                        "name": model.displayName,
+                        "vision": model.supportsVision
+                    ] as [String: Any]
+                }
+            ]
+        }
+    }
+
+    func companionAttachmentPayloads() -> [[String: Any]] {
+        attachedScreenshots.enumerated().map { index, data in
+            var item: [String: Any] = ["index": index]
+            if let thumb = ScreenshotCapture.captureCompletedPayload(from: data, maxEdge: 480)?.thumbnailJpegBase64 {
+                item["thumbnailJpegBase64"] = thumb
+            }
+            return item
+        }
+    }
+
+    func announceCompanionRuntime() {
+        guard companionEnabled else { return }
+        Task { await companion?.announceReady() }
     }
 
     func toggleVoiceInput() {
@@ -995,15 +1194,23 @@ final class PhantomStore: ObservableObject {
 
         if speechInput.isListening {
             let wasCloud = speechInput.isCloudMode
+            if autoSendAfterVoiceStop {
+                pendingVoiceAutoSend = true
+                sawVoiceTranscriptAfterStop = false
+                voiceAutoSendDeadline = Date().addingTimeInterval(5)
+                voiceAutoSendFallback = Date().addingTimeInterval(wasCloud ? 2 : 0.6)
+                voiceStatus = wasCloud
+                    ? "Finishing cloud transcription…"
+                    : "Sending automatically…"
+            } else {
+                pendingVoiceAutoSend = false
+                voiceAutoSendDeadline = nil
+                voiceAutoSendFallback = nil
+            }
             speechInput.stop()
             isListening = false
             if autoSendAfterVoiceStop {
-                if wasCloud {
-                    // Cloud transcription finishes asynchronously; final transcript schedules send.
-                    voiceStatus = "Finishing cloud transcription…"
-                } else {
-                    scheduleVoiceDispatch()
-                }
+                scheduleVoiceDispatch()
             }
         } else {
             configureSpeechRuntime()
@@ -1014,6 +1221,10 @@ final class PhantomStore: ObservableObject {
             preserveVoiceEdits = false
             pendingVoiceTurnId = UUID().uuidString
             lastAutoSentVoiceText = ""
+            pendingVoiceAutoSend = false
+            sawVoiceTranscriptAfterStop = false
+            voiceAutoSendDeadline = nil
+            voiceAutoSendFallback = nil
             voiceDispatchTask?.cancel()
             Task {
                 await speechInput.start()
@@ -1056,16 +1267,16 @@ final class PhantomStore: ObservableObject {
         }
         if useBYOProvider {
             if rotation.keys(for: selectedProviderId).isEmpty {
-                if let configured = byoProviders.first(where: { !rotation.keys(for: $0.providerId).isEmpty }) {
-                    selectedProviderId = configured.providerId
-                } else {
-                    status = "Add a \(selectedProviderId.isEmpty ? "provider" : selectedProviderId) API key in Settings before sending."
-                    return
-                }
+                status = "Add a \(selectedProviderId.isEmpty ? "provider" : selectedProviderId) API key in Settings before sending."
+                return
             }
         }
 
+        applyingCompanionComposer = true
         prompt = ""
+        applyingCompanionComposer = false
+        lastMirroredComposer = ""
+        companionVoiceTranscriptHandler?("", true, true)
         let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
         let model = selectedModelId
@@ -1081,6 +1292,7 @@ final class PhantomStore: ObservableObject {
         activeRequestStartedAt = Date()
         firstChunkRecorded = false
         isSending = true
+        var companionTurnSucceeded = false
         status = copilotMode == .interview ? "Starting interview session…" : "Starting briefing session…"
         Diagnostics.event("session_started", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
         Diagnostics.event("request_dispatched", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["provider": provider, "model": model, "stage": "dispatch", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
@@ -1117,6 +1329,8 @@ final class PhantomStore: ObservableObject {
                 }
                 lastInterviewActivityAt = Date()
                 startHeartbeat()
+                companionInterviewActive = true
+                companionSessionStartedHandler?()
                 try await runtime.metering.trackQuestion(text)
                 await runtime.track(
                     category: "chat",
@@ -1130,6 +1344,10 @@ final class PhantomStore: ObservableObject {
                 reply = pendingReply
                 messages.append(pendingReply)
                 ConversationStore.save(messages)
+                if companionDeltaHandler == nil, companionEnabled {
+                    companionRequestId = requestId
+                    companion?.notifyDesktopOriginatedChatStarted(requestId: requestId)
+                }
                 status = "Understanding…"
 
                 if isPremiumAccount, hostedKnowledgeBase?.canUseInInterview != true {
@@ -1181,7 +1399,6 @@ final class PhantomStore: ObservableObject {
                                     onDelta: onDelta,
                                     onRetryCleanup: onRetryCleanup
                                 )
-                                self.selectedModelId = selected.model
                                 return selected.response
                             } catch {
                                 guard ProviderResiliencePolicy.canCrossLane(
@@ -1233,8 +1450,6 @@ final class PhantomStore: ObservableObject {
                             onDelta: onDelta,
                             onRetryCleanup: onRetryCleanup
                         )
-                        self.selectedProviderId = selected.provider
-                        self.selectedModelId = selected.model
                         return selected.response
                     }
                 }
@@ -1354,6 +1569,7 @@ final class PhantomStore: ObservableObject {
                     accessToken: session.accessToken
                 )
                 status = result.decision.action == .clarify ? "Needs clarification" : "Ready"
+                companionTurnSucceeded = true
             } catch is CancellationError {
                 status = "Request cancelled."
                 Diagnostics.event("turn_cancelled", level: "Information", sessionId: copilotSessionId, turnId: requestId, operationId: activeOperationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "cancelled", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))"])
@@ -1404,6 +1620,18 @@ final class PhantomStore: ObservableObject {
             attachedScreenshots = []
             Diagnostics.event("session_ended", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle)
             ConversationStore.save(messages)
+            // Notify the companion relay that the turn finished and clear the per-turn hooks.
+            let succeeded = companionTurnSucceeded
+            let handler = companionTurnFinishedHandler
+            let desktopRequestId = companionRequestId
+            companionDeltaHandler = nil
+            companionTurnFinishedHandler = nil
+            companionRequestId = nil
+            if let handler {
+                handler(succeeded)
+            } else if companionEnabled, let desktopRequestId {
+                companion?.notifyDesktopOriginatedTurnFinished(requestId: desktopRequestId, succeeded: succeeded)
+            }
         }
     }
 
@@ -1425,6 +1653,60 @@ final class PhantomStore: ObservableObject {
         }
         status = "Request cancelled."
         ConversationStore.save(messages)
+    }
+
+    // MARK: - Companion lock probes (used by CompanionCommandHost)
+
+    /// True when the desktop currently holds an active interview lock (belt-and-suspenders
+    /// check for the relay's lock_missing guard). Also true when the launch context allows
+    /// resuming a previously-held lock (H15) — the relay still gates every command with
+    /// lock_missing, so this only avoids a false-negative for a freshly-resumed session.
+    func companionHasActiveLock() async -> Bool {
+        if let session = await runtime.metering.activeSession(),
+           let expiry = session.lockExpiresAtUtc,
+           !session.lockToken.isEmpty,
+           expiry > Date() {
+            return true
+        }
+        return launchContext.canResumeLockedInterview
+    }
+
+    /// Synchronous variant used for status mapping (desktop.hello / session.snapshot).
+    /// Returns false when the runtime session isn't loaded yet; the relay still enforces
+    /// lock_missing per command, so a transient false only yields a conservative "idle".
+    var companionHasActiveLockSync: Bool {
+        // Best-effort: rely on the launch context flag. A live lock check would require
+        // an async hop; the relay's per-command lock_missing guard remains authoritative.
+        launchContext.canResumeLockedInterview
+    }
+
+    func companionLockExpiresAt() async -> Date? {
+        await runtime.metering.activeSession()?.lockExpiresAtUtc
+    }
+
+    /// Called by the companion orchestrator to hide/restore the overlay (spec §8.2).
+    /// Forwards to the PhantomMain hook which performs the actual orderOut/showWindow.
+    func setCompanionOverlayHidden(_ hidden: Bool) {
+        companionOverlayHidden = hidden
+        onCompanionOverlayHidden?(hidden)
+    }
+
+    /// Lightweight topic reset for companion `chat.new_topic` (C10). Resets the local
+    /// conversation state WITHOUT releasing the interview lock or finishing the session
+    /// — unlike startNewTopic(), which calls finishInterview and would drop the lock the
+    /// phone is actively relying on.
+    func startNewTopicCompanion() {
+        chatTask?.cancel()
+        rotation.resetConversation()
+        conversationManager.reset()
+        isSending = false
+        isListening = false
+        attachedScreenshots = []
+        isScreenshotPreviewVisible = false
+        messages.removeAll()
+        jobDescriptionText = ""
+        ConversationStore.clear()
+        status = "New topic — lock preserved"
     }
 
     private func byoResponseWithRotation(
@@ -1595,6 +1877,11 @@ final class PhantomStore: ObservableObject {
     private func append(_ delta: String, to replyId: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == replyId }) else { return }
         messages[index].content += delta
+        if let handler = companionDeltaHandler {
+            handler(delta)
+        } else if companionEnabled, let requestId = companionRequestId {
+            companion?.notifyDesktopOriginatedDelta(delta, requestId: requestId)
+        }
         if !firstChunkRecorded {
             firstChunkRecorded = true
             let latency = Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000)
@@ -1677,6 +1964,9 @@ final class PhantomStore: ObservableObject {
         onLogout?()
         guard let current else { return }
         Task {
+            // Stop the companion relay before tearing down auth so the phone sees a clean
+            // disconnect and we don't reconnect with a stale token (H13).
+            await self.companion?.stop()
             await finishInterview(auth: current, account: snapshot)
             try? await backend.logout(current)
         }
@@ -1688,8 +1978,19 @@ final class PhantomStore: ObservableObject {
         heartbeatTask = nil
         sessionStatusTask?.cancel()
         sessionStatusTask = nil
+        if !preserveConversationOnTermination {
+            ConversationStore.clear()
+            // Real quit (not restart): drop the hosted pairing immediately so the phone
+            // leaves the session without waiting for interview finalize.
+            if let session, !companionPairingId.isEmpty {
+                await revokeCompanionPairing(accessToken: session.accessToken, pairingId: companionPairingId)
+            } else {
+                await companion?.stop()
+            }
+        } else {
+            await companion?.stop()
+        }
         await finishInterview(auth: session, account: account)
-        if !preserveConversationOnTermination { ConversationStore.clear() }
     }
 
     func restartApp() {
@@ -1816,6 +2117,9 @@ final class PhantomStore: ObservableObject {
         if isPremiumAccount {
             await loadContextPacks()
         }
+        // Bootstrap re-entry: reconcile companion mode after the app is ready so a
+        // previously-enabled pairing reconnects its relay without a manual toggle (H14).
+        reconcileCompanion()
     }
 
     private func selectAvailableModel() {
@@ -1872,7 +2176,6 @@ final class PhantomStore: ObservableObject {
     private func configureSpeechInput() {
         speechInput.onTranscript = { [weak self] transcript, isFinal in
             guard let self else { return }
-            self.voiceDispatchTask?.cancel()
             let merged = Self.mergeTranscript(
                 current: self.prompt,
                 lastRendered: self.lastVoiceRenderedPrompt,
@@ -1885,6 +2188,8 @@ final class PhantomStore: ObservableObject {
             self.preserveVoiceEdits = merged.preservingEdits
             self.previousVoiceTranscript = transcript
             self.lastVoiceRenderedPrompt = merged.text
+            self.lastMirroredComposer = merged.text
+            self.companionVoiceTranscriptHandler?(merged.text, isFinal, false)
             Diagnostics.event(
                 isFinal ? "transcript_finalized" : "transcript_partial_received",
                 level: isFinal ? "Information" : "Debug",
@@ -1894,7 +2199,14 @@ final class PhantomStore: ObservableObject {
                 style: self.interviewDeliveryStyle,
                 fields: ["transcript_length_bucket": Self.lengthBucket(merged.text.count)]
             )
-            if isFinal, self.autoSendAfterVoiceStop { self.scheduleVoiceDispatch() }
+            if self.speechInput.isListening {
+                self.voiceDispatchTask?.cancel()
+                return
+            }
+            if self.pendingVoiceAutoSend || (isFinal && self.autoSendAfterVoiceStop) {
+                self.sawVoiceTranscriptAfterStop = true
+                self.scheduleVoiceDispatch()
+            }
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
@@ -1903,18 +2215,96 @@ final class PhantomStore: ObservableObject {
         }
     }
 
+    func applyCompanionComposer(text: String, sent: Bool) {
+        applyingCompanionComposer = true
+        defer { applyingCompanionComposer = false }
+        if sent {
+            prompt = ""
+            lastMirroredComposer = ""
+            voicePromptPrefix = ""
+            previousVoiceTranscript = ""
+            lastVoiceRenderedPrompt = ""
+            preserveVoiceEdits = false
+            return
+        }
+        guard prompt != text else {
+            lastMirroredComposer = text
+            return
+        }
+        prompt = text
+        lastMirroredComposer = text
+        lastVoiceRenderedPrompt = text
+        previousVoiceTranscript = ""
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        voicePromptPrefix = trimmed.isEmpty ? "" : trimmed + " "
+        preserveVoiceEdits = true
+    }
+
+    private func scheduleCompanionComposerMirror() {
+        guard companionVoiceTranscriptHandler != nil else { return }
+        composerMirrorTask?.cancel()
+        composerMirrorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard !self.applyingCompanionComposer else { return }
+            let text = self.prompt
+            guard text != self.lastMirroredComposer else { return }
+            self.lastMirroredComposer = text
+            if !self.speechInput.isListening {
+                self.preserveVoiceEdits = true
+                self.lastVoiceRenderedPrompt = text
+            }
+            self.companionVoiceTranscriptHandler?(text, true, false)
+        }
+    }
+
     private func scheduleVoiceDispatch() {
         voiceDispatchTask?.cancel()
         let expected = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !expected.isEmpty else { return }
-        voiceDispatchTask = Task {
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled,
-                  self.prompt.trimmingCharacters(in: .whitespacesAndNewlines) == expected else { return }
+        if expected.isEmpty {
+            guard pendingVoiceAutoSend, let deadline = voiceAutoSendDeadline, Date() < deadline else {
+                pendingVoiceAutoSend = false
+                voiceAutoSendDeadline = nil
+                voiceAutoSendFallback = nil
+                return
+            }
+            voiceDispatchTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.scheduleVoiceDispatch()
+            }
+            return
+        }
+        if !sawVoiceTranscriptAfterStop, let fallback = voiceAutoSendFallback, Date() < fallback {
+            voiceDispatchTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.scheduleVoiceDispatch()
+            }
+            return
+        }
+        voiceDispatchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            let current = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard current == expected else {
+                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
+                return
+            }
+            guard !self.speechInput.isListening else {
+                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
+                return
+            }
             guard expected != self.lastAutoSentVoiceText else {
+                self.pendingVoiceAutoSend = false
+                self.voiceAutoSendDeadline = nil
+                self.voiceAutoSendFallback = nil
                 Diagnostics.event("request_dispatched", level: "Debug", sessionId: self.copilotSessionId, turnId: self.pendingVoiceTurnId ?? UUID().uuidString, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
                 return
             }
+            self.pendingVoiceAutoSend = false
+            self.voiceAutoSendDeadline = nil
+            self.voiceAutoSendFallback = nil
             self.lastAutoSentVoiceText = expected
             self.send()
         }

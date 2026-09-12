@@ -106,6 +106,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.isQuitting = true
             NSApp.terminate(nil)
         }
+        // Companion overlay hide/restore (spec §8.2). Hiding must NOT activate Phantom or
+        // steal focus; restoring uses showWindow() which is fine because companion is off
+        // by the time we restore (C3).
+        store.onCompanionOverlayHidden = { [weak self] hidden in
+            guard let self else { return }
+            if hidden {
+                self.window.orderOut(nil)
+            } else if self.store.companionEnabled == false {
+                self.showWindow()
+            }
+        }
         window.apply(opacity: store.opacity, clickThrough: store.clickThrough)
         window.configureFakeCursor(enabled: store.useFakeCursor, clickThrough: store.clickThrough, scale: store.fakeCursorScale)
     }

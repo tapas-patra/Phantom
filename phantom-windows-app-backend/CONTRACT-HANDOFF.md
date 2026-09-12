@@ -52,6 +52,16 @@ Temporary contract source in current workspace:
 - negative balance inspection
 - continuation debt inspection
 
+### Companion (phone-as-remote-control)
+- `POST /api/companion/pairings/start` — issue a short-lived pairing code bound to the desktop device
+- `POST /api/companion/pairings/complete` — phone redeems code to finalize a pairing
+- `GET /api/companion/pairings` — list active pairings for the desktop session
+- `DELETE /api/companion/pairings/{pairingId}` — revoke a pairing (desktop or phone side)
+- `POST /api/companion/relay-ticket` — issue a single-use WebSocket relay ticket
+- `GET /api/companion/sessions/current` — current companion session snapshot (presence + last turns)
+- `GET /api/companion/relay` — WebSocket relay endpoint (subprotocol `phantom.companion.v1`)
+- Relay state is in-memory only; one active desktop + one active phone socket per pairing; forwards `capture.*` / `chat.*` / `session.*` / `desktop.*` frames between peers
+
 ### Observability
 - auth telemetry ingestion
 - billing telemetry ingestion

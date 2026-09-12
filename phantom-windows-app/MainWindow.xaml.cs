@@ -1294,7 +1294,8 @@ namespace SecureOverlay
                 || provider == AIModelRegistry.Providers.Gemini
                 || provider == AIModelRegistry.Providers.Mistral
                 || provider == AIModelRegistry.Providers.Groq
-                || provider == AIModelRegistry.Providers.Nvidia;
+                || provider == AIModelRegistry.Providers.Nvidia
+                || provider == AIModelRegistry.Providers.OpenRouter;
         }
 
         private bool HasConfiguredByoKeysForProvider(string provider)
@@ -6068,78 +6069,112 @@ namespace SecureOverlay
             string[] models = GetAvailableModelsForSelectedProvider();
             string currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
 
-            if (models.Length == 0)
+            void RebuildModelButtons(string query)
             {
-                menuStack.Children.Add(new TextBlock
-                {
-                    Text = "(no models)",
-                    Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 160)),
-                    FontSize = 12,
-                    FontStyle = FontStyles.Italic,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    MaxWidth = 290,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                });
-            }
-            
-            foreach (var model in models)
-            {
-                // ✅ USE REGISTRY - Get display name
-            var displayName = GetModelDisplayName(_settings.SelectedAI, model);
-                var label = model == currentModel ? $"✓ {displayName}" : $"   {displayName}";
-                
-                var button = new Button
-                {
-                    Content = new TextBlock
+                menuStack.Children.Clear();
+                var needle = (query ?? string.Empty).Trim();
+                var visible = string.IsNullOrEmpty(needle)
+                    ? models
+                    : models.Where(model =>
                     {
-                        Text = label,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        TextWrapping = TextWrapping.NoWrap,
-                        MaxWidth = 290
-                    },
-                    Foreground = model == currentModel ? 
-                        new SolidColorBrush(Color.FromRgb(0, 170, 255)) : Brushes.White,
-                    Background = System.Windows.Media.Brushes.Transparent,
-                    BorderThickness = new Thickness(0),
-                    FontSize = 12,
-                    FontWeight = model == currentModel ? FontWeights.Bold : FontWeights.Normal,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    MaxWidth = 310,
-                    Cursor = Cursors.None,
-                    Tag = model
-                };
-                
-                button.Click += (s, e) =>
+                        var displayName = GetModelDisplayName(_settings.SelectedAI, model);
+                        return model.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+                            || displayName.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }).ToArray();
+
+                if (visible.Length == 0)
                 {
-                    try
+                    menuStack.Children.Add(new TextBlock
                     {
-                        menuWindow.Close();
-                        _currentDropdownMenu = null;  // ✅ Clear reference
-                    }
-                    catch { }
-                    
-                    var selectedModel = (s as Button)?.Tag as string;
-                    if (selectedModel != null && selectedModel != currentModel)
+                        Text = models.Length == 0 ? "(no models)" : "(no matching models)",
+                        Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 160)),
+                        FontSize = 12,
+                        FontStyle = FontStyles.Italic,
+                        Padding = new Thickness(15, 8, 15, 8),
+                        MaxWidth = 290,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    });
+                    return;
+                }
+
+                foreach (var model in visible)
+                {
+                    var displayName = GetModelDisplayName(_settings.SelectedAI, model);
+                    var label = model == currentModel ? $"✓ {displayName}" : $"   {displayName}";
+
+                    var button = new Button
                     {
-                        ChangeModel(selectedModel);
-                    }
-                };
-                
-                button.MouseEnter += (s, e) =>
-                {
-                    button.Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
-                };
-                button.MouseLeave += (s, e) =>
-                {
-                    button.Background = System.Windows.Media.Brushes.Transparent;
-                };
-                
-                menuStack.Children.Add(button);
+                        Content = new TextBlock
+                        {
+                            Text = label,
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                            TextWrapping = TextWrapping.NoWrap,
+                            MaxWidth = 290
+                        },
+                        Foreground = model == currentModel ?
+                            new SolidColorBrush(Color.FromRgb(0, 170, 255)) : Brushes.White,
+                        Background = System.Windows.Media.Brushes.Transparent,
+                        BorderThickness = new Thickness(0),
+                        FontSize = 12,
+                        FontWeight = model == currentModel ? FontWeights.Bold : FontWeights.Normal,
+                        Padding = new Thickness(15, 8, 15, 8),
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        MaxWidth = 310,
+                        Cursor = Cursors.None,
+                        Tag = model
+                    };
+
+                    button.Click += (s, e) =>
+                    {
+                        try
+                        {
+                            menuWindow.Close();
+                            _currentDropdownMenu = null;
+                        }
+                        catch { }
+
+                        var selectedModel = (s as Button)?.Tag as string;
+                        if (selectedModel != null && selectedModel != currentModel)
+                        {
+                            ChangeModel(selectedModel);
+                        }
+                    };
+
+                    button.MouseEnter += (s, e) =>
+                    {
+                        button.Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
+                    };
+                    button.MouseLeave += (s, e) =>
+                    {
+                        button.Background = System.Windows.Media.Brushes.Transparent;
+                    };
+
+                    menuStack.Children.Add(button);
+                }
             }
 
-            menuBorder.Child = menuScrollViewer;
+            var searchBox = new TextBox
+            {
+                Margin = new Thickness(4, 4, 4, 6),
+                Padding = new Thickness(6, 4, 6, 4),
+                FontSize = 12,
+                Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
+                Foreground = Brushes.White,
+                CaretBrush = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.FromArgb(120, 0, 170, 255)),
+                BorderThickness = new Thickness(1),
+                ToolTip = "Search models",
+                Cursor = Cursors.None
+            };
+            searchBox.TextChanged += (_, _) => RebuildModelButtons(searchBox.Text);
+            RebuildModelButtons(string.Empty);
+
+            var menuLayout = new DockPanel();
+            DockPanel.SetDock(searchBox, Dock.Top);
+            menuLayout.Children.Add(searchBox);
+            menuLayout.Children.Add(menuScrollViewer);
+            menuBorder.Child = menuLayout;
             menuWindow.Content = menuBorder;
 
             // ✅ SHOW WINDOW FIRST

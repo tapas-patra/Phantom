@@ -444,6 +444,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .table-scroll { width: 100%; overflow-x: auto; border: 1px solid var(--night-line); border-radius: 10px; }
 .bounded-table-scroll { max-height: 480px; overflow: auto; scrollbar-gutter: stable; }
 .bounded-table-scroll th { position: sticky; top: 0; z-index: 1; }
+.catalog-toolbar { align-items: center; }
+.model-search-input, .searchable-model-select input[type="search"] {
+  min-width: 180px;
+  width: min(280px, 100%);
+  border: 1px solid rgba(70, 85, 106, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #17324d;
+  padding: 8px 12px;
+  font: inherit;
+}
+.searchable-model-select { display: grid; gap: 8px; }
 table { width: 100%; border-collapse: collapse; min-width: 700px; }
 td, th { overflow-wrap: anywhere; }
 th, td { padding: 13px 14px; border-bottom: 1px solid var(--night-line); text-align: left; vertical-align: top; }

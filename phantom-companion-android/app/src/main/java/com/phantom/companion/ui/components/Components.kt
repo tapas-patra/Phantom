@@ -362,6 +362,7 @@ fun ProviderModelPickers(
             selectedLabel = selectedModel?.name?.ifBlank { selectedModel.id } ?: selectedModelId.ifBlank { "Select model" },
             options = models.map { it.id to it.name.ifBlank { it.id } },
             enabled = enabled && models.isNotEmpty(),
+            searchable = true,
             testTag = "dropdown_model",
             onSelect = { modelId ->
                 onSelect(provider.id, modelId)
@@ -379,12 +380,29 @@ fun PhantomDropdown(
     options: List<Pair<String, String>>,
     onSelect: (String) -> Unit,
     enabled: Boolean = true,
+    searchable: Boolean = false,
     testTag: String = "dropdown"
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(options, query, searchable) {
+        val needle = query.trim()
+        if (!searchable || needle.isEmpty()) {
+            options
+        } else {
+            options.filter { (id, name) ->
+                id.contains(needle, ignoreCase = true) || name.contains(needle, ignoreCase = true)
+            }
+        }
+    }
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { if (enabled) expanded = !expanded },
+        onExpandedChange = {
+            if (enabled) {
+                expanded = !expanded
+                if (!expanded) query = ""
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) {
         OutlinedTextField(
@@ -411,16 +429,48 @@ fun PhantomDropdown(
         )
         ExposedDropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = {
+                expanded = false
+                query = ""
+            }
         ) {
-            options.forEach { (id, name) ->
-                DropdownMenuItem(
-                    text = { Text(name.ifBlank { id }) },
-                    onClick = {
-                        expanded = false
-                        if (id != selectedId) onSelect(id)
-                    }
+            if (searchable) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .testTag("${testTag}_search"),
+                    placeholder = { Text("Search models") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PhantomText,
+                        unfocusedTextColor = PhantomText,
+                        focusedContainerColor = PhantomSurface,
+                        unfocusedContainerColor = PhantomSurface,
+                        focusedBorderColor = PhantomPrimary,
+                        unfocusedBorderColor = PhantomLine
+                    )
                 )
+            }
+            if (filtered.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text(if (options.isEmpty()) "No models" else "No matching models") },
+                    onClick = {},
+                    enabled = false
+                )
+            } else {
+                filtered.forEach { (id, name) ->
+                    DropdownMenuItem(
+                        text = { Text(name.ifBlank { id }) },
+                        onClick = {
+                            expanded = false
+                            query = ""
+                            if (id != selectedId) onSelect(id)
+                        }
+                    )
+                }
             }
         }
     }

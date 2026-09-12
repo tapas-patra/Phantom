@@ -22,6 +22,7 @@ namespace SecureOverlay.Helpers
             public const string Gemini = "Gemini";
             public const string Groq = "Groq";
             public const string Nvidia = "NVIDIA";
+            public const string OpenRouter = "OpenRouter";
         }
 
         public static string[] GetAllProviders()
@@ -33,7 +34,8 @@ namespace SecureOverlay.Helpers
                 Providers.Mistral, 
                 Providers.Gemini, 
                 Providers.Groq,
-                Providers.Nvidia
+                Providers.Nvidia,
+                Providers.OpenRouter
             };
         }
 
@@ -262,6 +264,9 @@ namespace SecureOverlay.Helpers
             },
             [Providers.Nvidia] = new List<ModelInfo>
             {
+            },
+            [Providers.OpenRouter] = new List<ModelInfo>
+            {
             }
         };
 
@@ -344,9 +349,9 @@ namespace SecureOverlay.Helpers
             return new ModelConfig
             {
                 Name = "Unknown",
-                MaxContextTokens = 4000,
-                MaxResponseTokens = 1000,
-                SlidingWindowSize = 3
+                MaxContextTokens = 128000,
+                MaxResponseTokens = 4000,
+                SlidingWindowSize = 15
             };
         }
 
@@ -363,6 +368,7 @@ namespace SecureOverlay.Helpers
                 "Gemini" => settings.GeminiModel,
                 "Groq" => settings.GroqModel,
                 "NVIDIA" => settings.NvidiaModel,
+                "OpenRouter" => settings.OpenRouterModel,
                 _ => GetModelsForProvider(provider).FirstOrDefault() ?? ""
             };
         }
@@ -391,6 +397,9 @@ namespace SecureOverlay.Helpers
                     break;
                 case "NVIDIA":
                     settings.NvidiaModel = model;
+                    break;
+                case "OpenRouter":
+                    settings.OpenRouterModel = model;
                     break;
             }
         }

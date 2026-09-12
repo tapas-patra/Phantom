@@ -25,6 +25,7 @@ namespace SecureOverlay.Services
         public List<string> GeminiApiKeys { get; set; } = new List<string>();
         public List<string> GroqApiKeys { get; set; } = new List<string>();
         public List<string> NvidiaApiKeys { get; set; } = new List<string>();
+        public List<string> OpenRouterApiKeys { get; set; } = new List<string>();
         
         // Legacy single keys (for backward compatibility - auto-migrated)
         public string ChatGPTApiKey { get; set; } = "";
@@ -33,6 +34,7 @@ namespace SecureOverlay.Services
         public string GeminiApiKey { get; set; } = "";
         public string GroqApiKey { get; set; } = "";
         public string NvidiaApiKey { get; set; } = "";
+        public string OpenRouterApiKey { get; set; } = "";
         
         // Models (lists for model switching)
         public List<string> ChatGPTModels { get; set; } = new List<string>();
@@ -41,6 +43,7 @@ namespace SecureOverlay.Services
         public List<string> GeminiModels { get; set; } = new List<string>();
         public List<string> GroqModels { get; set; } = new List<string>();
         public List<string> NvidiaModels { get; set; } = new List<string>();
+        public List<string> OpenRouterModels { get; set; } = new List<string>();
         
         // Legacy single models (for backward compatibility)
         public string ChatGPTModel { get; set; } = "";
@@ -49,6 +52,7 @@ namespace SecureOverlay.Services
         public string GeminiModel { get; set; } = "";
         public string GroqModel { get; set; } = "";
         public string NvidiaModel { get; set; } = "";
+        public string OpenRouterModel { get; set; } = "";
         
         // Rotation settings
         public bool AutoSwitchKeysOnError { get; set; } = true;
@@ -114,6 +118,7 @@ namespace SecureOverlay.Services
         public List<int> Gemini_Failed { get; set; } = new List<int>();
         public List<int> Groq_Failed { get; set; } = new List<int>();
         public List<int> NVIDIA_Failed { get; set; } = new List<int>();
+        public List<int> OpenRouter_Failed { get; set; } = new List<int>();
 
         // ✅ REMOVED: CachedConversation and LastConversationSaved
         // These are now ONLY in conversation_cache.json (separate file)
@@ -252,6 +257,14 @@ namespace SecureOverlay.Services
             if (settings.NvidiaModels.Count != originalNvidiaCount)
             {
                 Log.WriteLine($"  Cleaned NVIDIA models: {originalNvidiaCount} → {settings.NvidiaModels.Count}");
+                hadDuplicates = true;
+            }
+
+            var originalOpenRouterCount = settings.OpenRouterModels.Count;
+            settings.OpenRouterModels = settings.OpenRouterModels.Distinct().ToList();
+            if (settings.OpenRouterModels.Count != originalOpenRouterCount)
+            {
+                Log.WriteLine($"  Cleaned OpenRouter models: {originalOpenRouterCount} → {settings.OpenRouterModels.Count}");
                 hadDuplicates = true;
             }
 
@@ -439,6 +452,13 @@ namespace SecureOverlay.Services
                 migrated = true;
             }
 
+            if (settings.OpenRouterApiKeys.Count == 0 && !string.IsNullOrWhiteSpace(settings.OpenRouterApiKey))
+            {
+                settings.OpenRouterApiKeys.Add(settings.OpenRouterApiKey);
+                Log.WriteLine("  ✓ Migrated legacy OpenRouter key");
+                migrated = true;
+            }
+
             if (migrated)
             {
                 Log.WriteLine("═══════════════════════════════════════════════════════");
@@ -454,6 +474,7 @@ namespace SecureOverlay.Services
             Log.WriteLine($"  Gemini: {settings.GeminiApiKeys.Count} keys");
             Log.WriteLine($"  Groq: {settings.GroqApiKeys.Count} keys");
             Log.WriteLine($"  NVIDIA: {settings.NvidiaApiKeys.Count} keys");
+            Log.WriteLine($"  OpenRouter: {settings.OpenRouterApiKeys.Count} keys");
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
@@ -559,6 +580,7 @@ namespace SecureOverlay.Services
             settings.GeminiApiKeys = providerKeys.TryGetValue("Gemini", out var geminiKeys) ? geminiKeys : new List<string>();
             settings.GroqApiKeys = providerKeys.TryGetValue("Groq", out var groqKeys) ? groqKeys : new List<string>();
             settings.NvidiaApiKeys = providerKeys.TryGetValue("NVIDIA", out var nvidiaKeys) ? nvidiaKeys : new List<string>();
+            settings.OpenRouterApiKeys = providerKeys.TryGetValue("OpenRouter", out var openRouterKeys) ? openRouterKeys : new List<string>();
             settings.SpeechApiKeys = providerKeys
                 .Where(item => item.Key.StartsWith("speech:", StringComparison.OrdinalIgnoreCase))
                 .ToDictionary(item => item.Key.Substring("speech:".Length), item => item.Value, StringComparer.OrdinalIgnoreCase);
@@ -569,6 +591,7 @@ namespace SecureOverlay.Services
             settings.GeminiApiKey = settings.GeminiApiKeys.FirstOrDefault() ?? "";
             settings.GroqApiKey = settings.GroqApiKeys.FirstOrDefault() ?? "";
             settings.NvidiaApiKey = settings.NvidiaApiKeys.FirstOrDefault() ?? "";
+            settings.OpenRouterApiKey = settings.OpenRouterApiKeys.FirstOrDefault() ?? "";
         }
 
         private static Dictionary<string, List<string>> ExtractProviderKeys(AppSettings settings)
@@ -580,7 +603,8 @@ namespace SecureOverlay.Services
                 ["Mistral"] = settings.MistralApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["Gemini"] = settings.GeminiApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
                 ["Groq"] = settings.GroqApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
-                ["NVIDIA"] = settings.NvidiaApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
+                ["NVIDIA"] = settings.NvidiaApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList(),
+                ["OpenRouter"] = settings.OpenRouterApiKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList()
             };
             foreach (var item in settings.SpeechApiKeys)
                 keys[$"speech:{item.Key}"] = item.Value.Where(k => !string.IsNullOrWhiteSpace(k)).Take(2).ToList();
@@ -598,6 +622,7 @@ namespace SecureOverlay.Services
             clone.GeminiApiKeys = new List<string>();
             clone.GroqApiKeys = new List<string>();
             clone.NvidiaApiKeys = new List<string>();
+            clone.OpenRouterApiKeys = new List<string>();
             clone.SpeechApiKeys = new Dictionary<string, List<string>>();
 
             clone.ChatGPTApiKey = "";
@@ -606,6 +631,7 @@ namespace SecureOverlay.Services
             clone.GeminiApiKey = "";
             clone.GroqApiKey = "";
             clone.NvidiaApiKey = "";
+            clone.OpenRouterApiKey = "";
 
             return clone;
         }

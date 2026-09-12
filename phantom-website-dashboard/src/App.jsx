@@ -4489,6 +4489,84 @@ function getChatEligibleCatalogProviders(catalogProviders) {
     .filter((provider) => provider.models.length > 0);
 }
 
+function filterModelsByQuery(models, query) {
+  const needle = (query || "").trim().toLowerCase();
+  if (!needle) {
+    return models || [];
+  }
+
+  return (models || []).filter((model) => {
+    const id = `${model.modelId || model.id || ""}`.toLowerCase();
+    const name = `${model.displayName || model.name || ""}`.toLowerCase();
+    return id.includes(needle) || name.includes(needle);
+  });
+}
+
+function mergeCatalogRefreshResult(current, next) {
+  if (!next) {
+    return current;
+  }
+
+  const byId = new Map((current?.providers || []).map((item) => [item.providerId, item]));
+  for (const item of next.providers || []) {
+    byId.set(item.providerId, item);
+  }
+
+  return {
+    ...next,
+    providers: Array.from(byId.values())
+  };
+}
+
+function SearchableModelSelect({
+  models,
+  value,
+  onChange,
+  disabled = false,
+  getOptionValue = (model) => model.modelId,
+  getOptionLabel = (model) => model.displayName || model.modelId
+}) {
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const filtered = useMemo(
+    () => filterModelsByQuery(models, deferredQuery),
+    [models, deferredQuery]
+  );
+  const selected = (models || []).find((model) => getOptionValue(model) === value);
+  const options =
+    selected && !filtered.some((model) => getOptionValue(model) === value)
+      ? [selected, ...filtered]
+      : filtered;
+
+  return (
+    <div className="searchable-model-select">
+      <input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search models"
+        disabled={disabled}
+        aria-label="Search models"
+      />
+      <select
+        value={value || ""}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled || options.length === 0}
+      >
+        {options.length === 0 ? (
+          <option value="">No matching models</option>
+        ) : (
+          options.map((model) => (
+            <option key={getOptionValue(model)} value={getOptionValue(model)}>
+              {getOptionLabel(model)}
+            </option>
+          ))
+        )}
+      </select>
+    </div>
+  );
+}
+
 function ManagedRuntimeSelectionCard({
   accessToken,
   inventory,
@@ -4595,13 +4673,11 @@ function ManagedRuntimeSelectionCard({
             </label>
             <label>
               Active model
-              <select value={selectionModelId} onChange={(event) => setSelectionModelId(event.target.value)}>
-                {selectedCatalogModels.map((model) => (
-                  <option key={model.modelId} value={model.modelId}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
+              <SearchableModelSelect
+                models={selectedCatalogModels}
+                value={selectionModelId}
+                onChange={setSelectionModelId}
+              />
             </label>
           </div>
           <button
@@ -4936,13 +5012,15 @@ function ManagedAiTesterCard({ accessToken, catalogProviders, latencyModels, onR
             </label>
             <label>
               Model
-              <select value={modelId} onChange={(event) => { setModelId(event.target.value); setHistory([]); setLocalError(""); }}>
-                {(selectedProvider?.models || []).map((model) => (
-                  <option key={model.modelId} value={model.modelId}>
-                    {model.displayName}
-                  </option>
-                ))}
-              </select>
+              <SearchableModelSelect
+                models={selectedProvider?.models || []}
+                value={modelId}
+                onChange={(nextModelId) => {
+                  setModelId(nextModelId);
+                  setHistory([]);
+                  setLocalError("");
+                }}
+              />
             </label>
           </div>
 
@@ -5076,6 +5154,8 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
   const [submitting, setSubmitting] = useState(false);
   const [submittingManualModel, setSubmittingManualModel] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  const [refreshingProviderId, setRefreshingProviderId] = useState("");
+  const [catalogQueries, setCatalogQueries] = useState({});
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -5138,19 +5218,31 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
     }
   }
 
-  async function handleCatalogRefresh() {
-    setRefreshingCatalog(true);
+  async function handleCatalogRefresh(targetProviderId) {
+    const isProviderRefresh = Boolean(targetProviderId);
+    if (isProviderRefresh) {
+      setRefreshingProviderId(targetProviderId);
+    } else {
+      setRefreshingCatalog(true);
+    }
     setLocalError("");
     setSuccess("");
     try {
-      const refreshResult = await triggerManagedAiCatalogRefresh(accessToken);
-      onCatalogRefreshResult(refreshResult);
+      const refreshResult = await triggerManagedAiCatalogRefresh(accessToken, targetProviderId);
+      onCatalogRefreshResult(
+        isProviderRefresh ? mergeCatalogRefreshResult(catalogRefreshResult, refreshResult) : refreshResult
+      );
       await onRefresh();
-      setSuccess("Managed model catalog refreshed.");
+      setSuccess(
+        isProviderRefresh
+          ? `${targetProviderId} model catalog refreshed.`
+          : "Managed model catalog refreshed."
+      );
     } catch (refreshError) {
       setLocalError(refreshError.message || "Could not refresh managed model catalog.");
     } finally {
       setRefreshingCatalog(false);
+      setRefreshingProviderId("");
     }
   }
 
@@ -5227,8 +5319,13 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
             <button className="button button-secondary button-compact" type="button" onClick={onRefresh}>
               Refresh
             </button>
-            <button className="button button-primary button-compact" type="button" onClick={handleCatalogRefresh} disabled={refreshingCatalog}>
-              {refreshingCatalog ? "Updating..." : "Update Models"}
+            <button
+              className="button button-primary button-compact"
+              type="button"
+              onClick={() => handleCatalogRefresh()}
+              disabled={refreshingCatalog || Boolean(refreshingProviderId)}
+            >
+              {refreshingCatalog ? "Refreshing..." : "Refresh models list"}
             </button>
           </div>
         </div>
@@ -5379,13 +5476,43 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
       {providers.map((provider) => {
         const catalog = catalogProviders.find((item) => item.providerId === provider.providerId);
         const providerModels = catalog?.models || [];
+        const query = catalogQueries[provider.providerId] || "";
+        const visibleModels = filterModelsByQuery(providerModels, query);
+        const isRefreshingProvider = refreshingProviderId === provider.providerId;
 
         return (
           <div className="glass-panel table-panel table-span-full" key={`${provider.providerId}-catalog`}>
             <div className="table-header">
               <div>
                 <p className="eyebrow">{provider.label} catalog</p>
-                <h3>{providerModels.length} fetched models</h3>
+                <h3>
+                  {query.trim()
+                    ? `${visibleModels.length} of ${providerModels.length} models`
+                    : `${providerModels.length} fetched models`}
+                </h3>
+              </div>
+              <div className="inline-actions catalog-toolbar">
+                <input
+                  className="model-search-input"
+                  type="search"
+                  value={query}
+                  onChange={(event) =>
+                    setCatalogQueries((current) => ({
+                      ...current,
+                      [provider.providerId]: event.target.value
+                    }))
+                  }
+                  placeholder="Search models"
+                  aria-label={`Search ${provider.label} models`}
+                />
+                <button
+                  className="button button-primary button-compact"
+                  type="button"
+                  onClick={() => handleCatalogRefresh(provider.providerId)}
+                  disabled={refreshingCatalog || Boolean(refreshingProviderId)}
+                >
+                  {isRefreshingProvider ? "Refreshing..." : "Refresh models list"}
+                </button>
               </div>
             </div>
             <TableScroll className="bounded-table-scroll">
@@ -5400,12 +5527,16 @@ function ManagedAiAdminPanel({ accessToken, inventory, latencyStatus, onRefresh,
                   </tr>
                 </thead>
                 <tbody>
-                  {providerModels.length === 0 ? (
+                  {visibleModels.length === 0 ? (
                     <tr>
-                      <td colSpan="5">No stored catalog for this provider yet.</td>
+                      <td colSpan="5">
+                        {providerModels.length === 0
+                          ? "No stored catalog for this provider yet."
+                          : "No models match this search."}
+                      </td>
                     </tr>
                   ) : (
-                    providerModels.map((model) => {
+                    visibleModels.map((model) => {
                       const chatEligible = model.eligibleForChat !== false;
                       return (
                         <tr key={`${provider.providerId}-${model.modelId}`}>

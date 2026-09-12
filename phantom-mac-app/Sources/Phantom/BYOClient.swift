@@ -10,6 +10,7 @@ struct BYOClient {
         case "Mistral": endpoint = URL(string: "https://api.mistral.ai/v1/models")!
         case "Groq": endpoint = URL(string: "https://api.groq.com/openai/v1/models")!
         case "NVIDIA": endpoint = URL(string: "https://integrate.api.nvidia.com/v1/models")!
+        case "OpenRouter": endpoint = URL(string: "https://openrouter.ai/api/v1/models")!
         default: throw BYOError.unsupportedProvider
         }
         var request = URLRequest(url: endpoint)
@@ -19,6 +20,10 @@ struct BYOClient {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         } else if provider != "Gemini" {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        if provider == "OpenRouter" {
+            request.setValue("https://phantom.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("Phantom", forHTTPHeaderField: "X-Title")
         }
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -32,7 +37,7 @@ struct BYOClient {
             id = id.replacingOccurrences(of: "models/", with: "")
             let methods = row["supportedGenerationMethods"] as? [String] ?? []
             guard Self.isChatModel(id), provider != "Gemini" || methods.isEmpty || methods.contains("generateContent") else { return nil }
-            let display = row["display_name"] as? String ?? row["displayName"] as? String ?? id
+            let display = row["display_name"] as? String ?? row["displayName"] as? String ?? row["name"] as? String ?? id
             return ManagedModel(modelId: id, displayName: display, supportsVision: Self.supportsVision(id))
         }.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
@@ -82,6 +87,7 @@ struct BYOClient {
         case "Mistral": endpoint = URL(string: "https://api.mistral.ai/v1/chat/completions")!
         case "Groq": endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
         case "NVIDIA": endpoint = URL(string: "https://integrate.api.nvidia.com/v1/chat/completions")!
+        case "OpenRouter": endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
         default: throw BYOError.unsupportedProvider
         }
 
@@ -94,6 +100,10 @@ struct BYOClient {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         } else if provider != "Gemini" {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        if provider == "OpenRouter" {
+            request.setValue("https://phantom.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("Phantom", forHTTPHeaderField: "X-Title")
         }
         request.httpBody = try JSONSerialization.data(
             withJSONObject: payload(

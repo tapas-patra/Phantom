@@ -435,6 +435,14 @@ Rules:
                 systemPrompt,
                 userPrompt,
                 cancellationToken),
+            ManagedAiCatalog.OpenRouter => await CompleteOpenAiCompatibleAsync(
+                ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                modelId,
+                apiKey,
+                systemPrompt,
+                userPrompt,
+                cancellationToken,
+                ManagedAiCatalog.ApplyOpenRouterHeaders),
             ManagedAiCatalog.Claude => await CompleteClaudeAsync(modelId, apiKey, systemPrompt, userPrompt, cancellationToken),
             ManagedAiCatalog.Gemini => await CompleteGeminiAsync(modelId, apiKey, systemPrompt, userPrompt, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported provider '{providerId}'.")
@@ -447,7 +455,8 @@ Rules:
         string apiKey,
         string systemPrompt,
         string userPrompt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<HttpRequestHeaders>? configureHeaders = null)
     {
         var payload = JsonSerializer.Serialize(new
         {
@@ -463,6 +472,7 @@ Rules:
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        configureHeaders?.Invoke(request.Headers);
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(request, cancellationToken);

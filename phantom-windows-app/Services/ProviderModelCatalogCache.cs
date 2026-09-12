@@ -207,6 +207,9 @@ namespace SecureOverlay.Services
                 case "NVIDIA":
                     settings.NvidiaModels = normalized;
                     break;
+                case "OpenRouter":
+                    settings.OpenRouterModels = normalized;
+                    break;
             }
         }
     }

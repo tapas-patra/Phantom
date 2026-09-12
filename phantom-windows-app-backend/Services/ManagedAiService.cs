@@ -580,6 +580,17 @@ public sealed class ManagedAiService
                     apiKey,
                     cancellationToken);
                 return;
+            case ManagedAiCatalog.OpenRouter:
+                await StreamOpenAiCompatibleAsync(
+                    streamWriter,
+                    ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
+                    request.Model,
+                    outputBudget,
+                    apiKey,
+                    cancellationToken,
+                    ManagedAiCatalog.ApplyOpenRouterHeaders);
+                return;
             default:
                 throw new BackendValidationException("Unsupported managed provider.");
         }
@@ -626,6 +637,14 @@ public sealed class ManagedAiService
                 apiKey,
                 cancellationToken,
                 maxOutputTokens),
+            ManagedAiCatalog.OpenRouter => await GenerateOpenAiCompatibleResponseAsync(
+                ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
+                modelId,
+                apiKey,
+                cancellationToken,
+                maxOutputTokens,
+                ManagedAiCatalog.ApplyOpenRouterHeaders),
             _ => throw new BackendValidationException("Unsupported managed provider.")
         };
     }
@@ -637,7 +656,8 @@ public sealed class ManagedAiService
         string model,
         int outputBudget,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<HttpRequestHeaders>? configureHeaders = null)
     {
         var payload = JsonSerializer.Serialize(new
         {
@@ -649,6 +669,7 @@ public sealed class ManagedAiService
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        configureHeaders?.Invoke(request.Headers);
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -717,7 +738,8 @@ public sealed class ManagedAiService
         string model,
         string apiKey,
         CancellationToken cancellationToken,
-        int maxOutputTokens)
+        int maxOutputTokens,
+        Action<HttpRequestHeaders>? configureHeaders = null)
     {
         var payload = JsonSerializer.Serialize(new
         {
@@ -729,6 +751,7 @@ public sealed class ManagedAiService
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        configureHeaders?.Invoke(request.Headers);
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(request, cancellationToken);

@@ -191,7 +191,11 @@
                                           Margin="0,5,0,5" FontSize="12" Effect="{StaticResource Shadow}"/>
                                 <TextBlock Text="First model is used by default. Others are fallbacks." 
                                           FontSize="10" Foreground="#AAAAAA" Margin="0,0,0,5"/>
-                                <ComboBox x:Name="ChatGPTModelBox" Height="30" SelectionChanged="ChatGPTModelBox_SelectionChanged"/>
+                                <TextBox x:Name="ChatGPTModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="ChatGPTModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="ChatGPTModelBox_SelectionChanged"/>
                             </StackPanel>
                         </Border>
 
@@ -239,7 +243,11 @@
                                        Style="{StaticResource ButtonStyle}"/>
                                 
                                 <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
-                                <ComboBox x:Name="ClaudeModelBox" Height="30" SelectionChanged="ClaudeModelBox_SelectionChanged"/>
+                                <TextBox x:Name="ClaudeModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="ClaudeModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="ClaudeModelBox_SelectionChanged"/>
                             </StackPanel>
                         </Border>
 
@@ -287,7 +295,11 @@
                                        Style="{StaticResource ButtonStyle}"/>
                                 
                                 <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
-                                <ComboBox x:Name="MistralModelBox" Height="30" SelectionChanged="MistralModelBox_SelectionChanged" />
+                                <TextBox x:Name="MistralModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="MistralModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="MistralModelBox_SelectionChanged" />
                             </StackPanel>
                         </Border>
 
@@ -341,7 +353,11 @@
                                        Style="{StaticResource ButtonStyle}"/>
                                 
                                 <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
-                                <ComboBox x:Name="GeminiModelBox" Height="30" SelectionChanged="GeminiModelBox_SelectionChanged"/>
+                                <TextBox x:Name="GeminiModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="GeminiModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="GeminiModelBox_SelectionChanged"/>
                             </StackPanel>
                         </Border>
 
@@ -397,7 +413,11 @@
                                        Style="{StaticResource ButtonStyle}"/>
                                 
                                 <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
-                                <ComboBox x:Name="GroqModelBox" Height="30" SelectionChanged="GroqModelBox_SelectionChanged"/>
+                                <TextBox x:Name="GroqModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="GroqModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="GroqModelBox_SelectionChanged"/>
                             </StackPanel>
                         </Border>
 
@@ -451,7 +471,69 @@
                                        Style="{StaticResource ButtonStyle}"/>
                                 
                                 <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
-                                <ComboBox x:Name="NvidiaModelBox" Height="30" />
+                                <TextBox x:Name="NvidiaModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="NvidiaModelBox" Height="30" IsTextSearchEnabled="True" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- OpenRouter Settings -->
+                        <Border x:Name="OpenRouterPanel" Background="#30FFFFFF" CornerRadius="8" 
+                            Padding="15" Margin="0,0,0,15">
+                            <StackPanel>
+                                <TextBlock Text="OpenRouter Configuration" FontSize="13" FontWeight="Bold" 
+                                        Foreground="White" Margin="0,0,0,10" Effect="{StaticResource Shadow}"/>
+                                <TextBlock FontSize="11" Foreground="#CCCCCC" Margin="0,0,0,10" TextWrapping="Wrap" Effect="{StaticResource Shadow}">
+                                    <Run Text="Get your API key from: "/>
+                                    <Hyperlink NavigateUri="https://openrouter.ai/keys" RequestNavigate="Hyperlink_RequestNavigate">
+                                        <Run Text="OpenRouter"/>
+                                    </Hyperlink>
+                                </TextBlock>
+                                
+                                <TextBlock Text="API Keys:" Foreground="White" Margin="0,0,0,5" Effect="{StaticResource Shadow}"/>
+                                <ItemsControl x:Name="OpenRouterKeysList" Margin="0,0,0,10">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="35"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="35"/>
+                                                </Grid.ColumnDefinitions>
+                                                
+                                                <TextBlock Grid.Column="0" Text="{Binding Index}" 
+                                                          Foreground="#FFD700" FontWeight="Bold" FontSize="12"
+                                                          VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                                
+                                                <TextBox Grid.Column="1" Text="{Binding Key, UpdateSourceTrigger=PropertyChanged}" 
+                                                        Height="30" Background="#40FFFFFF" 
+                                                        Foreground="White" BorderBrush="#70FFFFFF"
+                                                        BorderThickness="1" Padding="5"/>
+                                                
+                                                <Button Grid.Column="2" Content="✕" Width="30" Height="30"
+                                                       Click="RemoveOpenRouterKey_Click" Tag="{Binding}"
+                                                       Background="#50FF0000" BorderBrush="#90FF0000" 
+                                                       BorderThickness="1" Foreground="White" Margin="5,0,0,0"
+                                                       Style="{StaticResource ButtonStyle}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                
+                                <Button Content="+ Add API Key" Click="AddOpenRouterKey_Click"
+                                       Height="30" Background="#5000AA00" BorderBrush="#9000AA00"
+                                       BorderThickness="1" Foreground="White" FontSize="12"
+                                       HorizontalAlignment="Left" Margin="0,0,0,15"
+                                       Style="{StaticResource ButtonStyle}"/>
+                                
+                                <TextBlock Text="Model:" Foreground="White" Margin="0,5,0,5" Effect="{StaticResource Shadow}"/>
+                                <TextBox x:Name="OpenRouterModelSearchBox" Height="28" Margin="0,0,0,6"
+                                        Background="#40FFFFFF" Foreground="White" BorderBrush="#70FFFFFF"
+                                        BorderThickness="1" Padding="5" FontSize="12" ToolTip="Search models"
+                                        TextChanged="ByoModelSearchBox_TextChanged"/>
+                                <ComboBox x:Name="OpenRouterModelBox" Height="30" IsTextSearchEnabled="True" SelectionChanged="OpenRouterModelBox_SelectionChanged"/>
                             </StackPanel>
                         </Border>
 

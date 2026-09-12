@@ -287,6 +287,9 @@ namespace SecureOverlay.Services
                 case "NVIDIA":
                     _settings.NvidiaModel = model;
                     break;
+                case "OpenRouter":
+                    _settings.OpenRouterModel = model;
+                    break;
             }
             
             Log.WriteLine($"✓ Settings updated: {provider} model set to {model}");
@@ -434,6 +437,7 @@ namespace SecureOverlay.Services
                 "Gemini" => _settings.GeminiModel,
                 "Groq" => _settings.GroqModel,
                 "NVIDIA" => _settings.NvidiaModel,
+                "OpenRouter" => _settings.OpenRouterModel,
                 _ => ""
             };
         }
@@ -456,6 +460,7 @@ namespace SecureOverlay.Services
                 "Gemini" => _settings.GeminiApiKeys,
                 "Groq" => _settings.GroqApiKeys,
                 "NVIDIA" => _settings.NvidiaApiKeys,
+                "OpenRouter" => _settings.OpenRouterApiKeys,
                 _ => new List<string>()
             };
         }
@@ -470,6 +475,7 @@ namespace SecureOverlay.Services
                 "Gemini" => _settings.GeminiModels,
                 "Groq" => _settings.GroqModels,
                 "NVIDIA" => _settings.NvidiaModels,
+                "OpenRouter" => _settings.OpenRouterModels,
                 _ => new List<string>()
             };
         }

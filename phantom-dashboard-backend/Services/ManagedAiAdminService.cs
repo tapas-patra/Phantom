@@ -31,7 +31,8 @@ public sealed class ManagedAiAdminService
                 new { providerId = "Gemini", label = "Gemini", lane = "managed" },
                 new { providerId = "Mistral", label = "Mistral", lane = "managed" },
                 new { providerId = "Groq", label = "Groq", lane = "managed" },
-                new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" }
+                new { providerId = "NVIDIA", label = "NVIDIA", lane = "managed" },
+                new { providerId = "OpenRouter", label = "OpenRouter", lane = "managed" }
             },
             selection,
             kbEmbedding,
@@ -93,6 +94,16 @@ public sealed class ManagedAiAdminService
     public Task<object?> RefreshCatalog(string authorizationHeader, CancellationToken cancellationToken)
     {
         return _authority.SendAsync<object>(HttpMethod.Post, "/api/admin/managed-ai/catalog/refresh", authorizationHeader, null, cancellationToken);
+    }
+
+    public Task<object?> RefreshProviderCatalog(string authorizationHeader, string providerId, CancellationToken cancellationToken)
+    {
+        return _authority.SendAsync<object>(
+            HttpMethod.Post,
+            $"/api/admin/managed-ai/catalog/{Uri.EscapeDataString(providerId)}/refresh",
+            authorizationHeader,
+            null,
+            cancellationToken);
     }
 
     public Task<object?> UpsertSpeechCredential(string authorizationHeader, object payload, CancellationToken cancellationToken) =>

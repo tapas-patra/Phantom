@@ -4526,8 +4526,12 @@ function SearchableModelSelect({
   getOptionValue = (model) => model.modelId,
   getOptionLabel = (model) => model.displayName || model.modelId
 }) {
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
+  const rootRef = useRef(null);
+  const searchRef = useRef(null);
+  const listId = useId();
   const filtered = useMemo(
     () => filterModelsByQuery(models, deferredQuery),
     [models, deferredQuery]
@@ -4537,32 +4541,102 @@ function SearchableModelSelect({
     selected && !filtered.some((model) => getOptionValue(model) === value)
       ? [selected, ...filtered]
       : filtered;
+  const selectedLabel = selected ? getOptionLabel(selected) : "Select a model";
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const closeOnPointer = (event) => {
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const closeOnKey = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", closeOnPointer);
+    document.addEventListener("keydown", closeOnKey);
+    return () => {
+      document.removeEventListener("mousedown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
 
   return (
-    <div className="searchable-model-select">
-      <input
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search models"
-        disabled={disabled}
-        aria-label="Search models"
-      />
-      <select
-        value={value || ""}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled || options.length === 0}
+    <div
+      className={`searchable-model-select${open ? " is-open" : ""}`}
+      ref={rootRef}
+      onMouseDown={(event) => {
+        if (event.target instanceof HTMLButtonElement) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="searchable-model-trigger"
+        disabled={disabled || (models || []).length === 0}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((current) => !current)}
       >
-        {options.length === 0 ? (
-          <option value="">No matching models</option>
-        ) : (
-          options.map((model) => (
-            <option key={getOptionValue(model)} value={getOptionValue(model)}>
-              {getOptionLabel(model)}
-            </option>
-          ))
-        )}
-      </select>
+        <span>{selectedLabel}</span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open ? (
+        <div className="searchable-model-menu">
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search models"
+            aria-label="Search models"
+            autoComplete="off"
+          />
+          <div className="searchable-model-options" role="listbox" id={listId}>
+            {options.length === 0 ? (
+              <p className="searchable-model-empty">No matching models</p>
+            ) : (
+              options.map((model) => {
+                const optionValue = getOptionValue(model);
+                const isSelected = optionValue === value;
+                return (
+                  <button
+                    key={optionValue}
+                    type="button"
+                    role="option"
+                    className={`searchable-model-option${isSelected ? " is-selected" : ""}`}
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      onChange(optionValue);
+                      setOpen(false);
+                    }}
+                  >
+                    {getOptionLabel(model)}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

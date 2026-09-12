@@ -344,6 +344,7 @@ namespace SecureOverlay
 
             this.MouseEnter += MainWindow_MouseEnter;
             this.MouseLeave += MainWindow_MouseLeave;
+            this.PreviewMouseLeftButtonDown += Window_PreviewMouseLeftButtonDown;
 
             Log.WriteLine("Setting up input box placeholder behavior...");
             
@@ -1062,12 +1063,17 @@ namespace SecureOverlay
                     var managedProvider = catalog.Providers?.FirstOrDefault();
                     var managedModel = managedProvider?.Models?.FirstOrDefault();
                     Log.WriteLine(
-                        $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}");
+                        $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}, vision={managedModel?.SupportsVision == true}");
 
                     if (_currentAI is HostedManagedAiService && managedProvider != null && managedModel != null)
                     {
                         Log.WriteLine("Managed catalog changed - reinitializing AI with the hosted runtime selection");
                         InitializeAI();
+                    }
+
+                    if (IsLoaded)
+                    {
+                        UpdateScreenshotButtonVisibility();
                     }
                 }
             }
@@ -3484,6 +3490,47 @@ namespace SecureOverlay
             }
         }
 
+        private void Window_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_currentDropdownMenu?.IsVisible != true)
+            {
+                return;
+            }
+
+            if (IsClickOnDropdownAnchor(e.OriginalSource))
+            {
+                return;
+            }
+
+            CloseCurrentDropdownMenu();
+        }
+
+        private bool IsClickOnDropdownAnchor(object? source)
+        {
+            return source is DependencyObject node
+                && (IsVisualInside(node, ProviderSelectorBorder) || IsVisualInside(node, ModelSelectorBorder));
+        }
+
+        private static bool IsVisualInside(DependencyObject node, DependencyObject? ancestor)
+        {
+            if (ancestor == null)
+            {
+                return false;
+            }
+
+            while (node != null)
+            {
+                if (ReferenceEquals(node, ancestor))
+                {
+                    return true;
+                }
+
+                node = VisualTreeHelper.GetParent(node);
+            }
+
+            return false;
+        }
+
         private void Window_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var element = e.OriginalSource as FrameworkElement;
@@ -5770,44 +5817,54 @@ namespace SecureOverlay
 
         private bool CurrentModelSupportsVision()
         {
-            if (_settings == null)
+            // Match Mac PhantomStore.selectedModelSupportsVision: catalog SupportsVision
+            // for the selected provider/model only. No name-based inference.
+            var model = GetSelectedCatalogModel();
+            var supportsVision = model?.SupportsVision == true;
+            Log.WriteLine(
+                $"Checking vision support for: {model?.ModelId ?? "(unresolved)"} => {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");
+            return supportsVision;
+        }
+
+        private ManagedAiModelOptionDto? GetSelectedCatalogModel()
+        {
+            var useByoCatalog = ShouldShowByoSelectors();
+            var providerId = useByoCatalog ? _settings.SelectedAI : GetCurrentRuntimeProviderId();
+            var modelId = useByoCatalog
+                ? AIModelRegistry.GetCurrentModelForProvider(_settings, providerId)
+                : GetCurrentRuntimeModelId();
+
+            var match = FindCatalogModel(providerId, modelId, preferByo: useByoCatalog);
+            if (match != null)
             {
-                Log.WriteLine("Settings not initialized");
-                return false;
+                return match;
             }
 
-            // When BYO pickers are visible, vision follows the BYO selection the user sees —
-            // not a managed runtime model that may still be active until keys are present.
-            if (ShouldShowByoSelectors())
+            // Managed desktop catalog is already filtered to the active runtime model.
+            if (!useByoCatalog)
             {
-                var byoProvider = _settings.SelectedAI;
-                var byoModelId = AIModelRegistry.GetCurrentModelForProvider(_settings, byoProvider);
-                var byoModel = ProviderModelCatalogCache.GetModel(_settings, byoProvider, byoModelId, byo: true);
-                if (byoModel != null)
+                var managedProvider = ProviderModelCatalogCache.GetProvider(_settings, providerId)
+                    ?? _settings.ManagedAiCatalogCache?.Providers?.FirstOrDefault();
+                if (managedProvider?.Models is { Count: > 0 })
                 {
-                    Log.WriteLine($"Checking vision support for BYO selection: {byoProvider} - {byoModelId} => {byoModel.SupportsVision}");
-                    return byoModel.SupportsVision;
+                    return managedProvider.Models.FirstOrDefault(item =>
+                               string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
+                           ?? managedProvider.Models[0];
                 }
             }
 
-            var provider = GetCurrentRuntimeProviderId();
-            var currentModel = GetCurrentRuntimeModelId();
-            if (string.IsNullOrWhiteSpace(currentModel) && _rotationManager != null)
+            return null;
+        }
+
+        private ManagedAiModelOptionDto? FindCatalogModel(string providerId, string modelId, bool preferByo)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(modelId))
             {
-                currentModel = _currentAI is HostedManagedAiService
-                    ? GetManagedRuntimeModelId(provider)
-                    : _rotationManager.GetCurrentModel(provider);
+                return null;
             }
 
-            Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
-
-            var useByoCatalog = _currentAI is not HostedManagedAiService;
-            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: useByoCatalog)
-                ?? ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: !useByoCatalog);
-            bool supportsVision = model?.SupportsVision == true;
-
-            Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")} (catalog only)");
-            return supportsVision;
+            return ProviderModelCatalogCache.GetModel(_settings, providerId, modelId, byo: preferByo)
+                ?? ProviderModelCatalogCache.GetModel(_settings, providerId, modelId, byo: !preferByo);
         }
 
 
@@ -5859,23 +5916,17 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING SCREENSHOT BUTTON VISIBILITY");
 
-            if (CurrentModelSupportsVision())
+            var supportsVision = CurrentModelSupportsVision();
+            ScreenshotButton.Visibility = Visibility.Visible;
+            if (!supportsVision && _attachedScreenshots.Count > 0)
             {
-                ScreenshotButton.Visibility = Visibility.Visible;
-                UpdateScreenshotButtonChrome();
-                Log.WriteLine("✓ Screenshot button VISIBLE (model supports vision)");
-            }
-            else
-            {
-                ScreenshotButton.Visibility = Visibility.Collapsed;
-                if (_attachedScreenshots.Count > 0)
-                {
-                    _attachedScreenshots.Clear();
-                    UpdateScreenshotButtonChrome();
-                }
-                Log.WriteLine("✗ Screenshot button HIDDEN (model doesn't support vision)");
+                _attachedScreenshots.Clear();
             }
 
+            UpdateScreenshotButtonChrome();
+            Log.WriteLine(supportsVision
+                ? "✓ Screenshot button ENABLED (catalog SupportsVision)"
+                : "✗ Screenshot button DISABLED (catalog SupportsVision is false)");
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
@@ -5885,13 +5936,27 @@ namespace SecureOverlay
 
         private void ProviderSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            e.Handled = true;
             Log.WriteLine("Provider selector clicked");
+            if (_currentDropdownMenu != null)
+            {
+                CloseCurrentDropdownMenu();
+                return;
+            }
+
             ShowProviderMenu();
         }
 
         private void ModelSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            e.Handled = true;
             Log.WriteLine("Model selector clicked");
+            if (_currentDropdownMenu != null)
+            {
+                CloseCurrentDropdownMenu();
+                return;
+            }
+
             ShowModelMenu();
         }
 
@@ -5900,25 +5965,10 @@ namespace SecureOverlay
             // ✅ Close any existing dropdown menu
             CloseCurrentDropdownMenu();
             
-            var menuWindow = new Window
-            {
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = System.Windows.Media.Brushes.Transparent,
-                ShowInTaskbar = false,
-                Topmost = true,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.None,
-                Owner = this  // ✅ SET OWNER - This fixes Z-order!
-            };
+            var menuWindow = CreateDropdownWindow();
 
             // ✅ Track this menu
             _currentDropdownMenu = menuWindow;
-
-            // ✅ Flag to prevent premature closing
-            bool isInitializing = true;
 
             menuWindow.Loaded += (s, e) =>
             {
@@ -5972,7 +6022,7 @@ namespace SecureOverlay
                     HorizontalContentAlignment = HorizontalAlignment.Left,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     MaxWidth = 210,
-                    Cursor = Cursors.None,
+                    Cursor = GetDropdownItemCursor(),
                     Tag = provider
                 };
                 
@@ -6012,32 +6062,7 @@ namespace SecureOverlay
             PositionDropdownMenu(menuWindow, ProviderSelectorBorder);
             menuWindow.Activate();
             AttachDropdownCursorTracking(menuWindow);
-
-            // ✅ DELAY ATTACHING DEACTIVATE HANDLER
-            var timer = new System.Windows.Threading.DispatcherTimer 
-            { 
-                Interval = TimeSpan.FromMilliseconds(100) 
-            };
-            timer.Tick += (s, e) =>
-            {
-                timer.Stop();
-                isInitializing = false;
-                
-                // Now attach the deactivate handler
-                menuWindow.Deactivated += (sender, args) =>
-                {
-                    if (!isInitializing)
-                    {
-                        try
-                        {
-                            menuWindow.Close();
-                            _currentDropdownMenu = null;  // ✅ Clear reference
-                        }
-                        catch { }
-                    }
-                };
-            };
-            timer.Start();
+            AttachDropdownDismissal(menuWindow);
         }
 
 
@@ -6047,25 +6072,10 @@ namespace SecureOverlay
             // ✅ Close any existing dropdown menu
             CloseCurrentDropdownMenu();
             
-            var menuWindow = new Window
-            {
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = System.Windows.Media.Brushes.Transparent,
-                ShowInTaskbar = false,
-                Topmost = true,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.None,
-                Owner = this  // ✅ SET OWNER - This fixes Z-order!
-            };
+            var menuWindow = CreateDropdownWindow();
 
             // ✅ Track this menu
             _currentDropdownMenu = menuWindow;
-
-            // ✅ Flag to prevent premature closing
-            bool isInitializing = true;
 
             menuWindow.Loaded += (s, e) =>
             {
@@ -6151,7 +6161,7 @@ namespace SecureOverlay
                         HorizontalContentAlignment = HorizontalAlignment.Left,
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         MaxWidth = 310,
-                        Cursor = Cursors.None,
+                        Cursor = GetDropdownItemCursor(),
                         Tag = model
                     };
 
@@ -6195,7 +6205,7 @@ namespace SecureOverlay
                 BorderBrush = new SolidColorBrush(Color.FromArgb(120, 0, 170, 255)),
                 BorderThickness = new Thickness(1),
                 ToolTip = "Search models",
-                Cursor = Cursors.None
+                Cursor = GetDropdownTextCursor()
             };
             searchBox.TextChanged += (_, _) => RebuildModelButtons(searchBox.Text);
             RebuildModelButtons(string.Empty);
@@ -6212,33 +6222,33 @@ namespace SecureOverlay
             PositionDropdownMenu(menuWindow, ModelSelectorBorder);
             menuWindow.Activate();
             AttachDropdownCursorTracking(menuWindow);
-
-            // ✅ DELAY ATTACHING DEACTIVATE HANDLER
-            var timer = new System.Windows.Threading.DispatcherTimer 
-            { 
-                Interval = TimeSpan.FromMilliseconds(100) 
-            };
-            timer.Tick += (s, e) =>
-            {
-                timer.Stop();
-                isInitializing = false;
-                
-                // Now attach the deactivate handler
-                menuWindow.Deactivated += (sender, args) =>
-                {
-                    if (!isInitializing)
-                    {
-                        try
-                        {
-                            menuWindow.Close();
-                            _currentDropdownMenu = null;  // ✅ Clear reference
-                        }
-                        catch { }
-                    }
-                };
-            };
-            timer.Start();
+            AttachDropdownDismissal(menuWindow);
+            searchBox.Focus();
         }
+
+        private Window CreateDropdownWindow()
+        {
+            var hideSystemCursor = _settings.UseFakeCursor;
+            return new Window
+            {
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                Background = System.Windows.Media.Brushes.Transparent,
+                ShowInTaskbar = false,
+                Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                Cursor = hideSystemCursor ? Cursors.None : Cursors.Arrow,
+                Owner = this
+            };
+        }
+
+        private System.Windows.Input.Cursor GetDropdownItemCursor()
+            => _settings.UseFakeCursor ? Cursors.None : Cursors.Hand;
+
+        private System.Windows.Input.Cursor GetDropdownTextCursor()
+            => _settings.UseFakeCursor ? Cursors.None : Cursors.IBeam;
 
         /// <summary>
         /// Close any currently open dropdown menu
@@ -6259,16 +6269,48 @@ namespace SecureOverlay
             }
         }
 
+        private void AttachDropdownDismissal(Window menuWindow)
+        {
+            void CloseMenu()
+            {
+                if (!ReferenceEquals(_currentDropdownMenu, menuWindow))
+                {
+                    return;
+                }
+
+                CloseCurrentDropdownMenu();
+            }
+
+            menuWindow.Deactivated += (_, _) => CloseMenu();
+            menuWindow.PreviewKeyDown += (_, args) =>
+            {
+                if (args.Key != Key.Escape)
+                {
+                    return;
+                }
+
+                args.Handled = true;
+                CloseMenu();
+            };
+        }
+
         private void AttachDropdownCursorTracking(Window menuWindow)
         {
-            _cursorManager?.SetOwnedOverlayActive(true);
-            menuWindow.MouseEnter += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
-            menuWindow.MouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
-            menuWindow.PreviewMouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            if (_settings.UseFakeCursor)
+            {
+                _cursorManager?.SetOwnedOverlayActive(true);
+                menuWindow.MouseEnter += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+                menuWindow.MouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+                menuWindow.PreviewMouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            }
+
             menuWindow.Closed += (_, _) =>
             {
                 if (ReferenceEquals(_currentDropdownMenu, menuWindow))
                     _currentDropdownMenu = null;
+
+                if (!_settings.UseFakeCursor)
+                    return;
 
                 _cursorManager?.SetOwnedOverlayActive(false);
 
@@ -6276,6 +6318,9 @@ namespace SecureOverlay
                 if (IsActive || _cursorManager?.IsPointerInsideParentWindow() == true)
                     _cursorManager?.EnsureLiveCursorAbove();
             };
+
+            if (!_settings.UseFakeCursor)
+                return;
 
             // Menu Activate() puts the popup above the live cursor; reassert immediately.
             _cursorManager?.EnsureLiveCursorAbove();

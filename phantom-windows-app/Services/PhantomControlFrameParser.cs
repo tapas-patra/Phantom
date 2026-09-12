@@ -267,15 +267,18 @@ namespace SecureOverlay.Services
         {
             var (minimum, maximum) = questionType switch
             {
-                "behavioral" => (45, 75),
-                "technical" => (30, 60),
-                "coding" => (45, 180),
-                "system_design" => (60, 180),
-                "product_case" => (45, 120),
-                "motivation_fit" => (30, 60),
-                "personal_factual" => (15, 60),
+                "behavioral" => (25, 45),
+                "technical" => (20, 40),
+                "coding" => (30, 90),
+                "system_design" => (40, 75),
+                "product_case" => (30, 60),
+                "motivation_fit" => (20, 40),
+                "personal_factual" => (10, 30),
+                "situational" => (20, 40),
                 "clarification" or "unknown" => (5, 20),
-                _ => (15, 120)
+                "factual_lookup" or "status_update" or "decision_support" or "objection_response"
+                    or "risk_tradeoff" or "brainstorm" or "action_capture" => (10, 40),
+                _ => (15, 45)
             };
             return Math.Clamp(value, minimum, maximum);
         }

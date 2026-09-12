@@ -1,0 +1,15 @@
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0/SemanticRoutingChecks
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0/SemanticRoutingChecks.deps.json
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0/SemanticRoutingChecks.runtimeconfig.json
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0/SemanticRoutingChecks.dll
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/bin/Debug/net10.0/SemanticRoutingChecks.pdb
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.GeneratedMSBuildEditorConfig.editorconfig
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.AssemblyInfoInputs.cache
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.AssemblyInfo.cs
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.csproj.CoreCompileInputs.cache
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.sourcelink.json
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.dll
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/refint/SemanticRoutingChecks.dll
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.pdb
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/SemanticRoutingChecks.genruntimeconfig.cache
+/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/Debug/net10.0/ref/SemanticRoutingChecks.dll

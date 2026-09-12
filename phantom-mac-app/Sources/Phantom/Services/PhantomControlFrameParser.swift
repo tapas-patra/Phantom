@@ -240,14 +240,18 @@ final class PhantomControlFrameParser {
     private static func clampTargetSeconds(_ value: Int, questionType: String) -> Int {
         let bounds: ClosedRange<Int>
         switch questionType {
-        case "behavioral": bounds = 45...75
-        case "technical": bounds = 30...60
-        case "coding", "system_design": bounds = 45...180
-        case "product_case": bounds = 45...120
-        case "motivation_fit": bounds = 30...60
-        case "personal_factual": bounds = 15...60
+        case "behavioral": bounds = 25...45
+        case "technical": bounds = 20...40
+        case "coding": bounds = 30...90
+        case "system_design": bounds = 40...75
+        case "product_case": bounds = 30...60
+        case "motivation_fit": bounds = 20...40
+        case "personal_factual": bounds = 10...30
+        case "situational": bounds = 20...40
         case "clarification", "unknown": bounds = 5...20
-        default: bounds = 15...120
+        case "factual_lookup", "status_update", "decision_support", "objection_response",
+             "risk_tradeoff", "brainstorm", "action_capture": bounds = 10...40
+        default: bounds = 15...45
         }
         return min(max(value, bounds.lowerBound), bounds.upperBound)
     }

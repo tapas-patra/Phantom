@@ -155,7 +155,9 @@
     "General technical, coding, system-design, and product questions stay universal",
     "Never invent numbers, durations, named technologies, team or stakeholder counts, adoption scope, or measured outcomes",
     "Never return a long wall of text",
-    "use 2–4 short paragraphs"
+    "use 2–4 short paragraphs",
+    "Treat targetSeconds as a maximum, not a quota",
+    "Use compact bullets only for coding"
   ],
   "deliveryStyleRequirements": {
     "standard": ["Delivery style is Standard", "Avoid casual openers and colloquial filler"],

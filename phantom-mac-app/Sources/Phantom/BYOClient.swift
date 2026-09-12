@@ -1,5 +1,9 @@
 import Foundation
 
+enum ReasoningContext {
+    @TaskLocal static var questionType: String?
+}
+
 struct BYOClient {
     func models(provider: String, apiKey: String) async throws -> [ManagedModel] {
         let endpoint: URL
@@ -187,31 +191,48 @@ struct BYOClient {
         imagesBase64: [String],
         messages: [ChatMessage]
     ) -> [String: Any] {
+        let plan = Self.reasoningPlan(for: messages)
+        let includeThinking = Self.supportsNativeThinking(provider: provider, model: model)
         if provider == "Claude" {
-            return [
+            var body: [String: Any] = [
                 "model": model,
-                "max_tokens": 2_000,
+                "max_tokens": max(plan.maxTokens, plan.claudeThinkingTokens + 512),
                 "system": messages.first(where: { $0.role == "system" })?.content ?? "",
                 "messages": claudeMessages(messages, imagesBase64: imagesBase64),
                 "stream": true
             ]
+            if includeThinking, plan.claudeThinkingTokens > 0 {
+                body["thinking"] = ["type": "enabled", "budget_tokens": plan.claudeThinkingTokens]
+            }
+            return body
         }
         if provider == "Gemini" {
+            var generationConfig: [String: Any] = ["maxOutputTokens": plan.maxTokens, "temperature": 0.7]
+            if includeThinking, plan.geminiThinkingTokens > 0 {
+                generationConfig["thinkingConfig"] = [
+                    "thinkingBudget": plan.geminiThinkingTokens,
+                    "includeThoughts": false
+                ]
+            }
             return [
                 "contents": geminiMessages(messages, imagesBase64: imagesBase64),
-                "generationConfig": ["maxOutputTokens": 2_000, "temperature": 0.7]
+                "generationConfig": generationConfig
             ]
         }
-        return [
+        var body: [String: Any] = [
             "model": model,
             "messages": openAIMessages(
                 messages,
                 imagesBase64: imagesBase64,
                 mistralImageURL: provider == "Mistral"
             ),
-            "max_tokens": 2_000,
+            "max_tokens": plan.maxTokens,
             "stream": true
         ]
+        if includeThinking {
+            body["reasoning"] = ["exclude": true, "effort": plan.effort]
+        }
+        return body
     }
 
     private func openAIMessages(
@@ -269,6 +290,56 @@ struct BYOClient {
             }
             return ["role": role, "parts": parts]
         }
+    }
+
+    private static func reasoningPlan(for messages: [ChatMessage]) -> (effort: String, maxTokens: Int, claudeThinkingTokens: Int, geminiThinkingTokens: Int) {
+        let effort = reasoningEffort(for: messages)
+        switch effort {
+        case "high": return ("high", 8_000, 5_000, 4_096)
+        case "low": return ("low", 3_000, 0, 0)
+        default: return ("medium", 5_000, 2_048, 1_024)
+        }
+    }
+
+    private static func supportsNativeThinking(provider: String, model: String) -> Bool {
+        if provider == "OpenRouter" { return true }
+        let value = model.lowercased()
+        let markers = [
+            "o1", "o3", "o4", "gpt-5",
+            "sonnet-4", "opus-4", "claude-3-7", "claude-4",
+            "gemini-2.5", "gemini-3",
+            "magistral", "gpt-oss", "qwq", "deepseek-r", "glm-5",
+            "reasoning", "thinking"
+        ]
+        return markers.contains(where: { value.contains($0) })
+    }
+
+    private static func reasoningEffort(for messages: [ChatMessage]) -> String {
+        if let typed = ReasoningContext.questionType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            switch typed {
+            case "coding", "system_design", "product_case": return "high"
+            case "behavioral", "personal_factual", "motivation_fit", "clarification", "factual_lookup", "status_update": return "low"
+            default: break
+            }
+        }
+        let question = messages.last(where: { $0.role == "user" })?.content.lowercased() ?? ""
+        let highTerms = [
+            "expand", "deeper", "in detail", "step by step", "write code", "write a function",
+            "implement", "algorithm", "complexity", "debug this", "fix this", "refactor",
+            "leetcode", "mermaid", "system design", "design a", "architecture", "scalability",
+            "high availability", "distributed", "load balancer", "rate limiter", "microservices"
+        ]
+        if messages.last(where: { $0.role == "user" })?.hasCode == true
+            || highTerms.contains(where: { question.contains($0) })
+        {
+            return "high"
+        }
+        let briefTerms = ["why", "how", "what about", "give an example", "clarify"]
+        let wordCount = question.split(whereSeparator: { $0.isWhitespace }).count
+        if wordCount <= 12 && briefTerms.contains(where: { question.contains($0) }) {
+            return "low"
+        }
+        return "medium"
     }
 }
 

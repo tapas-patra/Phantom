@@ -1519,7 +1519,12 @@ final class PhantomStore: ObservableObject {
                             modelId: self.selectedModelId,
                             knowledgeBase: self.hostedKnowledgeBase
                         )
-                        return makeStream(finalOutbound, UUID().uuidString, 1)
+                        let stream = makeStream(finalOutbound, UUID().uuidString, 1)
+                        return { onDelta, onRetryCleanup in
+                            try await ReasoningContext.$questionType.withValue(decision.questionType) {
+                                try await stream(onDelta, onRetryCleanup)
+                            }
+                        }
                     },
                     publish: { chunk in self.append(chunk, to: pendingReply.id) },
                     resetPublishedAttempt: { self.clearReply(pendingReply.id) },

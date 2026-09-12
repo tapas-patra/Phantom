@@ -17,6 +17,11 @@ public sealed class DesktopAiChatRequestDto
 
     public IReadOnlyList<DesktopAiChatMessageDto> Messages { get; set; } = Array.Empty<DesktopAiChatMessageDto>();
 
+    /// <summary>
+    /// Optional live-copilot question type from the control frame. Used to size reasoning for the answer call.
+    /// </summary>
+    public string? QuestionType { get; set; }
+
     public IReadOnlyList<string> GetNormalizedImages()
     {
         var images = new List<string>(MaxAttachedImages);

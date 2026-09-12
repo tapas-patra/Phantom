@@ -779,6 +779,7 @@ struct BackendClient {
             let allowPaidSessionExtension: Bool
             let imageBase64: String?
             let imagesBase64: [String]
+            let questionType: String?
             let messages: [WireMessage]
         }
 
@@ -797,6 +798,7 @@ struct BackendClient {
             allowPaidSessionExtension: allowPaidSessionExtension,
             imageBase64: normalizedImages.first,
             imagesBase64: normalizedImages,
+            questionType: ReasoningContext.questionType,
             messages: messages.map { WireMessage(role: $0.role, content: $0.content) }
         ))
 

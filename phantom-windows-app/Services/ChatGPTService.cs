@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -70,12 +71,22 @@ namespace SecureOverlay.Services
                     }
                 }
 
-                var request = new
-                {
-                    model = _model,
-                    messages = apiMessages,
-                    max_tokens = 2000
-                };
+                var plan = ReasoningBudget.Resolve(messages);
+                var includeThinking = ReasoningBudget.SupportsNativeThinking("ChatGPT", _model);
+                object request = includeThinking
+                    ? new
+                    {
+                        model = _model,
+                        messages = apiMessages,
+                        max_tokens = plan.MaxTokens,
+                        reasoning = new { exclude = true, effort = plan.Effort }
+                    }
+                    : new
+                    {
+                        model = _model,
+                        messages = apiMessages,
+                        max_tokens = plan.MaxTokens
+                    };
 
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -147,31 +158,37 @@ namespace SecureOverlay.Services
                     }
                 }
 
-                var request = new
-                {
-                    model = _model,
-                    messages = apiMessages,
-                    max_tokens = 2000,
-                    stream = true
-                };
-
-                var json = JsonConvert.SerializeObject(request);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
-
-                var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
-                {
-                    Content = content
-                };
-                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-
-                var response = await _httpClient.SendAsync(
-                    requestMessage,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken
-                );
+                var plan = ReasoningBudget.Resolve(messages);
+                var includeThinking = ReasoningBudget.SupportsNativeThinking("ChatGPT", _model);
+                var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
+                    _httpClient,
+                    withThinking =>
+                    {
+                        object payload = withThinking
+                            ? new
+                            {
+                                model = _model,
+                                messages = apiMessages,
+                                max_tokens = plan.MaxTokens,
+                                stream = true,
+                                reasoning = new { exclude = true, effort = plan.Effort }
+                            }
+                            : new
+                            {
+                                model = _model,
+                                messages = apiMessages,
+                                max_tokens = plan.MaxTokens,
+                                stream = true
+                            };
+                        var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+                        {
+                            Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json")
+                        };
+                        requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                        return requestMessage;
+                    },
+                    includeThinking,
+                    cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {

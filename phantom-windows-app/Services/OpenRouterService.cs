@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -42,11 +43,13 @@ namespace SecureOverlay.Services
 
             try
             {
+                var plan = ReasoningBudget.Resolve(messages);
                 var request = new
                 {
                     model = _model,
                     messages = BuildMessages(messages, imagesBase64),
-                    max_tokens = 2000
+                    max_tokens = plan.MaxTokens,
+                    reasoning = new { exclude = true, effort = plan.Effort }
                 };
 
                 var requestMessage = CreateRequest(request);
@@ -84,12 +87,14 @@ namespace SecureOverlay.Services
 
             try
             {
+                var plan = ReasoningBudget.Resolve(messages);
                 var request = new
                 {
                     model = _model,
                     messages = BuildMessages(messages, imagesBase64),
-                    max_tokens = 2000,
-                    stream = true
+                    max_tokens = plan.MaxTokens,
+                    stream = true,
+                    reasoning = new { exclude = true, effort = plan.Effort }
                 };
 
                 var requestMessage = CreateRequest(request);
@@ -128,6 +133,12 @@ namespace SecureOverlay.Services
                         try
                         {
                             dynamic? chunk = JsonConvert.DeserializeObject(data);
+                            var error = chunk?.error?.message?.ToString() ?? chunk?.error?.ToString();
+                            if (!string.IsNullOrWhiteSpace(error))
+                            {
+                                return $"Error: {error}";
+                            }
+
                             var delta = chunk?.choices[0]?.delta?.content?.ToString();
                             if (!string.IsNullOrEmpty(delta))
                             {

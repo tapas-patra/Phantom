@@ -176,9 +176,15 @@ namespace SecureOverlay.Services
 
                 var result = await new LiveCopilotOrchestrator().ExecuteAsync(
                     CopilotPromptRegistry.EntityIds(knowledge, _copilotMode), CopilotPromptRegistry.DocumentIds(knowledge, _copilotMode),
-                    (publish, cleanup, token) => RunModelOperationAsync(
-                        "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
-                        publish, cleanup, token, imagesBase64),
+                    async (publish, cleanup, token) =>
+                    {
+                        using (ReasoningBudget.UseQuestionType(null))
+                        {
+                            return await RunModelOperationAsync(
+                                "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
+                                publish, cleanup, token, imagesBase64).ConfigureAwait(false);
+                        }
+                    },
                     async (decision, token) =>
                     {
                         StageChanged?.Invoke(this, "Searching your knowledge…");
@@ -215,7 +221,13 @@ namespace SecureOverlay.Services
                         var prompt = CopilotPromptRegistry.BuildSecondCallPrompt(
                             _copilotMode, _deliveryStyle, decision, retrieval, knowledge, resume, roleContext);
                         var context = BuildAdaptiveContext(prompt);
-                        return (publish, cleanup, token) => RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imagesBase64);
+                        return async (publish, cleanup, token) =>
+                        {
+                            using (ReasoningBudget.UseQuestionType(decision.QuestionType))
+                            {
+                                return await RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imagesBase64).ConfigureAwait(false);
+                            }
+                        };
                     },
                     chunk => { StageChanged?.Invoke(this, "Answering…"); LiveRequestTrace.Current?.Mark("answer_first_visible_token"); onChunkReceived(chunk); },
                     onRetryCleanup, cancellationToken,

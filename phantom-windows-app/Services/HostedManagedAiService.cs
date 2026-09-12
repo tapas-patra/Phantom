@@ -11,6 +11,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Domain.Entities;
+using SecureOverlay.Helpers;
 using SecureOverlay.Infrastructure.Hosted;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 
@@ -89,6 +90,7 @@ namespace SecureOverlay.Services
                     allowPaidSessionExtension = _allowPaidSessionExtension,
                     imageBase64 = MultimodalContentBuilder.Normalize(imagesBase64).FirstOrDefault(),
                     imagesBase64 = MultimodalContentBuilder.Normalize(imagesBase64).Take(3).ToList(),
+                    questionType = ReasoningBudget.CurrentQuestionType,
                     messages = messages.ConvertAll(message => new
                     {
                         role = message.Role,
@@ -221,6 +223,7 @@ namespace SecureOverlay.Services
                 allowPaidSessionExtension = _allowPaidSessionExtension,
                 imageBase64 = MultimodalContentBuilder.Normalize(imagesBase64).FirstOrDefault(),
                 imagesBase64 = MultimodalContentBuilder.Normalize(imagesBase64).Take(3).ToList(),
+                questionType = ReasoningBudget.CurrentQuestionType,
                 messages = messages.ConvertAll(message => new
                 {
                     role = message.Role,

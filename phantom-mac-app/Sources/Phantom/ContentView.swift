@@ -377,7 +377,7 @@ private struct ChatView: View {
 
     private var promptEditor: some View {
         ZStack(alignment: .topLeading) {
-            PromptTextView(text: $store.prompt, height: $promptHeight)
+            PromptTextView(text: $store.prompt, height: $promptHeight, reclaimFocus: store.status == "Needs clarification")
                 .frame(height: promptHeight)
             if store.prompt.isEmpty {
                 Text("Ask an interview question")
@@ -412,6 +412,7 @@ private struct ChatView: View {
 private struct PromptTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
+    var reclaimFocus = false
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -440,6 +441,9 @@ private struct PromptTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text { textView.string = text }
         context.coordinator.resize(textView)
+        if reclaimFocus, let window = textView.window, window.isKeyWindow {
+            window.makeFirstResponder(textView)
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1100,6 +1104,7 @@ private struct MessageBubble: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.bordered)
+                            .focusable(false)
                         }
                     }
                 }

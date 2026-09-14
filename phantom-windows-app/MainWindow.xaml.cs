@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -2644,6 +2645,7 @@ namespace SecureOverlay
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
                     ShowClarificationOptions(_conversationManager.PendingClarificationOptions);
+                    RestoreComposerAfterClarification();
                     _lastRetryableQuestion = null;
                     RegenerateButton.IsEnabled = true;
                     
@@ -2787,7 +2789,7 @@ namespace SecureOverlay
                 // Do not steal foreground focus while the overlay is hidden for Companion Mode (M22).
                 if (!_companionOverlayHidden)
                 {
-                    FocusInput();
+                    RestoreComposerAfterClarification();
                 }
             }
         }
@@ -3214,8 +3216,12 @@ namespace SecureOverlay
                     BorderBrush = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF)),
                     BorderThickness = new Thickness(1),
                     Cursor = Cursors.Hand,
+                    Focusable = false,
+                    IsTabStop = false,
                     Style = (Style)FindResource("ButtonStyle")
                 };
+                KeyboardNavigation.SetIsTabStop(button, false);
+                KeyboardNavigation.SetDirectionalNavigation(button, KeyboardNavigationMode.None);
                 button.Click += async (_, _) =>
                 {
                     if (_isProcessingRequest)
@@ -3229,6 +3235,99 @@ namespace SecureOverlay
                 ClarificationOptionsPanel.Children.Add(button);
             }
             ClarificationOptionsPanel.Visibility = Visibility.Visible;
+            RestoreComposerAfterClarification();
+        }
+
+        private void RestoreComposerAfterClarification()
+        {
+            RestoreChatInputForRetry();
+            SyncChatWebViewHost();
+            if (_companionOverlayHidden)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_companionOverlayHidden || _isHidden)
+                {
+                    return;
+                }
+
+                SyncChatWebViewHost();
+                Activate();
+                InputTextBox.Focus();
+                Keyboard.Focus(InputTextBox);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_companionOverlayHidden || _isHidden)
+                {
+                    return;
+                }
+
+                if (!InputTextBox.IsKeyboardFocused)
+                {
+                    Activate();
+                    InputTextBox.Focus();
+                    Keyboard.Focus(InputTextBox);
+                }
+            }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+        }
+
+        private void SyncChatWebViewHost()
+        {
+            try
+            {
+                UpdateLayout();
+                ChatWebView.InvalidateMeasure();
+                ChatWebView.InvalidateArrange();
+                ChatWebView.UpdateLayout();
+
+                var controller = TryGetChatWebViewController();
+                controller?.NotifyParentWindowPositionChanged();
+
+                // Force the native WebView2 HWND to pick up the smaller chat slot after
+                // clarification chips appear; otherwise it keeps covering the composer.
+                var previousMargin = ChatWebView.Margin;
+                ChatWebView.Margin = new Thickness(
+                    previousMargin.Left,
+                    previousMargin.Top,
+                    previousMargin.Right,
+                    previousMargin.Bottom + 0.5);
+                ChatWebView.UpdateLayout();
+                ChatWebView.Margin = previousMargin;
+                ChatWebView.UpdateLayout();
+                controller?.NotifyParentWindowPositionChanged();
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Chat WebView layout sync failed: {ex.GetType().Name}");
+            }
+        }
+
+        private CoreWebView2Controller? TryGetChatWebViewController()
+        {
+            for (var type = ChatWebView.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var name in new[] { "_coreWebView2Controller", "coreWebView2Controller", "Controller" })
+                {
+                    var field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (field?.GetValue(ChatWebView) is CoreWebView2Controller fromField)
+                    {
+                        return fromField;
+                    }
+
+                    var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (property?.GetValue(ChatWebView) is CoreWebView2Controller fromProperty)
+                    {
+                        return fromProperty;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private async void RegenerateButton_Click(object sender, RoutedEventArgs e)

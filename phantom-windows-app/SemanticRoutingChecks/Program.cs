@@ -181,9 +181,6 @@ Equal("Which environment should I answer for?", listedOptions.DisplayText, "list
 Equal("2", listedOptions.Options.Count.ToString(), "listed clarification count");
 Equal("I meant a local minikube cluster", listedOptions.Options[0].Question, "listed clarification first option");
 
-if (!firstCallPrompt.Contains("Options:", StringComparison.Ordinal))
-    throw new InvalidOperationException("The Windows clarify contract is missing clickable option instructions.");
-
 Console.WriteLine($"Shared live-copilot fixture suite passed ({fixtures.Version}).");
 
 static string FindFixtures()

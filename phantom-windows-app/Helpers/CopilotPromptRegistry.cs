@@ -180,6 +180,7 @@ namespace SecureOverlay.Helpers
             "Use JSON booleans, a numeric confidence from 0 through 1, no comments, no trailing comma, and no newline inside the JSON. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
             "For retrieve, emit no body and request new private evidence only when it materially improves correctness; use only IDs from the catalog. " +
             "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. " +
+            "Nothing else may appear between the JSON line and PHANTOM_BODY. " +
             "Exact direct-answer shape:\nPHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nThen output the answer immediately.";
         private const string StrictProtocolRepair =
             "This is the single protocol-repair attempt because the previous header was invalid. Return only the exact control-frame shape described above. " +
@@ -200,7 +201,7 @@ namespace SecureOverlay.Helpers
             "Motivation/fit (20–40s): connect verified strengths to the role context without inventing career facts. " +
             "Personal factual (10–30s): answer only what evidence supports. If the exact fact is missing, do not guess; bridge to the closest supported fact. " +
             "Situational (20–40s): a concrete future approach, who you would involve, and how you would decide. Do not recast it as a past story. " +
-            "Clarify (5–15s): only when a genuine unresolved choice changes the answer. Ask one concise spoken question with two or three options. After the question, emit a line `Options:` then two or three `- reply` lines. Each reply is a short clickable answer the user can send unchanged. Never ask the user to pick an interview type.";
+            "Clarify (5–15s): only when a genuine unresolved choice changes the answer. Ask one concise spoken question with two or three alternatives in the question itself. Never add labels or lists before PHANTOM_BODY. Never ask the user to pick an interview type.";
         private const string BriefingContracts =
             "Briefing answers are for a live meeting, not an interview essay. Factual lookup: one to three sentences. Status: what is true now and one risk. " +
             "Decision: recommendation, why, and what to watch. Objection: acknowledge, answer with a fact, offer a next step. " +

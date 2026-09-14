@@ -50,6 +50,16 @@
       "expectedAction": "answer",
       "expectedBody": "Pretty body.",
       "maxNormalCalls": 1
+    },
+    {
+      "name": "missing-body-delimiter-chunked",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}",
+        "\nOn-prem uses kubeadm."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "On-prem uses kubeadm.",
+      "maxNormalCalls": 1
     }
   ],
   "invalid": [

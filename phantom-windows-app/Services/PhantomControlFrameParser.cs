@@ -60,17 +60,9 @@ namespace SecureOverlay.Services
 
             var buffered = Normalize(raw);
             PrefixBytes = Encoding.UTF8.GetByteCount(buffered);
-            if (TryLocateFrame(buffered, out var json, out var rest))
+            if (TryCommitFrame(buffered, finalize: false, out var visible))
             {
-                if (string.IsNullOrWhiteSpace(json))
-                {
-                    throw new PhantomProtocolException("control_json_invalid");
-                }
-
-                Decision = ParseAndValidate(json);
-                _bodyStarted = true;
-                _prefix.Clear();
-                return AcceptBody(rest);
+                return visible;
             }
 
             if (PrefixBytes > MaxPrefixBytes)
@@ -83,6 +75,13 @@ namespace SecureOverlay.Services
 
         public LiveTurnDecision Complete()
         {
+            if (Decision is null)
+            {
+                var buffered = Normalize(_prefix.ToString());
+                PrefixBytes = Encoding.UTF8.GetByteCount(buffered);
+                _ = TryCommitFrame(buffered, finalize: true, out _);
+            }
+
             var decision = Decision ?? throw new PhantomProtocolException("control_frame_incomplete");
             if (decision.Action == LiveCopilotAction.Retrieve && _bodyHasContent)
                 throw new PhantomProtocolException("retrieve_body_not_empty");
@@ -111,12 +110,12 @@ namespace SecureOverlay.Services
         public string GetFallbackAnswerText() => ExtractBareAnswer(_prefix.ToString());
 
         public static string ExtractAnswerBody(string response)
-            => TryLocateFrame(Normalize(response), out _, out var rest) ? rest : string.Empty;
+            => TryLocateFrame(Normalize(response), out _, out var rest, finalize: true) ? rest : string.Empty;
 
         public static string ExtractBareAnswer(string response)
         {
             var text = Normalize(response);
-            if (TryLocateFrame(text, out _, out var rest))
+            if (TryLocateFrame(text, out _, out var rest, finalize: true))
             {
                 return rest.Trim();
             }
@@ -136,25 +135,139 @@ namespace SecureOverlay.Services
             return StripThink(text.Replace("\r\n", "\n").Replace('\r', '\n'));
         }
 
-        private static bool TryLocateFrame(string buffered, out string json, out string rest)
+        private bool TryCommitFrame(string buffered, bool finalize, out string visible)
+        {
+            visible = string.Empty;
+            if (_bodyStarted) return true;
+            if (!TryLocateFrame(buffered, out var json, out var rest, finalize))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new PhantomProtocolException("control_json_invalid");
+            }
+
+            Decision = ParseAndValidate(json);
+            _bodyStarted = true;
+            _prefix.Clear();
+            visible = AcceptBody(rest);
+            return true;
+        }
+
+        private static bool TryLocateFrame(string buffered, out string json, out string rest, bool finalize = false)
         {
             json = string.Empty;
             rest = string.Empty;
             var protocolIndex = buffered.IndexOf(ProtocolLine, StringComparison.Ordinal);
             if (protocolIndex < 0) return false;
 
-            var afterProtocol = protocolIndex + ProtocolLine.Length;
-            if (afterProtocol < buffered.Length && buffered[afterProtocol] == '\n')
+            var cursor = protocolIndex + ProtocolLine.Length;
+            SkipWhitespace(buffered, ref cursor);
+            if (cursor >= buffered.Length || buffered[cursor] != '{')
             {
-                afterProtocol++;
+                return false;
             }
 
-            var bodyIndex = buffered.IndexOf(BodyDelimiter, afterProtocol, StringComparison.Ordinal);
-            if (bodyIndex < 0) return false;
+            if (!TryReadJsonObject(buffered, cursor, out var jsonEnd))
+            {
+                return false;
+            }
 
-            json = buffered[afterProtocol..bodyIndex].Trim();
-            rest = buffered[(bodyIndex + BodyDelimiter.Length)..];
+            json = buffered[cursor..jsonEnd].Trim();
+            cursor = jsonEnd;
+            SkipWhitespace(buffered, ref cursor);
+
+            const string bodyToken = "PHANTOM_BODY";
+            if (cursor < buffered.Length && StartsAt(buffered, cursor, bodyToken))
+            {
+                cursor += bodyToken.Length;
+                if (cursor < buffered.Length && buffered[cursor] == '\n')
+                {
+                    cursor++;
+                }
+
+                rest = buffered[cursor..];
+                return true;
+            }
+
+            var remaining = cursor < buffered.Length ? buffered[cursor..] : string.Empty;
+            if (!finalize && (remaining.Length == 0 || IsTokenPrefix(remaining, bodyToken)))
+            {
+                return false;
+            }
+
+            rest = remaining;
             return true;
+        }
+
+        private static void SkipWhitespace(string text, ref int index)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+        }
+
+        private static bool StartsAt(string text, int index, string token)
+        {
+            return index + token.Length <= text.Length
+                && string.CompareOrdinal(text, index, token, 0, token.Length) == 0;
+        }
+
+        private static bool IsTokenPrefix(string remaining, string token)
+            => remaining.Length > 0 && remaining.Length < token.Length
+                && token.StartsWith(remaining, StringComparison.Ordinal);
+
+        private static bool TryReadJsonObject(string text, int start, out int endExclusive)
+        {
+            endExclusive = start;
+            if (start >= text.Length || text[start] != '{') return false;
+
+            var depth = 0;
+            var inString = false;
+            var escape = false;
+            for (var i = start; i < text.Length; i++)
+            {
+                var c = text[i];
+                if (inString)
+                {
+                    if (escape)
+                    {
+                        escape = false;
+                        continue;
+                    }
+
+                    if (c == '\\')
+                    {
+                        escape = true;
+                        continue;
+                    }
+
+                    if (c == '"') inString = false;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    inString = true;
+                    continue;
+                }
+
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        endExclusive = i + 1;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static string StripThink(string text)

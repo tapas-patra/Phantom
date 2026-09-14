@@ -77,6 +77,17 @@ namespace SecureOverlay.Services
                     {
                         protocolRetries++;
                         protocolRejected?.Invoke(error.Code);
+                        if (PhantomControlFrameParser.CanFallback(error.Code) && IsCompleteAnswer(fallbackBuffer))
+                        {
+                            protocolRejected?.Invoke("control_frame_fallback");
+                            var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
+                            decisionParsed?.Invoke(fallbackDecision, modelCalls);
+                            publish(fallbackBuffer);
+                            return new LiveCopilotResult(
+                                fallbackBuffer, fallbackDecision, modelCalls, protocolRetries, "not_requested",
+                                Array.Empty<RetrievedContextSnippet>());
+                        }
+
                         resetPublishedAttempt?.Invoke();
                         continue;
                     }

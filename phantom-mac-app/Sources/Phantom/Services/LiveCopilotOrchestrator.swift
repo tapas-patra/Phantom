@@ -57,6 +57,16 @@ final class LiveCopilotOrchestrator {
                 if protocolRetries == 0 {
                     protocolRejected?(error.code)
                     protocolRetries += 1
+                    if PhantomControlFrameParser.canFallback(error.code), Self.isCompleteAnswer(fallbackBuffer) {
+                        protocolRejected?("control_frame_fallback")
+                        let fallbackDecision = PhantomControlFrameParser.fallbackAnswerDecision()
+                        decisionParsed?(fallbackDecision, modelCalls)
+                        publish(fallbackBuffer)
+                        return LiveCopilotResult(
+                            answer: fallbackBuffer, decision: fallbackDecision, modelCallCount: modelCalls,
+                            protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
+                        )
+                    }
                     parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
                     resetPublishedAttempt()
                     continue

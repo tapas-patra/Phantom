@@ -10,7 +10,7 @@
     "answerBases": ["exact_evidence", "profile_synthesis", "universal_knowledge", "universal_synthesis", "clarification"],
     "entityTypes": ["none", "profile", "experience", "project", "document", "context_pack", "task"],
     "directTemplate": "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\n",
-    "repairPolicy": "Retry malformed output once with a strict reminder. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
+    "repairPolicy": "Retry malformed output once with a strict reminder only when the first attempt produced no usable answer. If the first attempt already produced a complete answer body, use it immediately. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
   },
   "modes": {
     "interview": {

@@ -1,8 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "F183bVm6z2U=",
+  "dgSpecHash": "eTmtFT+El1U=",
   "success": true,
   "projectFilePath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/c60318aa45f2ef17e9ee6a3747c7c740/nuget/microsoft.netcore.app.ref/8.0.28/microsoft.netcore.app.ref.8.0.28.nupkg.sha512",
+    "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/c60318aa45f2ef17e9ee6a3747c7c740/nuget/microsoft.aspnetcore.app.ref/8.0.28/microsoft.aspnetcore.app.ref.8.0.28.nupkg.sha512",
+    "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/c60318aa45f2ef17e9ee6a3747c7c740/nuget/microsoft.netcore.app.host.osx-x64/8.0.28/microsoft.netcore.app.host.osx-x64.8.0.28.nupkg.sha512"
+  ],
   "logs": []
 }

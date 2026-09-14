@@ -28,8 +28,10 @@ final class SpeechInputService {
 
     var onTranscript: ((String, Bool) -> Void)?
     var onStateChange: ((String) -> Void)?
+    var onCaptureCompleted: (() -> Void)?
     private(set) var isListening = false
     var isCloudMode: Bool { cloudTranscriber != nil && preferCloud && !forceNative && !isCoolingDown }
+    private var awaitingStopCompletion = false
 
     private var isCoolingDown: Bool {
         guard let until = cloudCooldownUntil else { return false }
@@ -53,6 +55,7 @@ final class SpeechInputService {
     func start() async {
         guard !isListening, await requestPermissions() else { return }
         shouldListen = true
+        awaitingStopCompletion = false
         cloudTranscript = ""
         lastNativeTranscript = ""
         cloudAudio.reset()
@@ -170,6 +173,7 @@ final class SpeechInputService {
 
     func stop() {
         shouldListen = false
+        awaitingStopCompletion = true
         let wasCloud = isCloudMode
         stopEngine()
         isListening = false
@@ -177,14 +181,16 @@ final class SpeechInputService {
             let finalData = cloudAudio.flush() ?? Data()
             if cloudAudio.enqueue(finalData, final: true) { drainCloudQueue() }
             onStateChange?("Finishing cloud transcription…")
-        } else {
-            recognitionRequest?.endAudio(); recognitionTask?.finish(); recognitionRequest = nil; recognitionTask = nil
-            // If recognition already finished without an isFinal callback, still finalize for auto-send.
+        } else if recognitionTask == nil {
             if !lastNativeTranscript.isEmpty {
                 onTranscript?(lastNativeTranscript, true)
             }
             onStateChange?(forceNative ? "Native fallback ready" : "Ready")
             applyPendingCloudRecoveryIfNeeded()
+            raiseCaptureCompleted()
+        } else {
+            recognitionRequest?.endAudio()
+            recognitionTask?.finish()
         }
     }
 
@@ -220,19 +226,29 @@ final class SpeechInputService {
                         if self.shouldListen {
                             self.startNative()
                         } else if !self.cloudTranscript.isEmpty {
-                            // Stop already happened — still finalize so auto-send can run.
                             self.onTranscript?(self.cloudTranscript, true)
                             self.onStateChange?("Native fallback ready")
+                            self.raiseCaptureCompleted()
                         } else {
                             self.onStateChange?(firstFailure
                                 ? "The next recording will retry cloud speech"
                                 : "The next recording will use native speech fallback")
+                            self.raiseCaptureCompleted()
                         }
+                    } else {
+                        self.raiseCaptureCompleted()
                     }
                     break
                 }
             }
             self.cloudDrainTask = nil
+            if self.awaitingStopCompletion {
+                if self.cloudAudio.hasQueuedItems {
+                    self.drainCloudQueue()
+                    return
+                }
+                self.raiseCaptureCompleted()
+            }
         }
     }
 
@@ -240,6 +256,13 @@ final class SpeechInputService {
         stopEngine(); recognitionRequest = nil; recognitionTask = nil; isListening = false; shouldListen = false
         onStateChange?(forceNative ? "Native fallback ready" : "Ready")
         applyPendingCloudRecoveryIfNeeded()
+        raiseCaptureCompleted()
+    }
+
+    private func raiseCaptureCompleted() {
+        guard awaitingStopCompletion else { return }
+        awaitingStopCompletion = false
+        onCaptureCompleted?()
     }
 
     private func applyPendingCloudRecoveryIfNeeded() {
@@ -327,6 +350,11 @@ private final class SpeechAudioQueue: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard samples.count >= 8_000 else { samples.removeAll(); return nil }
         let result = data(from: samples); samples.removeAll(); return result
+    }
+
+    var hasQueuedItems: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !items.isEmpty
     }
 
     func enqueue(_ data: Data, final: Bool) -> Bool {

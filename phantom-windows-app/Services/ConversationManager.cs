@@ -242,12 +242,21 @@ namespace SecureOverlay.Services
                 LastDecision = result.Decision;
                 LastModelCallCount = result.ModelCallCount;
                 if (result.ActiveEvidence.Count > 0) _activeEvidence[_copilotMode] = result.ActiveEvidence;
-                var assistant = Message("assistant", result.Answer);
-                assistant.HasCode = result.Answer.Contains("```", StringComparison.Ordinal);
+                var answer = result.Answer;
+                if (result.Decision.Action == LiveCopilotAction.Clarify)
+                {
+                    var parsed = ClarificationOptionParser.Parse(answer);
+                    answer = parsed.DisplayText;
+                    PendingClarificationOptions = parsed.Options
+                        .Select(option => new ClarificationOption(option.Label, option.Question))
+                        .ToArray();
+                }
+                var assistant = Message("assistant", answer);
+                assistant.HasCode = answer.Contains("```", StringComparison.Ordinal);
                 assistant.AnswerSource = result.Decision.AnswerBasis;
                 assistant.InterviewIntent = result.Decision.Intent;
                 CurrentHistory.Add(assistant);
-                return (result.Answer, string.Empty);
+                return (answer, string.Empty);
             }
             catch (OperationCanceledException) { CurrentHistory.Remove(user); return (string.Empty, "Cancelled"); }
             catch (PhantomProtocolException error)

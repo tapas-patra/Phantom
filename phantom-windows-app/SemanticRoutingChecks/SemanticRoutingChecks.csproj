@@ -17,6 +17,7 @@
     <Compile Include="../../phantom-windows-app-backend/Services/ManagedAiProviderException.cs" Link="Backend/ManagedAiProviderException.cs" />
     <Compile Include="../../phantom-windows-app-backend/Services/ProviderResiliencePolicy.cs" Link="Backend/ProviderResiliencePolicy.cs" />
     <Compile Include="../Helpers/CopilotPromptRegistry.cs" Link="Helpers/CopilotPromptRegistry.cs" />
+    <Compile Include="../Helpers/ClarificationOptionParser.cs" Link="Helpers/ClarificationOptionParser.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" />

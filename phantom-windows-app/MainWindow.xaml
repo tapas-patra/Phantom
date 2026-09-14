@@ -302,8 +302,8 @@
                         <ColumnDefinition Width="Auto"/>   <!-- Send button -->
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel x:Name="ClarificationOptionsPanel" Grid.Row="0" Grid.ColumnSpan="7"
-                                Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed"/>
+                    <WrapPanel x:Name="ClarificationOptionsPanel" Grid.Row="0" Grid.ColumnSpan="7"
+                               Margin="0,0,0,8" Visibility="Collapsed"/>
 
                     <!-- Mac-style attached screenshot strip above the composer -->
                     <Border x:Name="AttachedScreenshotsBorder"

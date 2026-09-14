@@ -93,10 +93,7 @@ namespace SecureOverlay
 
         private bool _autoSendAfterVoice = false;
         private string _voiceCommittedText = "";
-        private bool _voiceSawTranscriptAfterStop;
-        private DateTime _voiceAutoSendDeadlineUtc;
-        private DateTime _voiceAutoSendFallbackUtc;
-        private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
+        private System.Windows.Threading.DispatcherTimer? _voiceCaptureSafetyTimer;
         private System.Windows.Threading.DispatcherTimer? _companionComposerSyncTimer;
         private bool _applyingCompanionComposer;
         private string _lastCompanionComposerSent = "\u0001";
@@ -3200,16 +3197,32 @@ namespace SecureOverlay
 
             foreach (var option in options)
             {
+                var label = new TextBlock
+                {
+                    Text = option.Label,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 280,
+                    Foreground = Brushes.White
+                };
                 var button = new Button
                 {
-                    Content = option.Label,
+                    Content = label,
                     Tag = option.Question,
-                    Margin = new Thickness(0, 0, 8, 0),
+                    Margin = new Thickness(0, 0, 8, 6),
                     Padding = new Thickness(12, 6, 12, 6),
+                    Background = new SolidColorBrush(Color.FromArgb(0x90, 0x00, 0xAA, 0xFF)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand,
                     Style = (Style)FindResource("ButtonStyle")
                 };
                 button.Click += async (_, _) =>
                 {
+                    if (_isProcessingRequest)
+                    {
+                        return;
+                    }
+
                     InputTextBox.Text = (string)button.Tag;
                     await SendMessage();
                 };
@@ -3644,6 +3657,7 @@ namespace SecureOverlay
                 _voiceService.SpeechRecognized += OnSpeechRecognized;
                 _voiceService.SpeechHypothesis += OnSpeechHypothesis;
                 _voiceService.StatusChanged += OnVoiceStatusChanged;
+                _voiceService.CaptureCompleted += OnVoiceCaptureCompleted;
                 
                 Log.WriteLine("Starting async initialization...");
                 VoiceStatusText.Text = "Initializing...";
@@ -3704,11 +3718,6 @@ namespace SecureOverlay
                 var shown = CombineVoiceText(_voiceCommittedText, text);
                 InputTextBox.Text = shown;
                 SendCompanionVoiceComposer(shown, isFinal: false);
-                if (_autoSendAfterVoice)
-                {
-                    _voiceSawTranscriptAfterStop = true;
-                    StartVoiceCompletionTimer();
-                }
             });
         }
 
@@ -3734,13 +3743,7 @@ namespace SecureOverlay
                 
                 FocusInput();
                 
-                if (_autoSendAfterVoice)
-                {
-                    _voiceSawTranscriptAfterStop = true;
-                    Log.WriteLine("  Auto-send active - restarting completion timer after transcript");
-                    StartVoiceCompletionTimer();
-                }
-                else
+                if (!_autoSendAfterVoice)
                 {
                     StatusText.Text = "✓ Speech captured - Press Enter to send";
                 }
@@ -3877,17 +3880,24 @@ namespace SecureOverlay
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 200, 200, 200));
                 }
 
-                // After cloud→native fallback (or cloud failure while waiting), keep auto-send alive.
-                if (_autoSendAfterVoice
-                    && _voiceService != null
-                    && !_voiceService.IsListening()
-                    && (status.Contains("Native fallback", StringComparison.OrdinalIgnoreCase)
-                        || status.Contains("Cloud speech unavailable", StringComparison.OrdinalIgnoreCase)
-                        || status.Contains("recognized", StringComparison.OrdinalIgnoreCase)))
-                {
-                    StartVoiceCompletionTimer();
-                }
             });
+        }
+
+        private void OnVoiceCaptureCompleted(object? sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.InvokeAsync(() => OnVoiceCaptureCompleted(sender, e));
+                return;
+            }
+
+            _voiceCaptureSafetyTimer?.Stop();
+            if (!_autoSendAfterVoice)
+            {
+                return;
+            }
+
+            _ = SendCompletedVoiceTranscriptAsync();
         }
 
         private void VoiceButton_Click(object sender, RoutedEventArgs e)
@@ -3920,30 +3930,25 @@ namespace SecureOverlay
             if (_voiceService.IsListening())
             {
                 Log.WriteLine("  Currently listening - stopping");
-                var wasCloudSpeech = _voiceService.IsCloudMode();
                 _autoSendAfterVoice = _settings.AutoSendAfterVoiceStopEnabled;
                 
                 _voiceService.StopListening();
                 SetVoiceButtonVisualState(isListening: false);
-                VoiceStatusText.Text = "Processing speech...";
+                VoiceStatusText.Text = "Finishing transcription…";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
-                Log.WriteLine("  ✓ Stopped listening - waiting for ALL speech to complete");
+                Log.WriteLine("  ✓ Stopped listening - waiting for transcription to finish");
 
                 if (_autoSendAfterVoice)
                 {
-                    var now = DateTime.UtcNow;
-                    _voiceSawTranscriptAfterStop = false;
-                    _voiceAutoSendDeadlineUtc = now.AddSeconds(5);
-                    _voiceAutoSendFallbackUtc = now.AddMilliseconds(wasCloudSpeech ? 2000 : 600);
-                    Log.WriteLine(wasCloudSpeech
-                        ? "  Auto-send enabled - waiting for cloud transcription or existing text"
-                        : "  Auto-send enabled - starting completion timer");
-                    StartVoiceCompletionTimer();
+                    StatusText.Text = "Finishing transcription…";
+                    StatusIndicator.Fill = Brushes.Gold;
+                    Log.WriteLine("  Auto-send enabled - waiting for capture completed");
+                    StartVoiceCaptureSafetyTimer();
                 }
                 else
                 {
-                    _voiceCompletionTimer?.Stop();
+                    _voiceCaptureSafetyTimer?.Stop();
                     StatusText.Text = "✓ Speech captured - Press Send to continue";
                     StatusIndicator.Fill = Brushes.LightGreen;
                     VoiceStatusText.Text = "Ready";
@@ -3964,7 +3969,7 @@ namespace SecureOverlay
                     : InputTextBox.Text.TrimEnd();
                 
                 _autoSendAfterVoice = false;
-                _voiceCompletionTimer?.Stop();
+                _voiceCaptureSafetyTimer?.Stop();
                 
                 _voiceService.StartListening();
                 SetVoiceButtonVisualState(isListening: true);
@@ -3977,73 +3982,79 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════");
         }
 
-        private void StartVoiceCompletionTimer()
+        private void StartVoiceCaptureSafetyTimer()
         {
-            if (_voiceCompletionTimer == null)
+            if (_voiceCaptureSafetyTimer == null)
             {
-                _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+                _voiceCaptureSafetyTimer = new System.Windows.Threading.DispatcherTimer
                 {
-                    Interval = TimeSpan.FromMilliseconds(500)
+                    Interval = TimeSpan.FromSeconds(20)
                 };
-                _voiceCompletionTimer.Tick += VoiceCompletionTimer_Tick;
+                _voiceCaptureSafetyTimer.Tick += VoiceCaptureSafetyTimer_Tick;
             }
 
-            _voiceCompletionTimer.Stop();
-            _voiceCompletionTimer.Start();
+            _voiceCaptureSafetyTimer.Stop();
+            _voiceCaptureSafetyTimer.Start();
         }
 
-        private async void VoiceCompletionTimer_Tick(object? sender, EventArgs e)
+        private void VoiceCaptureSafetyTimer_Tick(object? sender, EventArgs e)
         {
-            _voiceCompletionTimer?.Stop();
-
-            Log.WriteLine("  Completion timer fired - checking if speech is complete...");
-
-            var listening = _voiceService?.IsListening() == true;
-            var text = InputTextBox.Text?.Trim() ?? "";
-            var hasText = !string.IsNullOrWhiteSpace(text) && text != "Ask me anything...";
-
-            if (listening)
+            _voiceCaptureSafetyTimer?.Stop();
+            if (!_autoSendAfterVoice)
             {
-                Log.WriteLine("  Auto-send waiting - still listening");
-                if (_autoSendAfterVoice) StartVoiceCompletionTimer();
                 return;
             }
 
-            if (hasText)
+            _autoSendAfterVoice = false;
+            Log.WriteLine("  ⚠️ Auto-send cancelled - transcription did not complete");
+            StatusText.Text = "⚠️ Transcription still running — press Send when the text looks complete";
+            VoiceStatusText.Text = "Ready";
+            VoiceStatusText.Foreground = Brushes.LightGreen;
+        }
+
+        private async Task SendCompletedVoiceTranscriptAsync()
+        {
+            if (_voiceService?.IsListening() == true)
             {
-                if (!_voiceSawTranscriptAfterStop && DateTime.UtcNow < _voiceAutoSendFallbackUtc)
-                {
-                    Log.WriteLine("  Auto-send waiting - last transcript may still be arriving");
-                    StartVoiceCompletionTimer();
-                    return;
-                }
+                Log.WriteLine("  Capture completed ignored - still listening");
+                return;
+            }
 
-                Log.WriteLine($"  ✓ Speech fully completed length_bucket={LengthBucket(text.Length)}");
+            var committed = (_voiceCommittedText ?? "").Trim();
+            var shown = InputTextBox.Text?.Trim() ?? "";
+            if (shown == "Ask me anything...")
+            {
+                shown = "";
+            }
 
-                StatusText.Text = "✓ Speech captured - Sending automatically...";
-                StatusIndicator.Fill = Brushes.LightGreen;
-                VoiceStatusText.Text = "Sending...";
-                VoiceStatusText.Foreground = Brushes.LightGreen;
+            // Drop uncommitted interim text that never became a final transcript.
+            if (!string.IsNullOrWhiteSpace(committed) && !string.Equals(shown, committed, StringComparison.Ordinal))
+            {
+                InputTextBox.Text = committed;
+                shown = committed;
+            }
 
+            var hasText = !string.IsNullOrWhiteSpace(shown);
+            if (!hasText)
+            {
                 _autoSendAfterVoice = false;
-                _nextRequestIsVoice = true;
-                await SendMessage();
-
+                Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
+                StatusText.Text = "⚠️ No speech detected - try again";
                 VoiceStatusText.Text = "Ready";
                 VoiceStatusText.Foreground = Brushes.LightGreen;
                 return;
             }
 
-            if (_autoSendAfterVoice && DateTime.UtcNow < _voiceAutoSendDeadlineUtc)
-            {
-                Log.WriteLine("  Auto-send waiting - transcript not ready yet");
-                StartVoiceCompletionTimer();
-                return;
-            }
+            Log.WriteLine($"  ✓ Transcription complete length_bucket={LengthBucket(shown.Length)}");
+            StatusText.Text = "✓ Speech captured - Sending automatically...";
+            StatusIndicator.Fill = Brushes.LightGreen;
+            VoiceStatusText.Text = "Sending...";
+            VoiceStatusText.Foreground = Brushes.LightGreen;
 
             _autoSendAfterVoice = false;
-            Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
-            StatusText.Text = "⚠️ No speech detected - try again";
+            _nextRequestIsVoice = true;
+            await SendMessage();
+
             VoiceStatusText.Text = "Ready";
             VoiceStatusText.Foreground = Brushes.LightGreen;
         }
@@ -6754,12 +6765,12 @@ namespace SecureOverlay
                     _companionComposerSyncTimer = null;
                 }
 
-                if (_voiceCompletionTimer != null)
+                if (_voiceCaptureSafetyTimer != null)
                 {
-                    Log.WriteLine("Stopping voice completion timer...");
-                    _voiceCompletionTimer.Stop();
-                    _voiceCompletionTimer = null;
-                    Log.WriteLine("  ✓ Voice completion timer stopped");
+                    Log.WriteLine("Stopping voice capture safety timer...");
+                    _voiceCaptureSafetyTimer.Stop();
+                    _voiceCaptureSafetyTimer = null;
+                    Log.WriteLine("  ✓ Voice capture safety timer stopped");
                 }
                 
                 if (_currentRequestCancellation != null)

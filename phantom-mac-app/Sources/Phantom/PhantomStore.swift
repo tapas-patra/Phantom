@@ -268,16 +268,13 @@ final class PhantomStore: ObservableObject {
     private var previousVoiceTranscript = ""
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
-    private var voiceDispatchTask: Task<Void, Never>?
     private var composerMirrorTask: Task<Void, Never>?
     private var applyingCompanionComposer = false
     private var lastMirroredComposer = ""
     private var pendingVoiceAutoSend = false
-    private var sawVoiceTranscriptAfterStop = false
-    private var voiceAutoSendDeadline: Date?
-    private var voiceAutoSendFallback: Date?
     private var pendingVoiceTurnId: String?
     private var lastAutoSentVoiceText = ""
+    private var voiceCaptureSafetyTask: Task<Void, Never>?
 
     init() {
         let defaults = UserDefaults.standard
@@ -1193,25 +1190,16 @@ final class PhantomStore: ObservableObject {
         }
 
         if speechInput.isListening {
-            let wasCloud = speechInput.isCloudMode
             if autoSendAfterVoiceStop {
                 pendingVoiceAutoSend = true
-                sawVoiceTranscriptAfterStop = false
-                voiceAutoSendDeadline = Date().addingTimeInterval(5)
-                voiceAutoSendFallback = Date().addingTimeInterval(wasCloud ? 2 : 0.6)
-                voiceStatus = wasCloud
-                    ? "Finishing cloud transcription…"
-                    : "Sending automatically…"
+                voiceStatus = "Finishing transcription…"
+                startVoiceCaptureSafetyTimeout()
             } else {
                 pendingVoiceAutoSend = false
-                voiceAutoSendDeadline = nil
-                voiceAutoSendFallback = nil
+                voiceCaptureSafetyTask?.cancel()
             }
             speechInput.stop()
             isListening = false
-            if autoSendAfterVoiceStop {
-                scheduleVoiceDispatch()
-            }
         } else {
             configureSpeechRuntime()
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1222,10 +1210,7 @@ final class PhantomStore: ObservableObject {
             pendingVoiceTurnId = UUID().uuidString
             lastAutoSentVoiceText = ""
             pendingVoiceAutoSend = false
-            sawVoiceTranscriptAfterStop = false
-            voiceAutoSendDeadline = nil
-            voiceAutoSendFallback = nil
-            voiceDispatchTask?.cancel()
+            voiceCaptureSafetyTask?.cancel()
             Task {
                 await speechInput.start()
                 isListening = speechInput.isListening
@@ -1276,6 +1261,9 @@ final class PhantomStore: ObservableObject {
         prompt = ""
         applyingCompanionComposer = false
         lastMirroredComposer = ""
+        for index in messages.indices {
+            messages[index].clarificationOptions = nil
+        }
         companionVoiceTranscriptHandler?("", true, true)
         let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
@@ -1562,6 +1550,13 @@ final class PhantomStore: ObservableObject {
                     messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
                     messages[index].responseTimeMs = responseTimeMs
                     messages[index].createdAtUtc = Date()
+                    if result.decision.action == .clarify {
+                        let parsed = ClarificationOptionParser.parse(finalized.content)
+                        messages[index].content = parsed.displayText
+                        messages[index].summary = parsed.displayText.count > 100 ? String(parsed.displayText.prefix(100)) + "..." : parsed.displayText
+                        messages[index].estimatedTokens = ConversationManager.estimate(parsed.displayText)
+                        messages[index].clarificationOptions = parsed.options
+                    }
                 }
                 Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
                 try await runtime.metering.resume()
@@ -2204,14 +2199,9 @@ final class PhantomStore: ObservableObject {
                 style: self.interviewDeliveryStyle,
                 fields: ["transcript_length_bucket": Self.lengthBucket(merged.text.count)]
             )
-            if self.speechInput.isListening {
-                self.voiceDispatchTask?.cancel()
-                return
-            }
-            if self.pendingVoiceAutoSend || (isFinal && self.autoSendAfterVoiceStop) {
-                self.sawVoiceTranscriptAfterStop = true
-                self.scheduleVoiceDispatch()
-            }
+        }
+        speechInput.onCaptureCompleted = { [weak self] in
+            self?.finishVoiceCaptureAndMaybeSend()
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
@@ -2263,56 +2253,33 @@ final class PhantomStore: ObservableObject {
         }
     }
 
-    private func scheduleVoiceDispatch() {
-        voiceDispatchTask?.cancel()
-        let expected = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if expected.isEmpty {
-            guard pendingVoiceAutoSend, let deadline = voiceAutoSendDeadline, Date() < deadline else {
-                pendingVoiceAutoSend = false
-                voiceAutoSendDeadline = nil
-                voiceAutoSendFallback = nil
-                return
-            }
-            voiceDispatchTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                guard !Task.isCancelled, let self else { return }
-                self.scheduleVoiceDispatch()
-            }
-            return
-        }
-        if !sawVoiceTranscriptAfterStop, let fallback = voiceAutoSendFallback, Date() < fallback {
-            voiceDispatchTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                guard !Task.isCancelled, let self else { return }
-                self.scheduleVoiceDispatch()
-            }
-            return
-        }
-        voiceDispatchTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            let current = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard current == expected else {
-                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
-                return
-            }
-            guard !self.speechInput.isListening else {
-                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
-                return
-            }
-            guard expected != self.lastAutoSentVoiceText else {
-                self.pendingVoiceAutoSend = false
-                self.voiceAutoSendDeadline = nil
-                self.voiceAutoSendFallback = nil
-                Diagnostics.event("request_dispatched", level: "Debug", sessionId: self.copilotSessionId, turnId: self.pendingVoiceTurnId ?? UUID().uuidString, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
-                return
-            }
+    private func startVoiceCaptureSafetyTimeout() {
+        voiceCaptureSafetyTask?.cancel()
+        voiceCaptureSafetyTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled, let self, self.pendingVoiceAutoSend else { return }
             self.pendingVoiceAutoSend = false
-            self.voiceAutoSendDeadline = nil
-            self.voiceAutoSendFallback = nil
-            self.lastAutoSentVoiceText = expected
-            self.send()
+            self.voiceStatus = "Ready"
+            self.status = "Transcription still running — press Send when the text looks complete"
         }
+    }
+
+    private func finishVoiceCaptureAndMaybeSend() {
+        voiceCaptureSafetyTask?.cancel()
+        guard pendingVoiceAutoSend, !speechInput.isListening else { return }
+        pendingVoiceAutoSend = false
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            voiceStatus = "Ready"
+            status = "No speech detected — try again"
+            return
+        }
+        guard text != lastAutoSentVoiceText else {
+            Diagnostics.event("request_dispatched", level: "Debug", sessionId: copilotSessionId, turnId: pendingVoiceTurnId ?? UUID().uuidString, mode: copilotMode, style: interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
+            return
+        }
+        lastAutoSentVoiceText = text
+        send()
     }
 
     private static func lengthBucket(_ length: Int) -> String {

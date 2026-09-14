@@ -1090,10 +1090,16 @@ private struct MessageBubble: View {
                         .accessibilityLabel("Response time \(responseTime)")
                 }
                 if let options = message.clarificationOptions, !options.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(options, id: \.label) { option in
-                            Button(option.label) { onChooseClarification(option, message.id) }
-                                .buttonStyle(.bordered)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(options, id: \.question) { option in
+                            Button {
+                                onChooseClarification(option, message.id)
+                            } label: {
+                                Text(option.label)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
                         }
                     }
                 }

@@ -200,7 +200,7 @@ namespace SecureOverlay.Helpers
             "Motivation/fit (20–40s): connect verified strengths to the role context without inventing career facts. " +
             "Personal factual (10–30s): answer only what evidence supports. If the exact fact is missing, do not guess; bridge to the closest supported fact. " +
             "Situational (20–40s): a concrete future approach, who you would involve, and how you would decide. Do not recast it as a past story. " +
-            "Clarify (5–15s): only when a genuine unresolved choice changes the answer. Ask one concise question with two or three options. Never ask the user to pick an interview type.";
+            "Clarify (5–15s): only when a genuine unresolved choice changes the answer. Ask one concise spoken question with two or three options. After the question, emit a line `Options:` then two or three `- reply` lines. Each reply is a short clickable answer the user can send unchanged. Never ask the user to pick an interview type.";
         private const string BriefingContracts =
             "Briefing answers are for a live meeting, not an interview essay. Factual lookup: one to three sentences. Status: what is true now and one risk. " +
             "Decision: recommendation, why, and what to watch. Objection: acknowledge, answer with a fact, offer a next step. " +

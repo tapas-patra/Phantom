@@ -167,6 +167,23 @@ foreach (var secret in fixtures.SensitiveSamples)
         throw new InvalidOperationException("Sensitive fixture leaked into the telemetry allowlist.");
 }
 
+var kubernetesClarify = "Just to make sure I answer the right thing — did you mean installing Kubernetes on your own machine (like minikube, kind, or kubeadm on bare VMs), or were you asking about something else, like a specific cloud or on-prem setup?";
+var kubernetesOptions = ClarificationOptionParser.Parse(kubernetesClarify);
+if (kubernetesOptions.Options.Count != 2)
+    throw new InvalidOperationException("Kubernetes clarification did not produce two clickable options.");
+if (!kubernetesOptions.Options[0].Question.Contains("own machine", StringComparison.OrdinalIgnoreCase)
+    || !kubernetesOptions.Options[1].Question.Contains("cloud", StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("Kubernetes clarification options were parsed incorrectly.");
+
+var listedClarify = "Which environment should I answer for?\nOptions:\n- I meant a local minikube cluster\n- I meant GKE in the cloud";
+var listedOptions = ClarificationOptionParser.Parse(listedClarify);
+Equal("Which environment should I answer for?", listedOptions.DisplayText, "listed clarification display");
+Equal("2", listedOptions.Options.Count.ToString(), "listed clarification count");
+Equal("I meant a local minikube cluster", listedOptions.Options[0].Question, "listed clarification first option");
+
+if (!firstCallPrompt.Contains("Options:", StringComparison.Ordinal))
+    throw new InvalidOperationException("The Windows clarify contract is missing clickable option instructions.");
+
 Console.WriteLine($"Shared live-copilot fixture suite passed ({fixtures.Version}).");
 
 static string FindFixtures()

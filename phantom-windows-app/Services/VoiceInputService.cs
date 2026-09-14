@@ -34,10 +34,15 @@ namespace SecureOverlay.Services
         private bool _pendingCloudRecovery;
         private bool _immediateCloudProbePending;
         private bool _immediateCloudProbeConsumed;
+        private int _inflightCloudJobs;
+        private bool _stopRequested;
+        private bool _captureCompletedRaised;
+        private bool _cloudFlushReceived;
 
         public event EventHandler<string>? SpeechRecognized;
         public event EventHandler<string>? SpeechHypothesis;
         public event EventHandler<string>? StatusChanged;
+        public event EventHandler? CaptureCompleted;
 
         public VoiceInputService(
             Func<byte[], CancellationToken, Task<string>>? cloudTranscriber = null,
@@ -278,7 +283,13 @@ namespace SecureOverlay.Services
                 }
                 else if (message.StartsWith("AUDIO:"))
                 {
+                    Interlocked.Increment(ref _inflightCloudJobs);
                     _ = ProcessCloudAudioAsync(message.Substring("AUDIO:".Length));
+                }
+                else if (message == "FLUSHED")
+                {
+                    _cloudFlushReceived = true;
+                    TryRaiseCaptureCompleted();
                 }
                 else if (message.StartsWith("STATUS:"))
                 {
@@ -291,6 +302,12 @@ namespace SecureOverlay.Services
                     }
                     Log.WriteLine($"Status: {status}");
                     StatusChanged?.Invoke(this, status);
+                    if (_stopRequested
+                        && (string.Equals(status, "Ready", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(status, "Native fallback ready", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        TryRaiseCaptureCompleted();
+                    }
                 }
                 else if (message.StartsWith("ERROR:"))
                 {
@@ -338,10 +355,10 @@ namespace SecureOverlay.Services
 
         private async Task ProcessCloudAudioAsync(string base64)
         {
-            if (!_useCloud || _cloudTranscriber == null || _fallbackStarted) return;
             var acquired = false;
             try
             {
+                if (!_useCloud || _cloudTranscriber == null || _fallbackStarted) return;
                 await _audioGate.WaitAsync(_disposeCancellation.Token);
                 acquired = true;
                 if (_fallbackStarted) return;
@@ -363,7 +380,12 @@ namespace SecureOverlay.Services
                 StatusChanged?.Invoke(this, "Cloud speech unavailable");
                 if (_fallbackToNative) await FallbackToNativeAsync();
             }
-            finally { if (acquired) _audioGate.Release(); }
+            finally
+            {
+                if (acquired) _audioGate.Release();
+                Interlocked.Decrement(ref _inflightCloudJobs);
+                TryRaiseCaptureCompleted();
+            }
         }
 
         private async Task FallbackToNativeAsync()
@@ -536,7 +558,8 @@ async function startListening() {
   } catch(e) { window.chrome.webview.postMessage('ERROR:'+e.message); }
 }
 function stopListening() {
-  if (!listening) return; listening=false; processor?.disconnect(); source?.disconnect(); stream?.getTracks().forEach(t=>t.stop()); context?.close(); sendChunk(true);
+  if (!listening) { window.chrome.webview.postMessage('FLUSHED'); window.chrome.webview.postMessage('STATUS:Ready'); return; } listening=false; processor?.disconnect(); source?.disconnect(); stream?.getTracks().forEach(t=>t.stop()); context?.close(); sendChunk(true);
+  window.chrome.webview.postMessage('FLUSHED');
   window.chrome.webview.postMessage('STATUS:Ready');
 }
 window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Ready'));
@@ -773,6 +796,7 @@ window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Rea
                     
                     if (!recognition || !isListening) {
                         console.log('Not listening, nothing to stop');
+                        window.chrome.webview.postMessage('STATUS:Ready');
                         return;
                     }
 
@@ -797,6 +821,9 @@ window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Rea
         public async void StartListening()
         {
             Log.WriteLine("StartListening() called");
+            _stopRequested = false;
+            _captureCompletedRaised = false;
+            _cloudFlushReceived = false;
             
             if (!_isInitialized || _webView?.CoreWebView2 == null)
             {
@@ -825,10 +852,18 @@ window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Rea
 
         public async void StopListening()
         {
+            _stopRequested = true;
+            _captureCompletedRaised = false;
+            if (!IsCloudMode() || !_isListening || _webView?.CoreWebView2 == null)
+            {
+                _cloudFlushReceived = true;
+            }
+
             if (!_isListening || _webView?.CoreWebView2 == null)
             {
                 _isListening = false;
                 _ = ApplyPendingCloudRecoveryIfNeededAsync();
+                TryRaiseCaptureCompleted();
                 return;
             }
 
@@ -837,9 +872,35 @@ window.addEventListener('load',()=>window.chrome.webview.postMessage('STATUS:Rea
                 await _webView.CoreWebView2.ExecuteScriptAsync("stopListening()");
                 _isListening = false;
             }
-            catch { }
+            catch
+            {
+                _isListening = false;
+            }
 
             await ApplyPendingCloudRecoveryIfNeededAsync();
+        }
+
+        private void TryRaiseCaptureCompleted()
+        {
+            if (!_stopRequested || _captureCompletedRaised || _isListening)
+            {
+                return;
+            }
+
+            if (Volatile.Read(ref _inflightCloudJobs) > 0)
+            {
+                return;
+            }
+
+            if (!_cloudFlushReceived)
+            {
+                return;
+            }
+
+            _captureCompletedRaised = true;
+            _stopRequested = false;
+            Log.WriteLine("Voice capture completed — transcription finished");
+            CaptureCompleted?.Invoke(this, EventArgs.Empty);
         }
 
         public bool IsListening() => _isListening;

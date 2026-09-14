@@ -5,10 +5,12 @@ namespace Phantom.Dashboard.Backend.Services;
 public sealed class DashboardQueryService
 {
     private readonly PostgresDashboardStore _store;
+    private readonly DesktopReleaseVersionClient _releaseVersion;
 
-    public DashboardQueryService(PostgresDashboardStore store)
+    public DashboardQueryService(PostgresDashboardStore store, DesktopReleaseVersionClient releaseVersion)
     {
         _store = store;
+        _releaseVersion = releaseVersion;
     }
 
     public object? GetAccountSummary(string? userId, string? email)
@@ -221,7 +223,7 @@ LIMIT 1;";
         {
             canDownload = reader.GetBoolean(reader.GetOrdinal("email_verified")),
             installerLabel = "Phantom Desktop for Windows and macOS",
-            installerVersion = "Latest automated build",
+            installerVersion = _releaseVersion.GetInstallerVersion(),
             installerUrl = "/download",
             releaseChannel = hasCredits ? "Hosted Preview" : "Verification Pending"
         };

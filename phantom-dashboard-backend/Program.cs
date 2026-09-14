@@ -45,8 +45,14 @@ if (options.TrustForwardedHeaders)
     });
 }
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient(nameof(DesktopReleaseVersionClient), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("PhantomDashboard/1.0");
+});
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<AuthorityBackendClient>();
+builder.Services.AddSingleton<DesktopReleaseVersionClient>();
 builder.Services.AddSingleton<DashboardQueryService>();
 builder.Services.AddSingleton<ManagedAiAdminService>();
 builder.Services.AddSingleton<AdminSessionValidator>();

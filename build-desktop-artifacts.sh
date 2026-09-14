@@ -26,6 +26,8 @@ WANT_WINDOWS=0
 WANT_ALL=0
 SELF_CHECK=1
 CLEAN=1
+PHANTOM_PRODUCT_VERSION="${PHANTOM_PRODUCT_VERSION:-0.0.0-local}"
+export PHANTOM_PRODUCT_VERSION
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -108,6 +110,7 @@ write_manifest() {
     echo "Phantom local desktop artifacts"
     echo "git=$git_sha"
     echo "built_at_utc=$built_at"
+    echo "version=$PHANTOM_PRODUCT_VERSION"
     echo "host=$(uname -a 2>/dev/null || echo unknown)"
     echo "built=$(join_or_none "${built[@]+"${built[@]}"}")"
     echo "skipped=$(join_or_none "${skipped[@]+"${skipped[@]}"}")"
@@ -173,6 +176,8 @@ build_windows() {
     -p:PublishSingleFile=true \
     -p:IncludeNativeLibrariesForSelfExtract=true \
     -p:EnableCompressionInSingleFile=true \
+    -p:PhantomProductVersion="${PHANTOM_PRODUCT_VERSION:-0.0.0-local}" \
+    -p:IncludeSourceRevisionInInformationalVersion=false \
     -o "$OUT/windows"
 
   echo "==> Packaging Phantom-Windows-x64.zip"

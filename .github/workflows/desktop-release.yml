@@ -8,6 +8,12 @@ on:
       - "phantom-mac-app/**"
       - ".github/workflows/desktop-release.yml"
   workflow_dispatch:
+    inputs:
+      major_minor:
+        description: "MAJOR.MINOR only (for example 1.0 or 2.3). Leave empty to keep the last prefix. The third number is always this GitHub run number."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -21,27 +27,84 @@ env:
   RELEASE_TAG: desktop-latest
 
 # Do not use actions/upload-artifact for these zips. Actions artifact storage is
-# quota-limited (and is what fails with "Artifact storage quota has been hit").
-# GitHub Release assets are a different store: 2 GiB per file, no total size or
-# bandwidth cap. Each job uploads its zip with gh, which is the same Releases
-# API as softprops/action-gh-release.
+# quota-limited. GitHub Release assets are a different store. Downloads keep using
+# desktop-latest / Phantom-Windows-x64.zip and Phantom-macOS.zip. Immutable vX.Y.Z
+# releases are extra history; the third version digit is github.run_number.
 
 jobs:
-  prepare-release:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      tag: ${{ steps.compute.outputs.tag }}
+      prefix: ${{ steps.compute.outputs.prefix }}
     steps:
-      - name: Ensure rolling GitHub Release exists
+      - name: Compute desktop version
+        id: compute
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
+          MAJOR_MINOR_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.major_minor || '' }}
+        run: |
+          set -euo pipefail
+          INPUT="$(printf '%s' "${MAJOR_MINOR_INPUT:-}" | tr -d '[:space:]')"
+          if [ -n "$INPUT" ]; then
+            if ! printf '%s' "$INPUT" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+              echo "major_minor must be MAJOR.MINOR, for example 1.0 or 2.3" >&2
+              exit 1
+            fi
+            PREFIX="$INPUT"
+          else
+            PREFIX=""
+            WORK="$(mktemp -d)"
+            if gh release download "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --pattern latest.json --dir "$WORK" >/dev/null 2>&1 \
+              && [ -f "$WORK/latest.json" ]; then
+              LAST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$WORK/latest.json" || true)"
+              if printf '%s' "$LAST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                PREFIX="$(printf '%s' "$LAST" | awk -F. '{print $1"."$2}')"
+              fi
+            fi
+            if [ -z "$PREFIX" ]; then
+              TAGS="$(gh release list --repo "$RELEASE_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' || true)"
+              CANDIDATE="$(printf '%s\n' "$TAGS" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')"
+              if [ -n "$CANDIDATE" ]; then
+                PREFIX="$(printf '%s' "$CANDIDATE" | awk -F. '{print $1"."$2}')"
+              fi
+            fi
+            PREFIX="${PREFIX:-1.0}"
+          fi
+          VERSION="${PREFIX}.${GITHUB_RUN_NUMBER}"
+          TAG="v${VERSION}"
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Desktop version $VERSION (tag $TAG)"
+
+  prepare-release:
+    needs: [version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - name: Ensure rolling and versioned GitHub Releases exist
         env:
           GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
         run: |
+          set -euo pipefail
+          NOTES="Phantom Desktop $VERSION (unsigned) from $GITHUB_SHA."
           gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" \
-              --title "Phantom Desktop (latest)" \
-              --notes "Automated unsigned desktop build from $GITHUB_SHA."
+              --title "Phantom Desktop (latest)" --notes "$NOTES"
+          gh release view "$VERSION_TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$VERSION_TAG" --repo "$RELEASE_REPOSITORY" \
+              --title "Phantom Desktop $VERSION" --notes "$NOTES"
 
   windows:
-    needs: [prepare-release]
+    needs: [version, prepare-release]
     runs-on: windows-latest
+    env:
+      PHANTOM_PRODUCT_VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -55,6 +118,8 @@ jobs:
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
+          -p:PhantomProductVersion=${{ needs.version.outputs.version }}
+          -p:IncludeSourceRevisionInInformationalVersion=false
           -o release/windows
       - name: Package Windows app
         shell: pwsh
@@ -63,11 +128,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" Phantom-Windows-x64.zip --repo "$RELEASE_REPOSITORY" --clobber
+        run: |
+          set -euo pipefail
+          gh release upload "$VERSION_TAG" Phantom-Windows-x64.zip --repo "$RELEASE_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" Phantom-Windows-x64.zip --repo "$RELEASE_REPOSITORY" --clobber
 
   macos:
-    needs: [prepare-release]
+    needs: [version, prepare-release]
     runs-on: macos-14
+    env:
+      PHANTOM_PRODUCT_VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Build macOS app
@@ -77,15 +148,34 @@ jobs:
       - name: Upload macOS zip to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" Phantom-macOS.zip --repo "$RELEASE_REPOSITORY" --clobber
+        run: |
+          set -euo pipefail
+          gh release upload "$VERSION_TAG" Phantom-macOS.zip --repo "$RELEASE_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" Phantom-macOS.zip --repo "$RELEASE_REPOSITORY" --clobber
 
   publish:
-    needs: [windows, macos]
+    needs: [version, windows, macos]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - name: Stamp release notes
+      - name: Publish latest.json and stamp release notes
         env:
           GH_TOKEN: ${{ secrets.PHANTOM_RELEASE_TOKEN }}
-        run: >
-          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY"
-          --notes "Automated unsigned desktop build from $GITHUB_SHA."
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          payload = {
+            "version": os.environ["VERSION"],
+            "tag": os.environ["VERSION_TAG"],
+            "sha": os.environ["GITHUB_SHA"],
+            "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
+          }
+          open("latest.json", "w", encoding="utf-8").write(json.dumps(payload) + "\n")
+          PY
+          NOTES="Phantom Desktop $VERSION (unsigned) from $GITHUB_SHA."
+          gh release upload "$RELEASE_TAG" latest.json --repo "$RELEASE_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --notes "$NOTES"
+          gh release edit "$VERSION_TAG" --repo "$RELEASE_REPOSITORY" --notes "$NOTES"

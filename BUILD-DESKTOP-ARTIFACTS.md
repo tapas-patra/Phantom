@@ -2,7 +2,14 @@
 
 Use this when you want to test a desktop build after a code change without waiting for CI.
 
-CI publishes `Phantom-macOS.zip` and `Phantom-Windows-x64.zip` straight to the `desktop-latest` GitHub Release in `tapas-patra/phantom-release-repo`. It does not use `actions/upload-artifact`, so it does not consume Actions artifact storage.
+CI publishes `Phantom-macOS.zip` and `Phantom-Windows-x64.zip` straight to the `desktop-latest` GitHub Release in `tapas-patra/phantom-release-repo`. Website signed downloads keep using those exact zip names and that tag. CI also creates an immutable `vMAJOR.MINOR.RUN` release for history.
+
+Versioning:
+
+- You may pass **MAJOR.MINOR** when running the workflow (for example `2.3`). Never pass the third digit.
+- If you omit it, CI reuses MAJOR.MINOR from `latest.json` on `desktop-latest` (or `1.0` on the first run).
+- The third digit is always this workflow’s GitHub `run_number`. Last `1.0.1` + run `88` becomes `1.0.88`. Last `2.3.5` + run `88` becomes `2.3.88`.
+- Local builds default to `0.0.0-local` unless you set `PHANTOM_PRODUCT_VERSION`.
 
 The scripts produce the same zip names as [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml). Output is gitignored under `release/local/`.
 

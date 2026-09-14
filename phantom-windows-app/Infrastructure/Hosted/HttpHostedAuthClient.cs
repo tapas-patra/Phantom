@@ -1,5 +1,5 @@
-using System.Reflection;
 using SecureOverlay.Domain.Entities;
+using SecureOverlay.Helpers;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 
 namespace SecureOverlay.Infrastructure.Hosted
@@ -17,7 +17,7 @@ namespace SecureOverlay.Infrastructure.Hosted
         public AuthSessionDto CreateSession(AuthLoginRequestDto request)
         {
             request.AppVersion = string.IsNullOrWhiteSpace(request.AppVersion)
-                ? Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown"
+                ? PhantomAppVersion.Current
                 : request.AppVersion;
             request.InstallId = string.IsNullOrWhiteSpace(request.InstallId) ? _deviceProfile.InstallId : request.InstallId;
             request.DeviceLabel = string.IsNullOrWhiteSpace(request.DeviceLabel) ? _deviceProfile.DeviceLabel : request.DeviceLabel;

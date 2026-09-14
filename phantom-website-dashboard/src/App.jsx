@@ -1315,6 +1315,7 @@ function DownloadPage({ userSession }) {
           <div className="stats-grid">
             <MetricCard label="System" value="Windows 10/11 · macOS 12.3+" />
             <MetricCard label="Account" value="Verified sign-in" />
+            <MetricCard label="Version" value={entitlement?.installerVersion || "Pending"} />
             <MetricCard label="Channel" value={entitlement?.releaseChannel || "Account gated"} />
           </div>
           <div className="hero-actions">

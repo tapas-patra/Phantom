@@ -725,6 +725,7 @@ private struct SettingsView: View {
 
                     SettingsSection(title: "Account", systemImage: "person.crop.circle") {
                         ReadOnlyRow(label: "Email", value: store.session?.email ?? "—")
+                        ReadOnlyRow(label: "Version", value: AppVersion.current)
                         ReadOnlyRow(label: "Tier", value: store.account?.accessTier.capitalized ?? "—")
                         ReadOnlyRow(
                             label: "Credits",

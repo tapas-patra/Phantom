@@ -26,6 +26,8 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $out = Join-Path $root "release\local"
+$productVersion = if ($env:PHANTOM_PRODUCT_VERSION) { $env:PHANTOM_PRODUCT_VERSION } else { "0.0.0-local" }
+$env:PHANTOM_PRODUCT_VERSION = $productVersion
 $onMac = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::OSX)
 $onWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
@@ -127,6 +129,8 @@ if ($Windows) {
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:EnableCompressionInSingleFile=true `
+            -p:PhantomProductVersion=$productVersion `
+            -p:IncludeSourceRevisionInInformationalVersion=false `
             -o $winOut
         if ($LASTEXITCODE -ne 0) { throw "Windows publish failed with exit code $LASTEXITCODE." }
 
@@ -146,6 +150,7 @@ $manifest = Join-Path $out "MANIFEST.txt"
     "Phantom local desktop artifacts"
     "git=$gitSha"
     "built_at_utc=$builtAt"
+    "version=$productVersion"
     "host=$([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
     "built=$(if ($built.Count) { $built -join ',' } else { 'none' })"
     "skipped=$(if ($skipped.Count) { $skipped -join ',' } else { 'none' })"

@@ -61,6 +61,7 @@ namespace SecureOverlay
         public SettingsPage(AccountCacheSnapshot? accountSnapshot = null, AppSettings? settings = null)
         {
             InitializeComponent();
+            AppVersionText.Text = $"Version {PhantomAppVersion.Current}";
 
             _settings = settings ?? SettingsManager.Load();
             _accountSnapshot = accountSnapshot;
@@ -2470,7 +2471,7 @@ namespace SecureOverlay
             try
             {
                 var label = Environment.MachineName ?? "Windows PC";
-                var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+                var appVersion = PhantomAppVersion.Current;
                 var request = new CompanionPairingStartRequestDto
                 {
                     DesktopDeviceLabel = label,

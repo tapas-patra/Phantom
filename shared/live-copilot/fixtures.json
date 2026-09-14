@@ -60,6 +60,33 @@
       "expectedAction": "answer",
       "expectedBody": "On-prem uses kubeadm.",
       "maxNormalCalls": 1
+    },
+    {
+      "name": "fenced-json-after-protocol",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n```json\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\n```\nPHANTOM_BODY\nFenced body."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Fenced body.",
+      "maxNormalCalls": 1
+    },
+    {
+      "name": "json-without-protocol-line",
+      "chunks": [
+        "{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\nPHANTOM_BODY\nNo protocol line."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "No protocol line.",
+      "maxNormalCalls": 1
+    },
+    {
+      "name": "headerless-spoken-answer",
+      "chunks": [
+        "A load balancer sits in front of servers and spreads incoming traffic."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "A load balancer sits in front of servers and spreads incoming traffic.",
+      "maxNormalCalls": 1
     }
   ],
   "invalid": [

@@ -112,6 +112,12 @@ namespace SecureOverlay.Services
         public static string ExtractAnswerBody(string response)
             => TryLocateFrame(Normalize(response), out _, out var rest, finalize: true) ? rest : string.Empty;
 
+        public static string ResolveAnswer(string response)
+        {
+            var body = ExtractAnswerBody(response);
+            return string.IsNullOrWhiteSpace(body) ? ExtractBareAnswer(response) : body;
+        }
+
         public static string ExtractBareAnswer(string response)
         {
             var text = Normalize(response);
@@ -139,20 +145,29 @@ namespace SecureOverlay.Services
         {
             visible = string.Empty;
             if (_bodyStarted) return true;
-            if (!TryLocateFrame(buffered, out var json, out var rest, finalize))
+            if (TryLocateFrame(buffered, out var json, out var rest, finalize))
+            {
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    throw new PhantomProtocolException("control_json_invalid");
+                }
+
+                Decision = ParseAndValidate(json);
+                _bodyStarted = true;
+                _prefix.Clear();
+                visible = AcceptBody(rest);
+                return true;
+            }
+
+            if (!LooksLikeBareAnswer(buffered, finalize))
             {
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                throw new PhantomProtocolException("control_json_invalid");
-            }
-
-            Decision = ParseAndValidate(json);
+            Decision = FallbackAnswerDecision();
             _bodyStarted = true;
             _prefix.Clear();
-            visible = AcceptBody(rest);
+            visible = AcceptBody(buffered);
             return true;
         }
 
@@ -161,10 +176,13 @@ namespace SecureOverlay.Services
             json = string.Empty;
             rest = string.Empty;
             var protocolIndex = buffered.IndexOf(ProtocolLine, StringComparison.Ordinal);
-            if (protocolIndex < 0) return false;
+            var cursor = 0;
+            if (protocolIndex >= 0)
+            {
+                cursor = protocolIndex + ProtocolLine.Length;
+            }
 
-            var cursor = protocolIndex + ProtocolLine.Length;
-            SkipWhitespace(buffered, ref cursor);
+            SkipControlNoise(buffered, ref cursor);
             if (cursor >= buffered.Length || buffered[cursor] != '{')
             {
                 return false;
@@ -176,8 +194,13 @@ namespace SecureOverlay.Services
             }
 
             json = buffered[cursor..jsonEnd].Trim();
+            if (protocolIndex < 0 && json.IndexOf("\"action\"", StringComparison.Ordinal) < 0)
+            {
+                return false;
+            }
+
             cursor = jsonEnd;
-            SkipWhitespace(buffered, ref cursor);
+            SkipControlNoise(buffered, ref cursor);
 
             const string bodyToken = "PHANTOM_BODY";
             if (cursor < buffered.Length && StartsAt(buffered, cursor, bodyToken))
@@ -200,6 +223,44 @@ namespace SecureOverlay.Services
 
             rest = remaining;
             return true;
+        }
+
+        private static bool LooksLikeBareAnswer(string buffered, bool finalize)
+        {
+            var text = buffered.TrimStart();
+            if (text.Length == 0) return false;
+            if (text.Contains(ProtocolLine, StringComparison.Ordinal)) return false;
+            if (IsTokenPrefix(text, ProtocolLine)) return false;
+            if (text[0] == '{') return false;
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                return finalize && text.Length >= 80;
+            }
+
+            return finalize || text.Length >= 20;
+        }
+
+        private static void SkipControlNoise(string text, ref int index)
+        {
+            while (index < text.Length)
+            {
+                SkipWhitespace(text, ref index);
+                if (!StartsAt(text, index, "```"))
+                {
+                    break;
+                }
+
+                index += 3;
+                while (index < text.Length && text[index] != '\n' && text[index] != '{')
+                {
+                    index++;
+                }
+
+                if (index < text.Length && text[index] == '\n')
+                {
+                    index++;
+                }
+            }
         }
 
         private static void SkipWhitespace(string text, ref int index)

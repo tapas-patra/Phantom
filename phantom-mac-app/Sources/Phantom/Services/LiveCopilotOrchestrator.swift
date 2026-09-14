@@ -91,7 +91,7 @@ final class LiveCopilotOrchestrator {
             throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
         }
         if decision.action != .retrieve {
-            let answer = Self.extractBody(firstResponse)
+            let answer = PhantomControlFrameParser.resolveAnswer(firstResponse)
             guard Self.isCompleteAnswer(answer) else {
                 throw BackendError.server("The AI provider returned an incomplete response.")
             }

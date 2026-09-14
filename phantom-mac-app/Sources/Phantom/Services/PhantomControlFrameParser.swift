@@ -134,6 +134,12 @@ final class PhantomControlFrameParser {
         return locateFrame(text, finalize: true)?.rest ?? ""
     }
 
+    static func resolveAnswer(_ response: String) -> String {
+        let body = extractAnswerBody(response)
+        if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return body }
+        return extractBareAnswer(response)
+    }
+
     static func extractBareAnswer(_ response: String) -> String {
         let text = normalize(response)
         if let frame = locateFrame(text, finalize: true) { return frame.rest.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -148,25 +154,37 @@ final class PhantomControlFrameParser {
 
     private func commitFrame(_ buffered: String, finalize: Bool) throws -> String? {
         if bodyStarted { return "" }
-        guard let frame = Self.locateFrame(buffered, finalize: finalize) else { return nil }
-        guard !frame.json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PhantomProtocolError(code: "control_json_invalid")
+        if let frame = Self.locateFrame(buffered, finalize: finalize) {
+            guard !frame.json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw PhantomProtocolError(code: "control_json_invalid")
+            }
+            decision = try Self.parse(frame.json, allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+            bodyStarted = true
+            prefix = ""
+            return acceptBody(frame.rest)
         }
-        decision = try Self.parse(frame.json, allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+        guard Self.looksLikeBareAnswer(buffered, finalize: finalize) else { return nil }
+        decision = Self.fallbackAnswerDecision()
         bodyStarted = true
         prefix = ""
-        return acceptBody(frame.rest)
+        return acceptBody(buffered)
     }
 
     private static func locateFrame(_ buffered: String, finalize: Bool = false) -> (json: String, rest: String)? {
-        guard let protocolRange = buffered.range(of: protocolLine) else { return nil }
-        var cursor = protocolRange.upperBound
-        skipWhitespace(buffered, from: &cursor)
+        let protocolRange = buffered.range(of: protocolLine)
+        var cursor = buffered.startIndex
+        if let protocolRange {
+            cursor = protocolRange.upperBound
+        }
+        skipControlNoise(buffered, from: &cursor)
         guard cursor < buffered.endIndex, buffered[cursor] == "{" else { return nil }
         guard let jsonEnd = readJsonObjectEnd(buffered, from: cursor) else { return nil }
         let json = String(buffered[cursor..<jsonEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if protocolRange == nil, !json.contains("\"action\"") {
+            return nil
+        }
         cursor = jsonEnd
-        skipWhitespace(buffered, from: &cursor)
+        skipControlNoise(buffered, from: &cursor)
 
         let bodyToken = "PHANTOM_BODY"
         if cursor < buffered.endIndex, buffered[cursor...].hasPrefix(bodyToken) {
@@ -182,6 +200,33 @@ final class PhantomControlFrameParser {
             return nil
         }
         return (json, remaining)
+    }
+
+    private static func looksLikeBareAnswer(_ buffered: String, finalize: Bool) -> Bool {
+        let text = buffered.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        if text.contains(protocolLine) { return false }
+        let leading = buffered.drop(while: { $0.isWhitespace })
+        let leadingText = String(leading)
+        if isTokenPrefix(leadingText, of: protocolLine) { return false }
+        guard let first = leadingText.first else { return false }
+        if first == "{" { return false }
+        if leadingText.hasPrefix("```") { return finalize && leadingText.count >= 80 }
+        return finalize || leadingText.count >= 20
+    }
+
+    private static func skipControlNoise(_ text: String, from index: inout String.Index) {
+        while index < text.endIndex {
+            skipWhitespace(text, from: &index)
+            guard index < text.endIndex, text[index...].hasPrefix("```") else { break }
+            index = text.index(index, offsetBy: 3)
+            while index < text.endIndex, text[index] != "\n", text[index] != "{" {
+                index = text.index(after: index)
+            }
+            if index < text.endIndex, text[index] == "\n" {
+                index = text.index(after: index)
+            }
+        }
     }
 
     private static func skipWhitespace(_ text: String, from index: inout String.Index) {

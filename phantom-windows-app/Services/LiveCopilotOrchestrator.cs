@@ -113,7 +113,7 @@ namespace SecureOverlay.Services
                 throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)
             {
-                var answer = ExtractBody(firstResponse);
+                var answer = PhantomControlFrameParser.ResolveAnswer(firstResponse);
                 if (!IsCompleteAnswer(answer)) throw new InvalidOperationException("The AI provider returned an incomplete response.");
                 return new LiveCopilotResult(
                     answer, decision, modelCalls, protocolRetries, "not_requested", Array.Empty<RetrievedContextSnippet>());

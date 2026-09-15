@@ -64,7 +64,7 @@ final class LiveCopilotOrchestrator {
                     resetPublishedAttempt()
                 })
                 if let streamProtocolError { throw streamProtocolError }
-                if (!parser.hasReceivedChunks, !firstResponse.isEmpty {
+                if !parser.hasReceivedChunks, !firstResponse.isEmpty {
                     let visible = try parser.feed(firstResponse)
                     if !visible.isEmpty { publish(visible) }
                     tryStartRetrieve()

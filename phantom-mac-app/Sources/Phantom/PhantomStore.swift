@@ -1199,7 +1199,7 @@ final class PhantomStore: ObservableObject {
                 voiceCaptureSafetyTask?.cancel()
             }
             speechInput.stop()
-            isListening = false
+            isListening = pendingVoiceAutoSend
         } else {
             configureSpeechRuntime()
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2264,12 +2264,17 @@ final class PhantomStore: ObservableObject {
             )
         }
         speechInput.onCaptureCompleted = { [weak self] in
+            self?.isListening = false
             self?.finishVoiceCaptureAndMaybeSend()
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
             self.voiceStatus = state
-            self.isListening = self.speechInput.isListening
+            if self.pendingVoiceAutoSend {
+                self.isListening = true
+            } else {
+                self.isListening = self.speechInput.isListening
+            }
         }
     }
 

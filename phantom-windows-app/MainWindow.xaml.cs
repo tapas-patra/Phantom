@@ -1006,16 +1006,10 @@ namespace SecureOverlay
 
         private async Task RefreshDesktopCatalogsAsync(bool force)
         {
-            var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
-                || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
-            if (!force && !CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
-            {
-                Log.WriteLine("Automatic catalog refresh skipped (daily quota)");
-                return;
-            }
-
+            // Managed catalog is a cheap backend read and carries the admin runtime
+            // selection. Never skip it on the daily BYO-provider quota.
             await RefreshManagedCatalogCacheAsync(force: true);
-            await RefreshByoCatalogCacheAsync(forceAll: true);
+            await RefreshByoCatalogCacheAsync(forceAll: force);
         }
 
         private async Task RefreshManagedCatalogCacheAsync(bool force = false)
@@ -1063,7 +1057,8 @@ namespace SecureOverlay
                     Log.WriteLine(
                         $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}, vision={managedModel?.SupportsVision == true}");
 
-                    if (_currentAI is HostedManagedAiService && managedProvider != null && managedModel != null)
+                    if (managedProvider != null && managedModel != null
+                        && !ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
                     {
                         Log.WriteLine("Managed catalog changed - reinitializing AI with the hosted runtime selection");
                         InitializeAI();
@@ -1333,13 +1328,12 @@ namespace SecureOverlay
                 return false;
             }
 
-            // Prefer configured selection, else first BYO catalog provider id.
-            if (string.IsNullOrWhiteSpace(provider) || IsManagedProvider(provider))
+            if (string.IsNullOrWhiteSpace(provider))
             {
                 provider = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                     .Select(item => item.ProviderId)
                     .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id))
-                    ?? provider;
+                    ?? "provider";
             }
 
             return true;
@@ -1498,7 +1492,9 @@ namespace SecureOverlay
             }
 
             return _currentAI is HostedManagedAiService
-                ? "AI"
+                ? (string.IsNullOrWhiteSpace(_currentAI.GetProviderName())
+                    ? GetManagedRuntimeProviderId()
+                    : _currentAI.GetProviderName())
                 : (_currentAI?.GetProviderName() ?? "AI");
         }
 
@@ -1524,7 +1520,7 @@ namespace SecureOverlay
                 return;
             }
 
-            var shouldUseByoRuntime = IsByoLaneActiveNow();
+            var shouldUseByoRuntime = UsesByoProviderLane();
             var isUsingByoRuntime = _currentAI is not HostedManagedAiService;
             if (shouldUseByoRuntime != isUsingByoRuntime)
             {
@@ -1572,7 +1568,9 @@ namespace SecureOverlay
                 return true;
             }
 
-            return IsByoLaneActiveNow();
+            // Match the visible BYO dropdowns. Requiring chat keys here made Groq look
+            // selected while send still ran the stale managed OpenRouter runtime.
+            return UsesByoProviderLane();
         }
 
         private bool CanUseManagedExtensionFallbackForProvider(string provider)

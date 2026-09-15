@@ -173,13 +173,17 @@ final class SpeechInputService {
 
     func stop() {
         shouldListen = false
-        awaitingStopCompletion = true
         let wasCloud = isCloudMode
         stopEngine()
         isListening = false
         if wasCloud {
-            let finalData = cloudAudio.flush() ?? Data()
-            if cloudAudio.enqueue(finalData, final: true) { drainCloudQueue() }
+            // Flush remaining audio before arming completion so an in-flight drain
+            // cannot auto-send a partial transcript.
+            let startedDrain = cloudAudio.finishRecording()
+            awaitingStopCompletion = true
+            if startedDrain || cloudDrainTask == nil {
+                drainCloudQueue()
+            }
             onStateChange?("Finishing cloud transcription…")
         } else if recognitionTask == nil {
             if !lastNativeTranscript.isEmpty {
@@ -350,6 +354,21 @@ private final class SpeechAudioQueue: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard samples.count >= 8_000 else { samples.removeAll(); return nil }
         let result = data(from: samples); samples.removeAll(); return result
+    }
+
+    /// Atomically queues remaining samples as the final chunk. Returns true when the
+    /// caller should start a drain (false if one is already running and will pick this up).
+    func finishRecording() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        var payload = Data()
+        if samples.count >= 8_000 {
+            payload = data(from: samples)
+        }
+        samples.removeAll()
+        items.append(Item(data: payload, final: true))
+        if draining { return false }
+        draining = true
+        return true
     }
 
     var hasQueuedItems: Bool {

@@ -70,10 +70,8 @@ namespace SecureOverlay.Services
                                     SupportsVision = group.Any(model => model.SupportsVision)
                                 };
                             })
-                            .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
                             .ToList()
                     })
-                    .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
                     .ToList()
             };
 

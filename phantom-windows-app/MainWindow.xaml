@@ -281,7 +281,9 @@
                         ForceCursor="True">
                     <wv2:WebView2 x:Name="ChatWebView"
                                   HorizontalAlignment="Stretch"
-                                  VerticalAlignment="Stretch"/>
+                                  VerticalAlignment="Stretch"
+                                  Focusable="False"
+                                  KeyboardNavigation.IsTabStop="False"/>
                 </Border>
 
                 <!-- INPUT AREA (Grid.Row="2") -->
@@ -302,8 +304,9 @@
                         <ColumnDefinition Width="Auto"/>   <!-- Send button -->
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel x:Name="ClarificationOptionsPanel" Grid.Row="0" Grid.ColumnSpan="7"
-                                Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed"/>
+                    <WrapPanel x:Name="ClarificationOptionsPanel" Grid.Row="0" Grid.ColumnSpan="7"
+                               Margin="0,0,0,8" MaxHeight="88" Visibility="Collapsed"
+                               KeyboardNavigation.TabNavigation="None"/>
 
                     <!-- Mac-style attached screenshot strip above the composer -->
                     <Border x:Name="AttachedScreenshotsBorder"

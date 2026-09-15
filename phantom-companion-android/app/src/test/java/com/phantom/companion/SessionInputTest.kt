@@ -2,8 +2,12 @@ package com.phantom.companion
 
 import com.phantom.companion.domain.model.DEFAULT_SCREEN_PROMPT
 import com.phantom.companion.domain.model.DesktopPresenceState
+import com.phantom.companion.domain.model.StartupSnapshot
+import com.phantom.companion.domain.model.WalletSnapshot
+import com.phantom.companion.domain.model.exposesProviderModelPickers
 import com.phantom.companion.domain.model.mapDesktopPresence
 import com.phantom.companion.domain.model.resolveFollowUpText
+import com.phantom.companion.domain.model.sessionRuntimeLabel
 import com.phantom.companion.domain.model.shouldApplyRemoteComposer
 import com.phantom.companion.domain.model.shouldPublishComposer
 import org.junit.Assert.assertEquals
@@ -42,6 +46,26 @@ class SessionInputTest {
         assertTrue(shouldPublishComposer("hello there", "hello"))
         assertFalse(shouldPublishComposer("hello", "hello"))
         assertTrue(shouldPublishComposer("", "hello"))
+    }
+
+    @Test
+    fun premiumHidesManagedProviderAndModel() {
+        val premium = StartupSnapshot(accessTier = "premium", wallet = WalletSnapshot(premiumAvailableCredits = 12.0))
+        assertFalse(exposesProviderModelPickers(premium))
+        assertEquals("Phantom AI", sessionRuntimeLabel(premium, "groq", "whisper-large-v3"))
+    }
+
+    @Test
+    fun byoStillShowsProviderAndModel() {
+        val byo = StartupSnapshot(accessTier = "pro_byo", wallet = WalletSnapshot(proAvailableCredits = 8.0))
+        assertTrue(exposesProviderModelPickers(byo))
+        assertEquals("Groq / gpt-4o", sessionRuntimeLabel(byo, "Groq", "gpt-4o"))
+    }
+
+    @Test
+    fun freeHidesProviderAndModel() {
+        assertFalse(exposesProviderModelPickers(StartupSnapshot(accessTier = "free")))
+        assertFalse(exposesProviderModelPickers(null))
     }
 
     @Test

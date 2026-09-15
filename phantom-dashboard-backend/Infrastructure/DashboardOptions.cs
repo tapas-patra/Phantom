@@ -13,6 +13,8 @@ public sealed class DashboardOptions
     public string WindowsBackendInternalApiKey { get; init; } = string.Empty;
     public string PublicWebsiteBaseUrl { get; init; } = string.Empty;
     public string SharedCookieDomain { get; init; } = string.Empty;
+    public string ReleaseRepository { get; init; } = "tapas-patra/phantom-release-repo";
+    public string ReleaseTag { get; init; } = "desktop-latest";
     public bool TrustForwardedHeaders { get; init; }
 
     public bool HasAdminApiKey => !string.IsNullOrWhiteSpace(AdminApiKey);
@@ -69,6 +71,14 @@ public sealed class DashboardOptions
                 Environment.GetEnvironmentVariable("PHANTOM_SHARED_COOKIE_DOMAIN")?.Trim()
                 ?? section["SharedCookieDomain"]?.Trim()
                 ?? string.Empty,
+            ReleaseRepository =
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RELEASE_REPOSITORY")?.Trim()
+                ?? section["ReleaseRepository"]?.Trim()
+                ?? "tapas-patra/phantom-release-repo",
+            ReleaseTag =
+                Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_RELEASE_TAG")?.Trim()
+                ?? section["ReleaseTag"]?.Trim()
+                ?? "desktop-latest",
             TrustForwardedHeaders = bool.TryParse(
                 Environment.GetEnvironmentVariable("PHANTOM_DASHBOARD_BACKEND_TRUST_FORWARDED_HEADERS")
                     ?? section["TrustForwardedHeaders"],

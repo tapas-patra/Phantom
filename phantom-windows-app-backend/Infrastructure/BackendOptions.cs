@@ -65,7 +65,7 @@ public sealed class BackendOptions
     public int KnowledgeBaseEmbeddingDimensions { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultDimensions;
     public int KnowledgeBaseEmbeddingVersion { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultVersion;
     public int KnowledgeBaseEmbeddingBatchSize { get; init; } = HostedKnowledgeBaseEmbeddingDefaults.DefaultBatchSize;
-    public int KnowledgeBaseQueryEmbeddingTimeoutMs { get; init; } = 350;
+    public int KnowledgeBaseQueryEmbeddingTimeoutMs { get; init; } = 5000;
     public int KnowledgeBaseQueryEmbeddingRetries { get; init; } = 0;
     public int KnowledgeBaseQueryEmbeddingRetryDelayMs { get; init; } = 75;
     public int KnowledgeBaseQueryEmbeddingCacheEntries { get; init; } = 512;
@@ -392,7 +392,7 @@ public sealed class BackendOptions
             KnowledgeBaseQueryEmbeddingTimeoutMs = ParseInt(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_TIMEOUT_MS"),
                 section["KnowledgeBaseQueryEmbeddingTimeoutMs"],
-                350),
+                5000),
             KnowledgeBaseQueryEmbeddingRetries = ParseInt(
                 Environment.GetEnvironmentVariable("PHANTOM_WINDOWS_BACKEND_KB_QUERY_EMBEDDING_RETRIES"),
                 section["KnowledgeBaseQueryEmbeddingRetries"],

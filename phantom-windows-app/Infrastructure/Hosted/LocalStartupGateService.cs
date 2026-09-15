@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using SecureOverlay.Application.Auth;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Application.Telemetry;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Domain.Enums;
+using SecureOverlay.Helpers;
 using SecureOverlay.Infrastructure.Hosted.Contracts;
 using SecureOverlay.Infrastructure.Persistence;
 using SecureOverlay.Infrastructure.Telemetry;
@@ -154,7 +154,7 @@ namespace SecureOverlay.Infrastructure.Hosted
                 {
                     Email = email,
                     Password = password,
-                    AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+                    AppVersion = PhantomAppVersion.Current,
                     InstallId = _deviceProfile.InstallId,
                     DeviceLabel = _deviceProfile.DeviceLabel,
                     DeviceFingerprintHash = _deviceProfile.MachineFingerprintHash,

@@ -146,6 +146,39 @@ public sealed class ManagedAiCatalogService
         }
     }
 
+    public async Task<ManagedAiCatalogRefreshResultDto> RefreshProviderCatalogAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = providerId?.Trim() ?? string.Empty;
+        if (!ManagedAiCatalog.IsAllowedProvider(normalized))
+        {
+            throw new BackendValidationException("Unsupported managed AI provider.");
+        }
+
+        normalized = ManagedAiCatalog.GetAllProviders()
+            .First(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
+
+        await _refreshLock.WaitAsync(cancellationToken);
+        try
+        {
+            var result = await RefreshOneProviderAsync(
+                normalized,
+                GetEnabledCredential(normalized),
+                force: true,
+                cancellationToken);
+            return new ManagedAiCatalogRefreshResultDto
+            {
+                RefreshedAtUtc = DateTime.UtcNow,
+                Providers = new[] { result }
+            };
+        }
+        finally
+        {
+            _refreshLock.Release();
+        }
+    }
+
     private ManagedAiCatalogDto BuildByoCatalogDto()
     {
         // BYO users call providers with their own keys. Serve the admin catalog
@@ -185,34 +218,34 @@ public sealed class ManagedAiCatalogService
 
     private async Task RefreshSingleProviderCatalogAsync(string providerId, CancellationToken cancellationToken)
     {
-        var credential = _credentials.ListByProvider(providerId)
-            .Where(item => item.IsEnabled)
-            .OrderBy(item => item.Priority)
-            .ThenByDescending(item => item.UpdatedAtUtc)
-            .FirstOrDefault()
-            ?? throw new BackendValidationException($"No managed credential is configured for {ManagedAiCatalog.GetProviderLabel(providerId)}.");
-
-        var existing = _catalogRepository.FindByProviderId(providerId);
-        var existingModels = existing == null
-            ? Array.Empty<ManagedAiModelOptionDto>()
-            : DeserializeModels(existing.ModelsJson);
-
-        var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-        var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
-        var models = MergeFetchedModelsWithExisting(fetched, existingModels);
-        var refreshedAtUtc = DateTime.UtcNow;
-        _catalogRepository.Save(new ManagedProviderCatalogRecord
+        await _refreshLock.WaitAsync(cancellationToken);
+        try
         {
-            ProviderId = providerId,
-            Label = ManagedAiCatalog.GetProviderLabel(providerId),
-            ModelsJson = JsonSerializer.Serialize(models),
-            RefreshedAtUtc = refreshedAtUtc
-        });
+            var result = await RefreshOneProviderAsync(
+                providerId,
+                GetEnabledCredential(providerId),
+                force: true,
+                cancellationToken);
+            if (!result.Attempted)
+            {
+                throw new BackendValidationException(
+                    $"No managed credential is configured for {ManagedAiCatalog.GetProviderLabel(providerId)}.");
+            }
 
-        _logger.LogInformation(
-            "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
-            providerId,
-            models.Count);
+            if (!result.Succeeded)
+            {
+                throw new BackendValidationException(result.Message);
+            }
+
+            _logger.LogInformation(
+                "BYO AI catalog refreshed for provider {ProviderId}; model_count={ModelCount}",
+                providerId,
+                result.ModelCount);
+        }
+        finally
+        {
+            _refreshLock.Release();
+        }
     }
 
     public IReadOnlyList<ManagedAiProviderOptionDto> ListCatalogProviders()
@@ -444,82 +477,12 @@ public sealed class ManagedAiCatalogService
 
             foreach (var providerId in ManagedAiCatalog.GetAllProviders())
             {
-                var existing = _catalogRepository.FindByProviderId(providerId);
-                var existingModels = existing == null
-                    ? Array.Empty<ManagedAiModelOptionDto>()
-                    : DeserializeModels(existing.ModelsJson);
-
-                if (!credentialsByProvider.TryGetValue(providerId, out var credential))
-                {
-                    // No managed credential → cannot live-fetch, but keep catalog rows
-                    // (including admin-manual models) so BYO clients still receive them.
-                    results.Add(BuildRefreshResult(
-                        providerId,
-                        attempted: false,
-                        succeeded: existingModels.Count > 0,
-                        message: existingModels.Count > 0
-                            ? "No managed credential; serving existing catalog models."
-                            : "No enabled credential configured.",
-                        models: existingModels,
-                        refreshedAtUtc: existing?.RefreshedAtUtc));
-                    continue;
-                }
-
-                var isStale = existing == null || existing.RefreshedAtUtc <= DateTime.UtcNow - RefreshInterval;
-                if (!force && !isStale)
-                {
-                    results.Add(BuildRefreshResult(
-                        providerId,
-                        attempted: false,
-                        succeeded: true,
-                        message: "Catalog is still fresh.",
-                        models: existingModels,
-                        refreshedAtUtc: existing?.RefreshedAtUtc));
-                    continue;
-                }
-
-                try
-                {
-                    var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
-                    var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
-                    var models = MergeFetchedModelsWithExisting(fetched, existingModels);
-                    var refreshedAtUtc = DateTime.UtcNow;
-
-                    _catalogRepository.Save(new ManagedProviderCatalogRecord
-                    {
-                        ProviderId = providerId,
-                        Label = ManagedAiCatalog.GetProviderLabel(providerId),
-                        ModelsJson = JsonSerializer.Serialize(models),
-                        RefreshedAtUtc = refreshedAtUtc
-                    });
-
-                    results.Add(BuildRefreshResult(
-                        providerId,
-                        attempted: true,
-                        succeeded: true,
-                        message: $"Fetched {models.Count} model(s).",
-                        models: models,
-                        refreshedAtUtc: refreshedAtUtc));
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Managed AI catalog refresh failed for provider {ProviderId}. Serving cached catalog when available.",
-                        providerId);
-
-                    results.Add(BuildRefreshResult(
-                        providerId,
-                        attempted: true,
-                        succeeded: false,
-                        message: GetSingleLineMessage(ex),
-                        models: existingModels,
-                        refreshedAtUtc: existing?.RefreshedAtUtc));
-                }
+                credentialsByProvider.TryGetValue(providerId, out var credential);
+                results.Add(await RefreshOneProviderAsync(
+                    providerId,
+                    credential,
+                    force,
+                    cancellationToken));
             }
 
             return results
@@ -529,6 +492,95 @@ public sealed class ManagedAiCatalogService
         finally
         {
             _refreshLock.Release();
+        }
+    }
+
+    private ManagedProviderCredentialRecord? GetEnabledCredential(string providerId)
+    {
+        return _credentials.ListByProvider(providerId)
+            .Where(item => item.IsEnabled)
+            .OrderBy(item => item.Priority)
+            .ThenByDescending(item => item.UpdatedAtUtc)
+            .FirstOrDefault();
+    }
+
+    private async Task<ManagedAiCatalogRefreshProviderResultDto> RefreshOneProviderAsync(
+        string providerId,
+        ManagedProviderCredentialRecord? credential,
+        bool force,
+        CancellationToken cancellationToken)
+    {
+        var existing = _catalogRepository.FindByProviderId(providerId);
+        var existingModels = existing == null
+            ? Array.Empty<ManagedAiModelOptionDto>()
+            : DeserializeModels(existing.ModelsJson);
+
+        if (credential == null)
+        {
+            return BuildRefreshResult(
+                providerId,
+                attempted: false,
+                succeeded: existingModels.Count > 0,
+                message: existingModels.Count > 0
+                    ? "No managed credential; serving existing catalog models."
+                    : "No enabled credential configured.",
+                models: existingModels,
+                refreshedAtUtc: existing?.RefreshedAtUtc);
+        }
+
+        var isStale = existing == null || existing.RefreshedAtUtc <= DateTime.UtcNow - RefreshInterval;
+        if (!force && !isStale)
+        {
+            return BuildRefreshResult(
+                providerId,
+                attempted: false,
+                succeeded: true,
+                message: "Catalog is still fresh.",
+                models: existingModels,
+                refreshedAtUtc: existing?.RefreshedAtUtc);
+        }
+
+        try
+        {
+            var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
+            var fetched = await FetchModelsForProviderAsync(providerId, apiKey, cancellationToken);
+            var models = MergeFetchedModelsWithExisting(fetched, existingModels);
+            var refreshedAtUtc = DateTime.UtcNow;
+
+            _catalogRepository.Save(new ManagedProviderCatalogRecord
+            {
+                ProviderId = providerId,
+                Label = ManagedAiCatalog.GetProviderLabel(providerId),
+                ModelsJson = JsonSerializer.Serialize(models),
+                RefreshedAtUtc = refreshedAtUtc
+            });
+
+            return BuildRefreshResult(
+                providerId,
+                attempted: true,
+                succeeded: true,
+                message: $"Fetched {models.Count} model(s).",
+                models: models,
+                refreshedAtUtc: refreshedAtUtc);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Managed AI catalog refresh failed for provider {ProviderId}. Serving cached catalog when available.",
+                providerId);
+
+            return BuildRefreshResult(
+                providerId,
+                attempted: true,
+                succeeded: false,
+                message: GetSingleLineMessage(ex),
+                models: existingModels,
+                refreshedAtUtc: existing?.RefreshedAtUtc);
         }
     }
 
@@ -663,6 +715,8 @@ public sealed class ManagedAiCatalogService
                 => await FetchOpenAiModelsAsync("https://api.groq.com/openai/v1/models", apiKey, cancellationToken),
             var p when string.Equals(p, ManagedAiCatalog.Nvidia, StringComparison.OrdinalIgnoreCase)
                 => await FetchOpenAiModelsAsync("https://integrate.api.nvidia.com/v1/models", apiKey, cancellationToken),
+            var p when string.Equals(p, ManagedAiCatalog.OpenRouter, StringComparison.OrdinalIgnoreCase)
+                => await FetchOpenRouterModelsAsync(apiKey, cancellationToken),
             _ => Array.Empty<ManagedAiModelOptionDto>()
         };
     }
@@ -674,6 +728,10 @@ public sealed class ManagedAiCatalogService
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        if (url.StartsWith("https://openrouter.ai/", StringComparison.OrdinalIgnoreCase))
+        {
+            ManagedAiCatalog.ApplyOpenRouterHeaders(request.Headers);
+        }
         using var response = await HttpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -709,6 +767,77 @@ public sealed class ManagedAiCatalogService
         return models
             .DistinctBy(item => item.ModelId, StringComparer.OrdinalIgnoreCase)
             .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static async Task<IReadOnlyList<ManagedAiModelOptionDto>> FetchOpenRouterModelsAsync(
+        string apiKey,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, ManagedAiCatalog.OpenRouterModelsUrl);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        ManagedAiCatalog.ApplyOpenRouterHeaders(request.Headers);
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ManagedAiModelOptionDto>();
+        }
+
+        var models = new List<ManagedAiModelOptionDto>();
+        foreach (var item in data.EnumerateArray())
+        {
+            var id = item.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+            if (string.IsNullOrWhiteSpace(id) || !LooksLikeInventoryModel(id))
+            {
+                continue;
+            }
+
+            var outputModalities = ReadStringArray(item, "architecture", "output_modalities");
+            if (outputModalities.Count > 0
+                && !outputModalities.Any(value => string.Equals(value, "text", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var displayName = item.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : id;
+            var inputModalities = ReadStringArray(item, "architecture", "input_modalities");
+            var supportsVision = inputModalities.Any(value => string.Equals(value, "image", StringComparison.OrdinalIgnoreCase))
+                || InferVisionSupport(id, displayName);
+
+            models.Add(new ManagedAiModelOptionDto
+            {
+                ModelId = id,
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? id : displayName!,
+                SupportsVision = supportsVision,
+                EligibleForChat = true
+            });
+        }
+
+        return models
+            .DistinctBy(item => item.ModelId, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ReadStringArray(JsonElement item, string parentName, string propertyName)
+    {
+        if (!item.TryGetProperty(parentName, out var parent) || parent.ValueKind != JsonValueKind.Object)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (!parent.TryGetProperty(propertyName, out var values) || values.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        return values.EnumerateArray()
+            .Select(value => value.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
             .ToArray();
     }
 

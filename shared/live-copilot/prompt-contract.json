@@ -10,7 +10,7 @@
     "answerBases": ["exact_evidence", "profile_synthesis", "universal_knowledge", "universal_synthesis", "clarification"],
     "entityTypes": ["none", "profile", "experience", "project", "document", "context_pack", "task"],
     "directTemplate": "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\n",
-    "repairPolicy": "Retry malformed output once with a strict reminder. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
+    "repairPolicy": "Retry malformed output once with a strict reminder only when the first attempt produced no usable answer. If the first attempt already produced a complete answer body, use it immediately. The repair attempt must answer or clarify from supplied context and must not retrieve, so a protocol failure can never create a third live model call."
   },
   "modes": {
     "interview": {
@@ -23,8 +23,8 @@
     }
   },
   "deliveryStyles": {
-    "standard": "Polished, concise professional spoken English with neutral transitions, complete sentences, and restrained emphasis; avoid casual openers and colloquial filler.",
-    "desi": "Confident natural Indian professional English: short conversational sentences, concrete explanations, varied spoken transitions, and selective bold emphasis. Behavioral answers use short situation/action/result/learning paragraphs; technical answers use a simple definition, an accurate relatable analogy when useful, and a practical tradeoff or example. Never imitate an accent or stereotype, use broken grammar, force slang or Hinglish, invent cultural examples, or weaken technical accuracy."
+    "standard": "Polished, concise professional spoken English with neutral transitions, complete sentences, and restrained emphasis. Avoid casual openers and colloquial filler. Behavioral Standard uses two short paragraphs; technical Standard uses definition, mechanism, and caveat without spoken bridges or analogies unless the idea is abstract.",
+    "desi": "Confident natural Indian professional English: short conversational sentences, concrete explanations, varied spoken transitions, and selective bold emphasis. Behavioral answers use four short spoken paragraphs for situation, action, result, and learning, each one or two sentences. Technical answers use a simple definition, an accurate relatable analogy when useful, and a practical tradeoff or example. Never imitate an accent or stereotype, use broken grammar, force slang or Hinglish, invent cultural examples, or weaken technical accuracy."
   },
   "grounding": {
     "lockedFacts": ["employer", "role", "project", "technology", "date", "metric", "scope", "title", "team_size", "award", "outcome"],

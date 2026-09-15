@@ -315,7 +315,8 @@ private struct ChatView: View {
                         "Model",
                         selection: $store.selectedModelId,
                         options: store.byoModelChoices.map { ($0.displayName, $0.modelId) },
-                        compact: true
+                        compact: true,
+                        searchable: true
                     )
                     .frame(minWidth: 120, idealWidth: 150, maxWidth: 220)
                 }
@@ -376,7 +377,7 @@ private struct ChatView: View {
 
     private var promptEditor: some View {
         ZStack(alignment: .topLeading) {
-            PromptTextView(text: $store.prompt, height: $promptHeight)
+            PromptTextView(text: $store.prompt, height: $promptHeight, reclaimFocus: store.status == "Needs clarification")
                 .frame(height: promptHeight)
             if store.prompt.isEmpty {
                 Text("Ask an interview question")
@@ -411,6 +412,7 @@ private struct ChatView: View {
 private struct PromptTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
+    var reclaimFocus = false
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -439,6 +441,9 @@ private struct PromptTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text { textView.string = text }
         context.coordinator.resize(textView)
+        if reclaimFocus, let window = textView.window, window.isKeyWindow {
+            window.makeFirstResponder(textView)
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -537,7 +542,7 @@ private struct SettingsView: View {
                             InWindowPicker("Recognizer", selection: $store.speechRecognitionMode, options: [("Native", "Native"), ("Cloud", "Cloud")])
                             if store.speechRecognitionMode == "Cloud" {
                                 InWindowPicker("Speech provider", selection: $store.selectedSpeechProviderId, options: store.speechProviders.map { ($0.label, $0.providerId) })
-                                InWindowPicker("Speech model", selection: $store.selectedSpeechModelId, options: (store.selectedSpeechProvider?.models ?? []).map { ($0.displayName, $0.modelId) })
+                                InWindowPicker("Speech model", selection: $store.selectedSpeechModelId, options: (store.selectedSpeechProvider?.models ?? []).map { ($0.displayName, $0.modelId) }, searchable: true)
                                 TextField("Language code", text: $store.speechLanguage).textFieldStyle(.roundedBorder).accessibilityLabel("Speech language code")
                                 Toggle("Use chat provider API keys", isOn: $store.useChatKeysForSpeech)
                                 if !store.useChatKeysForSpeech {
@@ -580,7 +585,8 @@ private struct SettingsView: View {
                             InWindowPicker(
                                 "Model",
                                 selection: $store.selectedModelId,
-                                options: store.byoModelChoices.map { ($0.displayName, $0.modelId) }
+                                options: store.byoModelChoices.map { ($0.displayName, $0.modelId) },
+                                searchable: true
                             )
                             Button("Refresh models", action: store.refreshBYOModels)
                                 .buttonStyle(.bordered)
@@ -723,6 +729,7 @@ private struct SettingsView: View {
 
                     SettingsSection(title: "Account", systemImage: "person.crop.circle") {
                         ReadOnlyRow(label: "Email", value: store.session?.email ?? "—")
+                        ReadOnlyRow(label: "Version", value: AppVersion.current)
                         ReadOnlyRow(label: "Tier", value: store.account?.accessTier.capitalized ?? "—")
                         ReadOnlyRow(
                             label: "Credits",
@@ -815,23 +822,36 @@ private struct InWindowPicker<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(title: String, value: Value)]
     var compact: Bool = false
+    var searchable: Bool = false
     @State private var isExpanded = false
+    @State private var searchText = ""
 
-    init(_ title: String, selection: Binding<Value>, options: [(String, Value)], compact: Bool = false) {
+    init(_ title: String, selection: Binding<Value>, options: [(String, Value)], compact: Bool = false, searchable: Bool = false) {
         self.title = title
         _selection = selection
         self.options = options
         self.compact = compact
+        self.searchable = searchable
     }
 
     private var selectedTitle: String {
         options.first(where: { $0.value == selection })?.title ?? "—"
     }
 
+    private var filteredOptions: [(title: String, value: Value)] {
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard searchable, !needle.isEmpty else { return options }
+        return options.filter {
+            $0.title.localizedCaseInsensitiveContains(needle)
+                || String(describing: $0.value).localizedCaseInsensitiveContains(needle)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 6) {
             Button {
                 isExpanded.toggle()
+                if !isExpanded { searchText = "" }
             } label: {
                 HStack(spacing: 8) {
                     if !compact {
@@ -855,47 +875,68 @@ private struct InWindowPicker<Value: Hashable>: View {
             .accessibilityValue(selectedTitle)
 
             if isExpanded {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                            Button {
-                                selection = option.value
-                                isExpanded = false
-                            } label: {
-                                HStack {
-                                    Text(option.title)
-                                        .foregroundColor(PhantomColors.frost)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer(minLength: 0)
-                                    if option.value == selection {
-                                        Image(systemName: "checkmark").foregroundColor(PhantomColors.blue)
+                VStack(spacing: 6) {
+                    if searchable {
+                        TextField("Search models", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .frame(height: 28)
+                            .background(PhantomColors.graphite)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(PhantomColors.stroke))
+                            .accessibilityLabel("Search models")
+                    }
+                    ScrollView(.vertical) {
+                        LazyVStack(spacing: 2) {
+                            if filteredOptions.isEmpty {
+                                Text(options.isEmpty ? "No models" : "No matching models")
+                                    .foregroundColor(PhantomColors.muted)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 10)
+                                    .frame(minHeight: compact ? 26 : 30)
+                            } else {
+                                ForEach(Array(filteredOptions.enumerated()), id: \.offset) { _, option in
+                                    Button {
+                                        selection = option.value
+                                        isExpanded = false
+                                        searchText = ""
+                                    } label: {
+                                        HStack {
+                                            Text(option.title)
+                                                .foregroundColor(PhantomColors.frost)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            Spacer(minLength: 0)
+                                            if option.value == selection {
+                                                Image(systemName: "checkmark").foregroundColor(PhantomColors.blue)
+                                            }
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .frame(minHeight: compact ? 26 : 30)
+                                        .frame(maxWidth: .infinity)
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(.plain)
+                                    .accessibilityAddTraits(option.value == selection ? .isSelected : [])
                                 }
-                                .padding(.horizontal, 10)
-                                .frame(minHeight: compact ? 26 : 30)
-                                .frame(maxWidth: .infinity)
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(option.value == selection ? .isSelected : [])
                         }
                     }
+                    .frame(
+                        minWidth: compact ? 100 : 160,
+                        maxWidth: compact ? 220 : 320,
+                        minHeight: InWindowPickerSizing.minimumHeight,
+                        maxHeight: InWindowPickerSizing.maximumHeight
+                    )
+                    .frame(height: InWindowPickerSizing.height(optionCount: max(filteredOptions.count, 1)))
                 }
                 .padding(4)
-                .frame(
-                    minWidth: compact ? 100 : 160,
-                    maxWidth: compact ? 220 : 320,
-                    minHeight: InWindowPickerSizing.minimumHeight,
-                    maxHeight: InWindowPickerSizing.maximumHeight
-                )
-                .frame(height: InWindowPickerSizing.height(optionCount: options.count))
                 .background(PhantomColors.obsidian)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(PhantomColors.stroke))
             }
         }
-        .onExitCommand { isExpanded = false }
+        .onExitCommand { isExpanded = false; searchText = "" }
     }
 }
 
@@ -1053,10 +1094,17 @@ private struct MessageBubble: View {
                         .accessibilityLabel("Response time \(responseTime)")
                 }
                 if let options = message.clarificationOptions, !options.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(options, id: \.label) { option in
-                            Button(option.label) { onChooseClarification(option, message.id) }
-                                .buttonStyle(.bordered)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(options, id: \.question) { option in
+                            Button {
+                                onChooseClarification(option, message.id)
+                            } label: {
+                                Text(option.label)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
+                            .focusable(false)
                         }
                     }
                 }

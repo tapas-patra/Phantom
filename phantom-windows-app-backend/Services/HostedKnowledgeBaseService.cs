@@ -34,7 +34,8 @@ public sealed class HostedKnowledgeBaseService
     private const int MinSearchCandidateCount = 12;
     private const int MaxSearchCandidateCount = 36;
     private const int MaxSearchCacheEntries = 256;
-    private static readonly TimeSpan QueryEmbeddingDeadline = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan LiveSearchBudget = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan QueryEmbeddingBudget = TimeSpan.FromSeconds(5);
     private const double MinSnippetScore = 0.18d;
     private const double MinSemanticSimilarity = 0.45d;
     private const int MaxSnippetLength = 480;
@@ -1013,14 +1014,43 @@ public sealed class HostedKnowledgeBaseService
             };
         }
 
+        var candidateLimit = Math.Clamp(
+            snippetLimit * SearchCandidateMultiplier,
+            MinSearchCandidateCount,
+            MaxSearchCandidateCount);
+        var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var restrictToPreferred = normalizedPreferredDocumentIds.Length > 0;
+
+        IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> RunSearch(string? vector, bool restrict) =>
+            _knowledgeBases.SearchHybridCandidates(
+                userId: account.UserId,
+                knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
+                query: normalizedQuery,
+                preferredDocumentIds: normalizedPreferredDocumentIds,
+                restrictToPreferredDocuments: restrict,
+                queryEmbeddingVector: vector,
+                embeddingModel: profile.ModelId,
+                embeddingDimensions: profile.Dimensions,
+                embeddingVersion: profile.Version,
+                lexicalLimit: candidateLimit,
+                semanticLimit: candidateLimit,
+                finalLimit: candidateLimit);
+
+        // Lexical SQL does not need the vector. Start it immediately so an embedding
+        // timeout still yields snippets inside the 8s live-search budget.
+        var lexicalTask = Task.Run(() => RunSearch(null, restrictToPreferred), CancellationToken.None);
+
         string? queryVectorLiteral = null;
         if (_embeddingService.IsConfigured)
         {
-            using var embeddingDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            embeddingDeadline.CancelAfter(QueryEmbeddingDeadline);
+            using var embedDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            embedDeadline.CancelAfter(QueryEmbeddingBudget);
             try
             {
-                var queryVector = await _embeddingService.GenerateQueryEmbeddingAsync(normalizedQuery, embeddingDeadline.Token);
+                var queryVector = await _embeddingService.GenerateQueryEmbeddingAsync(
+                    normalizedQuery,
+                    embedDeadline.Token,
+                    QueryEmbeddingBudget).ConfigureAwait(false);
                 if (queryVector.Length == profile.Dimensions)
                 {
                     queryVectorLiteral = ToVectorLiteral(queryVector);
@@ -1028,7 +1058,7 @@ public sealed class HostedKnowledgeBaseService
             }
             catch (EmbeddingProviderException ex)
             {
-                _logger.LogWarning(
+                _logger.LogInformation(
                     ex,
                     "Hosted KB query embedding failed for knowledgeBaseId={KnowledgeBaseId}. Falling back to the non-vector search path.",
                     knowledgeBase.KnowledgeBaseId);
@@ -1042,7 +1072,7 @@ public sealed class HostedKnowledgeBaseService
             {
                 _logger.LogInformation(
                     "Hosted KB query embedding exceeded its {DeadlineMs}ms budget for knowledgeBaseId={KnowledgeBaseId}; using lexical search.",
-                    QueryEmbeddingDeadline.TotalMilliseconds,
+                    QueryEmbeddingBudget.TotalMilliseconds,
                     knowledgeBase.KnowledgeBaseId);
                 queryVectorLiteral = null;
             }
@@ -1052,24 +1082,22 @@ public sealed class HostedKnowledgeBaseService
             }
         }
 
-        var candidateLimit = Math.Clamp(
-            snippetLimit * SearchCandidateMultiplier,
-            MinSearchCandidateCount,
-            MaxSearchCandidateCount);
-        var terms = Tokenize(normalizedQuery).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var candidates = _knowledgeBases.SearchHybridCandidates(
-            userId: account.UserId,
-            knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
-            query: normalizedQuery,
-            preferredDocumentIds: normalizedPreferredDocumentIds,
-            restrictToPreferredDocuments: normalizedPreferredDocumentIds.Length > 0,
-            queryEmbeddingVector: queryVectorLiteral,
-            embeddingModel: profile.ModelId,
-            embeddingDimensions: profile.Dimensions,
-            embeddingVersion: profile.Version,
-            lexicalLimit: candidateLimit,
-            semanticLimit: candidateLimit,
-            finalLimit: candidateLimit);
+        IReadOnlyList<HostedKnowledgeBaseSearchCandidateRecord> candidates;
+        var remaining = LiveSearchBudget - stopwatch.Elapsed;
+        if (queryVectorLiteral != null && remaining > TimeSpan.FromMilliseconds(400))
+        {
+            _ = lexicalTask.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            candidates = RunSearch(queryVectorLiteral, restrictToPreferred);
+        }
+        else
+        {
+            candidates = await lexicalTask.ConfigureAwait(false);
+        }
+
         foreach (var (candidate, rank) in candidates.Take(5).Select((candidate, index) => (candidate, index + 1)))
         {
             _logger.LogDebug(
@@ -1084,6 +1112,14 @@ public sealed class HostedKnowledgeBaseService
                 candidate.FusedScore);
         }
         var snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
+        var unrestrictedRetry = false;
+        remaining = LiveSearchBudget - stopwatch.Elapsed;
+        if (snippets.Count == 0 && restrictToPreferred && remaining > TimeSpan.FromMilliseconds(400))
+        {
+            unrestrictedRetry = true;
+            candidates = RunSearch(queryVectorLiteral, restrict: false);
+            snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
+        }
 
         if (queryVectorLiteral != null || !_embeddingService.IsConfigured)
         {
@@ -1099,7 +1135,11 @@ public sealed class HostedKnowledgeBaseService
             "Hosted KB search completed for knowledgeBaseId={KnowledgeBaseId} kbRevision={KnowledgeBaseRevision} mode={SearchMode} queryLength={QueryLength} candidates={CandidateCount} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
             knowledgeBase.KnowledgeBaseId,
             knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
-            queryVectorLiteral != null ? "hybrid" : _embeddingService.IsConfigured ? "degraded_lexical" : "lexical",
+            queryVectorLiteral != null
+                ? (unrestrictedRetry ? "hybrid_unrestricted_retry" : "hybrid")
+                : _embeddingService.IsConfigured
+                    ? (unrestrictedRetry ? "degraded_lexical_unrestricted_retry" : "degraded_lexical")
+                    : (unrestrictedRetry ? "lexical_unrestricted_retry" : "lexical"),
             normalizedQuery.Length,
             candidates.Count,
             snippets.Count,

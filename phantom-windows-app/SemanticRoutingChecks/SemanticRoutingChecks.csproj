@@ -13,10 +13,12 @@
     <Compile Include="../Domain/Entities/RetrievedContextSnippet.cs" Link="Domain/Entities/RetrievedContextSnippet.cs" />
     <Compile Include="../Services/PhantomControlFrameParser.cs" Link="Services/PhantomControlFrameParser.cs" />
     <Compile Include="../Services/LiveCopilotOrchestrator.cs" Link="Services/LiveCopilotOrchestrator.cs" />
+    <Compile Include="../Services/LiveCopilotRetrievePolicy.cs" Link="Services/LiveCopilotRetrievePolicy.cs" />
     <Compile Include="../Services/ProviderResiliencePolicy.cs" Link="Services/ProviderResiliencePolicy.cs" />
     <Compile Include="../../phantom-windows-app-backend/Services/ManagedAiProviderException.cs" Link="Backend/ManagedAiProviderException.cs" />
     <Compile Include="../../phantom-windows-app-backend/Services/ProviderResiliencePolicy.cs" Link="Backend/ProviderResiliencePolicy.cs" />
     <Compile Include="../Helpers/CopilotPromptRegistry.cs" Link="Helpers/CopilotPromptRegistry.cs" />
+    <Compile Include="../Helpers/ClarificationOptionParser.cs" Link="Helpers/ClarificationOptionParser.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseSummaryDto.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseProfileCardDto.cs" />
     <Compile Include="../Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" Link="Infrastructure/Hosted/Contracts/HostedKnowledgeBaseExperienceCardDto.cs" />

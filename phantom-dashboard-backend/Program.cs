@@ -45,8 +45,14 @@ if (options.TrustForwardedHeaders)
     });
 }
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient(nameof(DesktopReleaseVersionClient), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("PhantomDashboard/1.0");
+});
 builder.Services.AddSingleton<PostgresDashboardStore>();
 builder.Services.AddSingleton<AuthorityBackendClient>();
+builder.Services.AddSingleton<DesktopReleaseVersionClient>();
 builder.Services.AddSingleton<DashboardQueryService>();
 builder.Services.AddSingleton<ManagedAiAdminService>();
 builder.Services.AddSingleton<AdminSessionValidator>();
@@ -479,6 +485,18 @@ adminGroup.MapPost("/managed-ai/catalog/refresh", async (
 {
     return Results.Ok(await managedAi.RefreshCatalog(
         cookies.GetAdminAuthorizationHeader(httpContext.Request),
+        cancellationToken));
+});
+adminGroup.MapPost("/managed-ai/catalog/{providerId}/refresh", async (
+    string providerId,
+    HttpContext httpContext,
+    BrowserSessionCookieService cookies,
+    ManagedAiAdminService managedAi,
+    CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await managedAi.RefreshProviderCatalog(
+        cookies.GetAdminAuthorizationHeader(httpContext.Request),
+        providerId,
         cancellationToken));
 });
 adminGroup.MapPost("/managed-ai/selection", async (

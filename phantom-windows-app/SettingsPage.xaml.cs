@@ -54,12 +54,14 @@ namespace SecureOverlay
         private ObservableCollection<ApiKeyItem> _geminiKeys = new ObservableCollection<ApiKeyItem>();
         private ObservableCollection<ApiKeyItem> _groqKeys = new ObservableCollection<ApiKeyItem>();
         private ObservableCollection<ApiKeyItem> _nvidiaKeys = new ObservableCollection<ApiKeyItem>();
+        private ObservableCollection<ApiKeyItem> _openRouterKeys = new ObservableCollection<ApiKeyItem>();
 
         public event EventHandler<SettingsCloseResult>? SettingsClosed;
 
         public SettingsPage(AccountCacheSnapshot? accountSnapshot = null, AppSettings? settings = null)
         {
             InitializeComponent();
+            AppVersionText.Text = $"Version {PhantomAppVersion.Current}";
 
             _settings = settings ?? SettingsManager.Load();
             _accountSnapshot = accountSnapshot;
@@ -187,6 +189,7 @@ namespace SecureOverlay
             ComboBoxProtection.ProtectComboBox(GeminiModelBox);
             ComboBoxProtection.ProtectComboBox(GroqModelBox);
             ComboBoxProtection.ProtectComboBox(NvidiaModelBox);
+            ComboBoxProtection.ProtectComboBox(OpenRouterModelBox);
             ComboBoxProtection.ProtectComboBox(CopilotModeComboBox);
             ComboBoxProtection.ProtectComboBox(DeliveryStyleComboBox);
             ComboBoxProtection.ProtectComboBox(ManagedModelComboBox);
@@ -247,6 +250,7 @@ namespace SecureOverlay
             string geminiModel = _settings.GeminiModel;
             string groqModel = _settings.GroqModel;
             string nvidiaModel = _settings.NvidiaModel;
+            string openRouterModel = _settings.OpenRouterModel;
             
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("LOADING SETTINGS PAGE");
@@ -256,6 +260,7 @@ namespace SecureOverlay
             Log.WriteLine($"  Gemini model from settings: {geminiModel}");
             Log.WriteLine($"  Groq model from settings: {groqModel}");
             Log.WriteLine($"  NVIDIA model from settings: {nvidiaModel}");
+            Log.WriteLine($"  OpenRouter model from settings: {openRouterModel}");
             Log.WriteLine("═══════════════════════════════════════════════════════");
             
             // Set selected models in ComboBoxes
@@ -265,6 +270,7 @@ namespace SecureOverlay
             GeminiModelBox.SelectedItem = geminiModel;
             GroqModelBox.SelectedItem = groqModel;
             NvidiaModelBox.SelectedItem = nvidiaModel;
+            OpenRouterModelBox.SelectedItem = openRouterModel;
             PopulateManagedModelChoices();
 
             VoiceInputCheckBox.IsChecked = _settings.VoiceInputEnabled;
@@ -821,6 +827,17 @@ namespace SecureOverlay
                 _nvidiaKeys.Add(new ApiKeyItem { Index = $"#{i + 1}", Key = _settings.NvidiaApiKeys[i] });
             }
             NvidiaKeysList.ItemsSource = _nvidiaKeys;
+
+            _openRouterKeys.Clear();
+            if (_settings.OpenRouterApiKeys.Count == 0 && !string.IsNullOrWhiteSpace(_settings.OpenRouterApiKey))
+            {
+                _settings.OpenRouterApiKeys.Add(_settings.OpenRouterApiKey);
+            }
+            for (int i = 0; i < _settings.OpenRouterApiKeys.Count; i++)
+            {
+                _openRouterKeys.Add(new ApiKeyItem { Index = $"#{i + 1}", Key = _settings.OpenRouterApiKeys[i] });
+            }
+            OpenRouterKeysList.ItemsSource = _openRouterKeys;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -914,6 +931,21 @@ namespace SecureOverlay
             {
                 _nvidiaKeys.Remove(item);
                 ReindexKeys(_nvidiaKeys);
+            }
+        }
+
+        private void AddOpenRouterKey_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CanAddProviderKey(_openRouterKeys, "OpenRouter")) return;
+            _openRouterKeys.Add(new ApiKeyItem { Index = $"#{_openRouterKeys.Count + 1}", Key = "" });
+        }
+
+        private void RemoveOpenRouterKey_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.Tag is ApiKeyItem item)
+            {
+                _openRouterKeys.Remove(item);
+                ReindexKeys(_openRouterKeys);
             }
         }
 
@@ -1021,6 +1053,7 @@ namespace SecureOverlay
                 GeminiPanel.Visibility = Visibility.Collapsed;
                 GroqPanel.Visibility = Visibility.Collapsed;
                 NvidiaPanel.Visibility = Visibility.Collapsed;
+                OpenRouterPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -1030,6 +1063,7 @@ namespace SecureOverlay
             GeminiPanel.Visibility = selected == "Gemini" ? Visibility.Visible : Visibility.Collapsed;
             GroqPanel.Visibility = selected == "Groq" ? Visibility.Visible : Visibility.Collapsed;
             NvidiaPanel.Visibility = selected == "NVIDIA" ? Visibility.Visible : Visibility.Collapsed;
+            OpenRouterPanel.Visibility = selected == "OpenRouter" ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void PopulateProviderChoices()
@@ -1090,12 +1124,13 @@ namespace SecureOverlay
 
         private void PopulateByoModelChoices()
         {
-            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT, byo: true));
-            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude, byo: true));
-            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral, byo: true));
-            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini, byo: true));
-            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq, byo: true));
-            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia, byo: true));
+            RebindModelCombo(ChatGPTModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.ChatGPT, byo: true), ChatGPTModelSearchBox);
+            RebindModelCombo(ClaudeModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Claude, byo: true), ClaudeModelSearchBox);
+            RebindModelCombo(MistralModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Mistral, byo: true), MistralModelSearchBox);
+            RebindModelCombo(GeminiModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Gemini, byo: true), GeminiModelSearchBox);
+            RebindModelCombo(GroqModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Groq, byo: true), GroqModelSearchBox);
+            RebindModelCombo(NvidiaModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.Nvidia, byo: true), NvidiaModelSearchBox);
+            RebindModelCombo(OpenRouterModelBox, ProviderModelCatalogCache.GetModelIds(_settings, AIModelRegistry.Providers.OpenRouter, byo: true), OpenRouterModelSearchBox);
         }
 
         private void LoadSpeechSettings()
@@ -1229,6 +1264,7 @@ namespace SecureOverlay
             Restore(GeminiModelBox, AIModelRegistry.Providers.Gemini);
             Restore(GroqModelBox, AIModelRegistry.Providers.Groq);
             Restore(NvidiaModelBox, AIModelRegistry.Providers.Nvidia);
+            Restore(OpenRouterModelBox, AIModelRegistry.Providers.OpenRouter);
         }
 
         private async Task RefreshSpeechCatalogAsync(bool force = false)
@@ -1316,12 +1352,67 @@ namespace SecureOverlay
             return IsPremiumOnlyAccount();
         }
 
-        private static void RebindModelCombo(ComboBox comboBox, IEnumerable<string> models)
+        private static void RebindModelCombo(ComboBox comboBox, IEnumerable<string> models, TextBox? searchBox = null)
         {
+            var selected = comboBox.SelectedItem as string;
+            var all = models.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            comboBox.Tag = all;
+            ApplyModelComboFilter(comboBox, searchBox?.Text, selected);
+        }
+
+        private void ByoModelSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isInitializing || sender is not TextBox searchBox)
+            {
+                return;
+            }
+
+            var comboBox = ComboBoxForModelSearch(searchBox);
+            if (comboBox == null)
+            {
+                return;
+            }
+
+            ApplyModelComboFilter(comboBox, searchBox.Text, comboBox.SelectedItem as string);
+        }
+
+        private ComboBox? ComboBoxForModelSearch(TextBox searchBox)
+        {
+            return searchBox.Name switch
+            {
+                "ChatGPTModelSearchBox" => ChatGPTModelBox,
+                "ClaudeModelSearchBox" => ClaudeModelBox,
+                "MistralModelSearchBox" => MistralModelBox,
+                "GeminiModelSearchBox" => GeminiModelBox,
+                "GroqModelSearchBox" => GroqModelBox,
+                "NvidiaModelSearchBox" => NvidiaModelBox,
+                "OpenRouterModelSearchBox" => OpenRouterModelBox,
+                _ => null
+            };
+        }
+
+        private static void ApplyModelComboFilter(ComboBox comboBox, string? query, string? selected)
+        {
+            var all = comboBox.Tag as List<string>
+                ?? comboBox.Items.OfType<string>().ToList();
+            var filtered = string.IsNullOrWhiteSpace(query)
+                ? all
+                : all.Where(item => item.IndexOf(query.Trim(), StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            if (!string.IsNullOrWhiteSpace(selected)
+                && !filtered.Contains(selected, StringComparer.OrdinalIgnoreCase))
+            {
+                filtered.Insert(0, selected);
+            }
+
             comboBox.Items.Clear();
-            foreach (var model in models.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var model in filtered)
             {
                 comboBox.Items.Add(model);
+            }
+
+            if (!string.IsNullOrWhiteSpace(selected) && comboBox.Items.Contains(selected))
+            {
+                comboBox.SelectedItem = selected;
             }
         }
 
@@ -1630,7 +1721,8 @@ namespace SecureOverlay
                     ["Mistral"] = _settings.MistralApiKeys.ToArray(),
                     ["Gemini"] = _settings.GeminiApiKeys.ToArray(),
                     ["Groq"] = _settings.GroqApiKeys.ToArray(),
-                    ["NVIDIA"] = _settings.NvidiaApiKeys.ToArray()
+                    ["NVIDIA"] = _settings.NvidiaApiKeys.ToArray(),
+                    ["OpenRouter"] = _settings.OpenRouterApiKeys.ToArray()
                 };
                 _settings.SelectedAI = AIProviderComboBox.SelectedItem as string
                     ?? (string.IsNullOrWhiteSpace(_settings.SelectedAI) ? "ChatGPT" : _settings.SelectedAI);
@@ -1643,6 +1735,7 @@ namespace SecureOverlay
                     _settings.GeminiApiKeys = new System.Collections.Generic.List<string>();
                     _settings.GroqApiKeys = new System.Collections.Generic.List<string>();
                     _settings.NvidiaApiKeys = new System.Collections.Generic.List<string>();
+                    _settings.OpenRouterApiKeys = new System.Collections.Generic.List<string>();
                 }
                 else
                 {
@@ -1652,6 +1745,7 @@ namespace SecureOverlay
                     _settings.GeminiApiKeys = _geminiKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
                     _settings.GroqApiKeys = _groqKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
                     _settings.NvidiaApiKeys = _nvidiaKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
+                    _settings.OpenRouterApiKeys = _openRouterKeys.Select(k => k.Key.Trim()).Where(k => k.Length > 0).ToList();
                 }
 
                 var rotation = new APIRotationManager(_settings);
@@ -1671,6 +1765,7 @@ namespace SecureOverlay
                 Log.WriteLine($"  Gemini: {_settings.GeminiApiKeys.Count} keys");
                 Log.WriteLine($"  Groq: {_settings.GroqApiKeys.Count} keys");
                 Log.WriteLine($"  NVIDIA: {_settings.NvidiaApiKeys.Count} keys");
+                Log.WriteLine($"  OpenRouter: {_settings.OpenRouterApiKeys.Count} keys");
                 Log.WriteLine("═══════════════════════════════════════════════════════");
                 
                 // Save legacy single keys (use first key if available)
@@ -1680,6 +1775,7 @@ namespace SecureOverlay
                 _settings.GeminiApiKey = _settings.GeminiApiKeys.FirstOrDefault() ?? "";
                 _settings.GroqApiKey = _settings.GroqApiKeys.FirstOrDefault() ?? "";
                 _settings.NvidiaApiKey = _settings.NvidiaApiKeys.FirstOrDefault() ?? "";
+                _settings.OpenRouterApiKey = _settings.OpenRouterApiKeys.FirstOrDefault() ?? "";
                 
                 // Save models
                 _settings.ChatGPTModel = ChatGPTModelBox.SelectedItem as string ?? _settings.ChatGPTModel;
@@ -1688,6 +1784,7 @@ namespace SecureOverlay
                 _settings.GeminiModel = GeminiModelBox.SelectedItem as string ?? _settings.GeminiModel;
                 _settings.GroqModel = GroqModelBox.SelectedItem as string ?? _settings.GroqModel;
                 _settings.NvidiaModel = NvidiaModelBox.SelectedItem as string ?? _settings.NvidiaModel;
+                _settings.OpenRouterModel = OpenRouterModelBox.SelectedItem as string ?? _settings.OpenRouterModel;
 
                 if (IsPremiumOnlyAccount())
                 {
@@ -1841,6 +1938,7 @@ namespace SecureOverlay
                 Log.WriteLine($"  Gemini keys: {_settings.GeminiApiKeys.Count}");
                 Log.WriteLine($"  Groq keys: {_settings.GroqApiKeys.Count}");
                 Log.WriteLine($"  NVIDIA keys: {_settings.NvidiaApiKeys.Count}");
+                Log.WriteLine($"  OpenRouter keys: {_settings.OpenRouterApiKeys.Count}");
                 Log.WriteLine($"  Auto-switch keys: {_settings.AutoSwitchKeysOnError}");
                 Log.WriteLine($"  Auto-switch models: {_settings.AutoSwitchModelsOnError}");
 
@@ -2027,6 +2125,14 @@ namespace SecureOverlay
             
             var selectedModel = GroqModelBox.SelectedItem as string;
             Log.WriteLine($"User selected Groq model: {selectedModel}");
+        }
+
+        private void OpenRouterModelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isInitializing) return;
+
+            var selectedModel = OpenRouterModelBox.SelectedItem as string;
+            Log.WriteLine($"User selected OpenRouter model: {selectedModel}");
         }
 
         private void ApplyAccountTierRestrictions()
@@ -2241,7 +2347,8 @@ namespace SecureOverlay
                 || (_settings.MistralApiKeys?.Count ?? 0) > 0
                 || (_settings.GeminiApiKeys?.Count ?? 0) > 0
                 || (_settings.GroqApiKeys?.Count ?? 0) > 0
-                || (_settings.NvidiaApiKeys?.Count ?? 0) > 0;
+                || (_settings.NvidiaApiKeys?.Count ?? 0) > 0
+                || (_settings.OpenRouterApiKeys?.Count ?? 0) > 0;
         }
 
         private bool IsPremiumAccount()
@@ -2316,6 +2423,7 @@ namespace SecureOverlay
             if (_geminiKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _geminiKeys) count++;
             if (_groqKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _groqKeys) count++;
             if (_nvidiaKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _nvidiaKeys) count++;
+            if (_openRouterKeys.Any(k => !string.IsNullOrWhiteSpace(k.Key)) || pendingProvider == _openRouterKeys) count++;
             return count;
         }
 
@@ -2333,7 +2441,8 @@ namespace SecureOverlay
                 new { Name = "Mistral", Keys = _settings.MistralApiKeys },
                 new { Name = "Gemini", Keys = _settings.GeminiApiKeys },
                 new { Name = "Groq", Keys = _settings.GroqApiKeys },
-                new { Name = "NVIDIA", Keys = _settings.NvidiaApiKeys }
+                new { Name = "NVIDIA", Keys = _settings.NvidiaApiKeys },
+                new { Name = "OpenRouter", Keys = _settings.OpenRouterApiKeys }
             };
 
             var configuredProviders = providerLists.Count(item => item.Keys.Count > 0);
@@ -2362,7 +2471,7 @@ namespace SecureOverlay
             try
             {
                 var label = Environment.MachineName ?? "Windows PC";
-                var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+                var appVersion = PhantomAppVersion.Current;
                 var request = new CompanionPairingStartRequestDto
                 {
                     DesktopDeviceLabel = label,

@@ -99,6 +99,7 @@ var directCalls = 0;
 var directVisible = string.Empty;
 var direct = await new LiveCopilotOrchestrator().ExecuteAsync(
     Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
     (publish, _, _) =>
     {
         directCalls++;
@@ -116,6 +117,7 @@ var retrieveCalls = 0;
 var finalVisible = string.Empty;
 var retrieved = await new LiveCopilotOrchestrator().ExecuteAsync(
     retrieveFixture.AllowedEntityIds, retrieveFixture.AllowedDocumentIds,
+    "Walk me through the payment migration conflict.", false, false,
     (publish, _, _) =>
     {
         retrieveCalls++;
@@ -138,12 +140,123 @@ Equal("2", retrieveCalls.ToString(), "retrieve model calls");
 Equal("Grounded final answer.", retrieved.Answer, "retrieve final answer");
 Equal(retrieved.Answer, finalVisible, "retrieve visible body");
 
+var fallbackCalls = 0;
+var fallbackVisible = string.Empty;
+const string fallbackRaw = "Optimistic locking detects a conflicting write without a control header.";
+var fallback = await new LiveCopilotOrchestrator().ExecuteAsync(
+    Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
+    (publish, _, _) =>
+    {
+        fallbackCalls++;
+        publish(fallbackRaw);
+        return Task.FromResult((fallbackRaw, string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Fallback fixture retrieved."),
+    (_, _) => throw new InvalidOperationException("Fallback fixture used a second call."),
+    chunk => fallbackVisible += chunk, null, CancellationToken.None);
+Equal("1", fallbackCalls.ToString(), "fallback model calls");
+Equal(fallbackRaw, fallback.Answer, "fallback answer");
+Equal(fallback.Answer, fallbackVisible, "fallback visible body");
+
+var repairCalls = 0;
+var repairVisible = string.Empty;
+var repairRejected = new List<string>();
+const string headerOnly = "PHANTOM_CONTROL_V1\n";
+var repaired = await new LiveCopilotOrchestrator().ExecuteAsync(
+    Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
+    (publish, _, _) =>
+    {
+        repairCalls++;
+        var raw = repairCalls == 1 ? headerOnly : fallbackRaw;
+        publish(raw);
+        return Task.FromResult((raw, string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Repair fixture retrieved."),
+    (_, _) => throw new InvalidOperationException("Repair fixture used a second call."),
+    chunk => repairVisible += chunk, null, CancellationToken.None,
+    protocolRejected: code => repairRejected.Add(code));
+Equal("2", repairCalls.ToString(), "header-only repair model calls");
+Equal(fallbackRaw, repaired.Answer, "header-only repair answer");
+Equal(repaired.Answer, repairVisible, "header-only repair visible body");
+if (!repairRejected.Contains("control_frame_incomplete"))
+    throw new InvalidOperationException("Header-only repair did not reject the first malformed header.");
+
+var forcePersonalFrame =
+    "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"candidate_specific\",\"answerBasis\":\"profile_synthesis\",\"entityType\":\"project\",\"entityId\":\"payment-migration\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\nPHANTOM_BODY\nCatalog-only architecture answer.";
+var forceCalls = 0;
+var forceForced = false;
+var forceVisible = string.Empty;
+var kept = await new LiveCopilotOrchestrator().ExecuteAsync(
+    new[] { "payment-migration" }, new[] { "resume-document-id" },
+    "Draw the architecture of Spashta.", true, false,
+    (publish, _, _) =>
+    {
+        forceCalls++;
+        publish(forcePersonalFrame);
+        return Task.FromResult((forcePersonalFrame, string.Empty));
+    },
+    (_, _) => throw new InvalidOperationException("Personal catalog answers must not retrieve."),
+    (_, _) => throw new InvalidOperationException("Personal catalog answers must not use a second call."),
+    chunk => forceVisible += chunk,
+    () => throw new InvalidOperationException("Personal catalog answers must not reset the first-call body."),
+    CancellationToken.None,
+    preferredDocumentsForDecision: _ => new[] { "resume-document-id" },
+    decisionParsed: (_, _, retrieveForced) => forceForced = retrieveForced);
+Equal("1", forceCalls.ToString(), "personal catalog answer model calls");
+Equal("false", forceForced.ToString().ToLowerInvariant(), "retrieve_forced");
+Equal("Catalog-only architecture answer.", kept.Answer, "kept first-call answer");
+Equal(kept.Answer, forceVisible, "kept visible body");
+
+var skipGeneral = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "general", "universal_knowledge", "none", "", "", Array.Empty<string>(), 30, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: false);
+if (skipGeneral) throw new InvalidOperationException("General technical turns must not force retrieve.");
+
+var skipActiveEvidence = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "personal_factual", "candidate_specific", "profile_synthesis", "project", "payment-migration", "", Array.Empty<string>(), 30, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: true);
+if (skipActiveEvidence) throw new InvalidOperationException("Active evidence must suppress forced retrieve.");
+
+var forcePersonal = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "candidate_specific", "profile_synthesis", "project", "payment-migration", "", Array.Empty<string>(), 40, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: false);
+if (forcePersonal) throw new InvalidOperationException("Candidate-specific project turns must keep a complete first-call answer.");
+
+if (!LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "found"))
+    throw new InvalidOperationException("Matching found speculation must be reusable.");
+if (!LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "empty"))
+    throw new InvalidOperationException("Matching empty speculation must be reusable.");
+if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "unavailable"))
+    throw new InvalidOperationException("Timed-out speculation must not be reused.");
+if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", new[] { "resume-document-id" }, "found"))
+    throw new InvalidOperationException("Speculation with different preferred documents must not be reused.");
+
 foreach (var secret in fixtures.SensitiveSamples)
 {
     var allowlist = new[] { "question_length_bucket", "provider", "model", "answer_basis" };
     if (allowlist.Any(value => value.Contains(secret, StringComparison.Ordinal)))
         throw new InvalidOperationException("Sensitive fixture leaked into the telemetry allowlist.");
 }
+
+var kubernetesClarify = "Just to make sure I answer the right thing — did you mean installing Kubernetes on your own machine (like minikube, kind, or kubeadm on bare VMs), or were you asking about something else, like a specific cloud or on-prem setup?";
+var kubernetesOptions = ClarificationOptionParser.Parse(kubernetesClarify);
+if (kubernetesOptions.Options.Count != 2)
+    throw new InvalidOperationException("Kubernetes clarification did not produce two clickable options.");
+if (!kubernetesOptions.Options[0].Question.Contains("own machine", StringComparison.OrdinalIgnoreCase)
+    || !kubernetesOptions.Options[1].Question.Contains("cloud", StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("Kubernetes clarification options were parsed incorrectly.");
+
+var listedClarify = "Which environment should I answer for?\nOptions:\n- I meant a local minikube cluster\n- I meant GKE in the cloud";
+var listedOptions = ClarificationOptionParser.Parse(listedClarify);
+Equal("Which environment should I answer for?", listedOptions.DisplayText, "listed clarification display");
+Equal("2", listedOptions.Options.Count.ToString(), "listed clarification count");
+Equal("I meant a local minikube cluster", listedOptions.Options[0].Question, "listed clarification first option");
 
 Console.WriteLine($"Shared live-copilot fixture suite passed ({fixtures.Version}).");
 

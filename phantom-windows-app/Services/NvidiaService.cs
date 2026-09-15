@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -46,7 +47,7 @@ namespace SecureOverlay.Services
                 {
                     model = _model,
                     messages = apiMessages,
-                    max_tokens = 2000
+                    max_tokens = ReasoningBudget.Resolve(messages).MaxTokens
                 };
 
                 var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://integrate.api.nvidia.com/v1/chat/completions")
@@ -93,7 +94,7 @@ namespace SecureOverlay.Services
                 {
                     model = _model,
                     messages = BuildMessages(messages, imagesBase64),
-                    max_tokens = 2000,
+                    max_tokens = ReasoningBudget.Resolve(messages).MaxTokens,
                     stream = true
                 };
 

@@ -629,7 +629,8 @@ struct BackendClient {
             URLQueryItem(name: "preferredDocumentIds", value: preferredDocumentIds.prefix(8).joined(separator: ","))
         ]
         var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 1.5
+        // Live interview search budget: embedding + lexical/hybrid query.
+        request.timeoutInterval = 8
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         correlate(&request, turnId: turnId, operationId: operationId)
         let result: KnowledgeSearchResult = try await send(request)
@@ -779,6 +780,7 @@ struct BackendClient {
             let allowPaidSessionExtension: Bool
             let imageBase64: String?
             let imagesBase64: [String]
+            let questionType: String?
             let messages: [WireMessage]
         }
 
@@ -797,6 +799,7 @@ struct BackendClient {
             allowPaidSessionExtension: allowPaidSessionExtension,
             imageBase64: normalizedImages.first,
             imagesBase64: normalizedImages,
+            questionType: ReasoningContext.questionType,
             messages: messages.map { WireMessage(role: $0.role, content: $0.content) }
         ))
 

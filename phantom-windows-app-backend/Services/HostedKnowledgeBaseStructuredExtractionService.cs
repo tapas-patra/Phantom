@@ -435,6 +435,15 @@ Rules:
                 systemPrompt,
                 userPrompt,
                 cancellationToken),
+            ManagedAiCatalog.OpenRouter => await CompleteOpenAiCompatibleAsync(
+                ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                modelId,
+                apiKey,
+                systemPrompt,
+                userPrompt,
+                cancellationToken,
+                ManagedAiCatalog.ApplyOpenRouterHeaders,
+                openRouter: true),
             ManagedAiCatalog.Claude => await CompleteClaudeAsync(modelId, apiKey, systemPrompt, userPrompt, cancellationToken),
             ManagedAiCatalog.Gemini => await CompleteGeminiAsync(modelId, apiKey, systemPrompt, userPrompt, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported provider '{providerId}'.")
@@ -447,28 +456,65 @@ Rules:
         string apiKey,
         string systemPrompt,
         string userPrompt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<HttpRequestHeaders>? configureHeaders = null,
+        bool openRouter = false)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            model = modelId,
-            temperature = 0.1,
-            max_tokens = 1200,
-            messages = new object[]
+        var payload = JsonSerializer.Serialize(openRouter
+            ? (object)new
             {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userPrompt }
+                model = modelId,
+                temperature = 0.1,
+                max_tokens = 3200,
+                reasoning = new { exclude = true, effort = "low" },
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userPrompt }
+                }
             }
-        });
+            : new
+            {
+                model = modelId,
+                temperature = 0.1,
+                max_tokens = 1200,
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userPrompt }
+                }
+            });
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        configureHeaders?.Invoke(request.Headers);
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await HttpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        return document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
+        if (document.RootElement.TryGetProperty("error", out var error))
+        {
+            var message = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var errorMessage)
+                ? errorMessage.GetString()
+                : error.ToString();
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(message) ? "OpenRouter request failed." : message);
+        }
+
+        if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+        {
+            return string.Empty;
+        }
+
+        var messageElement = choices[0].GetProperty("message");
+        if (!messageElement.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Null)
+        {
+            return string.Empty;
+        }
+
+        return content.ValueKind == JsonValueKind.String
+            ? content.GetString() ?? string.Empty
+            : content.ToString();
     }
 
     private static async Task<string> CompleteClaudeAsync(

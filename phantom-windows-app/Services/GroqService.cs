@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -74,7 +75,7 @@ namespace SecureOverlay.Services
                 {
                     model = _model,
                     messages = apiMessages,
-                    max_tokens = 2000,
+                    max_tokens = ReasoningBudget.Resolve(messages).MaxTokens,
                     temperature = 0.7
                 };
 
@@ -153,7 +154,7 @@ namespace SecureOverlay.Services
                 {
                     model = _model,
                     messages = apiMessages,
-                    max_tokens = 2000,
+                    max_tokens = ReasoningBudget.Resolve(messages).MaxTokens,
                     temperature = 0.7,
                     stream = true
                 };

@@ -11,5 +11,5 @@ public interface IKnowledgeBaseEmbeddingService
     HostedKnowledgeBaseEmbeddingConfigDto UpdateAdminConfiguration(HostedKnowledgeBaseEmbeddingConfigUpdateRequestDto request);
     Task<IReadOnlyList<float[]>> GenerateEmbeddingsAsync(IReadOnlyList<string> inputs, CancellationToken cancellationToken);
     Task<float[]> GenerateEmbeddingAsync(string input, CancellationToken cancellationToken);
-    Task<float[]> GenerateQueryEmbeddingAsync(string input, CancellationToken cancellationToken);
+    Task<float[]> GenerateQueryEmbeddingAsync(string input, CancellationToken cancellationToken, TimeSpan? timeout = null);
 }

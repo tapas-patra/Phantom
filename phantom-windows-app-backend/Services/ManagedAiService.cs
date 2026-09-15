@@ -11,7 +11,6 @@ namespace Phantom.WindowsApp.Backend.Services;
 
 public sealed class ManagedAiService
 {
-    private static readonly TimeSpan FirstTokenDeadline = TimeSpan.FromSeconds(12);
     private const int AdminModelTimeoutMs = 20000;
 
     private static readonly HttpClient HttpClient = new()
@@ -214,7 +213,7 @@ public sealed class ManagedAiService
                 var apiKey = _protector.Unprotect(credential.EncryptedApiKey);
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 firstTokenDeadline = deadline;
-                deadline.CancelAfter(FirstTokenDeadline);
+                deadline.CancelAfter(ReasoningPlanner.For(request.Messages, request.QuestionType).FirstTokenDeadline);
                 await StreamProviderAsync(streamWriter, request, apiKey, deadline.Token);
                 await streamWriter.FlushAsync(cancellationToken);
                 RecordCredentialSuccess(credential);
@@ -246,11 +245,11 @@ public sealed class ManagedAiService
                 var failure = ProviderResiliencePolicy.Classify(ex);
                 RecordCredentialFailure(credential, failure);
                 _logger.LogWarning(
-                    "managed_ai_stream_failed service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} credential_slot={CredentialSlot} elapsed_ms={ElapsedMs} error_code={ErrorCode} failure_class={FailureClass} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} outcome={Outcome}",
+                    "managed_ai_stream_failed service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} attempt={Attempt} credential_slot={CredentialSlot} elapsed_ms={ElapsedMs} error_code={ErrorCode} failure_class={FailureClass} chunk_count={ChunkCount} buffered_characters={BufferedCharacters} error_detail={ErrorDetail} outcome={Outcome}",
                     "phantom-windows-app-backend", "managed_ai", "provider_stream_failed", request.RequestId, request.RequestId, request.TurnId,
                     request.Provider, request.Model, "managed", attempt, credentialIndex + 1, stopwatch.Elapsed.TotalMilliseconds,
                     failure.ErrorCode, failure.Kind.ToString().ToLowerInvariant(), streamWriter.ChunkCount,
-                    streamWriter.BufferedCharacters, "error");
+                    streamWriter.BufferedCharacters, TruncateForLog(ex.Message), "error");
                 if (streamWriter.HasWritten || response.HasStarted)
                 {
                     await streamWriter.FlushAsync(cancellationToken);
@@ -526,11 +525,15 @@ public sealed class ManagedAiService
     private async Task StreamProviderAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, CancellationToken cancellationToken)
     {
         RunOutputBudgetSelfCheck();
-        var outputBudget = GetLiveOutputBudget(request.Messages);
+        var reasoningPlan = ReasoningPlanner.For(request.Messages, request.QuestionType);
+        var outputBudget = reasoningPlan.OutputTokens;
+        var includeThinking = ReasoningPlanner.SupportsNativeThinking(request.Provider, request.Model)
+            && reasoningPlan.Effort != "low";
         _logger.LogInformation(
-            "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} max_output_tokens={MaxOutputTokens} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
+            "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} max_output_tokens={MaxOutputTokens} reasoning_effort={ReasoningEffort} native_thinking={NativeThinking} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
             "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.RequestId, request.TurnId,
-            request.Provider, request.Model, "managed", outputBudget, request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
+            request.Provider, request.Model, "managed", outputBudget, reasoningPlan.Effort, includeThinking,
+            request.Messages.Sum(message => Math.Max(1, (message.Content?.Length ?? 0) / 4)),
             request.Messages.Count, request.GetNormalizedImages().Count > 0);
         switch (request.Provider)
         {
@@ -540,9 +543,10 @@ public sealed class ManagedAiService
                     "https://api.openai.com/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
-                    outputBudget,
                     apiKey,
-                    cancellationToken);
+                    cancellationToken,
+                    reasoningPlan,
+                    includeThinking);
                 return;
             case ManagedAiCatalog.Mistral:
                 await StreamOpenAiCompatibleAsync(
@@ -550,9 +554,10 @@ public sealed class ManagedAiService
                     "https://api.mistral.ai/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: true),
                     request.Model,
-                    outputBudget,
                     apiKey,
-                    cancellationToken);
+                    cancellationToken,
+                    reasoningPlan,
+                    includeThinking);
                 return;
             case ManagedAiCatalog.Groq:
                 await StreamOpenAiCompatibleAsync(
@@ -560,15 +565,16 @@ public sealed class ManagedAiService
                     "https://api.groq.com/openai/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
-                    outputBudget,
                     apiKey,
-                    cancellationToken);
+                    cancellationToken,
+                    reasoningPlan,
+                    includeThinking);
                 return;
             case ManagedAiCatalog.Claude:
-                await StreamClaudeAsync(streamWriter, request, apiKey, outputBudget, cancellationToken);
+                await StreamClaudeAsync(streamWriter, request, apiKey, reasoningPlan, includeThinking, cancellationToken);
                 return;
             case ManagedAiCatalog.Gemini:
-                await StreamGeminiAsync(streamWriter, request, apiKey, outputBudget, cancellationToken);
+                await StreamGeminiAsync(streamWriter, request, apiKey, reasoningPlan, includeThinking, cancellationToken);
                 return;
             case ManagedAiCatalog.Nvidia:
                 await StreamOpenAiCompatibleAsync(
@@ -576,9 +582,22 @@ public sealed class ManagedAiService
                     "https://integrate.api.nvidia.com/v1/chat/completions",
                     BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
                     request.Model,
-                    outputBudget,
                     apiKey,
-                    cancellationToken);
+                    cancellationToken,
+                    reasoningPlan,
+                    includeThinking);
+                return;
+            case ManagedAiCatalog.OpenRouter:
+                await StreamOpenAiCompatibleAsync(
+                    streamWriter,
+                    ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                    BuildOpenAiMessages(request.Messages, request.GetNormalizedImages(), mistralImageUrl: false),
+                    request.Model,
+                    apiKey,
+                    cancellationToken,
+                    reasoningPlan,
+                    includeThinking,
+                    ManagedAiCatalog.ApplyOpenRouterHeaders);
                 return;
             default:
                 throw new BackendValidationException("Unsupported managed provider.");
@@ -594,6 +613,9 @@ public sealed class ManagedAiService
         CancellationToken cancellationToken,
         int maxOutputTokens)
     {
+        var reasoningPlan = ReasoningPlanner.For(messages);
+        var includeThinking = ReasoningPlanner.SupportsNativeThinking(providerId, modelId)
+            && reasoningPlan.Effort != "low";
         return providerId switch
         {
             ManagedAiCatalog.ChatGpt => await GenerateOpenAiCompatibleResponseAsync(
@@ -602,30 +624,43 @@ public sealed class ManagedAiService
                 modelId,
                 apiKey,
                 cancellationToken,
-                maxOutputTokens),
+                reasoningPlan,
+                includeThinking),
             ManagedAiCatalog.Mistral => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.mistral.ai/v1/chat/completions",
                 BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: true),
                 modelId,
                 apiKey,
                 cancellationToken,
-                maxOutputTokens),
+                reasoningPlan,
+                includeThinking),
             ManagedAiCatalog.Groq => await GenerateOpenAiCompatibleResponseAsync(
                 "https://api.groq.com/openai/v1/chat/completions",
                 BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
                 cancellationToken,
-                maxOutputTokens),
-            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, maxOutputTokens),
-            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, maxOutputTokens),
+                reasoningPlan,
+                includeThinking),
+            ManagedAiCatalog.Claude => await GenerateClaudeResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, reasoningPlan, includeThinking),
+            ManagedAiCatalog.Gemini => await GenerateGeminiResponseAsync(modelId, messages, imagesBase64, apiKey, cancellationToken, reasoningPlan, includeThinking),
             ManagedAiCatalog.Nvidia => await GenerateOpenAiCompatibleResponseAsync(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
                 modelId,
                 apiKey,
                 cancellationToken,
-                maxOutputTokens),
+                reasoningPlan,
+                includeThinking),
+            ManagedAiCatalog.OpenRouter => await GenerateOpenAiCompatibleResponseAsync(
+                ManagedAiCatalog.OpenRouterChatCompletionsUrl,
+                BuildOpenAiMessages(messages, imagesBase64, mistralImageUrl: false),
+                modelId,
+                apiKey,
+                cancellationToken,
+                reasoningPlan,
+                includeThinking,
+                ManagedAiCatalog.ApplyOpenRouterHeaders),
             _ => throw new BackendValidationException("Unsupported managed provider.")
         };
     }
@@ -635,77 +670,110 @@ public sealed class ManagedAiService
         string url,
         object[] messages,
         string model,
-        int outputBudget,
         string apiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        Action<HttpRequestHeaders>? configureHeaders = null)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            model,
+        using var response = await SendOpenAiCompatibleAsync(
+            url,
             messages,
-            max_tokens = outputBudget,
-            stream = true
-        });
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            model,
+            apiKey,
+            stream: true,
+            cancellationToken,
+            configureHeaders,
+            reasoningPlan,
+            includeThinking);
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
         var sawDone = false;
         string? finishReason = null;
+        string? streamError = null;
         while (!reader.EndOfStream)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var line = await reader.ReadLineAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: ", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
             }
 
-            var data = line[6..];
+            var data = ReadSseData(line);
+            if (data is null)
+            {
+                continue;
+            }
+
             if (data == "[DONE]")
             {
                 sawDone = true;
                 break;
             }
 
-            using var json = JsonDocument.Parse(data);
-            if (!json.RootElement.TryGetProperty("choices", out var choices)
-                || choices.GetArrayLength() == 0)
+            JsonDocument json;
+            try
+            {
+                json = JsonDocument.Parse(data);
+            }
+            catch (JsonException)
             {
                 continue;
             }
 
-            var choice = choices[0];
-            if (choice.TryGetProperty("finish_reason", out var finishElement) && finishElement.ValueKind == JsonValueKind.String)
+            using (json)
             {
-                finishReason = finishElement.GetString();
-            }
-            if (!choice.TryGetProperty("delta", out var delta)
-                || !delta.TryGetProperty("content", out var contentElement))
-            {
-                continue;
-            }
+                var error = ReadProviderErrorMessage(json.RootElement);
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    streamError = error;
+                    break;
+                }
 
-            var deltaText = contentElement.GetString();
-            if (string.IsNullOrEmpty(deltaText))
-            {
-                continue;
-            }
+                if (!json.RootElement.TryGetProperty("choices", out var choices)
+                    || choices.GetArrayLength() == 0)
+                {
+                    continue;
+                }
 
-            await streamWriter.AppendAsync(deltaText, cancellationToken);
+                var choice = choices[0];
+                if (choice.TryGetProperty("finish_reason", out var finishElement) && finishElement.ValueKind == JsonValueKind.String)
+                {
+                    finishReason = finishElement.GetString();
+                }
+                if (!choice.TryGetProperty("delta", out var delta))
+                {
+                    continue;
+                }
+
+                var deltaText = ReadOpenAiDeltaText(delta);
+                if (string.IsNullOrEmpty(deltaText))
+                {
+                    continue;
+                }
+
+                await streamWriter.AppendAsync(deltaText, cancellationToken);
+            }
         }
+
+        if (!string.IsNullOrWhiteSpace(streamError))
+            throw new InvalidOperationException(streamError);
+        if (string.Equals(finishReason, "error", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("provider_error");
         if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("provider_output_truncated");
+        {
+            if (!streamWriter.HasWritten)
+                throw new InvalidOperationException("provider_output_truncated");
+            streamWriter.Complete("length");
+            return;
+        }
         if (!sawDone && !string.Equals(finishReason, "stop", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("provider_stream_incomplete");
         streamWriter.Complete(finishReason ?? "done");
@@ -717,27 +785,32 @@ public sealed class ManagedAiService
         string model,
         string apiKey,
         CancellationToken cancellationToken,
-        int maxOutputTokens)
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        Action<HttpRequestHeaders>? configureHeaders = null)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            model,
+        using var response = await SendOpenAiCompatibleAsync(
+            url,
             messages,
-            max_tokens = maxOutputTokens,
-            stream = false
-        });
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(request, cancellationToken);
+            model,
+            apiKey,
+            stream: false,
+            cancellationToken,
+            configureHeaders,
+            reasoningPlan,
+            includeThinking);
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var error = ReadProviderErrorMessage(document.RootElement);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            throw new InvalidOperationException(error);
+        }
+
         if (!document.RootElement.TryGetProperty("choices", out var choices)
             || choices.GetArrayLength() == 0)
         {
@@ -754,33 +827,202 @@ public sealed class ManagedAiService
         return ReadOpenAiContent(content);
     }
 
-    private async Task StreamClaudeAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, int outputBudget, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendOpenAiCompatibleAsync(
+        string url,
+        object[] messages,
+        string model,
+        string apiKey,
+        bool stream,
+        CancellationToken cancellationToken,
+        Action<HttpRequestHeaders>? configureHeaders,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking)
+    {
+        async Task<HttpResponseMessage> SendAsync(bool withThinking)
+        {
+            var payload = SerializeOpenAiCompatiblePayload(model, messages, stream, reasoningPlan, withThinking);
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            configureHeaders?.Invoke(request.Headers);
+            request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+            return await HttpClient.SendAsync(
+                request,
+                stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead,
+                cancellationToken);
+        }
+
+        var response = await SendAsync(withThinking: includeThinking);
+        if (includeThinking && response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning(
+                "managed_ai_reasoning_retry service={Service} component={Component} event={Event} model={Model} error_detail={ErrorDetail} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "native_thinking_rejected", model, TruncateForLog(body), "retry");
+            response.Dispose();
+            response = await SendAsync(withThinking: false);
+        }
+
+        return response;
+    }
+
+    private static string SerializeOpenAiCompatiblePayload(
+        string model,
+        object[] messages,
+        bool stream,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking)
+    {
+        var outputTokens = reasoningPlan.OutputTokens;
+        if (includeThinking)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                model,
+                messages,
+                max_tokens = outputTokens,
+                stream,
+                reasoning = new { exclude = true, effort = reasoningPlan.Effort }
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            model,
+            messages,
+            max_tokens = outputTokens,
+            stream
+        });
+    }
+
+    private async Task ThrowProviderHttpErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogWarning(
+            "managed_ai_provider_http_error service={Service} component={Component} event={Event} status_code={StatusCode} error_detail={ErrorDetail} outcome={Outcome}",
+            "phantom-windows-app-backend", "managed_ai", "provider_http_error", (int)response.StatusCode, TruncateForLog(body), "error");
+        throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+    }
+
+    private static string? ReadSseData(string line)
+    {
+        if (line.StartsWith("data: ", StringComparison.Ordinal))
+        {
+            return line[6..].Trim();
+        }
+
+        return line.StartsWith("data:", StringComparison.Ordinal) ? line[5..].Trim() : null;
+    }
+
+    private static string? ReadProviderErrorMessage(JsonElement root)
+    {
+        if (!root.TryGetProperty("error", out var error) || error.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (error.ValueKind == JsonValueKind.String)
+        {
+            return error.GetString();
+        }
+
+        if (error.ValueKind == JsonValueKind.Object
+            && error.TryGetProperty("message", out var message)
+            && message.ValueKind == JsonValueKind.String)
+        {
+            return message.GetString();
+        }
+
+        return error.ToString();
+    }
+
+    private static string ReadOpenAiDeltaText(JsonElement delta)
+    {
+        if (delta.TryGetProperty("content", out var content))
+        {
+            var text = ReadOpenAiContent(content);
+            if (!string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<HttpResponseMessage> SendClaudeAsync(
+        string model,
+        string systemPrompt,
+        object[] apiMessages,
+        string apiKey,
+        bool stream,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        CancellationToken cancellationToken)
+    {
+        async Task<HttpResponseMessage> SendAsync(bool withThinking)
+        {
+            var maxTokens = Math.Max(reasoningPlan.OutputTokens, reasoningPlan.ClaudeThinkingTokens + 512);
+            var payload = withThinking && reasoningPlan.ClaudeThinkingTokens > 0
+                ? JsonSerializer.Serialize(new
+                {
+                    model,
+                    max_tokens = maxTokens,
+                    system = systemPrompt,
+                    messages = apiMessages,
+                    stream,
+                    thinking = new { type = "enabled", budget_tokens = reasoningPlan.ClaudeThinkingTokens }
+                })
+                : JsonSerializer.Serialize(new
+                {
+                    model,
+                    max_tokens = maxTokens,
+                    system = systemPrompt,
+                    messages = apiMessages,
+                    stream
+                });
+            var outbound = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+            outbound.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+            outbound.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+            outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+            return await HttpClient.SendAsync(
+                outbound,
+                stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead,
+                cancellationToken);
+        }
+
+        var response = await SendAsync(withThinking: includeThinking);
+        if (includeThinking && reasoningPlan.ClaudeThinkingTokens > 0 && response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning(
+                "managed_ai_reasoning_retry service={Service} component={Component} event={Event} model={Model} error_detail={ErrorDetail} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "native_thinking_rejected", model, TruncateForLog(body), "retry");
+            response.Dispose();
+            response = await SendAsync(withThinking: false);
+        }
+
+        return response;
+    }
+
+    private async Task StreamClaudeAsync(
+        SseDeltaWriter streamWriter,
+        DesktopAiChatRequestDto request,
+        string apiKey,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        CancellationToken cancellationToken)
     {
         var systemPrompt = request.Messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
         var filteredMessages = request.Messages
             .Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content))
             .ToArray();
-
         var apiMessages = BuildClaudeMessages(filteredMessages, request.GetNormalizedImages());
-        var payload = JsonSerializer.Serialize(new
-        {
-            model = request.Model,
-            max_tokens = outputBudget,
-            system = systemPrompt,
-            messages = apiMessages,
-            stream = true
-        });
-
-        using var outbound = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-        outbound.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-        outbound.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
-        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendClaudeAsync(
+            request.Model, systemPrompt, apiMessages, apiKey, stream: true, reasoningPlan, includeThinking, cancellationToken);
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -844,30 +1086,25 @@ public sealed class ManagedAiService
         IReadOnlyList<string>? imagesBase64,
         string apiKey,
         CancellationToken cancellationToken,
-        int maxOutputTokens)
+        ReasoningPlan reasoningPlan,
+        bool includeThinking)
     {
         var systemPrompt = messages.FirstOrDefault(item => string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;
         var filteredMessages = messages
             .Where(item => !string.Equals(item.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Content))
             .ToArray();
-
-        var payload = JsonSerializer.Serialize(new
-        {
-            model = modelId,
-            max_tokens = maxOutputTokens,
-            system = systemPrompt,
-            messages = BuildClaudeMessages(filteredMessages, imagesBase64)
-        });
-
-        using var outbound = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-        outbound.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-        outbound.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
-        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(outbound, cancellationToken);
+        using var response = await SendClaudeAsync(
+            modelId,
+            systemPrompt,
+            BuildClaudeMessages(filteredMessages, imagesBase64),
+            apiKey,
+            stream: false,
+            reasoningPlan,
+            includeThinking,
+            cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -888,28 +1125,21 @@ public sealed class ManagedAiService
                 .Select(item => item.GetProperty("text").GetString()!.Trim()));
     }
 
-    private async Task StreamGeminiAsync(SseDeltaWriter streamWriter, DesktopAiChatRequestDto request, string apiKey, int outputBudget, CancellationToken cancellationToken)
+    private async Task StreamGeminiAsync(
+        SseDeltaWriter streamWriter,
+        DesktopAiChatRequestDto request,
+        string apiKey,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        CancellationToken cancellationToken)
     {
         var contents = BuildGeminiContents(request.Messages, request.GetNormalizedImages());
-        var payload = JsonSerializer.Serialize(new
-        {
-            contents,
-            generationConfig = new
-            {
-                maxOutputTokens = outputBudget,
-                temperature = 0.7
-            }
-        });
-
-        var url = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(request.Model)}:streamGenerateContent?key={Uri.EscapeDataString(apiKey)}&alt=sse";
-        using var outbound = new HttpRequestMessage(HttpMethod.Post, url);
-        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendGeminiAsync(
+            request.Model, contents, apiKey, stream: true, reasoningPlan, includeThinking, 0.7, cancellationToken);
         streamWriter.MarkProviderHeaders();
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -944,18 +1174,26 @@ public sealed class ManagedAiService
                 continue;
             }
 
-            if (!parts[0].TryGetProperty("text", out var textElement))
+            foreach (var part in parts.EnumerateArray())
             {
-                continue;
-            }
+                if (part.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.True)
+                {
+                    continue;
+                }
 
-            var deltaText = textElement.GetString();
-            if (string.IsNullOrEmpty(deltaText))
-            {
-                continue;
-            }
+                if (!part.TryGetProperty("text", out var textElement))
+                {
+                    continue;
+                }
 
-            await streamWriter.AppendAsync(deltaText, cancellationToken);
+                var deltaText = textElement.GetString();
+                if (string.IsNullOrEmpty(deltaText))
+                {
+                    continue;
+                }
+
+                await streamWriter.AppendAsync(deltaText, cancellationToken);
+            }
         }
         if (string.Equals(finishReason, "MAX_TOKENS", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("provider_output_truncated");
@@ -964,32 +1202,90 @@ public sealed class ManagedAiService
         streamWriter.Complete(finishReason ?? "unknown");
     }
 
+    private async Task<HttpResponseMessage> SendGeminiAsync(
+        string modelId,
+        object contents,
+        string apiKey,
+        bool stream,
+        ReasoningPlan reasoningPlan,
+        bool includeThinking,
+        double temperature,
+        CancellationToken cancellationToken)
+    {
+        async Task<HttpResponseMessage> SendAsync(bool withThinking)
+        {
+            var payload = withThinking && reasoningPlan.GeminiThinkingTokens > 0
+                ? JsonSerializer.Serialize(new
+                {
+                    contents,
+                    generationConfig = new
+                    {
+                        maxOutputTokens = reasoningPlan.OutputTokens,
+                        temperature,
+                        thinkingConfig = new
+                        {
+                            thinkingBudget = reasoningPlan.GeminiThinkingTokens,
+                            includeThoughts = false
+                        }
+                    }
+                })
+                : JsonSerializer.Serialize(new
+                {
+                    contents,
+                    generationConfig = new
+                    {
+                        maxOutputTokens = reasoningPlan.OutputTokens,
+                        temperature
+                    }
+                });
+            var url = stream
+                ? $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(modelId)}:streamGenerateContent?key={Uri.EscapeDataString(apiKey)}&alt=sse"
+                : $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(modelId)}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+            var outbound = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+            return await HttpClient.SendAsync(
+                outbound,
+                stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead,
+                cancellationToken);
+        }
+
+        var response = await SendAsync(withThinking: includeThinking);
+        if (includeThinking && reasoningPlan.GeminiThinkingTokens > 0 && response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning(
+                "managed_ai_reasoning_retry service={Service} component={Component} event={Event} model={Model} error_detail={ErrorDetail} outcome={Outcome}",
+                "phantom-windows-app-backend", "managed_ai", "native_thinking_rejected", modelId, TruncateForLog(body), "retry");
+            response.Dispose();
+            response = await SendAsync(withThinking: false);
+        }
+
+        return response;
+    }
+
     private async Task<string> GenerateGeminiResponseAsync(
         string modelId,
         IReadOnlyList<DesktopAiChatMessageDto> messages,
         IReadOnlyList<string>? imagesBase64,
         string apiKey,
         CancellationToken cancellationToken,
-        int maxOutputTokens)
+        ReasoningPlan reasoningPlan,
+        bool includeThinking)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            contents = BuildGeminiContents(messages, imagesBase64),
-            generationConfig = new
-            {
-                maxOutputTokens,
-                temperature = 0.2
-            }
-        });
-
-        var url = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(modelId)}:generateContent?key={Uri.EscapeDataString(apiKey)}";
-        using var outbound = new HttpRequestMessage(HttpMethod.Post, url);
-        outbound.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-
-        using var response = await HttpClient.SendAsync(outbound, cancellationToken);
+        using var response = await SendGeminiAsync(
+            modelId,
+            BuildGeminiContents(messages, imagesBase64),
+            apiKey,
+            stream: false,
+            reasoningPlan,
+            includeThinking,
+            0.2,
+            cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw ManagedAiProviderException.FromStatusCode((int)response.StatusCode);
+            await ThrowProviderHttpErrorAsync(response, cancellationToken);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -1197,6 +1493,17 @@ public sealed class ManagedAiService
         return string.IsNullOrWhiteSpace(responseText) ? "[empty response]" : responseText.Trim();
     }
 
+    private static string TruncateForLog(string? value, int maxLength = 300)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim().ReplaceLineEndings(" ");
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
     private static int ToLatencyMs(long elapsedMilliseconds)
     {
         return elapsedMilliseconds > int.MaxValue ? int.MaxValue : (int)Math.Max(0, elapsedMilliseconds);
@@ -1235,30 +1542,18 @@ public sealed class ManagedAiService
         return newlineIndex >= 0 ? message[..newlineIndex].Trim() : message;
     }
 
-    private static int GetLiveOutputBudget(IReadOnlyList<DesktopAiChatMessageDto> messages)
-    {
-        var question = messages.LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
-            ?.ToLowerInvariant() ?? string.Empty;
-        if (ContainsAny(question, "expand", "deeper", "in detail", "step by step")) return 1800;
-        if (ContainsAny(question, "write code", "implement", "algorithm", "complexity", "debug this", "mermaid")) return 1200;
-        if (ContainsAny(question, "system design", "design a", "architecture", "scalability", "high availability")) return 1600;
-        if (ContainsAny(question, "my project", "your project", "project called", "project named")) return 800;
-        if (question.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 12
-            && ContainsAny(question, "why", "how", "what about", "give an example", "clarify")) return 320;
-        return 700;
-    }
-
-    private static bool ContainsAny(string value, params string[] terms)
-        => terms.Any(term => value.Contains(term, StringComparison.Ordinal));
-
     [Conditional("DEBUG")]
     private static void RunOutputBudgetSelfCheck()
     {
         static DesktopAiChatMessageDto User(string content) => new() { Role = "user", Content = content };
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Why?") }) == 320);
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Design a highly available payment system") }) == 1600);
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Expand in detail") }) == 1800);
-        Debug.Assert(GetLiveOutputBudget(new[] { User("Correct this Mermaid code") }) == 1200);
+        Debug.Assert(ReasoningPlanner.For(new[] { User("Why?") }).Effort == "low");
+        Debug.Assert(ReasoningPlanner.For(new[] { User("Design a highly available payment system") }).Effort == "high");
+        Debug.Assert(ReasoningPlanner.For(new[] { User("Write code for LRU cache") }).Effort == "high");
+        Debug.Assert(ReasoningPlanner.For(new[] { User("What is CAP theorem?") }).Effort == "medium");
+        Debug.Assert(ReasoningPlanner.For(new[] { User("Tell me about a challenge") }, "coding").Effort == "high");
+        Debug.Assert(ReasoningPlanner.SupportsNativeThinking("OpenRouter", "z-ai/glm-5.3-flash"));
+        Debug.Assert(ReasoningPlanner.SupportsNativeThinking("Claude", "claude-sonnet-4-5"));
+        Debug.Assert(!ReasoningPlanner.SupportsNativeThinking("ChatGPT", "gpt-4o-mini"));
     }
 
     private static async Task WriteSseJsonAsync(HttpResponse response, object payload, CancellationToken cancellationToken)

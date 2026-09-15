@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -107,33 +108,40 @@ namespace SecureOverlay.Services
             try
             {
                 var contents = ConvertMessagesToGeminiFormat(messages, imagesBase64);
-
-                var request = new
-                {
-                    contents = contents,
-                    generationConfig = new
-                    {
-                        maxOutputTokens = 2000,
-                        temperature = 0.7
-                    }
-                };
-
-                var json = JsonConvert.SerializeObject(request);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                // Gemini streaming endpoint
+                var plan = ReasoningBudget.Resolve(messages);
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("Gemini", _model, plan) && plan.GeminiThinkingTokens > 0;
                 var url = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:streamGenerateContent?key={_apiKey}&alt=sse";
-
-                var requestMessage = new HttpRequestMessage(HttpMethod.Post, url)
-                {
-                    Content = content
-                };
-
-                var response = await _httpClient.SendAsync(
-                    requestMessage,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken
-                );
+                var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
+                    _httpClient,
+                    withThinking =>
+                    {
+                        object payload = withThinking
+                            ? new
+                            {
+                                contents,
+                                generationConfig = new
+                                {
+                                    maxOutputTokens = plan.MaxTokens,
+                                    temperature = 0.7,
+                                    thinkingConfig = new { thinkingBudget = plan.GeminiThinkingTokens, includeThoughts = false }
+                                }
+                            }
+                            : new
+                            {
+                                contents,
+                                generationConfig = new
+                                {
+                                    maxOutputTokens = plan.MaxTokens,
+                                    temperature = 0.7
+                                }
+                            };
+                        return new HttpRequestMessage(HttpMethod.Post, url)
+                        {
+                            Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json")
+                        };
+                    },
+                    includeThinking,
+                    cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {

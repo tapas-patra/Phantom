@@ -47,7 +47,7 @@ namespace SecureOverlay.Services
         public bool LastOperationHadOutput { get; private set; }
         public event EventHandler<string>? APISwitchNotification;
         public event EventHandler<string>? StageChanged;
-        public event Action<LiveTurnDecision, int>? DecisionParsed;
+        public event Action<LiveTurnDecision, int, bool>? DecisionParsed;
 
         public ConversationManager(
             IAIService aiService, string systemPrompt, ModelConfig modelConfig,
@@ -174,68 +174,93 @@ namespace SecureOverlay.Services
                 var firstProtocolAttempt = 0;
                 LiveRequestTrace.Current?.SetContext("adaptive", MultimodalContentBuilder.HasImages(imagesBase64), firstContext.Sum(x => x.EstimatedTokens));
 
+                var retrievalAvailable = knowledge?.CanUseInInterview == true && _knowledgeRetrievalEnabled?.Invoke() != false;
+                using var speculativeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                Task<LiveCopilotRetrieval>? speculativeRetrieval = null;
+                if (retrievalAvailable)
+                {
+                    var speculativeToken = speculativeCts.Token;
+                    speculativeRetrieval = SearchKnowledgeQuietlyAsync(userMessage, Array.Empty<string>(), knowledge, speculativeToken);
+                }
+
                 var result = await new LiveCopilotOrchestrator().ExecuteAsync(
                     CopilotPromptRegistry.EntityIds(knowledge, _copilotMode), CopilotPromptRegistry.DocumentIds(knowledge, _copilotMode),
-                    (publish, cleanup, token) => RunModelOperationAsync(
-                        "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
-                        publish, cleanup, token, imagesBase64),
+                    userMessage,
+                    retrievalAvailable,
+                    _activeEvidence[_copilotMode].Count > 0,
+                    async (publish, cleanup, token) =>
+                    {
+                        using (ReasoningBudget.UseQuestionType(ReasoningBudget.ControlQuestionType))
+                        {
+                            return await RunModelOperationAsync(
+                                "first_model", 1, ++firstProtocolAttempt == 1 ? firstContext : repairContext,
+                                publish, cleanup, token, imagesBase64).ConfigureAwait(false);
+                        }
+                    },
                     async (decision, token) =>
                     {
                         StageChanged?.Invoke(this, "Searching your knowledge…");
-                        LiveRequestTrace.Current?.StartOperation("retrieval", 0);
-                        if (_knowledgeRetriever == null || _knowledgeRetrievalEnabled?.Invoke() == false)
+                        var query = LiveCopilotRetrievePolicy.NormalizeRetrievalQuery(decision, userMessage);
+                        if (speculativeRetrieval != null &&
+                            LiveCopilotRetrievePolicy.QueriesAreSimilar(userMessage, query) &&
+                            LiveCopilotRetrievePolicy.DocumentSetsEqual(Array.Empty<string>(), decision.PreferredDocumentIds))
                         {
-                            LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", "unavailable", snippetCount: 0);
-                            return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
+                            var speculative = await speculativeRetrieval.WaitAsync(token).ConfigureAwait(false);
+                            if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+                                    userMessage, Array.Empty<string>(), query, decision.PreferredDocumentIds,
+                                    speculative.Status))
+                                return speculative;
                         }
-                        try
-                        {
-                            var preferredDocuments = decision.PreferredDocumentIds;
-                            if (_copilotMode == CopilotMode.Briefing && preferredDocuments.Count == 0)
-                                preferredDocuments = CopilotPromptRegistry.DocumentIds(knowledge, CopilotMode.Briefing);
-                            if (_copilotMode == CopilotMode.Briefing && preferredDocuments.Count == 0)
-                            {
-                                LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", "unavailable", snippetCount: 0);
-                                return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
-                            }
-                            var snippets = (await _knowledgeRetriever(decision.RetrievalQuery, preferredDocuments, token).ConfigureAwait(false)).Take(3).ToArray();
-                            var status = snippets.Length == 0 ? "empty" : "found";
-                            LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", status, snippetCount: snippets.Length);
-                            return new(status, snippets, KnowledgeRevision(knowledge));
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch
-                        {
-                            LiveRequestTrace.Current?.CompleteOperation("retrieval_failed", "error", errorCode: "retrieval_failed");
-                            return new("error", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
-                        }
+
+                        speculativeCts.Cancel();
+                        return await SearchKnowledgeAsync(query, decision.PreferredDocumentIds, knowledge, token).ConfigureAwait(false);
                     },
                     (decision, retrieval) =>
                     {
                         var prompt = CopilotPromptRegistry.BuildSecondCallPrompt(
                             _copilotMode, _deliveryStyle, decision, retrieval, knowledge, resume, roleContext);
                         var context = BuildAdaptiveContext(prompt);
-                        return (publish, cleanup, token) => RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imagesBase64);
+                        return async (publish, cleanup, token) =>
+                        {
+                            using (ReasoningBudget.UseQuestionType(decision.QuestionType))
+                            {
+                                return await RunModelOperationAsync("second_model", 2, context, publish, cleanup, token, imagesBase64).ConfigureAwait(false);
+                            }
+                        };
                     },
                     chunk => { StageChanged?.Invoke(this, "Answering…"); LiveRequestTrace.Current?.Mark("answer_first_visible_token"); onChunkReceived(chunk); },
                     onRetryCleanup, cancellationToken,
+                    decision => CopilotPromptRegistry.PreferredDocumentIds(decision.EntityId, decision.EntityType, knowledge),
                     code => LiveRequestTrace.Current?.RejectControl(code),
-                    (decision, calls) =>
+                    (decision, calls, retrieveForced) =>
                     {
                         LiveRequestTrace.Current?.SetDecision(
-                            decision, calls, decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested");
-                        DecisionParsed?.Invoke(decision, calls);
+                            decision, calls, decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested",
+                            retrieveForced);
+                        DecisionParsed?.Invoke(decision, calls, retrieveForced);
                     }).ConfigureAwait(false);
+
+                if (result.Decision.Action != LiveCopilotAction.Retrieve)
+                    speculativeCts.Cancel();
 
                 LastDecision = result.Decision;
                 LastModelCallCount = result.ModelCallCount;
                 if (result.ActiveEvidence.Count > 0) _activeEvidence[_copilotMode] = result.ActiveEvidence;
-                var assistant = Message("assistant", result.Answer);
-                assistant.HasCode = result.Answer.Contains("```", StringComparison.Ordinal);
+                var answer = result.Answer;
+                if (result.Decision.Action == LiveCopilotAction.Clarify)
+                {
+                    var parsed = ClarificationOptionParser.Parse(answer);
+                    answer = parsed.DisplayText;
+                    PendingClarificationOptions = parsed.Options
+                        .Select(option => new ClarificationOption(option.Label, option.Question))
+                        .ToArray();
+                }
+                var assistant = Message("assistant", answer);
+                assistant.HasCode = answer.Contains("```", StringComparison.Ordinal);
                 assistant.AnswerSource = result.Decision.AnswerBasis;
                 assistant.InterviewIntent = result.Decision.Intent;
                 CurrentHistory.Add(assistant);
-                return (result.Answer, string.Empty);
+                return (answer, string.Empty);
             }
             catch (OperationCanceledException) { CurrentHistory.Remove(user); return (string.Empty, "Cancelled"); }
             catch (PhantomProtocolException error)
@@ -249,6 +274,59 @@ namespace SecureOverlay.Services
                 CurrentHistory.Remove(user);
                 LiveRequestTrace.Current?.Fail("turn_failed", error is TimeoutException ? "timeout" : "provider_error");
                 return (string.Empty, error is TimeoutException ? "The AI provider timed out. Please retry." : "The AI provider could not complete this request. Please retry.");
+            }
+        }
+
+        private async Task<LiveCopilotRetrieval> SearchKnowledgeQuietlyAsync(
+            string query,
+            IReadOnlyList<string>? preferredDocuments,
+            HostedKnowledgeBaseSummaryDto? knowledge,
+            CancellationToken token)
+        {
+            try
+            {
+                return await SearchKnowledgeAsync(query, preferredDocuments, knowledge, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
+            }
+        }
+
+        private async Task<LiveCopilotRetrieval> SearchKnowledgeAsync(
+            string query,
+            IReadOnlyList<string>? preferredDocuments,
+            HostedKnowledgeBaseSummaryDto? knowledge,
+            CancellationToken token)
+        {
+            LiveRequestTrace.Current?.StartOperation("retrieval", 0);
+            if (_knowledgeRetriever == null || _knowledgeRetrievalEnabled?.Invoke() == false)
+            {
+                LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", "unavailable", snippetCount: 0);
+                return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
+            }
+
+            try
+            {
+                var documents = preferredDocuments ?? Array.Empty<string>();
+                if (_copilotMode == CopilotMode.Briefing && documents.Count == 0)
+                    documents = CopilotPromptRegistry.DocumentIds(knowledge, CopilotMode.Briefing);
+                if (_copilotMode == CopilotMode.Briefing && documents.Count == 0)
+                {
+                    LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", "unavailable", snippetCount: 0);
+                    return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
+                }
+
+                var snippets = (await _knowledgeRetriever(query, documents, token).ConfigureAwait(false)).Take(3).ToArray();
+                var status = snippets.Length == 0 ? "empty" : "found";
+                LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", status, snippetCount: snippets.Length);
+                return new(status, snippets, KnowledgeRevision(knowledge));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                LiveRequestTrace.Current?.CompleteOperation("retrieval_completed", "unavailable", snippetCount: 0);
+                return new("unavailable", Array.Empty<RetrievedContextSnippet>(), KnowledgeRevision(knowledge));
             }
         }
 

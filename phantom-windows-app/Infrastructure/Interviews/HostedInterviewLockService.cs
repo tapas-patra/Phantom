@@ -1,6 +1,6 @@
 using System;
-using System.Reflection;
 using SecureOverlay.Application.Interviews;
+using SecureOverlay.Helpers;
 using SecureOverlay.Application.Persistence;
 using SecureOverlay.Domain.Entities;
 using SecureOverlay.Domain.Enums;
@@ -34,7 +34,7 @@ namespace SecureOverlay.Infrastructure.Interviews
             _authSessionRepository = authSessionRepository;
             _hostedLockClient = hostedLockClient;
             _installId = installId;
-            _appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+            _appVersion = PhantomAppVersion.Current;
             _fallback = new LocalInterviewLockService(interviewSessionRepository, accountCacheRepository);
         }
 

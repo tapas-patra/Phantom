@@ -1,5 +1,6 @@
 package com.phantom.companion.data.remote
 
+import com.phantom.companion.data.speech.MIN_TRANSCRIBE_WAV_BYTES
 import com.phantom.companion.data.speech.buildWav
 import com.phantom.companion.data.speech.containsSpeech
 import com.phantom.companion.data.speech.speechLanguageTag
@@ -33,6 +34,7 @@ class SpeechTranscriptionClient(
     ): String = withContext(Dispatchers.IO) {
         if (!containsSpeech(pcm16)) return@withContext ""
         val wav = buildWav(pcm16)
+        if (wav.size < MIN_TRANSCRIBE_WAV_BYTES) return@withContext ""
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -93,10 +94,7 @@ namespace SecureOverlay
 
         private bool _autoSendAfterVoice = false;
         private string _voiceCommittedText = "";
-        private bool _voiceSawTranscriptAfterStop;
-        private DateTime _voiceAutoSendDeadlineUtc;
-        private DateTime _voiceAutoSendFallbackUtc;
-        private System.Windows.Threading.DispatcherTimer? _voiceCompletionTimer;
+        private System.Windows.Threading.DispatcherTimer? _voiceCaptureSafetyTimer;
         private System.Windows.Threading.DispatcherTimer? _companionComposerSyncTimer;
         private bool _applyingCompanionComposer;
         private string _lastCompanionComposerSent = "\u0001";
@@ -344,6 +342,7 @@ namespace SecureOverlay
 
             this.MouseEnter += MainWindow_MouseEnter;
             this.MouseLeave += MainWindow_MouseLeave;
+            this.PreviewMouseLeftButtonDown += Window_PreviewMouseLeftButtonDown;
 
             Log.WriteLine("Setting up input box placeholder behavior...");
             
@@ -1007,16 +1006,10 @@ namespace SecureOverlay
 
         private async Task RefreshDesktopCatalogsAsync(bool force)
         {
-            var cacheEmpty = CatalogRefreshQuota.IsChatCatalogEmpty(_settings)
-                || CatalogRefreshQuota.IsSpeechCatalogEmpty(_settings);
-            if (!force && !CatalogRefreshQuota.TryConsumeAutomaticRefresh(_settings, cacheEmpty))
-            {
-                Log.WriteLine("Automatic catalog refresh skipped (daily quota)");
-                return;
-            }
-
+            // Managed catalog is a cheap backend read and carries the admin runtime
+            // selection. Never skip it on the daily BYO-provider quota.
             await RefreshManagedCatalogCacheAsync(force: true);
-            await RefreshByoCatalogCacheAsync(forceAll: true);
+            await RefreshByoCatalogCacheAsync(forceAll: force);
         }
 
         private async Task RefreshManagedCatalogCacheAsync(bool force = false)
@@ -1062,12 +1055,18 @@ namespace SecureOverlay
                     var managedProvider = catalog.Providers?.FirstOrDefault();
                     var managedModel = managedProvider?.Models?.FirstOrDefault();
                     Log.WriteLine(
-                        $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}");
+                        $"Managed catalog refreshed: provider={managedProvider?.ProviderId ?? "none"}, model={managedModel?.ModelId ?? "none"}, vision={managedModel?.SupportsVision == true}");
 
-                    if (_currentAI is HostedManagedAiService && managedProvider != null && managedModel != null)
+                    if (managedProvider != null && managedModel != null
+                        && !ShouldUseByoRuntimeForCurrentSelection(_settings.SelectedAI))
                     {
                         Log.WriteLine("Managed catalog changed - reinitializing AI with the hosted runtime selection");
                         InitializeAI();
+                    }
+
+                    if (IsLoaded)
+                    {
+                        UpdateScreenshotButtonVisibility();
                     }
                 }
             }
@@ -1294,7 +1293,8 @@ namespace SecureOverlay
                 || provider == AIModelRegistry.Providers.Gemini
                 || provider == AIModelRegistry.Providers.Mistral
                 || provider == AIModelRegistry.Providers.Groq
-                || provider == AIModelRegistry.Providers.Nvidia;
+                || provider == AIModelRegistry.Providers.Nvidia
+                || provider == AIModelRegistry.Providers.OpenRouter;
         }
 
         private bool HasConfiguredByoKeysForProvider(string provider)
@@ -1328,13 +1328,12 @@ namespace SecureOverlay
                 return false;
             }
 
-            // Prefer configured selection, else first BYO catalog provider id.
-            if (string.IsNullOrWhiteSpace(provider) || IsManagedProvider(provider))
+            if (string.IsNullOrWhiteSpace(provider))
             {
                 provider = (_settings.ByoAiCatalogCache?.Providers ?? new List<ManagedAiProviderOptionDto>())
                     .Select(item => item.ProviderId)
                     .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id))
-                    ?? provider;
+                    ?? "provider";
             }
 
             return true;
@@ -1493,7 +1492,9 @@ namespace SecureOverlay
             }
 
             return _currentAI is HostedManagedAiService
-                ? "AI"
+                ? (string.IsNullOrWhiteSpace(_currentAI.GetProviderName())
+                    ? GetManagedRuntimeProviderId()
+                    : _currentAI.GetProviderName())
                 : (_currentAI?.GetProviderName() ?? "AI");
         }
 
@@ -1519,7 +1520,7 @@ namespace SecureOverlay
                 return;
             }
 
-            var shouldUseByoRuntime = IsByoLaneActiveNow();
+            var shouldUseByoRuntime = UsesByoProviderLane();
             var isUsingByoRuntime = _currentAI is not HostedManagedAiService;
             if (shouldUseByoRuntime != isUsingByoRuntime)
             {
@@ -1567,7 +1568,9 @@ namespace SecureOverlay
                 return true;
             }
 
-            return IsByoLaneActiveNow();
+            // Match the visible BYO dropdowns. Requiring chat keys here made Groq look
+            // selected while send still ran the stale managed OpenRouter runtime.
+            return UsesByoProviderLane();
         }
 
         private bool CanUseManagedExtensionFallbackForProvider(string provider)
@@ -2067,7 +2070,7 @@ namespace SecureOverlay
             }));
         }
 
-        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount)
+        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount, bool retrieveForced)
         {
             if (_activeRequestTrace is not { } trace) return;
             TrackLiveCopilotAsync("control_frame_parsed", trace, new Dictionary<string, string>
@@ -2082,7 +2085,8 @@ namespace SecureOverlay
                 ["protocol_version"] = decision.ProtocolVersion.ToString(),
                 ["validation_outcome"] = "accepted",
                 ["model_call_count"] = modelCallCount.ToString(),
-                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested"
+                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested",
+                ["retrieve_forced"] = retrieveForced ? "true" : "false"
             });
         }
 
@@ -2572,10 +2576,14 @@ namespace SecureOverlay
                 else if (!string.IsNullOrEmpty(error))
                 {
                     companionOutcome = CompanionTurnOutcome.Failed;
-                    companionErrorCode = "provider_error";
+                    companionErrorCode = ClassifyTurnError(error);
                     companionErrorMessage = error;
                     requestTrace.Complete(0, "error");
-                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string> { ["outcome"] = "error", ["error_code"] = "provider_error" });
+                    TrackLiveCopilotAsync("turn_failed", requestTrace, new Dictionary<string, string>
+                    {
+                        ["outcome"] = "error",
+                        ["error_code"] = companionErrorCode
+                    });
                     Log.WriteLine($"✗ AI Error: {error}");
 
                     var isDesktopAuthFailure =
@@ -2636,6 +2644,7 @@ namespace SecureOverlay
                     _chatMessages.Add(new MarkdownHelper.ChatRenderMessage(false, finalMarkdown));
                     _streamMessageId = null;
                     ShowClarificationOptions(_conversationManager.PendingClarificationOptions);
+                    RestoreComposerAfterClarification();
                     _lastRetryableQuestion = null;
                     RegenerateButton.IsEnabled = true;
                     
@@ -2779,7 +2788,7 @@ namespace SecureOverlay
                 // Do not steal foreground focus while the overlay is hidden for Companion Mode (M22).
                 if (!_companionOverlayHidden)
                 {
-                    FocusInput();
+                    RestoreComposerAfterClarification();
                 }
             }
         }
@@ -3189,22 +3198,135 @@ namespace SecureOverlay
 
             foreach (var option in options)
             {
+                var label = new TextBlock
+                {
+                    Text = option.Label,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 280,
+                    Foreground = Brushes.White
+                };
                 var button = new Button
                 {
-                    Content = option.Label,
+                    Content = label,
                     Tag = option.Question,
-                    Margin = new Thickness(0, 0, 8, 0),
+                    Margin = new Thickness(0, 0, 8, 6),
                     Padding = new Thickness(12, 6, 12, 6),
+                    Background = new SolidColorBrush(Color.FromArgb(0x90, 0x00, 0xAA, 0xFF)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand,
+                    Focusable = false,
+                    IsTabStop = false,
                     Style = (Style)FindResource("ButtonStyle")
                 };
+                KeyboardNavigation.SetIsTabStop(button, false);
+                KeyboardNavigation.SetDirectionalNavigation(button, KeyboardNavigationMode.None);
                 button.Click += async (_, _) =>
                 {
+                    if (_isProcessingRequest)
+                    {
+                        return;
+                    }
+
                     InputTextBox.Text = (string)button.Tag;
                     await SendMessage();
                 };
                 ClarificationOptionsPanel.Children.Add(button);
             }
             ClarificationOptionsPanel.Visibility = Visibility.Visible;
+            RestoreComposerAfterClarification();
+        }
+
+        private void RestoreComposerAfterClarification()
+        {
+            RestoreChatInputForRetry();
+            SyncChatWebViewHost();
+            if (_companionOverlayHidden)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_companionOverlayHidden || _isHidden)
+                {
+                    return;
+                }
+
+                SyncChatWebViewHost();
+                Activate();
+                InputTextBox.Focus();
+                Keyboard.Focus(InputTextBox);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_companionOverlayHidden || _isHidden)
+                {
+                    return;
+                }
+
+                if (!InputTextBox.IsKeyboardFocused)
+                {
+                    Activate();
+                    InputTextBox.Focus();
+                    Keyboard.Focus(InputTextBox);
+                }
+            }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+        }
+
+        private void SyncChatWebViewHost()
+        {
+            try
+            {
+                UpdateLayout();
+                ChatWebView.InvalidateMeasure();
+                ChatWebView.InvalidateArrange();
+                ChatWebView.UpdateLayout();
+
+                var controller = TryGetChatWebViewController();
+                controller?.NotifyParentWindowPositionChanged();
+
+                // Force the native WebView2 HWND to pick up the smaller chat slot after
+                // clarification chips appear; otherwise it keeps covering the composer.
+                var previousMargin = ChatWebView.Margin;
+                ChatWebView.Margin = new Thickness(
+                    previousMargin.Left,
+                    previousMargin.Top,
+                    previousMargin.Right,
+                    previousMargin.Bottom + 0.5);
+                ChatWebView.UpdateLayout();
+                ChatWebView.Margin = previousMargin;
+                ChatWebView.UpdateLayout();
+                controller?.NotifyParentWindowPositionChanged();
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine($"Chat WebView layout sync failed: {ex.GetType().Name}");
+            }
+        }
+
+        private CoreWebView2Controller? TryGetChatWebViewController()
+        {
+            for (var type = ChatWebView.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var name in new[] { "_coreWebView2Controller", "coreWebView2Controller", "Controller" })
+                {
+                    var field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (field?.GetValue(ChatWebView) is CoreWebView2Controller fromField)
+                    {
+                        return fromField;
+                    }
+
+                    var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (property?.GetValue(ChatWebView) is CoreWebView2Controller fromProperty)
+                    {
+                        return fromProperty;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private async void RegenerateButton_Click(object sender, RoutedEventArgs e)
@@ -3479,6 +3601,47 @@ namespace SecureOverlay
             }
         }
 
+        private void Window_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_currentDropdownMenu?.IsVisible != true)
+            {
+                return;
+            }
+
+            if (IsClickOnDropdownAnchor(e.OriginalSource))
+            {
+                return;
+            }
+
+            CloseCurrentDropdownMenu();
+        }
+
+        private bool IsClickOnDropdownAnchor(object? source)
+        {
+            return source is DependencyObject node
+                && (IsVisualInside(node, ProviderSelectorBorder) || IsVisualInside(node, ModelSelectorBorder));
+        }
+
+        private static bool IsVisualInside(DependencyObject node, DependencyObject? ancestor)
+        {
+            if (ancestor == null)
+            {
+                return false;
+            }
+
+            while (node != null)
+            {
+                if (ReferenceEquals(node, ancestor))
+                {
+                    return true;
+                }
+
+                node = VisualTreeHelper.GetParent(node);
+            }
+
+            return false;
+        }
+
         private void Window_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var element = e.OriginalSource as FrameworkElement;
@@ -3592,6 +3755,7 @@ namespace SecureOverlay
                 _voiceService.SpeechRecognized += OnSpeechRecognized;
                 _voiceService.SpeechHypothesis += OnSpeechHypothesis;
                 _voiceService.StatusChanged += OnVoiceStatusChanged;
+                _voiceService.CaptureCompleted += OnVoiceCaptureCompleted;
                 
                 Log.WriteLine("Starting async initialization...");
                 VoiceStatusText.Text = "Initializing...";
@@ -3652,11 +3816,6 @@ namespace SecureOverlay
                 var shown = CombineVoiceText(_voiceCommittedText, text);
                 InputTextBox.Text = shown;
                 SendCompanionVoiceComposer(shown, isFinal: false);
-                if (_autoSendAfterVoice)
-                {
-                    _voiceSawTranscriptAfterStop = true;
-                    StartVoiceCompletionTimer();
-                }
             });
         }
 
@@ -3682,13 +3841,7 @@ namespace SecureOverlay
                 
                 FocusInput();
                 
-                if (_autoSendAfterVoice)
-                {
-                    _voiceSawTranscriptAfterStop = true;
-                    Log.WriteLine("  Auto-send active - restarting completion timer after transcript");
-                    StartVoiceCompletionTimer();
-                }
-                else
+                if (!_autoSendAfterVoice)
                 {
                     StatusText.Text = "✓ Speech captured - Press Enter to send";
                 }
@@ -3825,17 +3978,24 @@ namespace SecureOverlay
                     VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 200, 200, 200));
                 }
 
-                // After cloud→native fallback (or cloud failure while waiting), keep auto-send alive.
-                if (_autoSendAfterVoice
-                    && _voiceService != null
-                    && !_voiceService.IsListening()
-                    && (status.Contains("Native fallback", StringComparison.OrdinalIgnoreCase)
-                        || status.Contains("Cloud speech unavailable", StringComparison.OrdinalIgnoreCase)
-                        || status.Contains("recognized", StringComparison.OrdinalIgnoreCase)))
-                {
-                    StartVoiceCompletionTimer();
-                }
             });
+        }
+
+        private void OnVoiceCaptureCompleted(object? sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.InvokeAsync(() => OnVoiceCaptureCompleted(sender, e));
+                return;
+            }
+
+            _voiceCaptureSafetyTimer?.Stop();
+            if (!_autoSendAfterVoice)
+            {
+                return;
+            }
+
+            _ = SendCompletedVoiceTranscriptAsync();
         }
 
         private void VoiceButton_Click(object sender, RoutedEventArgs e)
@@ -3868,30 +4028,25 @@ namespace SecureOverlay
             if (_voiceService.IsListening())
             {
                 Log.WriteLine("  Currently listening - stopping");
-                var wasCloudSpeech = _voiceService.IsCloudMode();
                 _autoSendAfterVoice = _settings.AutoSendAfterVoiceStopEnabled;
                 
                 _voiceService.StopListening();
                 SetVoiceButtonVisualState(isListening: false);
-                VoiceStatusText.Text = "Processing speech...";
+                VoiceStatusText.Text = "Finishing transcription…";
                 VoiceStatusText.Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 215, 0));
                 
-                Log.WriteLine("  ✓ Stopped listening - waiting for ALL speech to complete");
+                Log.WriteLine("  ✓ Stopped listening - waiting for transcription to finish");
 
                 if (_autoSendAfterVoice)
                 {
-                    var now = DateTime.UtcNow;
-                    _voiceSawTranscriptAfterStop = false;
-                    _voiceAutoSendDeadlineUtc = now.AddSeconds(5);
-                    _voiceAutoSendFallbackUtc = now.AddMilliseconds(wasCloudSpeech ? 2000 : 600);
-                    Log.WriteLine(wasCloudSpeech
-                        ? "  Auto-send enabled - waiting for cloud transcription or existing text"
-                        : "  Auto-send enabled - starting completion timer");
-                    StartVoiceCompletionTimer();
+                    StatusText.Text = "Finishing transcription…";
+                    StatusIndicator.Fill = Brushes.Gold;
+                    Log.WriteLine("  Auto-send enabled - waiting for capture completed");
+                    StartVoiceCaptureSafetyTimer();
                 }
                 else
                 {
-                    _voiceCompletionTimer?.Stop();
+                    _voiceCaptureSafetyTimer?.Stop();
                     StatusText.Text = "✓ Speech captured - Press Send to continue";
                     StatusIndicator.Fill = Brushes.LightGreen;
                     VoiceStatusText.Text = "Ready";
@@ -3912,7 +4067,7 @@ namespace SecureOverlay
                     : InputTextBox.Text.TrimEnd();
                 
                 _autoSendAfterVoice = false;
-                _voiceCompletionTimer?.Stop();
+                _voiceCaptureSafetyTimer?.Stop();
                 
                 _voiceService.StartListening();
                 SetVoiceButtonVisualState(isListening: true);
@@ -3925,73 +4080,79 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════");
         }
 
-        private void StartVoiceCompletionTimer()
+        private void StartVoiceCaptureSafetyTimer()
         {
-            if (_voiceCompletionTimer == null)
+            if (_voiceCaptureSafetyTimer == null)
             {
-                _voiceCompletionTimer = new System.Windows.Threading.DispatcherTimer
+                _voiceCaptureSafetyTimer = new System.Windows.Threading.DispatcherTimer
                 {
-                    Interval = TimeSpan.FromMilliseconds(500)
+                    Interval = TimeSpan.FromSeconds(20)
                 };
-                _voiceCompletionTimer.Tick += VoiceCompletionTimer_Tick;
+                _voiceCaptureSafetyTimer.Tick += VoiceCaptureSafetyTimer_Tick;
             }
 
-            _voiceCompletionTimer.Stop();
-            _voiceCompletionTimer.Start();
+            _voiceCaptureSafetyTimer.Stop();
+            _voiceCaptureSafetyTimer.Start();
         }
 
-        private async void VoiceCompletionTimer_Tick(object? sender, EventArgs e)
+        private void VoiceCaptureSafetyTimer_Tick(object? sender, EventArgs e)
         {
-            _voiceCompletionTimer?.Stop();
-
-            Log.WriteLine("  Completion timer fired - checking if speech is complete...");
-
-            var listening = _voiceService?.IsListening() == true;
-            var text = InputTextBox.Text?.Trim() ?? "";
-            var hasText = !string.IsNullOrWhiteSpace(text) && text != "Ask me anything...";
-
-            if (listening)
+            _voiceCaptureSafetyTimer?.Stop();
+            if (!_autoSendAfterVoice)
             {
-                Log.WriteLine("  Auto-send waiting - still listening");
-                if (_autoSendAfterVoice) StartVoiceCompletionTimer();
                 return;
             }
 
-            if (hasText)
+            _autoSendAfterVoice = false;
+            Log.WriteLine("  ⚠️ Auto-send cancelled - transcription did not complete");
+            StatusText.Text = "⚠️ Transcription still running — press Send when the text looks complete";
+            VoiceStatusText.Text = "Ready";
+            VoiceStatusText.Foreground = Brushes.LightGreen;
+        }
+
+        private async Task SendCompletedVoiceTranscriptAsync()
+        {
+            if (_voiceService?.IsListening() == true)
             {
-                if (!_voiceSawTranscriptAfterStop && DateTime.UtcNow < _voiceAutoSendFallbackUtc)
-                {
-                    Log.WriteLine("  Auto-send waiting - last transcript may still be arriving");
-                    StartVoiceCompletionTimer();
-                    return;
-                }
+                Log.WriteLine("  Capture completed ignored - still listening");
+                return;
+            }
 
-                Log.WriteLine($"  ✓ Speech fully completed length_bucket={LengthBucket(text.Length)}");
+            var committed = (_voiceCommittedText ?? "").Trim();
+            var shown = InputTextBox.Text?.Trim() ?? "";
+            if (shown == "Ask me anything...")
+            {
+                shown = "";
+            }
 
-                StatusText.Text = "✓ Speech captured - Sending automatically...";
-                StatusIndicator.Fill = Brushes.LightGreen;
-                VoiceStatusText.Text = "Sending...";
-                VoiceStatusText.Foreground = Brushes.LightGreen;
+            // Drop uncommitted interim text that never became a final transcript.
+            if (!string.IsNullOrWhiteSpace(committed) && !string.Equals(shown, committed, StringComparison.Ordinal))
+            {
+                InputTextBox.Text = committed;
+                shown = committed;
+            }
 
+            var hasText = !string.IsNullOrWhiteSpace(shown);
+            if (!hasText)
+            {
                 _autoSendAfterVoice = false;
-                _nextRequestIsVoice = true;
-                await SendMessage();
-
+                Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
+                StatusText.Text = "⚠️ No speech detected - try again";
                 VoiceStatusText.Text = "Ready";
                 VoiceStatusText.Foreground = Brushes.LightGreen;
                 return;
             }
 
-            if (_autoSendAfterVoice && DateTime.UtcNow < _voiceAutoSendDeadlineUtc)
-            {
-                Log.WriteLine("  Auto-send waiting - transcript not ready yet");
-                StartVoiceCompletionTimer();
-                return;
-            }
+            Log.WriteLine($"  ✓ Transcription complete length_bucket={LengthBucket(shown.Length)}");
+            StatusText.Text = "✓ Speech captured - Sending automatically...";
+            StatusIndicator.Fill = Brushes.LightGreen;
+            VoiceStatusText.Text = "Sending...";
+            VoiceStatusText.Foreground = Brushes.LightGreen;
 
             _autoSendAfterVoice = false;
-            Log.WriteLine("  ⚠️ Auto-send cancelled - no text captured");
-            StatusText.Text = "⚠️ No speech detected - try again";
+            _nextRequestIsVoice = true;
+            await SendMessage();
+
             VoiceStatusText.Text = "Ready";
             VoiceStatusText.Foreground = Brushes.LightGreen;
         }
@@ -4109,7 +4270,33 @@ namespace SecureOverlay
             fields["delivery_style"] = trace.DeliveryStyle;
             fields["execution_lane"] = trace.ExecutionLane;
             fields["usage_source"] = trace.UsageSource;
+            fields["provider"] = trace.Provider;
+            fields["model"] = trace.Model;
+            fields["elapsed_ms"] = ((int)trace.ElapsedMilliseconds).ToString();
             _ = Task.Run(() => _telemetryService.Track("live_copilot", eventName, fields));
+        }
+
+        private static string ClassifyTurnError(string error)
+        {
+            if (error.IndexOf("invalid live-response header", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("invalid response format", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "control_frame_incomplete";
+            }
+
+            if (error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "timeout";
+            }
+
+            if (error.IndexOf("429", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("rate limit", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "rate_limited";
+            }
+
+            return "provider_error";
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -5739,44 +5926,54 @@ namespace SecureOverlay
 
         private bool CurrentModelSupportsVision()
         {
-            if (_settings == null)
+            // Match Mac PhantomStore.selectedModelSupportsVision: catalog SupportsVision
+            // for the selected provider/model only. No name-based inference.
+            var model = GetSelectedCatalogModel();
+            var supportsVision = model?.SupportsVision == true;
+            Log.WriteLine(
+                $"Checking vision support for: {model?.ModelId ?? "(unresolved)"} => {(supportsVision ? "✓ Supports vision" : "✗ No vision support")}");
+            return supportsVision;
+        }
+
+        private ManagedAiModelOptionDto? GetSelectedCatalogModel()
+        {
+            var useByoCatalog = ShouldShowByoSelectors();
+            var providerId = useByoCatalog ? _settings.SelectedAI : GetCurrentRuntimeProviderId();
+            var modelId = useByoCatalog
+                ? AIModelRegistry.GetCurrentModelForProvider(_settings, providerId)
+                : GetCurrentRuntimeModelId();
+
+            var match = FindCatalogModel(providerId, modelId, preferByo: useByoCatalog);
+            if (match != null)
             {
-                Log.WriteLine("Settings not initialized");
-                return false;
+                return match;
             }
 
-            // When BYO pickers are visible, vision follows the BYO selection the user sees —
-            // not a managed runtime model that may still be active until keys are present.
-            if (ShouldShowByoSelectors())
+            // Managed desktop catalog is already filtered to the active runtime model.
+            if (!useByoCatalog)
             {
-                var byoProvider = _settings.SelectedAI;
-                var byoModelId = AIModelRegistry.GetCurrentModelForProvider(_settings, byoProvider);
-                var byoModel = ProviderModelCatalogCache.GetModel(_settings, byoProvider, byoModelId, byo: true);
-                if (byoModel != null)
+                var managedProvider = ProviderModelCatalogCache.GetProvider(_settings, providerId)
+                    ?? _settings.ManagedAiCatalogCache?.Providers?.FirstOrDefault();
+                if (managedProvider?.Models is { Count: > 0 })
                 {
-                    Log.WriteLine($"Checking vision support for BYO selection: {byoProvider} - {byoModelId} => {byoModel.SupportsVision}");
-                    return byoModel.SupportsVision;
+                    return managedProvider.Models.FirstOrDefault(item =>
+                               string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
+                           ?? managedProvider.Models[0];
                 }
             }
 
-            var provider = GetCurrentRuntimeProviderId();
-            var currentModel = GetCurrentRuntimeModelId();
-            if (string.IsNullOrWhiteSpace(currentModel) && _rotationManager != null)
+            return null;
+        }
+
+        private ManagedAiModelOptionDto? FindCatalogModel(string providerId, string modelId, bool preferByo)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(modelId))
             {
-                currentModel = _currentAI is HostedManagedAiService
-                    ? GetManagedRuntimeModelId(provider)
-                    : _rotationManager.GetCurrentModel(provider);
+                return null;
             }
 
-            Log.WriteLine($"Checking vision support for: {provider} - {currentModel}");
-
-            var useByoCatalog = _currentAI is not HostedManagedAiService;
-            var model = ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: useByoCatalog)
-                ?? ProviderModelCatalogCache.GetModel(_settings, provider, currentModel, byo: !useByoCatalog);
-            bool supportsVision = model?.SupportsVision == true;
-
-            Log.WriteLine($"  Result: {(supportsVision ? "✓ Supports vision" : "✗ No vision support")} (catalog only)");
-            return supportsVision;
+            return ProviderModelCatalogCache.GetModel(_settings, providerId, modelId, byo: preferByo)
+                ?? ProviderModelCatalogCache.GetModel(_settings, providerId, modelId, byo: !preferByo);
         }
 
 
@@ -5828,23 +6025,17 @@ namespace SecureOverlay
             Log.WriteLine("═══════════════════════════════════════════════════════");
             Log.WriteLine("UPDATING SCREENSHOT BUTTON VISIBILITY");
 
-            if (CurrentModelSupportsVision())
+            var supportsVision = CurrentModelSupportsVision();
+            ScreenshotButton.Visibility = Visibility.Visible;
+            if (!supportsVision && _attachedScreenshots.Count > 0)
             {
-                ScreenshotButton.Visibility = Visibility.Visible;
-                UpdateScreenshotButtonChrome();
-                Log.WriteLine("✓ Screenshot button VISIBLE (model supports vision)");
-            }
-            else
-            {
-                ScreenshotButton.Visibility = Visibility.Collapsed;
-                if (_attachedScreenshots.Count > 0)
-                {
-                    _attachedScreenshots.Clear();
-                    UpdateScreenshotButtonChrome();
-                }
-                Log.WriteLine("✗ Screenshot button HIDDEN (model doesn't support vision)");
+                _attachedScreenshots.Clear();
             }
 
+            UpdateScreenshotButtonChrome();
+            Log.WriteLine(supportsVision
+                ? "✓ Screenshot button ENABLED (catalog SupportsVision)"
+                : "✗ Screenshot button DISABLED (catalog SupportsVision is false)");
             Log.WriteLine("═══════════════════════════════════════════════════════");
         }
 
@@ -5854,13 +6045,27 @@ namespace SecureOverlay
 
         private void ProviderSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            e.Handled = true;
             Log.WriteLine("Provider selector clicked");
+            if (_currentDropdownMenu != null)
+            {
+                CloseCurrentDropdownMenu();
+                return;
+            }
+
             ShowProviderMenu();
         }
 
         private void ModelSelector_Click(object sender, MouseButtonEventArgs e)
         {
+            e.Handled = true;
             Log.WriteLine("Model selector clicked");
+            if (_currentDropdownMenu != null)
+            {
+                CloseCurrentDropdownMenu();
+                return;
+            }
+
             ShowModelMenu();
         }
 
@@ -5869,25 +6074,10 @@ namespace SecureOverlay
             // ✅ Close any existing dropdown menu
             CloseCurrentDropdownMenu();
             
-            var menuWindow = new Window
-            {
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = System.Windows.Media.Brushes.Transparent,
-                ShowInTaskbar = false,
-                Topmost = true,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.None,
-                Owner = this  // ✅ SET OWNER - This fixes Z-order!
-            };
+            var menuWindow = CreateDropdownWindow();
 
             // ✅ Track this menu
             _currentDropdownMenu = menuWindow;
-
-            // ✅ Flag to prevent premature closing
-            bool isInitializing = true;
 
             menuWindow.Loaded += (s, e) =>
             {
@@ -5941,7 +6131,7 @@ namespace SecureOverlay
                     HorizontalContentAlignment = HorizontalAlignment.Left,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     MaxWidth = 210,
-                    Cursor = Cursors.None,
+                    Cursor = GetDropdownItemCursor(),
                     Tag = provider
                 };
                 
@@ -5981,32 +6171,7 @@ namespace SecureOverlay
             PositionDropdownMenu(menuWindow, ProviderSelectorBorder);
             menuWindow.Activate();
             AttachDropdownCursorTracking(menuWindow);
-
-            // ✅ DELAY ATTACHING DEACTIVATE HANDLER
-            var timer = new System.Windows.Threading.DispatcherTimer 
-            { 
-                Interval = TimeSpan.FromMilliseconds(100) 
-            };
-            timer.Tick += (s, e) =>
-            {
-                timer.Stop();
-                isInitializing = false;
-                
-                // Now attach the deactivate handler
-                menuWindow.Deactivated += (sender, args) =>
-                {
-                    if (!isInitializing)
-                    {
-                        try
-                        {
-                            menuWindow.Close();
-                            _currentDropdownMenu = null;  // ✅ Clear reference
-                        }
-                        catch { }
-                    }
-                };
-            };
-            timer.Start();
+            AttachDropdownDismissal(menuWindow);
         }
 
 
@@ -6016,25 +6181,10 @@ namespace SecureOverlay
             // ✅ Close any existing dropdown menu
             CloseCurrentDropdownMenu();
             
-            var menuWindow = new Window
-            {
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = System.Windows.Media.Brushes.Transparent,
-                ShowInTaskbar = false,
-                Topmost = true,
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                Cursor = Cursors.None,
-                Owner = this  // ✅ SET OWNER - This fixes Z-order!
-            };
+            var menuWindow = CreateDropdownWindow();
 
             // ✅ Track this menu
             _currentDropdownMenu = menuWindow;
-
-            // ✅ Flag to prevent premature closing
-            bool isInitializing = true;
 
             menuWindow.Loaded += (s, e) =>
             {
@@ -6068,78 +6218,112 @@ namespace SecureOverlay
             string[] models = GetAvailableModelsForSelectedProvider();
             string currentModel = _rotationManager?.GetCurrentModel(_settings.SelectedAI) ?? "";
 
-            if (models.Length == 0)
+            void RebuildModelButtons(string query)
             {
-                menuStack.Children.Add(new TextBlock
-                {
-                    Text = "(no models)",
-                    Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 160)),
-                    FontSize = 12,
-                    FontStyle = FontStyles.Italic,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    MaxWidth = 290,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                });
-            }
-            
-            foreach (var model in models)
-            {
-                // ✅ USE REGISTRY - Get display name
-            var displayName = GetModelDisplayName(_settings.SelectedAI, model);
-                var label = model == currentModel ? $"✓ {displayName}" : $"   {displayName}";
-                
-                var button = new Button
-                {
-                    Content = new TextBlock
+                menuStack.Children.Clear();
+                var needle = (query ?? string.Empty).Trim();
+                var visible = string.IsNullOrEmpty(needle)
+                    ? models
+                    : models.Where(model =>
                     {
-                        Text = label,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        TextWrapping = TextWrapping.NoWrap,
-                        MaxWidth = 290
-                    },
-                    Foreground = model == currentModel ? 
-                        new SolidColorBrush(Color.FromRgb(0, 170, 255)) : Brushes.White,
-                    Background = System.Windows.Media.Brushes.Transparent,
-                    BorderThickness = new Thickness(0),
-                    FontSize = 12,
-                    FontWeight = model == currentModel ? FontWeights.Bold : FontWeights.Normal,
-                    Padding = new Thickness(15, 8, 15, 8),
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    MaxWidth = 310,
-                    Cursor = Cursors.None,
-                    Tag = model
-                };
-                
-                button.Click += (s, e) =>
+                        var displayName = GetModelDisplayName(_settings.SelectedAI, model);
+                        return model.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+                            || displayName.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }).ToArray();
+
+                if (visible.Length == 0)
                 {
-                    try
+                    menuStack.Children.Add(new TextBlock
                     {
-                        menuWindow.Close();
-                        _currentDropdownMenu = null;  // ✅ Clear reference
-                    }
-                    catch { }
-                    
-                    var selectedModel = (s as Button)?.Tag as string;
-                    if (selectedModel != null && selectedModel != currentModel)
+                        Text = models.Length == 0 ? "(no models)" : "(no matching models)",
+                        Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 160)),
+                        FontSize = 12,
+                        FontStyle = FontStyles.Italic,
+                        Padding = new Thickness(15, 8, 15, 8),
+                        MaxWidth = 290,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    });
+                    return;
+                }
+
+                foreach (var model in visible)
+                {
+                    var displayName = GetModelDisplayName(_settings.SelectedAI, model);
+                    var label = model == currentModel ? $"✓ {displayName}" : $"   {displayName}";
+
+                    var button = new Button
                     {
-                        ChangeModel(selectedModel);
-                    }
-                };
-                
-                button.MouseEnter += (s, e) =>
-                {
-                    button.Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
-                };
-                button.MouseLeave += (s, e) =>
-                {
-                    button.Background = System.Windows.Media.Brushes.Transparent;
-                };
-                
-                menuStack.Children.Add(button);
+                        Content = new TextBlock
+                        {
+                            Text = label,
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                            TextWrapping = TextWrapping.NoWrap,
+                            MaxWidth = 290
+                        },
+                        Foreground = model == currentModel ?
+                            new SolidColorBrush(Color.FromRgb(0, 170, 255)) : Brushes.White,
+                        Background = System.Windows.Media.Brushes.Transparent,
+                        BorderThickness = new Thickness(0),
+                        FontSize = 12,
+                        FontWeight = model == currentModel ? FontWeights.Bold : FontWeights.Normal,
+                        Padding = new Thickness(15, 8, 15, 8),
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        MaxWidth = 310,
+                        Cursor = GetDropdownItemCursor(),
+                        Tag = model
+                    };
+
+                    button.Click += (s, e) =>
+                    {
+                        try
+                        {
+                            menuWindow.Close();
+                            _currentDropdownMenu = null;
+                        }
+                        catch { }
+
+                        var selectedModel = (s as Button)?.Tag as string;
+                        if (selectedModel != null && selectedModel != currentModel)
+                        {
+                            ChangeModel(selectedModel);
+                        }
+                    };
+
+                    button.MouseEnter += (s, e) =>
+                    {
+                        button.Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
+                    };
+                    button.MouseLeave += (s, e) =>
+                    {
+                        button.Background = System.Windows.Media.Brushes.Transparent;
+                    };
+
+                    menuStack.Children.Add(button);
+                }
             }
 
-            menuBorder.Child = menuScrollViewer;
+            var searchBox = new TextBox
+            {
+                Margin = new Thickness(4, 4, 4, 6),
+                Padding = new Thickness(6, 4, 6, 4),
+                FontSize = 12,
+                Background = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
+                Foreground = Brushes.White,
+                CaretBrush = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.FromArgb(120, 0, 170, 255)),
+                BorderThickness = new Thickness(1),
+                ToolTip = "Search models",
+                Cursor = GetDropdownTextCursor()
+            };
+            searchBox.TextChanged += (_, _) => RebuildModelButtons(searchBox.Text);
+            RebuildModelButtons(string.Empty);
+
+            var menuLayout = new DockPanel();
+            DockPanel.SetDock(searchBox, Dock.Top);
+            menuLayout.Children.Add(searchBox);
+            menuLayout.Children.Add(menuScrollViewer);
+            menuBorder.Child = menuLayout;
             menuWindow.Content = menuBorder;
 
             // ✅ SHOW WINDOW FIRST
@@ -6147,33 +6331,33 @@ namespace SecureOverlay
             PositionDropdownMenu(menuWindow, ModelSelectorBorder);
             menuWindow.Activate();
             AttachDropdownCursorTracking(menuWindow);
-
-            // ✅ DELAY ATTACHING DEACTIVATE HANDLER
-            var timer = new System.Windows.Threading.DispatcherTimer 
-            { 
-                Interval = TimeSpan.FromMilliseconds(100) 
-            };
-            timer.Tick += (s, e) =>
-            {
-                timer.Stop();
-                isInitializing = false;
-                
-                // Now attach the deactivate handler
-                menuWindow.Deactivated += (sender, args) =>
-                {
-                    if (!isInitializing)
-                    {
-                        try
-                        {
-                            menuWindow.Close();
-                            _currentDropdownMenu = null;  // ✅ Clear reference
-                        }
-                        catch { }
-                    }
-                };
-            };
-            timer.Start();
+            AttachDropdownDismissal(menuWindow);
+            searchBox.Focus();
         }
+
+        private Window CreateDropdownWindow()
+        {
+            var hideSystemCursor = _settings.UseFakeCursor;
+            return new Window
+            {
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                Background = System.Windows.Media.Brushes.Transparent,
+                ShowInTaskbar = false,
+                Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                Cursor = hideSystemCursor ? Cursors.None : Cursors.Arrow,
+                Owner = this
+            };
+        }
+
+        private System.Windows.Input.Cursor GetDropdownItemCursor()
+            => _settings.UseFakeCursor ? Cursors.None : Cursors.Hand;
+
+        private System.Windows.Input.Cursor GetDropdownTextCursor()
+            => _settings.UseFakeCursor ? Cursors.None : Cursors.IBeam;
 
         /// <summary>
         /// Close any currently open dropdown menu
@@ -6194,16 +6378,48 @@ namespace SecureOverlay
             }
         }
 
+        private void AttachDropdownDismissal(Window menuWindow)
+        {
+            void CloseMenu()
+            {
+                if (!ReferenceEquals(_currentDropdownMenu, menuWindow))
+                {
+                    return;
+                }
+
+                CloseCurrentDropdownMenu();
+            }
+
+            menuWindow.Deactivated += (_, _) => CloseMenu();
+            menuWindow.PreviewKeyDown += (_, args) =>
+            {
+                if (args.Key != Key.Escape)
+                {
+                    return;
+                }
+
+                args.Handled = true;
+                CloseMenu();
+            };
+        }
+
         private void AttachDropdownCursorTracking(Window menuWindow)
         {
-            _cursorManager?.SetOwnedOverlayActive(true);
-            menuWindow.MouseEnter += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
-            menuWindow.MouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
-            menuWindow.PreviewMouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            if (_settings.UseFakeCursor)
+            {
+                _cursorManager?.SetOwnedOverlayActive(true);
+                menuWindow.MouseEnter += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+                menuWindow.MouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+                menuWindow.PreviewMouseMove += (_, _) => _cursorManager?.EnsureLiveCursorAbove();
+            }
+
             menuWindow.Closed += (_, _) =>
             {
                 if (ReferenceEquals(_currentDropdownMenu, menuWindow))
                     _currentDropdownMenu = null;
+
+                if (!_settings.UseFakeCursor)
+                    return;
 
                 _cursorManager?.SetOwnedOverlayActive(false);
 
@@ -6211,6 +6427,9 @@ namespace SecureOverlay
                 if (IsActive || _cursorManager?.IsPointerInsideParentWindow() == true)
                     _cursorManager?.EnsureLiveCursorAbove();
             };
+
+            if (!_settings.UseFakeCursor)
+                return;
 
             // Menu Activate() puts the popup above the live cursor; reassert immediately.
             _cursorManager?.EnsureLiveCursorAbove();
@@ -6644,12 +6863,12 @@ namespace SecureOverlay
                     _companionComposerSyncTimer = null;
                 }
 
-                if (_voiceCompletionTimer != null)
+                if (_voiceCaptureSafetyTimer != null)
                 {
-                    Log.WriteLine("Stopping voice completion timer...");
-                    _voiceCompletionTimer.Stop();
-                    _voiceCompletionTimer = null;
-                    Log.WriteLine("  ✓ Voice completion timer stopped");
+                    Log.WriteLine("Stopping voice capture safety timer...");
+                    _voiceCaptureSafetyTimer.Stop();
+                    _voiceCaptureSafetyTimer = null;
+                    Log.WriteLine("  ✓ Voice capture safety timer stopped");
                 }
                 
                 if (_currentRequestCancellation != null)

@@ -577,8 +577,11 @@ export async function deleteManagedSpeechCredential(accessToken, credentialId) {
   });
 }
 
-export async function triggerManagedAiCatalogRefresh(accessToken) {
-  return request(DASHBOARD_API_BASE, "/api/dashboard/admin/managed-ai/catalog/refresh", {
+export async function triggerManagedAiCatalogRefresh(accessToken, providerId) {
+  const path = providerId
+    ? `/api/dashboard/admin/managed-ai/catalog/${encodeURIComponent(providerId)}/refresh`
+    : "/api/dashboard/admin/managed-ai/catalog/refresh";
+  return request(DASHBOARD_API_BASE, path, {
     method: "POST",
     headers: authHeaders(accessToken)
   });

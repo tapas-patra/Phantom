@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phantom.companion.BuildConfig
+import com.phantom.companion.domain.model.exposesProviderModelPickers
 import com.phantom.companion.ui.components.PhantomPrimaryButton
 import com.phantom.companion.ui.components.PhantomSecondaryButton
 import com.phantom.companion.ui.components.ProviderModelPickers
@@ -207,19 +208,27 @@ fun AccountScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             AccountCard(title = "Model", icon = Icons.Default.Memory) {
-                Text(
-                    text = "Changes apply on this phone and the paired desktop.",
-                    fontSize = 13.sp,
-                    color = PhantomMuted
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                ProviderModelPickers(
-                    providers = providers,
-                    selectedProviderId = currentProvider.orEmpty(),
-                    selectedModelId = currentModel.orEmpty(),
-                    onSelect = viewModel::selectRuntime,
-                    enabled = activePairing != null
-                )
+                if (exposesProviderModelPickers(startupSnapshot)) {
+                    Text(
+                        text = "Changes apply on this phone and the paired desktop.",
+                        fontSize = 13.sp,
+                        color = PhantomMuted
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ProviderModelPickers(
+                        providers = providers,
+                        selectedProviderId = currentProvider.orEmpty(),
+                        selectedModelId = currentModel.orEmpty(),
+                        onSelect = viewModel::selectRuntime,
+                        enabled = activePairing != null
+                    )
+                } else {
+                    Text(
+                        text = "Provider and model are managed by Phantom on this lane.",
+                        fontSize = 13.sp,
+                        color = PhantomMuted
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

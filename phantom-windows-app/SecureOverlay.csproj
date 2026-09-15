@@ -28,9 +28,12 @@
     <!-- Copyright -->
     <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
     
-    <!-- File version (matches Windows 11 23H2) -->
+    <!-- File version (matches Windows 11 23H2). Keep this disguise; product version is InformationalVersion. -->
     <FileVersion>10.0.22631.4602</FileVersion>
     <AssemblyVersion>10.0.22631.4602</AssemblyVersion>
+    <PhantomProductVersion Condition="'$(PhantomProductVersion)' == ''">0.0.0-local</PhantomProductVersion>
+    <InformationalVersion>$(PhantomProductVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     
     <!-- Shared Phantom app icon -->
     <ApplicationIcon>assets\brand\phantom-logo.ico</ApplicationIcon>

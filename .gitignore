@@ -14,3 +14,4 @@ phantom-website-dashboard/test-results/
 */dist/
 graphify-out/
 /.gradle
+/release/

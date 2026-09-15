@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=${0:A:h}
 ROOT_DIR=${SCRIPT_DIR:h}
 APP_BUNDLE="$ROOT_DIR/dist/Phantom.app"
+VERSION="${PHANTOM_PRODUCT_VERSION:-0.0.0-local}"
 
 export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build-cache/clang"
 export SWIFTPM_CONFIG_DIR="$ROOT_DIR/.build-cache/swiftpm/config"
@@ -27,6 +28,8 @@ rm -rf -- "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_DIR/Phantom" "$APP_BUNDLE/Contents/MacOS/Phantom"
 cp "$ROOT_DIR/Packaging/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_BUNDLE/Contents/Info.plist"
 cp "$ROOT_DIR/phantom.hosted.json" "$APP_BUNDLE/Contents/Resources/phantom.hosted.json"
 cp "$ROOT_DIR/../phantom-windows-app/Assets/brand/phantom-logo-512.png" "$APP_BUNDLE/Contents/Resources/phantom-logo.png"
 cp "$ROOT_DIR/../phantom-windows-app/assets/mermaid/mermaid.min.js" "$APP_BUNDLE/Contents/Resources/mermaid.min.js"

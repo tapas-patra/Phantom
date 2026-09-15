@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SecureOverlay.Helpers;
 
 namespace SecureOverlay.Services
 {
@@ -71,7 +72,7 @@ namespace SecureOverlay.Services
                 var request = new
                 {
                     model = _model,
-                    max_tokens = 2000,
+                    max_tokens = ReasoningBudget.Resolve(messages).MaxTokens,
                     system = systemPrompt,
                     messages = apiMessages
                 };
@@ -149,30 +150,41 @@ namespace SecureOverlay.Services
                     }
                 }
 
-                var request = new
-                {
-                    model = _model,
-                    max_tokens = 2000,
-                    system = systemPrompt,
-                    messages = apiMessages,
-                    stream = true
-                };
-
-                var json = JsonConvert.SerializeObject(request);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
-                {
-                    Content = content
-                };
-                requestMessage.Headers.TryAddWithoutValidation("x-api-key", _apiKey);
-                requestMessage.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
-
-                var response = await _httpClient.SendAsync(
-                    requestMessage,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken
-                );
+                var plan = ReasoningBudget.Resolve(messages);
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("Claude", _model, plan) && plan.ClaudeThinkingTokens > 0;
+                var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
+                    _httpClient,
+                    withThinking =>
+                    {
+                        var maxTokens = Math.Max(plan.MaxTokens, plan.ClaudeThinkingTokens + 512);
+                        object payload = withThinking
+                            ? new
+                            {
+                                model = _model,
+                                max_tokens = maxTokens,
+                                system = systemPrompt,
+                                messages = apiMessages,
+                                stream = true,
+                                thinking = new { type = "enabled", budget_tokens = plan.ClaudeThinkingTokens }
+                            }
+                            : new
+                            {
+                                model = _model,
+                                max_tokens = maxTokens,
+                                system = systemPrompt,
+                                messages = apiMessages,
+                                stream = true
+                            };
+                        var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
+                        {
+                            Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json")
+                        };
+                        requestMessage.Headers.TryAddWithoutValidation("x-api-key", _apiKey);
+                        requestMessage.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+                        return requestMessage;
+                    },
+                    includeThinking,
+                    cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {

@@ -30,6 +30,7 @@ namespace SecureOverlay.Services
                 "Gemini" => new GeminiService(apiKey, model),
                 "Groq" => new GroqService(apiKey, model),
                 "NVIDIA" => new NvidiaService(apiKey, model),
+                "OpenRouter" => new OpenRouterService(apiKey, model),
                 _ => throw new ArgumentException($"Unknown AI provider: {provider}")
             };
         }

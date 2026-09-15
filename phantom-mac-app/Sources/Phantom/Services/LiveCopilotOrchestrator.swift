@@ -7,18 +7,40 @@ final class LiveCopilotOrchestrator {
     func execute(
         allowedEntityIds: [String],
         allowedDocumentIds: [String],
+        questionText: String,
+        retrievalAvailable: Bool,
+        hasActiveEvidence: Bool,
+        preferredDocumentsForDecision: @escaping (LiveTurnDecision) -> [String] = { _ in [] },
         firstModel: @escaping ModelStream,
         retrieve: @escaping (LiveTurnDecision) async throws -> LiveCopilotRetrieval,
         secondModel: @escaping (LiveTurnDecision, LiveCopilotRetrieval) -> ModelStream,
         publish: @escaping (String) -> Void,
         resetPublishedAttempt: @escaping () -> Void,
         protocolRejected: ((String) -> Void)? = nil,
-        decisionParsed: ((LiveTurnDecision, Int) -> Void)? = nil
+        decisionParsed: ((LiveTurnDecision, Int, Bool) -> Void)? = nil
     ) async throws -> LiveCopilotResult {
+        _ = retrievalAvailable
+        _ = hasActiveEvidence
         var modelCalls = 0
         var protocolRetries = 0
         var parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
         var firstResponse = ""
+        var fallbackBuffer = ""
+        var retrievalTask: Task<LiveCopilotRetrieval, Error>?
+
+        func prepare(_ decision: LiveTurnDecision) -> LiveTurnDecision {
+            LiveCopilotRetrievePolicy.prepareRetrieve(
+                decision,
+                questionText: questionText,
+                preferredDocumentIds: preferredDocumentsForDecision(decision)
+            )
+        }
+
+        func tryStartRetrieve() {
+            guard retrievalTask == nil, let decision = parser.decision, decision.action == .retrieve else { return }
+            let prepared = prepare(decision)
+            retrievalTask = Task { try await retrieve(prepared) }
+        }
 
         while true {
             modelCalls += 1
@@ -29,6 +51,7 @@ final class LiveCopilotOrchestrator {
                     do {
                         let visible = try parser.feed(chunk)
                         if !visible.isEmpty { publish(visible) }
+                        tryStartRetrieve()
                     } catch let error as PhantomProtocolError {
                         streamProtocolError = error
                     } catch {
@@ -36,30 +59,61 @@ final class LiveCopilotOrchestrator {
                     }
                 }, {
                     parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    retrievalTask?.cancel()
+                    retrievalTask = nil
                     resetPublishedAttempt()
                 })
                 if let streamProtocolError { throw streamProtocolError }
                 if !parser.hasReceivedChunks, !firstResponse.isEmpty {
                     let visible = try parser.feed(firstResponse)
                     if !visible.isEmpty { publish(visible) }
+                    tryStartRetrieve()
                 }
                 _ = try parser.complete()
+                tryStartRetrieve()
                 break
-            } catch let error as PhantomProtocolError where protocolRetries == 0 {
+            } catch let error as PhantomProtocolError {
+                var candidate = parser.fallbackAnswerText()
+                if candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    candidate = PhantomControlFrameParser.extractBareAnswer(firstResponse)
+                }
+                if !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    fallbackBuffer = candidate
+                }
                 protocolRejected?(error.code)
-                protocolRetries += 1
-                parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
-                resetPublishedAttempt()
+                if Self.isCompleteAnswer(fallbackBuffer) {
+                    protocolRetries = max(protocolRetries, 1)
+                    protocolRejected?("control_frame_fallback")
+                    let fallbackDecision = PhantomControlFrameParser.fallbackAnswerDecision()
+                    decisionParsed?(fallbackDecision, modelCalls, false)
+                    publish(fallbackBuffer)
+                    return LiveCopilotResult(
+                        answer: fallbackBuffer, decision: fallbackDecision, modelCallCount: modelCalls,
+                        protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
+                    )
+                }
+                if protocolRetries == 0 {
+                    protocolRetries += 1
+                    parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    retrievalTask?.cancel()
+                    retrievalTask = nil
+                    resetPublishedAttempt()
+                    continue
+                }
+                throw error
             }
         }
 
-        let decision = try parser.complete()
-        decisionParsed?(decision, modelCalls)
+        var decision = try parser.complete()
+        if decision.action == .retrieve {
+            decision = prepare(decision)
+        }
+        decisionParsed?(decision, modelCalls, false)
         if protocolRetries > 0, decision.action == .retrieve {
             throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
         }
         if decision.action != .retrieve {
-            let answer = Self.extractBody(firstResponse)
+            let answer = PhantomControlFrameParser.resolveAnswer(firstResponse)
             guard Self.isCompleteAnswer(answer) else {
                 throw BackendError.server("The AI provider returned an incomplete response.")
             }
@@ -69,7 +123,12 @@ final class LiveCopilotOrchestrator {
             )
         }
 
-        let retrieval = try await retrieve(decision)
+        let retrieval: LiveCopilotRetrieval
+        if let retrievalTask {
+            retrieval = try await retrievalTask.value
+        } else {
+            retrieval = try await retrieve(decision)
+        }
         var finalResponse = ""
         modelCalls += 1
         let completed = try await secondModel(decision, retrieval)({ chunk in
@@ -90,8 +149,7 @@ final class LiveCopilotOrchestrator {
     }
 
     static func extractBody(_ response: String) -> String {
-        guard let range = response.range(of: PhantomControlFrameParser.bodyDelimiter) else { return "" }
-        return String(response[range.upperBound...])
+        PhantomControlFrameParser.extractAnswerBody(response)
     }
 
     nonisolated static func isCompleteAnswer(_ response: String) -> Bool {

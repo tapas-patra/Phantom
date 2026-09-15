@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
-using System.Reflection;
 using System.Threading.Tasks;
+using SecureOverlay.Helpers;
 using System.Windows;
 using SecureOverlay.Application.Auth;
 using SecureOverlay.Application.Device;
@@ -88,7 +88,7 @@ namespace SecureOverlay
         {
             try
             {
-                var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+                var version = PhantomAppVersion.Current;
                 var deviceProfile = _deviceIdentityService.GetOrCreateProfile();
                 var url = HostedWebRoutes.BuildRegisterUrl(new DeviceRegistrationMetadataDto
                 {

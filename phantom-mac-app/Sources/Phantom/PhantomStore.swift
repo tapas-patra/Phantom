@@ -268,16 +268,13 @@ final class PhantomStore: ObservableObject {
     private var previousVoiceTranscript = ""
     private var lastVoiceRenderedPrompt = ""
     private var preserveVoiceEdits = false
-    private var voiceDispatchTask: Task<Void, Never>?
     private var composerMirrorTask: Task<Void, Never>?
     private var applyingCompanionComposer = false
     private var lastMirroredComposer = ""
     private var pendingVoiceAutoSend = false
-    private var sawVoiceTranscriptAfterStop = false
-    private var voiceAutoSendDeadline: Date?
-    private var voiceAutoSendFallback: Date?
     private var pendingVoiceTurnId: String?
     private var lastAutoSentVoiceText = ""
+    private var voiceCaptureSafetyTask: Task<Void, Never>?
 
     init() {
         let defaults = UserDefaults.standard
@@ -1193,25 +1190,16 @@ final class PhantomStore: ObservableObject {
         }
 
         if speechInput.isListening {
-            let wasCloud = speechInput.isCloudMode
             if autoSendAfterVoiceStop {
                 pendingVoiceAutoSend = true
-                sawVoiceTranscriptAfterStop = false
-                voiceAutoSendDeadline = Date().addingTimeInterval(5)
-                voiceAutoSendFallback = Date().addingTimeInterval(wasCloud ? 2 : 0.6)
-                voiceStatus = wasCloud
-                    ? "Finishing cloud transcription…"
-                    : "Sending automatically…"
+                voiceStatus = "Finishing transcription…"
+                startVoiceCaptureSafetyTimeout()
             } else {
                 pendingVoiceAutoSend = false
-                voiceAutoSendDeadline = nil
-                voiceAutoSendFallback = nil
+                voiceCaptureSafetyTask?.cancel()
             }
             speechInput.stop()
-            isListening = false
-            if autoSendAfterVoiceStop {
-                scheduleVoiceDispatch()
-            }
+            isListening = pendingVoiceAutoSend
         } else {
             configureSpeechRuntime()
             let existing = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1222,10 +1210,7 @@ final class PhantomStore: ObservableObject {
             pendingVoiceTurnId = UUID().uuidString
             lastAutoSentVoiceText = ""
             pendingVoiceAutoSend = false
-            sawVoiceTranscriptAfterStop = false
-            voiceAutoSendDeadline = nil
-            voiceAutoSendFallback = nil
-            voiceDispatchTask?.cancel()
+            voiceCaptureSafetyTask?.cancel()
             Task {
                 await speechInput.start()
                 isListening = speechInput.isListening
@@ -1276,6 +1261,9 @@ final class PhantomStore: ObservableObject {
         prompt = ""
         applyingCompanionComposer = false
         lastMirroredComposer = ""
+        for index in messages.indices {
+            messages[index].clarificationOptions = nil
+        }
         companionVoiceTranscriptHandler?("", true, true)
         let imagesBase64 = attachedScreenshots.map { $0.base64EncodedString() }
         let provider = selectedProviderId
@@ -1332,12 +1320,14 @@ final class PhantomStore: ObservableObject {
                 companionInterviewActive = true
                 companionSessionStartedHandler?()
                 try await runtime.metering.trackQuestion(text)
-                await runtime.track(
-                    category: "chat",
-                    event: "question_submitted",
-                    attributes: ["requestId": requestId, "provider": provider, "model": model, "lane": usesBYO ? "pro_byo" : "managed"],
-                    accessToken: session.accessToken
-                )
+                Task {
+                    await runtime.track(
+                        category: "chat",
+                        event: "question_submitted",
+                        attributes: ["requestId": requestId, "provider": provider, "model": model, "lane": usesBYO ? "pro_byo" : "managed"],
+                        accessToken: session.accessToken
+                    )
+                }
 
                 messages.append(ChatMessage(role: "user", content: text))
                 let pendingReply = ChatMessage(role: "assistant", content: "")
@@ -1462,50 +1452,65 @@ final class PhantomStore: ObservableObject {
                 }
                 let orchestrator = LiveCopilotOrchestrator()
                 var firstProtocolAttempt = 0
+                let retrievalAvailable = isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true
+                let speculativeTask: Task<LiveCopilotRetrieval, Error>? = retrievalAvailable
+                    ? Task {
+                        do {
+                            return try await self.searchKnowledge(
+                                query: text,
+                                preferredDocuments: [],
+                                session: session,
+                                requestId: requestId
+                            )
+                        } catch is CancellationError {
+                            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+                        }
+                    }
+                    : nil
                 let firstStream: LiveCopilotOrchestrator.ModelStream = { onDelta, onRetryCleanup in
                     firstProtocolAttempt += 1
                     let outbound = firstProtocolAttempt == 1 ? firstOutbound : repairOutbound
-                    return try await makeStream(outbound, firstOperationId, firstProtocolAttempt)(onDelta, onRetryCleanup)
+                    return try await ReasoningContext.$questionType.withValue("control") {
+                        try await makeStream(outbound, firstOperationId, firstProtocolAttempt)(onDelta, onRetryCleanup)
+                    }
                 }
                 let result = try await orchestrator.execute(
                     allowedEntityIds: CopilotPrompt.entityIds(hostedKnowledgeBase, mode: copilotMode),
                     allowedDocumentIds: CopilotPrompt.documentIds(hostedKnowledgeBase, mode: copilotMode),
+                    questionText: text,
+                    retrievalAvailable: retrievalAvailable,
+                    hasActiveEvidence: !conversationManager.activeEvidence(for: copilotMode).isEmpty,
+                    preferredDocumentsForDecision: { decision in
+                        CopilotPrompt.preferredDocumentIds(
+                            entityId: decision.entityId,
+                            entityType: decision.entityType,
+                            knowledge: self.hostedKnowledgeBase
+                        )
+                    },
                     firstModel: firstStream,
                     retrieve: { decision in
-                        let operationId = UUID().uuidString
-                        self.status = "Searching your knowledge…"
-                        Diagnostics.event("retrieval_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle)
-                        self.mirrorLiveEvent("retrieval_started", turnId: requestId, operationId: operationId)
-                        guard self.isPremiumAccount, self.hostedKnowledgeBase?.canUseInInterview == true else {
-                            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
-                        }
-                        do {
-                            var preferredDocuments = decision.preferredDocumentIds
-                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
-                                preferredDocuments = CopilotPrompt.documentIds(self.hostedKnowledgeBase, mode: .briefing)
+                        let query = LiveCopilotRetrievePolicy.normalizeRetrievalQuery(decision: decision, questionText: text)
+                        if let speculativeTask,
+                           LiveCopilotRetrievePolicy.queriesAreSimilar(text, query),
+                           LiveCopilotRetrievePolicy.documentSetsEqual([], decision.preferredDocumentIds) {
+                            let speculative = try await speculativeTask.value
+                            if LiveCopilotRetrievePolicy.canReuseSpeculative(
+                                speculativeQuery: text,
+                                speculativeDocuments: [],
+                                query: query,
+                                documents: decision.preferredDocumentIds,
+                                status: speculative.status
+                            ) {
+                                return speculative
                             }
-                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
-                                Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
-                                self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
-                                return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
-                            }
-                            let snippets = try await self.backend.knowledgeSnippets(
-                                accessToken: session.accessToken,
-                                query: decision.retrievalQuery,
-                                preferredDocumentIds: preferredDocuments,
-                                turnId: requestId,
-                                operationId: operationId
-                            )
-                            let bounded = Array(snippets.prefix(3))
-                            Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
-                            self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
-                            return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(self.hostedKnowledgeBase?.embeddingVersion ?? 0)")
-                        } catch is CancellationError { throw CancellationError() }
-                        catch {
-                            Diagnostics.event("retrieval_failed", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": "retrieval_failed"])
-                            self.mirrorLiveEvent("retrieval_failed", turnId: requestId, operationId: operationId, fields: ["outcome": "error", "error_code": "retrieval_failed"])
-                            return LiveCopilotRetrieval(status: "error", snippets: [], kbRevision: "")
                         }
+                        speculativeTask?.cancel()
+                        return try await self.searchKnowledge(
+                            query: query,
+                            preferredDocuments: decision.preferredDocumentIds,
+                            session: session,
+                            requestId: requestId
+                        )
                     },
                     secondModel: { decision, retrieval in
                         let finalOutbound = self.conversationManager.secondCallMessages(
@@ -1519,7 +1524,12 @@ final class PhantomStore: ObservableObject {
                             modelId: self.selectedModelId,
                             knowledgeBase: self.hostedKnowledgeBase
                         )
-                        return makeStream(finalOutbound, UUID().uuidString, 1)
+                        let stream = makeStream(finalOutbound, UUID().uuidString, 1)
+                        return { onDelta, onRetryCleanup in
+                            try await ReasoningContext.$questionType.withValue(decision.questionType) {
+                                try await stream(onDelta, onRetryCleanup)
+                            }
+                        }
                     },
                     publish: { chunk in self.append(chunk, to: pendingReply.id) },
                     resetPublishedAttempt: { self.clearReply(pendingReply.id) },
@@ -1527,7 +1537,7 @@ final class PhantomStore: ObservableObject {
                         Diagnostics.event("control_frame_rejected", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": code, "validation_outcome": "rejected"])
                         self.mirrorLiveEvent("control_frame_rejected", turnId: requestId, operationId: self.activeOperationId, fields: ["error_code": code, "validation_outcome": "rejected"])
                     },
-                    decisionParsed: { decision, calls in
+                    decisionParsed: { decision, calls, retrieveForced in
                         let fields = [
                             "question_type": decision.questionType,
                             "intent": decision.intent,
@@ -1539,12 +1549,16 @@ final class PhantomStore: ObservableObject {
                             "protocol_version": "\(decision.protocolVersion)",
                             "validation_outcome": "accepted",
                             "model_call_count": "\(calls)",
-                            "retrieval_status": decision.action == .retrieve ? "pending" : "not_requested"
+                            "retrieval_status": decision.action == .retrieve ? "pending" : "not_requested",
+                            "retrieve_forced": retrieveForced ? "true" : "false"
                         ]
                         Diagnostics.event("control_frame_parsed", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: fields)
                         self.mirrorLiveEvent("control_frame_parsed", turnId: requestId, operationId: self.activeOperationId, fields: fields)
                     }
                 )
+                if result.decision.action != .retrieve {
+                    speculativeTask?.cancel()
+                }
                 conversationManager.complete(result, mode: copilotMode)
                 if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
                     let responseTimeMs = max(0, Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))
@@ -1557,6 +1571,13 @@ final class PhantomStore: ObservableObject {
                     messages[index].interviewIntent = conversationManager.lastAnswerResolution.intent.rawValue
                     messages[index].responseTimeMs = responseTimeMs
                     messages[index].createdAtUtc = Date()
+                    if result.decision.action == .clarify {
+                        let parsed = ClarificationOptionParser.parse(finalized.content)
+                        messages[index].content = parsed.displayText
+                        messages[index].summary = parsed.displayText.count > 100 ? String(parsed.displayText.prefix(100)) + "..." : parsed.displayText
+                        messages[index].estimatedTokens = ConversationManager.estimate(parsed.displayText)
+                        messages[index].clarificationOptions = parsed.options
+                    }
                 }
                 Diagnostics.event("answer_completed", sessionId: copilotSessionId, turnId: requestId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["outcome": "success", "answer_basis": conversationManager.lastAnswerResolution.answerBasis, "question_type": conversationManager.lastAnswerResolution.questionType, "model_call": "\(conversationManager.lastModelCallCount)", "elapsed_ms": "\(Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))", "buffered_characters": "\(messages.first(where: { $0.id == pendingReply.id })?.content.count ?? 0)", "execution_lane": activeExecutionLane, "usage_source": activeUsageSource])
                 try await runtime.metering.resume()
@@ -1643,6 +1664,48 @@ final class PhantomStore: ObservableObject {
         }
         prompt = option.question
         send()
+    }
+
+    private func searchKnowledge(
+        query: String,
+        preferredDocuments: [String],
+        session: AuthSession,
+        requestId: String
+    ) async throws -> LiveCopilotRetrieval {
+        let operationId = UUID().uuidString
+        status = "Searching your knowledge…"
+        Diagnostics.event("retrieval_started", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle)
+        mirrorLiveEvent("retrieval_started", turnId: requestId, operationId: operationId)
+        guard isPremiumAccount, hostedKnowledgeBase?.canUseInInterview == true else {
+            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+        }
+        do {
+            var documents = preferredDocuments
+            if copilotMode == .briefing, documents.isEmpty {
+                documents = CopilotPrompt.documentIds(hostedKnowledgeBase, mode: .briefing)
+            }
+            if copilotMode == .briefing, documents.isEmpty {
+                Diagnostics.event("retrieval_completed", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+            }
+            let snippets = try await backend.knowledgeSnippets(
+                accessToken: session.accessToken,
+                query: query,
+                preferredDocumentIds: documents,
+                turnId: requestId,
+                operationId: operationId
+            )
+            let bounded = Array(snippets.prefix(3))
+            Diagnostics.event("retrieval_completed", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+            mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+            return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(hostedKnowledgeBase?.embeddingVersion ?? 0)")
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            Diagnostics.event("retrieval_completed", level: "Warning", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+            mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+        }
     }
 
     func cancelCurrentRequest() {
@@ -2199,19 +2262,19 @@ final class PhantomStore: ObservableObject {
                 style: self.interviewDeliveryStyle,
                 fields: ["transcript_length_bucket": Self.lengthBucket(merged.text.count)]
             )
-            if self.speechInput.isListening {
-                self.voiceDispatchTask?.cancel()
-                return
-            }
-            if self.pendingVoiceAutoSend || (isFinal && self.autoSendAfterVoiceStop) {
-                self.sawVoiceTranscriptAfterStop = true
-                self.scheduleVoiceDispatch()
-            }
+        }
+        speechInput.onCaptureCompleted = { [weak self] in
+            self?.isListening = false
+            self?.finishVoiceCaptureAndMaybeSend()
         }
         speechInput.onStateChange = { [weak self] state in
             guard let self else { return }
             self.voiceStatus = state
-            self.isListening = self.speechInput.isListening
+            if self.pendingVoiceAutoSend {
+                self.isListening = true
+            } else {
+                self.isListening = self.speechInput.isListening
+            }
         }
     }
 
@@ -2258,56 +2321,33 @@ final class PhantomStore: ObservableObject {
         }
     }
 
-    private func scheduleVoiceDispatch() {
-        voiceDispatchTask?.cancel()
-        let expected = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if expected.isEmpty {
-            guard pendingVoiceAutoSend, let deadline = voiceAutoSendDeadline, Date() < deadline else {
-                pendingVoiceAutoSend = false
-                voiceAutoSendDeadline = nil
-                voiceAutoSendFallback = nil
-                return
-            }
-            voiceDispatchTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                guard !Task.isCancelled, let self else { return }
-                self.scheduleVoiceDispatch()
-            }
-            return
-        }
-        if !sawVoiceTranscriptAfterStop, let fallback = voiceAutoSendFallback, Date() < fallback {
-            voiceDispatchTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                guard !Task.isCancelled, let self else { return }
-                self.scheduleVoiceDispatch()
-            }
-            return
-        }
-        voiceDispatchTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            let current = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard current == expected else {
-                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
-                return
-            }
-            guard !self.speechInput.isListening else {
-                if self.pendingVoiceAutoSend { self.scheduleVoiceDispatch() }
-                return
-            }
-            guard expected != self.lastAutoSentVoiceText else {
-                self.pendingVoiceAutoSend = false
-                self.voiceAutoSendDeadline = nil
-                self.voiceAutoSendFallback = nil
-                Diagnostics.event("request_dispatched", level: "Debug", sessionId: self.copilotSessionId, turnId: self.pendingVoiceTurnId ?? UUID().uuidString, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
-                return
-            }
+    private func startVoiceCaptureSafetyTimeout() {
+        voiceCaptureSafetyTask?.cancel()
+        voiceCaptureSafetyTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled, let self, self.pendingVoiceAutoSend else { return }
             self.pendingVoiceAutoSend = false
-            self.voiceAutoSendDeadline = nil
-            self.voiceAutoSendFallback = nil
-            self.lastAutoSentVoiceText = expected
-            self.send()
+            self.voiceStatus = "Ready"
+            self.status = "Transcription still running — press Send when the text looks complete"
         }
+    }
+
+    private func finishVoiceCaptureAndMaybeSend() {
+        voiceCaptureSafetyTask?.cancel()
+        guard pendingVoiceAutoSend, !speechInput.isListening else { return }
+        pendingVoiceAutoSend = false
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            voiceStatus = "Ready"
+            status = "No speech detected — try again"
+            return
+        }
+        guard text != lastAutoSentVoiceText else {
+            Diagnostics.event("request_dispatched", level: "Debug", sessionId: copilotSessionId, turnId: pendingVoiceTurnId ?? UUID().uuidString, mode: copilotMode, style: interviewDeliveryStyle, fields: ["duplicate_suppression_count": "1", "outcome": "suppressed"])
+            return
+        }
+        lastAutoSentVoiceText = text
+        send()
     }
 
     private static func lengthBucket(_ length: Int) -> String {

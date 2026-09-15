@@ -100,7 +100,7 @@ namespace SecureOverlay
         public void CompleteOperation(string eventName, string outcome, string? errorCode = null, int snippetCount = 0)
             => Write(eventName, outcome, errorCode, snippetCount);
 
-        public void SetDecision(LiveTurnDecision decision, int modelCallCount, string retrievalStatus)
+        public void SetDecision(LiveTurnDecision decision, int modelCallCount, string retrievalStatus, bool retrieveForced = false)
         {
             Route = decision.Action.ToString().ToLowerInvariant();
             UsedRetrieval = decision.Action == LiveCopilotAction.Retrieve;
@@ -114,7 +114,8 @@ namespace SecureOverlay
                 hasEntityId: !string.IsNullOrEmpty(decision.EntityId),
                 protocolVersion: decision.ProtocolVersion,
                 modelCallCount: modelCallCount,
-                retrievalStatus: retrievalStatus);
+                retrievalStatus: retrievalStatus,
+                retrieveForced: retrieveForced);
         }
 
         public void MarkRetry(string errorCode = "provider_error")
@@ -167,7 +168,7 @@ namespace SecureOverlay
             string? questionType = null, string? intent = null, string? action = null,
             string? answerBasis = null, string? confidenceBucket = null, string? entityType = null,
             bool? hasEntityId = null, int? protocolVersion = null, int? modelCallCount = null,
-            string? retrievalStatus = null, int? bufferedCharacters = null)
+            string? retrievalStatus = null, int? bufferedCharacters = null, bool? retrieveForced = null)
         {
             var envelope = new
             {
@@ -205,6 +206,7 @@ namespace SecureOverlay
                 protocol_version = protocolVersion,
                 model_call_count = modelCallCount,
                 retrieval_status = retrievalStatus,
+                retrieve_forced = retrieveForced,
                 buffered_characters = bufferedCharacters
             };
             if (!Lines.Writer.TryWrite(JsonSerializer.Serialize(envelope)))

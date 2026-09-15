@@ -224,6 +224,19 @@ var forcePersonal = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
     retrievalAvailable: true, hasActiveEvidence: false);
 if (forcePersonal) throw new InvalidOperationException("Candidate-specific project turns must keep a complete first-call answer.");
 
+if (!LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "found"))
+    throw new InvalidOperationException("Matching found speculation must be reusable.");
+if (!LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "empty"))
+    throw new InvalidOperationException("Matching empty speculation must be reusable.");
+if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", Array.Empty<string>(), "unavailable"))
+    throw new InvalidOperationException("Timed-out speculation must not be reused.");
+if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+        "introduce yourself", Array.Empty<string>(), "introduce yourself", new[] { "resume-document-id" }, "found"))
+    throw new InvalidOperationException("Speculation with different preferred documents must not be reused.");
+
 foreach (var secret in fixtures.SensitiveSamples)
 {
     var allowlist = new[] { "question_length_bucket", "provider", "model", "answer_basis" };

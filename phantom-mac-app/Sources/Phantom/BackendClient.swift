@@ -629,8 +629,8 @@ struct BackendClient {
             URLQueryItem(name: "preferredDocumentIds", value: preferredDocumentIds.prefix(8).joined(separator: ","))
         ]
         var request = URLRequest(url: components.url!)
-        // Allow embedding timeout + degraded lexical fallback (~2–4s) plus network slack.
-        request.timeoutInterval = 2
+        // Live interview search budget: embedding + lexical/hybrid query.
+        request.timeoutInterval = 8
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         correlate(&request, turnId: turnId, operationId: operationId)
         let result: KnowledgeSearchResult = try await send(request)

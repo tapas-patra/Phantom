@@ -39,7 +39,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         _repository = repository;
         _protector = protector;
         _logger = logger;
-        _queryTimeout = TimeSpan.FromMilliseconds(Math.Clamp(options.KnowledgeBaseQueryEmbeddingTimeoutMs, 100, 2000));
+        _queryTimeout = TimeSpan.FromMilliseconds(Math.Clamp(options.KnowledgeBaseQueryEmbeddingTimeoutMs, 100, 8000));
         _queryMaxRetries = Math.Clamp(options.KnowledgeBaseQueryEmbeddingRetries, 0, 3);
         _queryRetryDelay = TimeSpan.FromMilliseconds(Math.Clamp(options.KnowledgeBaseQueryEmbeddingRetryDelayMs, 0, 1000));
         _queryCacheMaxEntries = Math.Clamp(options.KnowledgeBaseQueryEmbeddingCacheEntries, 32, 4096);
@@ -139,7 +139,7 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
         return embeddings.Count == 0 ? Array.Empty<float>() : embeddings[0];
     }
 
-    public async Task<float[]> GenerateQueryEmbeddingAsync(string input, CancellationToken cancellationToken)
+    public async Task<float[]> GenerateQueryEmbeddingAsync(string input, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         var configuration = ResolveConfiguration(includeApiKey: true);
         if (!configuration.IsConfigured)
@@ -169,7 +169,9 @@ public sealed class KnowledgeBaseEmbeddingService : IKnowledgeBaseEmbeddingServi
             new EmbeddingRequestPolicy(
                 operationName: "query",
                 maxRetries: _queryMaxRetries,
-                timeout: _queryTimeout,
+                timeout: timeout is { } requested
+                    ? TimeSpan.FromMilliseconds(Math.Clamp(requested.TotalMilliseconds, 100, 8000))
+                    : _queryTimeout,
                 retryDelay: _queryRetryDelay));
         var result = vectors.Count == 0 ? Array.Empty<float>() : vectors[0];
         if (result.Length == profile.Dimensions)

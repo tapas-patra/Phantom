@@ -37,7 +37,31 @@ namespace SecureOverlay.Services
             PhantomControlFrameParser parser;
             var firstResponse = string.Empty;
             var fallbackBuffer = string.Empty;
+            Task<LiveCopilotRetrieval>? retrievalTask = null;
+            var retrieveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+            LiveTurnDecision Prepare(LiveTurnDecision decision) =>
+                LiveCopilotRetrievePolicy.PrepareRetrieve(
+                    decision, questionText, preferredDocumentsForDecision?.Invoke(decision));
+
+            void ResetRetrieve()
+            {
+                try { retrieveCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+                retrieveCts.Dispose();
+                retrieveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                retrievalTask = null;
+            }
+
+            void TryStartRetrieve(PhantomControlFrameParser current)
+            {
+                if (retrievalTask != null || current.Decision?.Action != LiveCopilotAction.Retrieve)
+                    return;
+                retrievalTask = retrieve(Prepare(current.Decision), retrieveCts.Token);
+            }
+
+            try
+            {
             while (true)
             {
                 parser = new PhantomControlFrameParser(allowedEntityIds, allowedDocumentIds);
@@ -49,10 +73,12 @@ namespace SecureOverlay.Services
                         {
                             var visible = parser.Feed(chunk);
                             if (visible.Length > 0) publish(visible);
+                            TryStartRetrieve(parser);
                         },
                         () =>
                         {
                             parser = new PhantomControlFrameParser(allowedEntityIds, allowedDocumentIds);
+                            ResetRetrieve();
                             resetPublishedAttempt?.Invoke();
                         },
                         cancellationToken).ConfigureAwait(false);
@@ -62,8 +88,10 @@ namespace SecureOverlay.Services
                     {
                         var visible = parser.Feed(first.Response);
                         if (visible.Length > 0) publish(visible);
+                        TryStartRetrieve(parser);
                     }
                     parser.Complete();
+                    TryStartRetrieve(parser);
                     break;
                 }
                 catch (PhantomProtocolException error)
@@ -95,6 +123,7 @@ namespace SecureOverlay.Services
                     if (protocolRetries == 0)
                     {
                         protocolRetries++;
+                        ResetRetrieve();
                         resetPublishedAttempt?.Invoke();
                         continue;
                     }
@@ -105,15 +134,7 @@ namespace SecureOverlay.Services
 
             var decision = parser.Decision!;
             if (decision.Action == LiveCopilotAction.Retrieve)
-            {
-                var query = string.IsNullOrWhiteSpace(decision.RetrievalQuery)
-                    ? LiveCopilotRetrievePolicy.NormalizeRetrievalQuery(decision, questionText)
-                    : decision.RetrievalQuery;
-                var docs = decision.PreferredDocumentIds.Count > 0
-                    ? decision.PreferredDocumentIds
-                    : preferredDocumentsForDecision?.Invoke(decision) ?? Array.Empty<string>();
-                decision = decision with { RetrievalQuery = query, PreferredDocumentIds = docs };
-            }
+                decision = Prepare(decision);
 
             decisionParsed?.Invoke(decision, modelCalls, false);
             if (protocolRetries > 0 && decision.Action == LiveCopilotAction.Retrieve)
@@ -126,7 +147,9 @@ namespace SecureOverlay.Services
                     answer, decision, modelCalls, protocolRetries, "not_requested", Array.Empty<RetrievedContextSnippet>());
             }
 
-            var retrieval = await retrieve(decision, cancellationToken).ConfigureAwait(false);
+            var retrieval = retrievalTask != null
+                ? await retrievalTask.ConfigureAwait(false)
+                : await retrieve(decision, retrieveCts.Token).ConfigureAwait(false);
             var finalResponse = string.Empty;
             var second = secondModel(decision, retrieval);
             modelCalls++;
@@ -146,6 +169,11 @@ namespace SecureOverlay.Services
             if (finalResponse.Length == 0) finalResponse = completed.Response;
             if (!IsCompleteAnswer(finalResponse)) throw new InvalidOperationException("The AI provider returned an incomplete response.");
             return new LiveCopilotResult(finalResponse, decision, modelCalls, protocolRetries, retrieval.Status, retrieval.Snippets);
+            }
+            finally
+            {
+                retrieveCts.Dispose();
+            }
         }
 
         public static bool IsCompleteAnswer(string response)

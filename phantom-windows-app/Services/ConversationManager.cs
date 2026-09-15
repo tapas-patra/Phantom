@@ -201,13 +201,18 @@ namespace SecureOverlay.Services
                     {
                         StageChanged?.Invoke(this, "Searching your knowledge…");
                         var query = LiveCopilotRetrievePolicy.NormalizeRetrievalQuery(decision, userMessage);
-                        if (speculativeRetrieval != null && LiveCopilotRetrievePolicy.QueriesAreSimilar(userMessage, query))
+                        if (speculativeRetrieval != null &&
+                            LiveCopilotRetrievePolicy.QueriesAreSimilar(userMessage, query) &&
+                            LiveCopilotRetrievePolicy.DocumentSetsEqual(Array.Empty<string>(), decision.PreferredDocumentIds))
                         {
                             var speculative = await speculativeRetrieval.WaitAsync(token).ConfigureAwait(false);
-                            if (speculative.Status is "found" or "empty" or "unavailable")
+                            if (LiveCopilotRetrievePolicy.CanReuseSpeculative(
+                                    userMessage, Array.Empty<string>(), query, decision.PreferredDocumentIds,
+                                    speculative.Status))
                                 return speculative;
                         }
 
+                        speculativeCts.Cancel();
                         return await SearchKnowledgeAsync(query, decision.PreferredDocumentIds, knowledge, token).ConfigureAwait(false);
                     },
                     (decision, retrieval) =>

@@ -38,10 +38,10 @@ namespace SecureOverlay.Services
             return false;
         }
 
-        public static LiveTurnDecision ForceRetrieve(
+        public static LiveTurnDecision PrepareRetrieve(
             LiveTurnDecision decision,
             string questionText,
-            IReadOnlyList<string> preferredDocumentIds)
+            IReadOnlyList<string>? preferredDocumentIds)
         {
             var docs = decision.PreferredDocumentIds.Count > 0
                 ? decision.PreferredDocumentIds
@@ -53,6 +53,31 @@ namespace SecureOverlay.Services
                 PreferredDocumentIds = docs
             };
         }
+
+        public static bool CanReuseSpeculative(
+            string speculativeQuery,
+            IReadOnlyList<string>? speculativeDocuments,
+            string query,
+            IReadOnlyList<string>? documents,
+            string status)
+        {
+            if (status is not ("found" or "empty")) return false;
+            if (!QueriesAreSimilar(speculativeQuery, query)) return false;
+            return DocumentSetsEqual(speculativeDocuments, documents);
+        }
+
+        public static bool DocumentSetsEqual(IReadOnlyList<string>? left, IReadOnlyList<string>? right)
+        {
+            var a = NormalizeDocumentSet(left);
+            var b = NormalizeDocumentSet(right);
+            return a.SetEquals(b);
+        }
+
+        public static LiveTurnDecision ForceRetrieve(
+            LiveTurnDecision decision,
+            string questionText,
+            IReadOnlyList<string> preferredDocumentIds)
+            => PrepareRetrieve(decision, questionText, preferredDocumentIds);
 
         public static string NormalizeRetrievalQuery(LiveTurnDecision decision, string questionText)
         {
@@ -115,5 +140,10 @@ namespace SecureOverlay.Services
             var normalized = value.Trim();
             return normalized.Length <= 500 ? normalized : normalized[..500];
         }
+
+        private static HashSet<string> NormalizeDocumentSet(IReadOnlyList<string>? value)
+            => new(
+                (value ?? Array.Empty<string>()).Where(id => !string.IsNullOrWhiteSpace(id)),
+                StringComparer.Ordinal);
     }
 }

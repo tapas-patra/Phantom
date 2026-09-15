@@ -12,8 +12,8 @@ namespace SecureOverlay.Infrastructure.Context
     public sealed class HostedKnowledgeRetrievalService : IKnowledgeRetrievalService
     {
         private static readonly TimeSpan RefreshTimeout = TimeSpan.FromMilliseconds(500);
-        // Allow embedding timeout + degraded lexical fallback (~2–4s) plus network slack.
-        private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(2);
+        // Live interview search budget: embedding + lexical/hybrid query.
+        private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(8);
         private readonly IKnowledgeRetrievalService _localFallback;
         private readonly IAuthSessionRepository _sessions;
         private readonly IAccountCacheRepository _accounts;

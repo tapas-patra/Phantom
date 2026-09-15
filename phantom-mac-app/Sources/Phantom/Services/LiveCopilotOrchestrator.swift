@@ -26,6 +26,21 @@ final class LiveCopilotOrchestrator {
         var parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
         var firstResponse = ""
         var fallbackBuffer = ""
+        var retrievalTask: Task<LiveCopilotRetrieval, Error>?
+
+        func prepare(_ decision: LiveTurnDecision) -> LiveTurnDecision {
+            LiveCopilotRetrievePolicy.prepareRetrieve(
+                decision,
+                questionText: questionText,
+                preferredDocumentIds: preferredDocumentsForDecision(decision)
+            )
+        }
+
+        func tryStartRetrieve() {
+            guard retrievalTask == nil, let decision = parser.decision, decision.action == .retrieve else { return }
+            let prepared = prepare(decision)
+            retrievalTask = Task { try await retrieve(prepared) }
+        }
 
         while true {
             modelCalls += 1
@@ -36,6 +51,7 @@ final class LiveCopilotOrchestrator {
                     do {
                         let visible = try parser.feed(chunk)
                         if !visible.isEmpty { publish(visible) }
+                        tryStartRetrieve()
                     } catch let error as PhantomProtocolError {
                         streamProtocolError = error
                     } catch {
@@ -43,14 +59,18 @@ final class LiveCopilotOrchestrator {
                     }
                 }, {
                     parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    retrievalTask?.cancel()
+                    retrievalTask = nil
                     resetPublishedAttempt()
                 })
                 if let streamProtocolError { throw streamProtocolError }
-                if !parser.hasReceivedChunks, !firstResponse.isEmpty {
+                if (!parser.hasReceivedChunks, !firstResponse.isEmpty {
                     let visible = try parser.feed(firstResponse)
                     if !visible.isEmpty { publish(visible) }
+                    tryStartRetrieve()
                 }
                 _ = try parser.complete()
+                tryStartRetrieve()
                 break
             } catch let error as PhantomProtocolError {
                 var candidate = parser.fallbackAnswerText()
@@ -75,6 +95,8 @@ final class LiveCopilotOrchestrator {
                 if protocolRetries == 0 {
                     protocolRetries += 1
                     parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    retrievalTask?.cancel()
+                    retrievalTask = nil
                     resetPublishedAttempt()
                     continue
                 }
@@ -83,20 +105,8 @@ final class LiveCopilotOrchestrator {
         }
 
         var decision = try parser.complete()
-        if decision.action == .retrieve, decision.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            decision = LiveTurnDecision(
-                action: decision.action,
-                questionType: decision.questionType,
-                intent: decision.intent,
-                answerBasis: decision.answerBasis,
-                entityType: decision.entityType,
-                entityId: decision.entityId,
-                retrievalQuery: LiveCopilotRetrievePolicy.normalizeRetrievalQuery(decision: decision, questionText: questionText),
-                preferredDocumentIds: decision.preferredDocumentIds,
-                targetSeconds: decision.targetSeconds,
-                allowCode: decision.allowCode,
-                confidence: decision.confidence
-            )
+        if decision.action == .retrieve {
+            decision = prepare(decision)
         }
         decisionParsed?(decision, modelCalls, false)
         if protocolRetries > 0, decision.action == .retrieve {
@@ -113,7 +123,12 @@ final class LiveCopilotOrchestrator {
             )
         }
 
-        let retrieval = try await retrieve(decision)
+        let retrieval: LiveCopilotRetrieval
+        if let retrievalTask {
+            retrieval = try await retrievalTask.value
+        } else {
+            retrieval = try await retrieve(decision)
+        }
         var finalResponse = ""
         modelCalls += 1
         let completed = try await secondModel(decision, retrieval)({ chunk in

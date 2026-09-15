@@ -25,7 +25,7 @@ enum LiveCopilotRetrievePolicy {
         return false
     }
 
-    static func forceRetrieve(
+    static func prepareRetrieve(
         _ decision: LiveTurnDecision,
         questionText: String,
         preferredDocumentIds: [String]
@@ -33,19 +33,34 @@ enum LiveCopilotRetrievePolicy {
         let docs = !decision.preferredDocumentIds.isEmpty
             ? decision.preferredDocumentIds
             : Array(preferredDocumentIds.prefix(8))
-        return LiveTurnDecision(
-            action: .retrieve,
-            questionType: decision.questionType,
-            intent: decision.intent,
-            answerBasis: decision.answerBasis,
-            entityType: decision.entityType,
-            entityId: decision.entityId,
-            retrievalQuery: normalizeRetrievalQuery(decision: decision, questionText: questionText),
-            preferredDocumentIds: docs,
-            targetSeconds: decision.targetSeconds,
-            allowCode: decision.allowCode,
-            confidence: decision.confidence
+        return decision.withRetrieval(
+            query: normalizeRetrievalQuery(decision: decision, questionText: questionText),
+            preferredDocumentIds: docs
         )
+    }
+
+    static func canReuseSpeculative(
+        speculativeQuery: String,
+        speculativeDocuments: [String],
+        query: String,
+        documents: [String],
+        status: String
+    ) -> Bool {
+        guard status == "found" || status == "empty" else { return false }
+        guard queriesAreSimilar(speculativeQuery, query) else { return false }
+        return documentSetsEqual(speculativeDocuments, documents)
+    }
+
+    static func documentSetsEqual(_ left: [String], _ right: [String]) -> Bool {
+        Set(left.filter { !$0.isEmpty }) == Set(right.filter { !$0.isEmpty })
+    }
+
+    static func forceRetrieve(
+        _ decision: LiveTurnDecision,
+        questionText: String,
+        preferredDocumentIds: [String]
+    ) -> LiveTurnDecision {
+        prepareRetrieve(decision, questionText: questionText, preferredDocumentIds: preferredDocumentIds)
     }
 
     static func normalizeRetrievalQuery(decision: LiveTurnDecision, questionText: String) -> String {

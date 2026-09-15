@@ -8,7 +8,7 @@
     "net8.0": []
   },
   "packageFolders": {
-    "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/0e046dcd7b0c919e0f1ae15d30cd59e5/nuget": {}
+    "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/977803aff410303f862386835a3f5eb5/nuget": {}
   },
   "project": {
     "version": "1.0.0",
@@ -16,7 +16,7 @@
       "projectUniqueName": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
       "projectName": "SemanticRoutingChecks",
       "projectPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/SemanticRoutingChecks.csproj",
-      "packagesPath": "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/0e046dcd7b0c919e0f1ae15d30cd59e5/nuget",
+      "packagesPath": "/var/folders/rv/6wg0lmps4yx324ds7sdy2p700000gp/T/cursor-sandbox-cache/977803aff410303f862386835a3f5eb5/nuget",
       "outputPath": "/Users/tapaskumarpatra/TKP-Other-personal/Phantom/phantom-windows-app/SemanticRoutingChecks/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
@@ -41,7 +41,7 @@
         ]
       },
       "restoreAuditProperties": {
-        "enableAudit": "true",
+        "enableAudit": "false",
         "auditLevel": "low",
         "auditMode": "direct"
       },

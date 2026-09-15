@@ -1320,12 +1320,14 @@ final class PhantomStore: ObservableObject {
                 companionInterviewActive = true
                 companionSessionStartedHandler?()
                 try await runtime.metering.trackQuestion(text)
-                await runtime.track(
-                    category: "chat",
-                    event: "question_submitted",
-                    attributes: ["requestId": requestId, "provider": provider, "model": model, "lane": usesBYO ? "pro_byo" : "managed"],
-                    accessToken: session.accessToken
-                )
+                Task {
+                    await runtime.track(
+                        category: "chat",
+                        event: "question_submitted",
+                        attributes: ["requestId": requestId, "provider": provider, "model": model, "lane": usesBYO ? "pro_byo" : "managed"],
+                        accessToken: session.accessToken
+                    )
+                }
 
                 messages.append(ChatMessage(role: "user", content: text))
                 let pendingReply = ChatMessage(role: "assistant", content: "")
@@ -1488,12 +1490,21 @@ final class PhantomStore: ObservableObject {
                     firstModel: firstStream,
                     retrieve: { decision in
                         let query = LiveCopilotRetrievePolicy.normalizeRetrievalQuery(decision: decision, questionText: text)
-                        if let speculativeTask, LiveCopilotRetrievePolicy.queriesAreSimilar(text, query) {
+                        if let speculativeTask,
+                           LiveCopilotRetrievePolicy.queriesAreSimilar(text, query),
+                           LiveCopilotRetrievePolicy.documentSetsEqual([], decision.preferredDocumentIds) {
                             let speculative = try await speculativeTask.value
-                            if speculative.status == "found" || speculative.status == "empty" || speculative.status == "unavailable" {
+                            if LiveCopilotRetrievePolicy.canReuseSpeculative(
+                                speculativeQuery: text,
+                                speculativeDocuments: [],
+                                query: query,
+                                documents: decision.preferredDocumentIds,
+                                status: speculative.status
+                            ) {
                                 return speculative
                             }
                         }
+                        speculativeTask?.cancel()
                         return try await self.searchKnowledge(
                             query: query,
                             preferredDocuments: decision.preferredDocumentIds,

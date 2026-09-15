@@ -29,6 +29,22 @@ struct LiveTurnDecision: Equatable {
     let allowCode: Bool
     let confidence: Double
     let protocolVersion = 1
+
+    func withRetrieval(query: String, preferredDocumentIds: [String]) -> LiveTurnDecision {
+        LiveTurnDecision(
+            action: .retrieve,
+            questionType: questionType,
+            intent: intent,
+            answerBasis: answerBasis,
+            entityType: entityType,
+            entityId: entityId,
+            retrievalQuery: query,
+            preferredDocumentIds: preferredDocumentIds,
+            targetSeconds: targetSeconds,
+            allowCode: allowCode,
+            confidence: confidence
+        )
+    }
 }
 
 struct LiveCopilotRetrieval {

@@ -44,13 +44,20 @@ namespace SecureOverlay.Services
             try
             {
                 var plan = ReasoningBudget.Resolve(messages);
-                var request = new
-                {
-                    model = _model,
-                    messages = BuildMessages(messages, imagesBase64),
-                    max_tokens = plan.MaxTokens,
-                    reasoning = new { exclude = true, effort = plan.Effort }
-                };
+                object request = plan.Effort == "low"
+                    ? new
+                    {
+                        model = _model,
+                        messages = BuildMessages(messages, imagesBase64),
+                        max_tokens = plan.MaxTokens
+                    }
+                    : new
+                    {
+                        model = _model,
+                        messages = BuildMessages(messages, imagesBase64),
+                        max_tokens = plan.MaxTokens,
+                        reasoning = new { exclude = true, effort = plan.Effort }
+                    };
 
                 var requestMessage = CreateRequest(request);
                 var response = await _httpClient.SendAsync(requestMessage);
@@ -88,14 +95,22 @@ namespace SecureOverlay.Services
             try
             {
                 var plan = ReasoningBudget.Resolve(messages);
-                var request = new
-                {
-                    model = _model,
-                    messages = BuildMessages(messages, imagesBase64),
-                    max_tokens = plan.MaxTokens,
-                    stream = true,
-                    reasoning = new { exclude = true, effort = plan.Effort }
-                };
+                object request = plan.Effort == "low"
+                    ? new
+                    {
+                        model = _model,
+                        messages = BuildMessages(messages, imagesBase64),
+                        max_tokens = plan.MaxTokens,
+                        stream = true
+                    }
+                    : new
+                    {
+                        model = _model,
+                        messages = BuildMessages(messages, imagesBase64),
+                        max_tokens = plan.MaxTokens,
+                        stream = true,
+                        reasoning = new { exclude = true, effort = plan.Effort }
+                    };
 
                 var requestMessage = CreateRequest(request);
                 var response = await _httpClient.SendAsync(

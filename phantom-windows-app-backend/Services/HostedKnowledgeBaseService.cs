@@ -1084,6 +1084,25 @@ public sealed class HostedKnowledgeBaseService
                 candidate.FusedScore);
         }
         var snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
+        var unrestrictedRetry = false;
+        if (snippets.Count == 0 && normalizedPreferredDocumentIds.Length > 0)
+        {
+            unrestrictedRetry = true;
+            candidates = _knowledgeBases.SearchHybridCandidates(
+                userId: account.UserId,
+                knowledgeBaseId: knowledgeBase.KnowledgeBaseId,
+                query: normalizedQuery,
+                preferredDocumentIds: normalizedPreferredDocumentIds,
+                restrictToPreferredDocuments: false,
+                queryEmbeddingVector: queryVectorLiteral,
+                embeddingModel: profile.ModelId,
+                embeddingDimensions: profile.Dimensions,
+                embeddingVersion: profile.Version,
+                lexicalLimit: candidateLimit,
+                semanticLimit: candidateLimit,
+                finalLimit: candidateLimit);
+            snippets = BuildSearchSnippets(candidates, terms, snippetLimit, queryVectorLiteral != null);
+        }
 
         if (queryVectorLiteral != null || !_embeddingService.IsConfigured)
         {
@@ -1099,7 +1118,11 @@ public sealed class HostedKnowledgeBaseService
             "Hosted KB search completed for knowledgeBaseId={KnowledgeBaseId} kbRevision={KnowledgeBaseRevision} mode={SearchMode} queryLength={QueryLength} candidates={CandidateCount} snippets={SnippetCount} elapsedMs={ElapsedMs}.",
             knowledgeBase.KnowledgeBaseId,
             knowledgeBase.LastProcessedAtUtc?.Ticks ?? 0,
-            queryVectorLiteral != null ? "hybrid" : _embeddingService.IsConfigured ? "degraded_lexical" : "lexical",
+            queryVectorLiteral != null
+                ? (unrestrictedRetry ? "hybrid_unrestricted_retry" : "hybrid")
+                : _embeddingService.IsConfigured
+                    ? (unrestrictedRetry ? "degraded_lexical_unrestricted_retry" : "degraded_lexical")
+                    : (unrestrictedRetry ? "lexical_unrestricted_retry" : "lexical"),
             normalizedQuery.Length,
             candidates.Count,
             snippets.Count,

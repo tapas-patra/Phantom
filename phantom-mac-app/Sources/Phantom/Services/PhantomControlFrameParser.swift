@@ -106,7 +106,6 @@ final class PhantomControlFrameParser {
             _ = try commitFrame(buffered, finalize: true)
         }
         guard let decision else { throw PhantomProtocolError(code: "control_frame_incomplete") }
-        if decision.action == .retrieve, bodyHasContent { throw PhantomProtocolError(code: "retrieve_body_not_empty") }
         if decision.action != .retrieve, !bodyHasContent { throw PhantomProtocolError(code: "answer_body_empty") }
         return decision
     }
@@ -114,7 +113,10 @@ final class PhantomControlFrameParser {
     static func canFallback(_ code: String) -> Bool {
         [
             "control_frame_incomplete", "control_prefix_invalid", "control_prefix_oversized",
-            "control_json_invalid", "answer_body_empty"
+            "control_json_invalid", "answer_body_empty", "control_enum_invalid",
+            "control_value_out_of_range", "control_document_limit", "control_document_duplicate",
+            "control_entity_unknown", "control_document_unknown", "retrieval_query_empty",
+            "unexpected_retrieval_query", "clarification_basis_invalid", "retrieve_body_not_empty"
         ].contains(code)
     }
 
@@ -308,46 +310,96 @@ final class PhantomControlFrameParser {
     }
 
     private static func parse(_ json: String, allowedEntityIds: Set<String>, allowedDocumentIds: Set<String>) throws -> LiveTurnDecision {
-        let dto: ControlFrame
         let data = Data(json.utf8)
-        do {
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  Set(object.keys) == ControlFrame.keys else {
-                throw PhantomProtocolError(code: "control_json_invalid")
-            }
-            dto = try JSONDecoder().decode(ControlFrame.self, from: data)
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw PhantomProtocolError(code: "control_json_invalid")
         }
-        catch { throw PhantomProtocolError(code: "control_json_invalid") }
-        guard actions.contains(dto.action), questionTypes.contains(dto.questionType), intents.contains(dto.intent),
-              bases.contains(dto.answerBasis), entityTypes.contains(dto.entityType) else {
+        let actionRaw = stringValue(object, "action")
+        guard actions.contains(actionRaw), let action = LiveCopilotAction(rawValue: actionRaw) else {
             throw PhantomProtocolError(code: "control_enum_invalid")
         }
-        guard (0...1).contains(dto.confidence), dto.entityId.count <= 160, dto.retrievalQuery.count <= 500 else {
-            throw PhantomProtocolError(code: "control_value_out_of_range")
+        let questionType = coerce(stringValue(object, "questionType"), allowed: questionTypes, fallback: "unknown")
+        let intent = coerce(stringValue(object, "intent"), allowed: intents, fallback: "general")
+        var answerBasis = coerce(stringValue(object, "answerBasis"), allowed: bases, fallback: "universal_knowledge")
+        var entityType = coerce(stringValue(object, "entityType"), allowed: entityTypes, fallback: "none")
+        var entityId = String(stringValue(object, "entityId").prefix(160))
+        if !entityId.isEmpty, !allowedEntityIds.contains(entityId) {
+            entityId = ""
+            entityType = "none"
         }
-        guard dto.preferredDocumentIds.count <= 8,
-              Set(dto.preferredDocumentIds).count == dto.preferredDocumentIds.count,
-              dto.preferredDocumentIds.allSatisfy({ !$0.isEmpty && $0.count <= 160 }) else {
-            throw PhantomProtocolError(code: "control_document_limit")
-        }
-        guard dto.entityId.isEmpty || allowedEntityIds.contains(dto.entityId) else { throw PhantomProtocolError(code: "control_entity_unknown") }
-        guard dto.preferredDocumentIds.allSatisfy(allowedDocumentIds.contains) else { throw PhantomProtocolError(code: "control_document_unknown") }
-        guard let action = LiveCopilotAction(rawValue: dto.action) else { throw PhantomProtocolError(code: "control_enum_invalid") }
-        guard action != .retrieve || !dto.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PhantomProtocolError(code: "retrieval_query_empty")
-        }
-        guard action == .retrieve || dto.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PhantomProtocolError(code: "unexpected_retrieval_query")
-        }
-        guard action != .clarify || dto.answerBasis == "clarification" else { throw PhantomProtocolError(code: "clarification_basis_invalid") }
+        var retrievalQuery = String(stringValue(object, "retrievalQuery").prefix(500))
+        let preferredDocumentIds = stringArray(object, "preferredDocumentIds")
+            .filter { !$0.isEmpty && $0.count <= 160 }
+            .reduce(into: [String]()) { result, id in
+                if !result.contains(id) { result.append(id) }
+            }
+            .filter(allowedDocumentIds.contains)
+            .prefix(8)
+            .map { $0 }
+        if action != .retrieve { retrievalQuery = "" }
+        if action == .clarify { answerBasis = "clarification" }
+        var confidence = doubleValue(object, "confidence", 0.5)
+        if confidence.isNaN || confidence.isInfinite { confidence = 0.5 }
+        confidence = min(max(confidence, 0), 1)
         return LiveTurnDecision(
-            action: action, questionType: dto.questionType, intent: dto.intent, answerBasis: dto.answerBasis,
-            entityType: dto.entityType, entityId: dto.entityId,
-            retrievalQuery: dto.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines),
-            preferredDocumentIds: dto.preferredDocumentIds,
-            targetSeconds: clampTargetSeconds(dto.targetSeconds, questionType: dto.questionType),
-            allowCode: dto.allowCode, confidence: dto.confidence
+            action: action, questionType: questionType, intent: intent, answerBasis: answerBasis,
+            entityType: entityType, entityId: entityId,
+            retrievalQuery: retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines),
+            preferredDocumentIds: preferredDocumentIds,
+            targetSeconds: clampTargetSeconds(intValue(object, "targetSeconds"), questionType: questionType),
+            allowCode: boolValue(object, "allowCode"), confidence: confidence
         )
+    }
+
+    private static func lookup(_ object: [String: Any], _ key: String) -> Any? {
+        if let value = object[key] { return value }
+        let lowered = key.lowercased()
+        return object.first { $0.key.lowercased() == lowered }?.value
+    }
+
+    private static func coerce(_ value: String, allowed: Set<String>, fallback: String) -> String {
+        allowed.contains(value) ? value : fallback
+    }
+
+    private static func stringValue(_ object: [String: Any], _ key: String) -> String {
+        switch lookup(object, key) {
+        case let value as String: return value
+        case let value as NSNumber: return value.stringValue
+        default: return ""
+        }
+    }
+
+    private static func intValue(_ object: [String: Any], _ key: String) -> Int {
+        switch lookup(object, key) {
+        case let value as Int: return value
+        case let value as NSNumber: return value.intValue
+        case let value as String: return Int(value) ?? 0
+        default: return 0
+        }
+    }
+
+    private static func doubleValue(_ object: [String: Any], _ key: String, _ fallback: Double) -> Double {
+        switch lookup(object, key) {
+        case let value as Double: return value
+        case let value as NSNumber: return value.doubleValue
+        case let value as String: return Double(value) ?? fallback
+        default: return fallback
+        }
+    }
+
+    private static func boolValue(_ object: [String: Any], _ key: String) -> Bool {
+        switch lookup(object, key) {
+        case let value as Bool: return value
+        case let value as NSNumber: return value.boolValue
+        case let value as String: return (value as NSString).boolValue
+        default: return false
+        }
+    }
+
+    private static func stringArray(_ object: [String: Any], _ key: String) -> [String] {
+        (lookup(object, key) as? [Any] ?? []).compactMap { item in
+            item as? String
+        }
     }
 
     private static func clampTargetSeconds(_ value: Int, questionType: String) -> Int {
@@ -369,21 +421,4 @@ final class PhantomControlFrameParser {
         return min(max(value, bounds.lowerBound), bounds.upperBound)
     }
 
-    private struct ControlFrame: Decodable {
-        static let keys = Set([
-            "action", "questionType", "intent", "answerBasis", "entityType", "entityId",
-            "retrievalQuery", "preferredDocumentIds", "targetSeconds", "allowCode", "confidence"
-        ])
-        let action: String
-        let questionType: String
-        let intent: String
-        let answerBasis: String
-        let entityType: String
-        let entityId: String
-        let retrievalQuery: String
-        let preferredDocumentIds: [String]
-        let targetSeconds: Int
-        let allowCode: Bool
-        let confidence: Double
-    }
 }

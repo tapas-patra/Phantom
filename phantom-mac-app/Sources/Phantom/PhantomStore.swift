@@ -1450,16 +1450,33 @@ final class PhantomStore: ObservableObject {
                 }
                 let orchestrator = LiveCopilotOrchestrator()
                 var firstProtocolAttempt = 0
+                let retrievalAvailable = isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true
+                let speculativeTask: Task<LiveCopilotRetrieval, Error>? = retrievalAvailable
+                    ? Task {
+                        do {
+                            return try await self.searchKnowledge(
+                                query: text,
+                                preferredDocuments: [],
+                                session: session,
+                                requestId: requestId
+                            )
+                        } catch is CancellationError {
+                            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+                        }
+                    }
+                    : nil
                 let firstStream: LiveCopilotOrchestrator.ModelStream = { onDelta, onRetryCleanup in
                     firstProtocolAttempt += 1
                     let outbound = firstProtocolAttempt == 1 ? firstOutbound : repairOutbound
-                    return try await makeStream(outbound, firstOperationId, firstProtocolAttempt)(onDelta, onRetryCleanup)
+                    return try await ReasoningContext.$questionType.withValue("control") {
+                        try await makeStream(outbound, firstOperationId, firstProtocolAttempt)(onDelta, onRetryCleanup)
+                    }
                 }
                 let result = try await orchestrator.execute(
                     allowedEntityIds: CopilotPrompt.entityIds(hostedKnowledgeBase, mode: copilotMode),
                     allowedDocumentIds: CopilotPrompt.documentIds(hostedKnowledgeBase, mode: copilotMode),
                     questionText: text,
-                    retrievalAvailable: isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true,
+                    retrievalAvailable: retrievalAvailable,
                     hasActiveEvidence: !conversationManager.activeEvidence(for: copilotMode).isEmpty,
                     preferredDocumentsForDecision: { decision in
                         CopilotPrompt.preferredDocumentIds(
@@ -1470,40 +1487,19 @@ final class PhantomStore: ObservableObject {
                     },
                     firstModel: firstStream,
                     retrieve: { decision in
-                        let operationId = UUID().uuidString
-                        self.status = "Searching your knowledge…"
-                        Diagnostics.event("retrieval_started", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle)
-                        self.mirrorLiveEvent("retrieval_started", turnId: requestId, operationId: operationId)
-                        guard self.isPremiumAccount, self.hostedKnowledgeBase?.canUseInInterview == true else {
-                            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
-                        }
-                        do {
-                            var preferredDocuments = decision.preferredDocumentIds
-                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
-                                preferredDocuments = CopilotPrompt.documentIds(self.hostedKnowledgeBase, mode: .briefing)
+                        let query = LiveCopilotRetrievePolicy.normalizeRetrievalQuery(decision: decision, questionText: text)
+                        if let speculativeTask, LiveCopilotRetrievePolicy.queriesAreSimilar(text, query) {
+                            let speculative = try await speculativeTask.value
+                            if speculative.status == "found" || speculative.status == "empty" || speculative.status == "unavailable" {
+                                return speculative
                             }
-                            if self.copilotMode == .briefing, preferredDocuments.isEmpty {
-                                Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
-                                self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
-                                return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
-                            }
-                            let snippets = try await self.backend.knowledgeSnippets(
-                                accessToken: session.accessToken,
-                                query: decision.retrievalQuery,
-                                preferredDocumentIds: preferredDocuments,
-                                turnId: requestId,
-                                operationId: operationId
-                            )
-                            let bounded = Array(snippets.prefix(3))
-                            Diagnostics.event("retrieval_completed", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
-                            self.mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
-                            return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(self.hostedKnowledgeBase?.embeddingVersion ?? 0)")
-                        } catch is CancellationError { throw CancellationError() }
-                        catch {
-                            Diagnostics.event("retrieval_failed", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: operationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": "retrieval_failed"])
-                            self.mirrorLiveEvent("retrieval_failed", turnId: requestId, operationId: operationId, fields: ["outcome": "error", "error_code": "retrieval_failed"])
-                            return LiveCopilotRetrieval(status: "error", snippets: [], kbRevision: "")
                         }
+                        return try await self.searchKnowledge(
+                            query: query,
+                            preferredDocuments: decision.preferredDocumentIds,
+                            session: session,
+                            requestId: requestId
+                        )
                     },
                     secondModel: { decision, retrieval in
                         let finalOutbound = self.conversationManager.secondCallMessages(
@@ -1549,6 +1545,9 @@ final class PhantomStore: ObservableObject {
                         self.mirrorLiveEvent("control_frame_parsed", turnId: requestId, operationId: self.activeOperationId, fields: fields)
                     }
                 )
+                if result.decision.action != .retrieve {
+                    speculativeTask?.cancel()
+                }
                 conversationManager.complete(result, mode: copilotMode)
                 if let index = messages.firstIndex(where: { $0.id == pendingReply.id }) {
                     let responseTimeMs = max(0, Int(Date().timeIntervalSince(activeRequestStartedAt) * 1_000))
@@ -1654,6 +1653,48 @@ final class PhantomStore: ObservableObject {
         }
         prompt = option.question
         send()
+    }
+
+    private func searchKnowledge(
+        query: String,
+        preferredDocuments: [String],
+        session: AuthSession,
+        requestId: String
+    ) async throws -> LiveCopilotRetrieval {
+        let operationId = UUID().uuidString
+        status = "Searching your knowledge…"
+        Diagnostics.event("retrieval_started", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle)
+        mirrorLiveEvent("retrieval_started", turnId: requestId, operationId: operationId)
+        guard isPremiumAccount, hostedKnowledgeBase?.canUseInInterview == true else {
+            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+        }
+        do {
+            var documents = preferredDocuments
+            if copilotMode == .briefing, documents.isEmpty {
+                documents = CopilotPrompt.documentIds(hostedKnowledgeBase, mode: .briefing)
+            }
+            if copilotMode == .briefing, documents.isEmpty {
+                Diagnostics.event("retrieval_completed", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+                return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+            }
+            let snippets = try await backend.knowledgeSnippets(
+                accessToken: session.accessToken,
+                query: query,
+                preferredDocumentIds: documents,
+                turnId: requestId,
+                operationId: operationId
+            )
+            let bounded = Array(snippets.prefix(3))
+            Diagnostics.event("retrieval_completed", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+            mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "\(bounded.count)", "retrieval_status": bounded.isEmpty ? "empty" : "found"])
+            return LiveCopilotRetrieval(status: bounded.isEmpty ? "empty" : "found", snippets: bounded, kbRevision: "\(hostedKnowledgeBase?.embeddingVersion ?? 0)")
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            Diagnostics.event("retrieval_completed", level: "Warning", sessionId: copilotSessionId, turnId: requestId, operationId: operationId, mode: copilotMode, style: interviewDeliveryStyle, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+            mirrorLiveEvent("retrieval_completed", turnId: requestId, operationId: operationId, fields: ["snippet_count": "0", "retrieval_status": "unavailable"])
+            return LiveCopilotRetrieval(status: "unavailable", snippets: [], kbRevision: "")
+        }
     }
 
     func cancelCurrentRequest() {

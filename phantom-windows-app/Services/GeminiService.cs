@@ -109,7 +109,7 @@ namespace SecureOverlay.Services
             {
                 var contents = ConvertMessagesToGeminiFormat(messages, imagesBase64);
                 var plan = ReasoningBudget.Resolve(messages);
-                var includeThinking = ReasoningBudget.SupportsNativeThinking("Gemini", _model) && plan.GeminiThinkingTokens > 0;
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("Gemini", _model, plan) && plan.GeminiThinkingTokens > 0;
                 var url = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:streamGenerateContent?key={_apiKey}&alt=sse";
                 var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
                     _httpClient,

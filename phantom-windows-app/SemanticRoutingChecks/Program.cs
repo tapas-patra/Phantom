@@ -188,8 +188,7 @@ var forcePersonalFrame =
 var forceCalls = 0;
 var forceForced = false;
 var forceVisible = string.Empty;
-var forceReset = 0;
-var forced = await new LiveCopilotOrchestrator().ExecuteAsync(
+var kept = await new LiveCopilotOrchestrator().ExecuteAsync(
     new[] { "payment-migration" }, new[] { "resume-document-id" },
     "Draw the architecture of Spashta.", true, false,
     (publish, _, _) =>
@@ -198,30 +197,17 @@ var forced = await new LiveCopilotOrchestrator().ExecuteAsync(
         publish(forcePersonalFrame);
         return Task.FromResult((forcePersonalFrame, string.Empty));
     },
-    (decision, _) =>
-    {
-        if (string.IsNullOrWhiteSpace(decision.RetrievalQuery))
-            throw new InvalidOperationException("Forced retrieve missing query.");
-        return Task.FromResult(new LiveCopilotRetrieval("found", new[]
-        {
-            new RetrievedContextSnippet { DocumentId = "resume-document-id", Text = "Spashta architecture evidence" }
-        }, "1"));
-    },
-    (_, _) => (publish, _, _) =>
-    {
-        forceCalls++;
-        publish("Forced grounded architecture answer.");
-        return Task.FromResult(("Forced grounded architecture answer.", string.Empty));
-    },
+    (_, _) => throw new InvalidOperationException("Personal catalog answers must not retrieve."),
+    (_, _) => throw new InvalidOperationException("Personal catalog answers must not use a second call."),
     chunk => forceVisible += chunk,
-    () => { forceReset++; forceVisible = string.Empty; },
+    () => throw new InvalidOperationException("Personal catalog answers must not reset the first-call body."),
     CancellationToken.None,
     preferredDocumentsForDecision: _ => new[] { "resume-document-id" },
     decisionParsed: (_, _, retrieveForced) => forceForced = retrieveForced);
-Equal("2", forceCalls.ToString(), "forced personal retrieve model calls");
-Equal("true", forceForced.ToString().ToLowerInvariant(), "retrieve_forced");
-Equal("Forced grounded architecture answer.", forced.Answer, "forced retrieve answer");
-if (forceReset < 1) throw new InvalidOperationException("Forced retrieve did not clear the first-call body.");
+Equal("1", forceCalls.ToString(), "personal catalog answer model calls");
+Equal("false", forceForced.ToString().ToLowerInvariant(), "retrieve_forced");
+Equal("Catalog-only architecture answer.", kept.Answer, "kept first-call answer");
+Equal(kept.Answer, forceVisible, "kept visible body");
 
 var skipGeneral = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
     new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "general", "universal_knowledge", "none", "", "", Array.Empty<string>(), 30, false, 0.9),
@@ -236,7 +222,7 @@ if (skipActiveEvidence) throw new InvalidOperationException("Active evidence mus
 var forcePersonal = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
     new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "candidate_specific", "profile_synthesis", "project", "payment-migration", "", Array.Empty<string>(), 40, false, 0.9),
     retrievalAvailable: true, hasActiveEvidence: false);
-if (!forcePersonal) throw new InvalidOperationException("Candidate-specific project turns must force retrieve when KB is available.");
+if (forcePersonal) throw new InvalidOperationException("Candidate-specific project turns must keep a complete first-call answer.");
 
 foreach (var secret in fixtures.SensitiveSamples)
 {

@@ -12,6 +12,8 @@ namespace SecureOverlay.Helpers
 
     public static class ReasoningBudget
     {
+        public const string ControlQuestionType = "control";
+
         private static readonly AsyncLocal<string?> QuestionType = new();
 
         public static string? CurrentQuestionType => QuestionType.Value;
@@ -56,10 +58,15 @@ namespace SecureOverlay.Helpers
                 "reasoning", "thinking");
         }
 
+        public static bool ShouldEnableNativeThinking(string provider, string model, ReasoningPlan plan)
+            => SupportsNativeThinking(provider, model) && plan.Effort != "low";
+
         private static string Classify(string? questionType, string question, bool hasCode)
         {
             switch (questionType?.Trim().ToLowerInvariant())
             {
+                case "control":
+                    return "low";
                 case "coding":
                 case "system_design":
                 case "product_case":

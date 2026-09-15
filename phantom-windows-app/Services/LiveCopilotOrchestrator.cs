@@ -30,6 +30,8 @@ namespace SecureOverlay.Services
             Action<string>? protocolRejected = null,
             Action<LiveTurnDecision, int, bool>? decisionParsed = null)
         {
+            _ = retrievalAvailable;
+            _ = hasActiveEvidence;
             var modelCalls = 0;
             var protocolRetries = 0;
             PhantomControlFrameParser parser;
@@ -77,27 +79,10 @@ namespace SecureOverlay.Services
                         fallbackBuffer = candidate;
                     }
 
-                    if (protocolRetries == 0)
+                    protocolRejected?.Invoke(error.Code);
+                    if (IsCompleteAnswer(fallbackBuffer))
                     {
-                        protocolRetries++;
-                        protocolRejected?.Invoke(error.Code);
-                        if (PhantomControlFrameParser.CanFallback(error.Code) && IsCompleteAnswer(fallbackBuffer))
-                        {
-                            protocolRejected?.Invoke("control_frame_fallback");
-                            var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
-                            decisionParsed?.Invoke(fallbackDecision, modelCalls, false);
-                            publish(fallbackBuffer);
-                            return new LiveCopilotResult(
-                                fallbackBuffer, fallbackDecision, modelCalls, protocolRetries, "not_requested",
-                                Array.Empty<RetrievedContextSnippet>());
-                        }
-
-                        resetPublishedAttempt?.Invoke();
-                        continue;
-                    }
-
-                    if (PhantomControlFrameParser.CanFallback(error.Code) && IsCompleteAnswer(fallbackBuffer))
-                    {
+                        protocolRetries = Math.Max(protocolRetries, 1);
                         protocolRejected?.Invoke("control_frame_fallback");
                         var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
                         decisionParsed?.Invoke(fallbackDecision, modelCalls, false);
@@ -107,24 +92,30 @@ namespace SecureOverlay.Services
                             Array.Empty<RetrievedContextSnippet>());
                     }
 
+                    if (protocolRetries == 0)
+                    {
+                        protocolRetries++;
+                        resetPublishedAttempt?.Invoke();
+                        continue;
+                    }
+
                     throw;
                 }
             }
 
             var decision = parser.Decision!;
-            var retrieveForced = false;
-            if (protocolRetries == 0 &&
-                LiveCopilotRetrievePolicy.ShouldForceRetrieve(decision, retrievalAvailable, hasActiveEvidence))
+            if (decision.Action == LiveCopilotAction.Retrieve)
             {
-                decision = LiveCopilotRetrievePolicy.ForceRetrieve(
-                    decision,
-                    questionText,
-                    preferredDocumentsForDecision?.Invoke(decision) ?? Array.Empty<string>());
-                retrieveForced = true;
-                resetPublishedAttempt?.Invoke();
+                var query = string.IsNullOrWhiteSpace(decision.RetrievalQuery)
+                    ? LiveCopilotRetrievePolicy.NormalizeRetrievalQuery(decision, questionText)
+                    : decision.RetrievalQuery;
+                var docs = decision.PreferredDocumentIds.Count > 0
+                    ? decision.PreferredDocumentIds
+                    : preferredDocumentsForDecision?.Invoke(decision) ?? Array.Empty<string>();
+                decision = decision with { RetrievalQuery = query, PreferredDocumentIds = docs };
             }
 
-            decisionParsed?.Invoke(decision, modelCalls, retrieveForced);
+            decisionParsed?.Invoke(decision, modelCalls, false);
             if (protocolRetries > 0 && decision.Action == LiveCopilotAction.Retrieve)
                 throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)

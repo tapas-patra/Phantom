@@ -630,7 +630,7 @@ struct BackendClient {
         ]
         var request = URLRequest(url: components.url!)
         // Allow embedding timeout + degraded lexical fallback (~2–4s) plus network slack.
-        request.timeoutInterval = 5
+        request.timeoutInterval = 2
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         correlate(&request, turnId: turnId, operationId: operationId)
         let result: KnowledgeSearchResult = try await send(request)

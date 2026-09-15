@@ -87,16 +87,65 @@
       "expectedAction": "answer",
       "expectedBody": "A load balancer sits in front of servers and spreads incoming traffic.",
       "maxNormalCalls": 1
+    },
+    {
+      "name": "extra-json-field",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9,\"notes\":\"ignore\"}\nPHANTOM_BODY\nExtra fields are ignored."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Extra fields are ignored.",
+      "maxNormalCalls": 1
+    },
+    {
+      "name": "unknown-entity-coerced",
+      "allowedEntityIds": ["payment-migration"],
+      "allowedDocumentIds": ["resume-document-id"],
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"personal_factual\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"project\",\"entityId\":\"not-a-real-entity\",\"retrievalQuery\":\"deployment details\",\"preferredDocumentIds\":[\"resume-document-id\"],\"targetSeconds\":20,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\n"
+      ],
+      "expectedAction": "retrieve",
+      "expectedBody": "",
+      "maxNormalCalls": 2
+    },
+    {
+      "name": "unknown-document-dropped",
+      "allowedEntityIds": ["payment-migration"],
+      "allowedDocumentIds": ["resume-document-id"],
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"personal_factual\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"document\",\"entityId\":\"\",\"retrievalQuery\":\"exact metric\",\"preferredDocumentIds\":[\"not-in-catalog\"],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.7}\nPHANTOM_BODY\n"
+      ],
+      "expectedAction": "retrieve",
+      "expectedBody": "",
+      "maxNormalCalls": 2
+    },
+    {
+      "name": "body-on-retrieve-ignored",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"behavioral\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"conflict\",\"preferredDocumentIds\":[],\"targetSeconds\":60,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nleak"
+      ],
+      "expectedAction": "retrieve",
+      "expectedBody": "",
+      "maxNormalCalls": 2
+    },
+    {
+      "name": "answer-with-retrieval-query-cleared",
+      "chunks": [
+        "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"should be cleared\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.88}\nPHANTOM_BODY\nOptimistic locking detects a conflicting write."
+      ],
+      "expectedAction": "answer",
+      "expectedBody": "Optimistic locking detects a conflicting write.",
+      "maxNormalCalls": 1
     }
   ],
   "invalid": [
     {
-      "name": "unknown-document",
-      "frame": "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"personal_factual\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"document\",\"entityId\":\"\",\"retrievalQuery\":\"exact metric\",\"preferredDocumentIds\":[\"not-in-catalog\"],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.7}\nPHANTOM_BODY\n"
+      "name": "missing-action",
+      "frame": "PHANTOM_CONTROL_V1\n{\"questionType\":\"technical\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\nPHANTOM_BODY\n"
     },
     {
-      "name": "body-on-retrieve",
-      "frame": "PHANTOM_CONTROL_V1\n{\"action\":\"retrieve\",\"questionType\":\"behavioral\",\"intent\":\"candidate_specific\",\"answerBasis\":\"exact_evidence\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"conflict\",\"preferredDocumentIds\":[],\"targetSeconds\":60,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nleak"
+      "name": "not-an-object",
+      "frame": "PHANTOM_CONTROL_V1\n[1,2,3]\nPHANTOM_BODY\n"
     }
   ],
   "answerCompletion": [
@@ -196,7 +245,9 @@
     "Treat targetSeconds as a maximum, not a quota",
     "Use compact bullets only for coding",
     "When retrievalAvailable=true and the question is about the candidate's profile",
-    "Pure general technical, coding, system-design, and product questions with intent=general and entityType=none should answer without retrieve"
+    "Pure general technical, coding, system-design, and product questions with intent=general and entityType=none should answer without retrieve",
+    "Emit PHANTOM_CONTROL_V1 and the JSON object first",
+    "Never wrap the control frame in Markdown fences"
   ],
   "deliveryStyleRequirements": {
     "standard": ["Delivery style is Standard", "Avoid casual openers and colloquial filler"],

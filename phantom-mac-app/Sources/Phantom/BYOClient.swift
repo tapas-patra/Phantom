@@ -192,7 +192,7 @@ struct BYOClient {
         messages: [ChatMessage]
     ) -> [String: Any] {
         let plan = Self.reasoningPlan(for: messages)
-        let includeThinking = Self.supportsNativeThinking(provider: provider, model: model)
+        let includeThinking = Self.supportsNativeThinking(provider: provider, model: model) && plan.effort != "low"
         if provider == "Claude" {
             var body: [String: Any] = [
                 "model": model,
@@ -318,7 +318,7 @@ struct BYOClient {
         if let typed = ReasoningContext.questionType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             switch typed {
             case "coding", "system_design", "product_case": return "high"
-            case "behavioral", "personal_factual", "motivation_fit", "clarification", "factual_lookup", "status_update": return "low"
+            case "control", "behavioral", "personal_factual", "motivation_fit", "clarification", "factual_lookup", "status_update": return "low"
             default: break
             }
         }

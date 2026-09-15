@@ -151,7 +151,7 @@ namespace SecureOverlay.Services
                 }
 
                 var plan = ReasoningBudget.Resolve(messages);
-                var includeThinking = ReasoningBudget.SupportsNativeThinking("Claude", _model) && plan.ClaudeThinkingTokens > 0;
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("Claude", _model, plan) && plan.ClaudeThinkingTokens > 0;
                 var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
                     _httpClient,
                     withThinking =>

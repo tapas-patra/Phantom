@@ -70,7 +70,7 @@ public static class ReasoningPlanner
         {
             "coding" or "system_design" or "product_case" => LiveQuestionKind.Coding,
             "behavioral" or "personal_factual" or "motivation_fit" or "clarification"
-                or "factual_lookup" or "status_update" => LiveQuestionKind.Brief,
+                or "factual_lookup" or "status_update" or "control" => LiveQuestionKind.Brief,
             "technical" or "situational" or "unknown" or "decision_support" or "objection_response"
                 or "risk_tradeoff" or "brainstorm" or "action_capture" => LiveQuestionKind.Default,
             _ => LiveQuestionKind.Default

@@ -72,7 +72,7 @@ namespace SecureOverlay.Services
                 }
 
                 var plan = ReasoningBudget.Resolve(messages);
-                var includeThinking = ReasoningBudget.SupportsNativeThinking("ChatGPT", _model);
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("ChatGPT", _model, plan);
                 object request = includeThinking
                     ? new
                     {
@@ -159,7 +159,7 @@ namespace SecureOverlay.Services
                 }
 
                 var plan = ReasoningBudget.Resolve(messages);
-                var includeThinking = ReasoningBudget.SupportsNativeThinking("ChatGPT", _model);
+                var includeThinking = ReasoningBudget.ShouldEnableNativeThinking("ChatGPT", _model, plan);
                 var response = await ReasoningBudget.SendWithOptionalThinkingAsync(
                     _httpClient,
                     withThinking =>

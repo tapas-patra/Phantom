@@ -527,7 +527,8 @@ public sealed class ManagedAiService
         RunOutputBudgetSelfCheck();
         var reasoningPlan = ReasoningPlanner.For(request.Messages, request.QuestionType);
         var outputBudget = reasoningPlan.OutputTokens;
-        var includeThinking = ReasoningPlanner.SupportsNativeThinking(request.Provider, request.Model);
+        var includeThinking = ReasoningPlanner.SupportsNativeThinking(request.Provider, request.Model)
+            && reasoningPlan.Effort != "low";
         _logger.LogInformation(
             "managed_ai_dispatch service={Service} component={Component} event={Event} request_id={RequestId} operation_id={OperationId} turn_id={TurnId} provider={Provider} model={Model} execution_lane={ExecutionLane} max_output_tokens={MaxOutputTokens} reasoning_effort={ReasoningEffort} native_thinking={NativeThinking} estimated_input_tokens={EstimatedInputTokens} recent_turn_count={RecentTurnCount} image_present={ImagePresent}",
             "phantom-windows-app-backend", "managed_ai", "provider_request_started", request.RequestId, request.RequestId, request.TurnId,
@@ -613,7 +614,8 @@ public sealed class ManagedAiService
         int maxOutputTokens)
     {
         var reasoningPlan = ReasoningPlanner.For(messages);
-        var includeThinking = ReasoningPlanner.SupportsNativeThinking(providerId, modelId);
+        var includeThinking = ReasoningPlanner.SupportsNativeThinking(providerId, modelId)
+            && reasoningPlan.Effort != "low";
         return providerId switch
         {
             ManagedAiCatalog.ChatGpt => await GenerateOpenAiCompatibleResponseAsync(

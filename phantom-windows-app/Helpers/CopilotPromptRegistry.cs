@@ -198,6 +198,7 @@ namespace SecureOverlay.Helpers
             "You may conservatively synthesize ordinary interpersonal context, disagreement shape, action sequence, decision process, rollout choice, qualitative result, and learning around verified anchors. " +
             "For a missing exact personal fact, do not guess; bridge naturally to the closest supported fact. General knowledge must never become a claim about the candidate.";
         private const string ControlProtocol =
+            "Emit PHANTOM_CONTROL_V1 and the JSON object first, before any thinking or spoken text. Do not write hidden chain-of-thought. " +
             "Begin with exactly PHANTOM_CONTROL_V1, then one single-line JSON object, then PHANTOM_BODY on its own line. " +
             "Use every field exactly once in this order: action, questionType, intent, answerBasis, entityType, entityId, retrievalQuery, preferredDocumentIds, targetSeconds, allowCode, confidence. " +
             "Valid action: answer, retrieve, clarify. Valid questionType: behavioral, technical, coding, system_design, product_case, motivation_fit, personal_factual, situational, clarification, unknown, factual_lookup, status_update, decision_support, objection_response, risk_tradeoff, brainstorm, action_capture. " +
@@ -206,9 +207,9 @@ namespace SecureOverlay.Helpers
             "Use JSON booleans, a numeric confidence from 0 through 1, no comments, no trailing comma, and no newline inside the JSON. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
             "When retrievalAvailable=true and the question is about the candidate's profile, experience, projects, personal facts, behavioral stories, motivation/fit, or applying knowledge to their work, choose action=retrieve unless ACTIVE_EVIDENCE already covers the needed detail; one-call profile_synthesis is allowed only when retrievalAvailable=false or active evidence is already sufficient. " +
             "If recent history already established a candidate project, experience, or personal topic, and the current question continues that topic — architecture, endpoints, components, services, parsing, tradeoffs, or other details of that work — keep intent=candidate_specific or hybrid, set entityType/entityId from the catalog when possible, and retrieve when retrievalAvailable=true; do not reclassify those follow-ups as intent=general with entityType=none. " +
-            "Pure standalone general technical, coding, system-design, and product questions that do not refer to the candidate's work stay intent=general and entityType=none and should answer without retrieve. " +
+            "Pure standalone general technical, coding, system-design, and product questions that do not refer to the candidate's work stay intent=general and entityType=none and should answer without retrieve. Pure general technical, coding, system-design, and product questions with intent=general and entityType=none should answer without retrieve. " +
             "For retrieve, emit no body, set a focused retrievalQuery, and use only IDs from the catalog. " +
-            "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. " +
+            "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. Never wrap the control frame in Markdown fences. " +
             "Nothing else may appear between the JSON line and PHANTOM_BODY. " +
             "Exact direct-answer shape:\nPHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nThen output the answer immediately.";
         private const string StrictProtocolRepair =

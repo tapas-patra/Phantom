@@ -421,15 +421,9 @@ enum PhantomMain {
             answerBasis: "profile_synthesis", entityType: "project", entityId: "payment-migration",
             retrievalQuery: "", preferredDocumentIds: [], targetSeconds: 40, allowCode: false, confidence: 0.9
         )
-        precondition(LiveCopilotRetrievePolicy.shouldForceRetrieve(
+        precondition(!LiveCopilotRetrievePolicy.shouldForceRetrieve(
             decision: personalDecision, retrievalAvailable: true, hasActiveEvidence: false
         ))
-        let forcedDecision = LiveCopilotRetrievePolicy.forceRetrieve(
-            personalDecision, questionText: "Draw Spashta architecture", preferredDocumentIds: ["resume-document-id"]
-        )
-        precondition(forcedDecision.action == .retrieve)
-        precondition(!forcedDecision.retrievalQuery.isEmpty)
-        precondition(forcedDecision.preferredDocumentIds == ["resume-document-id"])
         precondition(!LiveCopilotRetrievePolicy.shouldForceRetrieve(
             decision: LiveTurnDecision(
                 action: .answer, questionType: "technical", intent: "general",

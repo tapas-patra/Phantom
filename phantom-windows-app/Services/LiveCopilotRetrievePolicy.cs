@@ -32,9 +32,10 @@ namespace SecureOverlay.Services
             bool retrievalAvailable,
             bool hasActiveEvidence)
         {
-            if (!retrievalAvailable || hasActiveEvidence) return false;
-            if (decision.Action != LiveCopilotAction.Answer) return false;
-            return LooksPersonal(decision);
+            _ = decision;
+            _ = retrievalAvailable;
+            _ = hasActiveEvidence;
+            return false;
         }
 
         public static LiveTurnDecision ForceRetrieve(
@@ -42,16 +43,42 @@ namespace SecureOverlay.Services
             string questionText,
             IReadOnlyList<string> preferredDocumentIds)
         {
-            var query = BuildRetrievalQuery(decision, questionText);
             var docs = decision.PreferredDocumentIds.Count > 0
                 ? decision.PreferredDocumentIds
                 : (preferredDocumentIds ?? Array.Empty<string>()).Take(8).ToArray();
             return decision with
             {
                 Action = LiveCopilotAction.Retrieve,
-                RetrievalQuery = query,
+                RetrievalQuery = NormalizeRetrievalQuery(decision, questionText),
                 PreferredDocumentIds = docs
             };
+        }
+
+        public static string NormalizeRetrievalQuery(LiveTurnDecision decision, string questionText)
+        {
+            if (!string.IsNullOrWhiteSpace(decision.RetrievalQuery))
+                return TrimQuery(decision.RetrievalQuery);
+
+            var parts = new List<string>();
+            var question = (questionText ?? string.Empty)
+                .Replace('\n', ' ')
+                .Replace('\r', ' ')
+                .Trim();
+            if (!string.IsNullOrWhiteSpace(question)) parts.Add(question);
+            if (!string.IsNullOrWhiteSpace(decision.EntityId)) parts.Add(decision.EntityId);
+            var joined = string.Join(' ', parts).Trim();
+            return string.IsNullOrWhiteSpace(joined)
+                ? "candidate profile experience project details"
+                : TrimQuery(joined);
+        }
+
+        public static bool QueriesAreSimilar(string left, string right)
+        {
+            var a = NormalizeForCompare(left);
+            var b = NormalizeForCompare(right);
+            if (a.Length == 0 || b.Length == 0) return false;
+            if (string.Equals(a, b, StringComparison.Ordinal)) return true;
+            return a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal);
         }
 
         public static bool LooksPersonal(LiveTurnDecision decision)
@@ -76,23 +103,12 @@ namespace SecureOverlay.Services
             return false;
         }
 
-        private static string BuildRetrievalQuery(LiveTurnDecision decision, string questionText)
-        {
-            if (!string.IsNullOrWhiteSpace(decision.RetrievalQuery))
-                return TrimQuery(decision.RetrievalQuery);
-
-            var parts = new List<string>();
-            var question = (questionText ?? string.Empty)
+        private static string NormalizeForCompare(string value)
+            => string.Join(' ', (value ?? string.Empty)
                 .Replace('\n', ' ')
                 .Replace('\r', ' ')
-                .Trim();
-            if (!string.IsNullOrWhiteSpace(question)) parts.Add(question);
-            if (!string.IsNullOrWhiteSpace(decision.EntityId)) parts.Add(decision.EntityId);
-            var joined = string.Join(' ', parts).Trim();
-            return string.IsNullOrWhiteSpace(joined)
-                ? "candidate profile experience project details"
-                : TrimQuery(joined);
-        }
+                .ToLowerInvariant()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
         private static string TrimQuery(string value)
         {

@@ -19,6 +19,8 @@ final class LiveCopilotOrchestrator {
         protocolRejected: ((String) -> Void)? = nil,
         decisionParsed: ((LiveTurnDecision, Int, Bool) -> Void)? = nil
     ) async throws -> LiveCopilotResult {
+        _ = retrievalAvailable
+        _ = hasActiveEvidence
         var modelCalls = 0
         var protocolRetries = 0
         var parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
@@ -58,24 +60,9 @@ final class LiveCopilotOrchestrator {
                 if !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     fallbackBuffer = candidate
                 }
-                if protocolRetries == 0 {
-                    protocolRejected?(error.code)
-                    protocolRetries += 1
-                    if PhantomControlFrameParser.canFallback(error.code), Self.isCompleteAnswer(fallbackBuffer) {
-                        protocolRejected?("control_frame_fallback")
-                        let fallbackDecision = PhantomControlFrameParser.fallbackAnswerDecision()
-                        decisionParsed?(fallbackDecision, modelCalls, false)
-                        publish(fallbackBuffer)
-                        return LiveCopilotResult(
-                            answer: fallbackBuffer, decision: fallbackDecision, modelCallCount: modelCalls,
-                            protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
-                        )
-                    }
-                    parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
-                    resetPublishedAttempt()
-                    continue
-                }
-                if PhantomControlFrameParser.canFallback(error.code), Self.isCompleteAnswer(fallbackBuffer) {
+                protocolRejected?(error.code)
+                if Self.isCompleteAnswer(fallbackBuffer) {
+                    protocolRetries = max(protocolRetries, 1)
                     protocolRejected?("control_frame_fallback")
                     let fallbackDecision = PhantomControlFrameParser.fallbackAnswerDecision()
                     decisionParsed?(fallbackDecision, modelCalls, false)
@@ -85,27 +72,33 @@ final class LiveCopilotOrchestrator {
                         protocolRetryCount: protocolRetries, retrievalStatus: "not_requested", activeEvidence: []
                     )
                 }
+                if protocolRetries == 0 {
+                    protocolRetries += 1
+                    parser = PhantomControlFrameParser(allowedEntityIds: allowedEntityIds, allowedDocumentIds: allowedDocumentIds)
+                    resetPublishedAttempt()
+                    continue
+                }
                 throw error
             }
         }
 
         var decision = try parser.complete()
-        var retrieveForced = false
-        if protocolRetries == 0,
-           LiveCopilotRetrievePolicy.shouldForceRetrieve(
-               decision: decision,
-               retrievalAvailable: retrievalAvailable,
-               hasActiveEvidence: hasActiveEvidence
-           ) {
-            decision = LiveCopilotRetrievePolicy.forceRetrieve(
-                decision,
-                questionText: questionText,
-                preferredDocumentIds: preferredDocumentsForDecision(decision)
+        if decision.action == .retrieve, decision.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            decision = LiveTurnDecision(
+                action: decision.action,
+                questionType: decision.questionType,
+                intent: decision.intent,
+                answerBasis: decision.answerBasis,
+                entityType: decision.entityType,
+                entityId: decision.entityId,
+                retrievalQuery: LiveCopilotRetrievePolicy.normalizeRetrievalQuery(decision: decision, questionText: questionText),
+                preferredDocumentIds: decision.preferredDocumentIds,
+                targetSeconds: decision.targetSeconds,
+                allowCode: decision.allowCode,
+                confidence: decision.confidence
             )
-            retrieveForced = true
-            resetPublishedAttempt()
         }
-        decisionParsed?(decision, modelCalls, retrieveForced)
+        decisionParsed?(decision, modelCalls, false)
         if protocolRetries > 0, decision.action == .retrieve {
             throw PhantomProtocolError(code: "control_repair_retrieve_invalid")
         }

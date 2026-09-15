@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SemanticRoutingChecks")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+92196e15f304c20f79fce0391b74ec3e4c3d094a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f28736a1be6e8412bf6869939a01c1ef30a93f26")]
 [assembly: System.Reflection.AssemblyProductAttribute("SemanticRoutingChecks")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SemanticRoutingChecks")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

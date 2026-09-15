@@ -19,9 +19,10 @@ enum LiveCopilotRetrievePolicy {
         retrievalAvailable: Bool,
         hasActiveEvidence: Bool
     ) -> Bool {
-        guard retrievalAvailable, !hasActiveEvidence else { return false }
-        guard decision.action == .answer else { return false }
-        return looksPersonal(decision)
+        _ = decision
+        _ = retrievalAvailable
+        _ = hasActiveEvidence
+        return false
     }
 
     static func forceRetrieve(
@@ -29,7 +30,6 @@ enum LiveCopilotRetrievePolicy {
         questionText: String,
         preferredDocumentIds: [String]
     ) -> LiveTurnDecision {
-        let query = buildRetrievalQuery(decision: decision, questionText: questionText)
         let docs = !decision.preferredDocumentIds.isEmpty
             ? decision.preferredDocumentIds
             : Array(preferredDocumentIds.prefix(8))
@@ -40,12 +40,35 @@ enum LiveCopilotRetrievePolicy {
             answerBasis: decision.answerBasis,
             entityType: decision.entityType,
             entityId: decision.entityId,
-            retrievalQuery: query,
+            retrievalQuery: normalizeRetrievalQuery(decision: decision, questionText: questionText),
             preferredDocumentIds: docs,
             targetSeconds: decision.targetSeconds,
             allowCode: decision.allowCode,
             confidence: decision.confidence
         )
+    }
+
+    static func normalizeRetrievalQuery(decision: LiveTurnDecision, questionText: String) -> String {
+        let existing = decision.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !existing.isEmpty { return String(existing.prefix(500)) }
+        var parts: [String] = []
+        let question = questionText
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !question.isEmpty { parts.append(question) }
+        if !decision.entityId.isEmpty { parts.append(decision.entityId) }
+        let joined = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !joined.isEmpty { return String(joined.prefix(500)) }
+        return "candidate profile experience project details"
+    }
+
+    static func queriesAreSimilar(_ left: String, _ right: String) -> Bool {
+        let a = normalizeForCompare(left)
+        let b = normalizeForCompare(right)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        return a.contains(b) || b.contains(a)
     }
 
     static func looksPersonal(_ decision: LiveTurnDecision) -> Bool {
@@ -64,18 +87,12 @@ enum LiveCopilotRetrievePolicy {
         return false
     }
 
-    private static func buildRetrievalQuery(decision: LiveTurnDecision, questionText: String) -> String {
-        let existing = decision.retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !existing.isEmpty { return String(existing.prefix(500)) }
-        var parts: [String] = []
-        let question = questionText
+    private static func normalizeForCompare(_ value: String) -> String {
+        value
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !question.isEmpty { parts.append(question) }
-        if !decision.entityId.isEmpty { parts.append(decision.entityId) }
-        let joined = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !joined.isEmpty { return String(joined.prefix(500)) }
-        return "candidate profile experience project details"
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
     }
 }

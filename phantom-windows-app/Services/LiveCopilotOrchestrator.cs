@@ -17,14 +17,18 @@ namespace SecureOverlay.Services
         public async Task<LiveCopilotResult> ExecuteAsync(
             IEnumerable<string> allowedEntityIds,
             IEnumerable<string> allowedDocumentIds,
+            string questionText,
+            bool retrievalAvailable,
+            bool hasActiveEvidence,
             ModelStream firstModel,
             Func<LiveTurnDecision, CancellationToken, Task<LiveCopilotRetrieval>> retrieve,
             Func<LiveTurnDecision, LiveCopilotRetrieval, ModelStream> secondModel,
             Action<string> publish,
             Action? resetPublishedAttempt,
             CancellationToken cancellationToken,
+            Func<LiveTurnDecision, IReadOnlyList<string>>? preferredDocumentsForDecision = null,
             Action<string>? protocolRejected = null,
-            Action<LiveTurnDecision, int>? decisionParsed = null)
+            Action<LiveTurnDecision, int, bool>? decisionParsed = null)
         {
             var modelCalls = 0;
             var protocolRetries = 0;
@@ -81,7 +85,7 @@ namespace SecureOverlay.Services
                         {
                             protocolRejected?.Invoke("control_frame_fallback");
                             var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
-                            decisionParsed?.Invoke(fallbackDecision, modelCalls);
+                            decisionParsed?.Invoke(fallbackDecision, modelCalls, false);
                             publish(fallbackBuffer);
                             return new LiveCopilotResult(
                                 fallbackBuffer, fallbackDecision, modelCalls, protocolRetries, "not_requested",
@@ -96,7 +100,7 @@ namespace SecureOverlay.Services
                     {
                         protocolRejected?.Invoke("control_frame_fallback");
                         var fallbackDecision = PhantomControlFrameParser.FallbackAnswerDecision();
-                        decisionParsed?.Invoke(fallbackDecision, modelCalls);
+                        decisionParsed?.Invoke(fallbackDecision, modelCalls, false);
                         publish(fallbackBuffer);
                         return new LiveCopilotResult(
                             fallbackBuffer, fallbackDecision, modelCalls, protocolRetries, "not_requested",
@@ -108,7 +112,19 @@ namespace SecureOverlay.Services
             }
 
             var decision = parser.Decision!;
-            decisionParsed?.Invoke(decision, modelCalls);
+            var retrieveForced = false;
+            if (protocolRetries == 0 &&
+                LiveCopilotRetrievePolicy.ShouldForceRetrieve(decision, retrievalAvailable, hasActiveEvidence))
+            {
+                decision = LiveCopilotRetrievePolicy.ForceRetrieve(
+                    decision,
+                    questionText,
+                    preferredDocumentsForDecision?.Invoke(decision) ?? Array.Empty<string>());
+                retrieveForced = true;
+                resetPublishedAttempt?.Invoke();
+            }
+
+            decisionParsed?.Invoke(decision, modelCalls, retrieveForced);
             if (protocolRetries > 0 && decision.Action == LiveCopilotAction.Retrieve)
                 throw new PhantomProtocolException("control_repair_retrieve_invalid");
             if (decision.Action != LiveCopilotAction.Retrieve)

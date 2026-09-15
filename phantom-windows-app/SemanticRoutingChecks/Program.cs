@@ -99,6 +99,7 @@ var directCalls = 0;
 var directVisible = string.Empty;
 var direct = await new LiveCopilotOrchestrator().ExecuteAsync(
     Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
     (publish, _, _) =>
     {
         directCalls++;
@@ -116,6 +117,7 @@ var retrieveCalls = 0;
 var finalVisible = string.Empty;
 var retrieved = await new LiveCopilotOrchestrator().ExecuteAsync(
     retrieveFixture.AllowedEntityIds, retrieveFixture.AllowedDocumentIds,
+    "Walk me through the payment migration conflict.", false, false,
     (publish, _, _) =>
     {
         retrieveCalls++;
@@ -143,6 +145,7 @@ var fallbackVisible = string.Empty;
 const string fallbackRaw = "Optimistic locking detects a conflicting write without a control header.";
 var fallback = await new LiveCopilotOrchestrator().ExecuteAsync(
     Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
     (publish, _, _) =>
     {
         fallbackCalls++;
@@ -162,6 +165,7 @@ var repairRejected = new List<string>();
 const string headerOnly = "PHANTOM_CONTROL_V1\n";
 var repaired = await new LiveCopilotOrchestrator().ExecuteAsync(
     Array.Empty<string>(), Array.Empty<string>(),
+    "What is optimistic locking?", false, false,
     (publish, _, _) =>
     {
         repairCalls++;
@@ -172,12 +176,67 @@ var repaired = await new LiveCopilotOrchestrator().ExecuteAsync(
     (_, _) => throw new InvalidOperationException("Repair fixture retrieved."),
     (_, _) => throw new InvalidOperationException("Repair fixture used a second call."),
     chunk => repairVisible += chunk, null, CancellationToken.None,
-    code => repairRejected.Add(code));
+    protocolRejected: code => repairRejected.Add(code));
 Equal("2", repairCalls.ToString(), "header-only repair model calls");
 Equal(fallbackRaw, repaired.Answer, "header-only repair answer");
 Equal(repaired.Answer, repairVisible, "header-only repair visible body");
 if (!repairRejected.Contains("control_frame_incomplete"))
     throw new InvalidOperationException("Header-only repair did not reject the first malformed header.");
+
+var forcePersonalFrame =
+    "PHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"technical\",\"intent\":\"candidate_specific\",\"answerBasis\":\"profile_synthesis\",\"entityType\":\"project\",\"entityId\":\"payment-migration\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":40,\"allowCode\":false,\"confidence\":0.9}\nPHANTOM_BODY\nCatalog-only architecture answer.";
+var forceCalls = 0;
+var forceForced = false;
+var forceVisible = string.Empty;
+var forceReset = 0;
+var forced = await new LiveCopilotOrchestrator().ExecuteAsync(
+    new[] { "payment-migration" }, new[] { "resume-document-id" },
+    "Draw the architecture of Spashta.", true, false,
+    (publish, _, _) =>
+    {
+        forceCalls++;
+        publish(forcePersonalFrame);
+        return Task.FromResult((forcePersonalFrame, string.Empty));
+    },
+    (decision, _) =>
+    {
+        if (string.IsNullOrWhiteSpace(decision.RetrievalQuery))
+            throw new InvalidOperationException("Forced retrieve missing query.");
+        return Task.FromResult(new LiveCopilotRetrieval("found", new[]
+        {
+            new RetrievedContextSnippet { DocumentId = "resume-document-id", Text = "Spashta architecture evidence" }
+        }, "1"));
+    },
+    (_, _) => (publish, _, _) =>
+    {
+        forceCalls++;
+        publish("Forced grounded architecture answer.");
+        return Task.FromResult(("Forced grounded architecture answer.", string.Empty));
+    },
+    chunk => forceVisible += chunk,
+    () => { forceReset++; forceVisible = string.Empty; },
+    CancellationToken.None,
+    preferredDocumentsForDecision: _ => new[] { "resume-document-id" },
+    decisionParsed: (_, _, retrieveForced) => forceForced = retrieveForced);
+Equal("2", forceCalls.ToString(), "forced personal retrieve model calls");
+Equal("true", forceForced.ToString().ToLowerInvariant(), "retrieve_forced");
+Equal("Forced grounded architecture answer.", forced.Answer, "forced retrieve answer");
+if (forceReset < 1) throw new InvalidOperationException("Forced retrieve did not clear the first-call body.");
+
+var skipGeneral = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "general", "universal_knowledge", "none", "", "", Array.Empty<string>(), 30, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: false);
+if (skipGeneral) throw new InvalidOperationException("General technical turns must not force retrieve.");
+
+var skipActiveEvidence = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "personal_factual", "candidate_specific", "profile_synthesis", "project", "payment-migration", "", Array.Empty<string>(), 30, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: true);
+if (skipActiveEvidence) throw new InvalidOperationException("Active evidence must suppress forced retrieve.");
+
+var forcePersonal = LiveCopilotRetrievePolicy.ShouldForceRetrieve(
+    new LiveTurnDecision(LiveCopilotAction.Answer, "technical", "candidate_specific", "profile_synthesis", "project", "payment-migration", "", Array.Empty<string>(), 40, false, 0.9),
+    retrievalAvailable: true, hasActiveEvidence: false);
+if (!forcePersonal) throw new InvalidOperationException("Candidate-specific project turns must force retrieve when KB is available.");
 
 foreach (var secret in fixtures.SensitiveSamples)
 {

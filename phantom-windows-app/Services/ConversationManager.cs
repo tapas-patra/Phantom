@@ -47,7 +47,7 @@ namespace SecureOverlay.Services
         public bool LastOperationHadOutput { get; private set; }
         public event EventHandler<string>? APISwitchNotification;
         public event EventHandler<string>? StageChanged;
-        public event Action<LiveTurnDecision, int>? DecisionParsed;
+        public event Action<LiveTurnDecision, int, bool>? DecisionParsed;
 
         public ConversationManager(
             IAIService aiService, string systemPrompt, ModelConfig modelConfig,
@@ -176,6 +176,9 @@ namespace SecureOverlay.Services
 
                 var result = await new LiveCopilotOrchestrator().ExecuteAsync(
                     CopilotPromptRegistry.EntityIds(knowledge, _copilotMode), CopilotPromptRegistry.DocumentIds(knowledge, _copilotMode),
+                    userMessage,
+                    knowledge?.CanUseInInterview == true && _knowledgeRetrievalEnabled?.Invoke() != false,
+                    _activeEvidence[_copilotMode].Count > 0,
                     async (publish, cleanup, token) =>
                     {
                         using (ReasoningBudget.UseQuestionType(null))
@@ -231,12 +234,14 @@ namespace SecureOverlay.Services
                     },
                     chunk => { StageChanged?.Invoke(this, "Answering…"); LiveRequestTrace.Current?.Mark("answer_first_visible_token"); onChunkReceived(chunk); },
                     onRetryCleanup, cancellationToken,
+                    decision => CopilotPromptRegistry.PreferredDocumentIds(decision.EntityId, decision.EntityType, knowledge),
                     code => LiveRequestTrace.Current?.RejectControl(code),
-                    (decision, calls) =>
+                    (decision, calls, retrieveForced) =>
                     {
                         LiveRequestTrace.Current?.SetDecision(
-                            decision, calls, decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested");
-                        DecisionParsed?.Invoke(decision, calls);
+                            decision, calls, decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested",
+                            retrieveForced);
+                        DecisionParsed?.Invoke(decision, calls, retrieveForced);
                     }).ConfigureAwait(false);
 
                 LastDecision = result.Decision;

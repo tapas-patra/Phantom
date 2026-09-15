@@ -1458,6 +1458,16 @@ final class PhantomStore: ObservableObject {
                 let result = try await orchestrator.execute(
                     allowedEntityIds: CopilotPrompt.entityIds(hostedKnowledgeBase, mode: copilotMode),
                     allowedDocumentIds: CopilotPrompt.documentIds(hostedKnowledgeBase, mode: copilotMode),
+                    questionText: text,
+                    retrievalAvailable: isPremiumAccount && hostedKnowledgeBase?.canUseInInterview == true,
+                    hasActiveEvidence: !conversationManager.activeEvidence(for: copilotMode).isEmpty,
+                    preferredDocumentsForDecision: { decision in
+                        CopilotPrompt.preferredDocumentIds(
+                            entityId: decision.entityId,
+                            entityType: decision.entityType,
+                            knowledge: self.hostedKnowledgeBase
+                        )
+                    },
                     firstModel: firstStream,
                     retrieve: { decision in
                         let operationId = UUID().uuidString
@@ -1520,7 +1530,7 @@ final class PhantomStore: ObservableObject {
                         Diagnostics.event("control_frame_rejected", level: "Warning", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: ["error_code": code, "validation_outcome": "rejected"])
                         self.mirrorLiveEvent("control_frame_rejected", turnId: requestId, operationId: self.activeOperationId, fields: ["error_code": code, "validation_outcome": "rejected"])
                     },
-                    decisionParsed: { decision, calls in
+                    decisionParsed: { decision, calls, retrieveForced in
                         let fields = [
                             "question_type": decision.questionType,
                             "intent": decision.intent,
@@ -1532,7 +1542,8 @@ final class PhantomStore: ObservableObject {
                             "protocol_version": "\(decision.protocolVersion)",
                             "validation_outcome": "accepted",
                             "model_call_count": "\(calls)",
-                            "retrieval_status": decision.action == .retrieve ? "pending" : "not_requested"
+                            "retrieval_status": decision.action == .retrieve ? "pending" : "not_requested",
+                            "retrieve_forced": retrieveForced ? "true" : "false"
                         ]
                         Diagnostics.event("control_frame_parsed", sessionId: self.copilotSessionId, turnId: requestId, operationId: self.activeOperationId, mode: self.copilotMode, style: self.interviewDeliveryStyle, fields: fields)
                         self.mirrorLiveEvent("control_frame_parsed", turnId: requestId, operationId: self.activeOperationId, fields: fields)

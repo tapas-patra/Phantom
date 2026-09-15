@@ -2072,7 +2072,7 @@ namespace SecureOverlay
             }));
         }
 
-        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount)
+        private void OnCopilotDecisionParsed(LiveTurnDecision decision, int modelCallCount, bool retrieveForced)
         {
             if (_activeRequestTrace is not { } trace) return;
             TrackLiveCopilotAsync("control_frame_parsed", trace, new Dictionary<string, string>
@@ -2087,7 +2087,8 @@ namespace SecureOverlay
                 ["protocol_version"] = decision.ProtocolVersion.ToString(),
                 ["validation_outcome"] = "accepted",
                 ["model_call_count"] = modelCallCount.ToString(),
-                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested"
+                ["retrieval_status"] = decision.Action == LiveCopilotAction.Retrieve ? "pending" : "not_requested",
+                ["retrieve_forced"] = retrieveForced ? "true" : "false"
             });
         }
 

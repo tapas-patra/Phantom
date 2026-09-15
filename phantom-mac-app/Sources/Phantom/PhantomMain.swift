@@ -416,6 +416,31 @@ enum PhantomMain {
             roleOrMeetingContext: "", activeEvidence: [], protocolRepair: true
         )
         precondition(repairPrompt.hasSuffix(fixtures.repairPromptSuffix))
+        let personalDecision = LiveTurnDecision(
+            action: .answer, questionType: "technical", intent: "candidate_specific",
+            answerBasis: "profile_synthesis", entityType: "project", entityId: "payment-migration",
+            retrievalQuery: "", preferredDocumentIds: [], targetSeconds: 40, allowCode: false, confidence: 0.9
+        )
+        precondition(LiveCopilotRetrievePolicy.shouldForceRetrieve(
+            decision: personalDecision, retrievalAvailable: true, hasActiveEvidence: false
+        ))
+        let forcedDecision = LiveCopilotRetrievePolicy.forceRetrieve(
+            personalDecision, questionText: "Draw Spashta architecture", preferredDocumentIds: ["resume-document-id"]
+        )
+        precondition(forcedDecision.action == .retrieve)
+        precondition(!forcedDecision.retrievalQuery.isEmpty)
+        precondition(forcedDecision.preferredDocumentIds == ["resume-document-id"])
+        precondition(!LiveCopilotRetrievePolicy.shouldForceRetrieve(
+            decision: LiveTurnDecision(
+                action: .answer, questionType: "technical", intent: "general",
+                answerBasis: "universal_knowledge", entityType: "none", entityId: "",
+                retrievalQuery: "", preferredDocumentIds: [], targetSeconds: 30, allowCode: false, confidence: 0.9
+            ),
+            retrievalAvailable: true, hasActiveEvidence: false
+        ))
+        precondition(!LiveCopilotRetrievePolicy.shouldForceRetrieve(
+            decision: personalDecision, retrievalAvailable: true, hasActiveEvidence: true
+        ))
         for fixture in fixtures.parser {
             let parser = PhantomControlFrameParser(
                 allowedEntityIds: fixture.allowedEntityIds ?? [],

@@ -92,6 +92,32 @@ namespace SecureOverlay.Helpers
                     .Concat(knowledge.ProjectCards?.SelectMany(x => x.SourceDocumentIds ?? Array.Empty<string>()) ?? Array.Empty<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToArray();
 
+        public static IReadOnlyList<string> PreferredDocumentIds(
+            string entityId,
+            string entityType,
+            HostedKnowledgeBaseSummaryDto? knowledge)
+        {
+            if (knowledge == null) return Array.Empty<string>();
+            var id = (entityId ?? string.Empty).Trim();
+            return entityType switch
+            {
+                "profile" when knowledge.ProfileCard != null &&
+                               (string.IsNullOrEmpty(id) || string.Equals(knowledge.ProfileCard.ProfileCardId, id, StringComparison.Ordinal))
+                    => (knowledge.ProfileCard.SourceDocumentIds ?? Array.Empty<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x)).ToArray(),
+                "experience" => (knowledge.ExperienceCards ?? Array.Empty<HostedKnowledgeBaseExperienceCardDto>())
+                    .Where(x => !string.IsNullOrEmpty(id) && string.Equals(x.ExperienceCardId, id, StringComparison.Ordinal))
+                    .SelectMany(x => x.SourceDocumentIds ?? Array.Empty<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).ToArray(),
+                "project" => (knowledge.ProjectCards ?? Array.Empty<HostedKnowledgeBaseProjectCardDto>())
+                    .Where(x => !string.IsNullOrEmpty(id) && string.Equals(x.ProjectCardId, id, StringComparison.Ordinal))
+                    .SelectMany(x => x.SourceDocumentIds ?? Array.Empty<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).ToArray(),
+                "document" when !string.IsNullOrEmpty(id) => new[] { id },
+                _ => Array.Empty<string>()
+            };
+        }
+
         private static string BuildCatalog(CopilotMode mode, HostedKnowledgeBaseSummaryDto? knowledge, string resume)
         {
             if (knowledge == null)
@@ -178,7 +204,9 @@ namespace SecureOverlay.Helpers
             "Valid intent: candidate_specific, general, hybrid, ambiguous. Valid answerBasis: exact_evidence, profile_synthesis, universal_knowledge, universal_synthesis, clarification. Valid entityType: none, profile, experience, project, document, context_pack, task. " +
             "Set targetSeconds to the speakable ceiling for the chosen question type, not the schema maximum. " +
             "Use JSON booleans, a numeric confidence from 0 through 1, no comments, no trailing comma, and no newline inside the JSON. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
-            "For retrieve, emit no body and request new private evidence only when it materially improves correctness; use only IDs from the catalog. " +
+            "When retrievalAvailable=true and the question is about the candidate's profile, experience, projects, personal facts, behavioral stories, motivation/fit, or applying knowledge to their work, choose action=retrieve unless ACTIVE_EVIDENCE already covers the needed detail; one-call profile_synthesis is allowed only when retrievalAvailable=false or active evidence is already sufficient. " +
+            "Pure general technical, coding, system-design, and product questions with intent=general and entityType=none should answer without retrieve. " +
+            "For retrieve, emit no body, set a focused retrievalQuery, and use only IDs from the catalog. " +
             "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. " +
             "Nothing else may appear between the JSON line and PHANTOM_BODY. " +
             "Exact direct-answer shape:\nPHANTOM_CONTROL_V1\n{\"action\":\"answer\",\"questionType\":\"unknown\",\"intent\":\"general\",\"answerBasis\":\"universal_knowledge\",\"entityType\":\"none\",\"entityId\":\"\",\"retrievalQuery\":\"\",\"preferredDocumentIds\":[],\"targetSeconds\":30,\"allowCode\":false,\"confidence\":0.8}\nPHANTOM_BODY\nThen output the answer immediately.";

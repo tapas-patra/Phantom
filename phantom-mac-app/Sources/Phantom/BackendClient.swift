@@ -629,7 +629,8 @@ struct BackendClient {
             URLQueryItem(name: "preferredDocumentIds", value: preferredDocumentIds.prefix(8).joined(separator: ","))
         ]
         var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 1.5
+        // Allow embedding timeout + degraded lexical fallback (~2–4s) plus network slack.
+        request.timeoutInterval = 5
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         correlate(&request, turnId: turnId, operationId: operationId)
         let result: KnowledgeSearchResult = try await send(request)

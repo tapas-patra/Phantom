@@ -205,7 +205,8 @@ namespace SecureOverlay.Helpers
             "Set targetSeconds to the speakable ceiling for the chosen question type, not the schema maximum. " +
             "Use JSON booleans, a numeric confidence from 0 through 1, no comments, no trailing comma, and no newline inside the JSON. For answer/clarify, stream the complete answer after PHANTOM_BODY and leave retrievalQuery empty. " +
             "When retrievalAvailable=true and the question is about the candidate's profile, experience, projects, personal facts, behavioral stories, motivation/fit, or applying knowledge to their work, choose action=retrieve unless ACTIVE_EVIDENCE already covers the needed detail; one-call profile_synthesis is allowed only when retrievalAvailable=false or active evidence is already sufficient. " +
-            "Pure general technical, coding, system-design, and product questions with intent=general and entityType=none should answer without retrieve. " +
+            "If recent history already established a candidate project, experience, or personal topic, and the current question continues that topic — architecture, endpoints, components, services, parsing, tradeoffs, or other details of that work — keep intent=candidate_specific or hybrid, set entityType/entityId from the catalog when possible, and retrieve when retrievalAvailable=true; do not reclassify those follow-ups as intent=general with entityType=none. " +
+            "Pure standalone general technical, coding, system-design, and product questions that do not refer to the candidate's work stay intent=general and entityType=none and should answer without retrieve. " +
             "For retrieve, emit no body, set a focused retrievalQuery, and use only IDs from the catalog. " +
             "Reuse active evidence when sufficient. Never use Markdown fences around the control frame. " +
             "Nothing else may appear between the JSON line and PHANTOM_BODY. " +

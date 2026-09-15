@@ -22,7 +22,7 @@ public sealed class TelemetryIngestService
         "image_present", "status_class", "search_mode", "cache_hit", "candidate_count", "transcript_length_bucket",
         "duplicate_suppression_count", "chunk_count", "buffered_characters", "flush_count", "render_ms", "retrieval_status", "finish_reason",
         "input_type", "model_call_count", "execution_lane", "usage_source", "cross_lane_fallback",
-        "retry_reason_code", "key_rotated"
+        "retry_reason_code", "key_rotated", "retrieve_forced"
     };
     private static readonly string[] SensitiveKeyFragments =
     {
